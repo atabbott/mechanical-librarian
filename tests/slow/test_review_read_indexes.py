@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sqlite3
 import tempfile
 from collections.abc import Callable
@@ -297,14 +298,31 @@ def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
                     for value in statements
                     if "CANDIDATES AS MATERIALIZED (SELECT" in value.upper()
                 )
+                # Everything before the page's document select chooses and
+                # orders keys: it reads no case or report document at all, and
+                # takes its sort key from the persisted browse facts (#1199).
                 sorter, documents = statement.split(") SELECT rc.document", 1)
-                assert "rc.document" not in sorter
-                assert "mr.document AS" not in sorter
+                # Whole words: a digest column such as `mr.document_digest` is a
+                # thin key, not the document.
+                assert re.search(r"\b(?:rc|mr)\.document\b", sorter) is None
+                assert "facts.title_key AS title_order" in sorter
+                assert "JOIN metadata_report_browse_facts facts" in sorter
                 assert documents.startswith(",")
-                assert "report_scalars AS MATERIALIZED" in sorter
+                assert re.search(r"\bmr\.document\b", documents) is not None
                 plan = support._plan(connection, statement, ())
-                assert any("MATERIALIZE report_scalars" in step for step in plan)
+                assert any("SEARCH facts USING PRIMARY KEY" in step for step in plan)
                 assert sum("MATERIALIZE candidates" in step for step in plan) == 1
+                # The documents come from the case and report rows joined to
+                # the limited page of keys; the sorter's own joins to those
+                # tables read thin columns only, as the text above proves.
+                limited = plan.index("SCAN page LEFT-JOIN")
+                assert plan.index("MATERIALIZE page") < limited
+                for joined in ("rc", "mr"):
+                    assert any(
+                        step.startswith(f"SEARCH {joined} ")
+                        and step.endswith("LEFT-JOIN")
+                        for step in plan[limited + 1 :]
+                    )
                 if surface == "attention":
                     assert "AS disposition" not in sorter
                     assert "AS disposition" in documents
