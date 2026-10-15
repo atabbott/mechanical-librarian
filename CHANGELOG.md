@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Library, Attention, search and work detail do less work per request and no
+  longer slow as decisions and policy changes accumulate: indexes reach that
+  history directly, cover currentness is evaluated only where it can change a row
+  or count, refusal scans skip text that cannot match them, and a read reuses
+  documents it already validated. Rows, counts, order and refusals are unchanged;
+  clean rebuild required (#1202).
+
 - Library, Attention and search choose their rows and counts from stored per-work
   title, author, format, provider and policy facts, reading only the reports they
   show instead of every work's report and proposal on each request. Visible rows,
