@@ -684,6 +684,23 @@ _FIELD_EFFECTS_SQL = (
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
 )
+# Pending field-effect documents and counts ask whether a live effect names a
+# decision as its own authority or as its subtitle companion's; without these
+# every pending candidate scanned every effect (#1204). The companion arm
+# compares this CAST, which is the TEXT conversion the comparison with a TEXT
+# decision id applies to a bare json_extract, so the index can serve it; a
+# statement must use this exact expression for the planner to choose it.
+_FIELD_EFFECT_COMPANION_DECISION_SQL = "CAST(json_extract(document,'$.plan.subtitle_companion.authority.decision_id') AS TEXT)"
+_FIELD_EFFECTS_DECISION_INDEX_SQL = (
+    "CREATE INDEX field_effects_decision ON field_effects(decision_id)"
+)
+_FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL = (
+    "CREATE INDEX field_effects_companion_decision ON field_effects("
+    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+    + ") WHERE "
+    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+    + " IS NOT NULL"
+)
 _FIELD_EFFECT_NO_CHANGES_SQL = (
     "CREATE TABLE field_effect_no_changes ("
     "decision_id TEXT PRIMARY KEY NOT NULL, "
@@ -946,6 +963,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
     connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
     connection.execute(_FIELD_EFFECTS_SQL)
+    connection.execute(_FIELD_EFFECTS_DECISION_INDEX_SQL)
+    connection.execute(_FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL)
     connection.execute(_FIELD_EFFECT_EVENTS_SQL)
     connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
     connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
@@ -1092,6 +1111,12 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_field_effect_consents_1", None),
             ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
             ("index", "sqlite_autoindex_field_effects_1", None),
+            ("index", "field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
+            (
+                "index",
+                "field_effects_companion_decision",
+                _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL,
+            ),
             ("index", "sqlite_autoindex_metadata_reports_1", None),
             ("index", "sqlite_autoindex_metadata_reports_2", None),
             ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),

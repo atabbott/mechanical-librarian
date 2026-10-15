@@ -582,6 +582,8 @@ def test_representative_attention_expectation_counts_only_remaining_owner_action
         "shadow_decision_outcomes_case_history",
         "human_decisions_case_destination",
         "metadata_policy_resolutions_resolved",
+        "field_effects_decision",
+        "field_effects_companion_decision",
     ],
 )
 def test_exact_schema_requires_each_measured_index(index_name: str) -> None:

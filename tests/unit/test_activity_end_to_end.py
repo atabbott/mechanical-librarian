@@ -1289,7 +1289,12 @@ def test_changed_activity_source_refuses_before_nonmatching_search(tmp_path, tab
         row = list(
             root._connection.execute(f"SELECT * FROM {table} LIMIT 1").fetchone()
         )
-        row[columns.index("document")] = "{not-json"
+        # The companion index parses every effect document, so SQLite refuses
+        # malformed JSON there at write (#1204); a well-formed non-effect
+        # changes that source instead.
+        row[columns.index("document")] = (
+            '{"not":"an effect"}' if table == "field_effects" else "{not-json"
+        )
         schema = root._connection.execute("PRAGMA schema_version").fetchone()
         root._connection.execute("PRAGMA ignore_check_constraints=ON")
         root._connection.execute(
