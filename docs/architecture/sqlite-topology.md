@@ -362,8 +362,10 @@ index; `field_effect_no_changes` consequently exposes only its distinct event
 automatic index.
 
 #1202's `human_decisions_case_destination` and
-`metadata_policy_resolutions_resolved`, and #1204's `field_effects_decision` and
-`field_effects_companion_decision`, postdate this snapshot, so they are listed
+`metadata_policy_resolutions_resolved`, and #1204's `field_effects_decision`,
+`field_effects_companion_decision`, `field_effects_ready`,
+`field_effects_waiting`, `field_effects_target` and
+`description_decisions_case`, postdate this snapshot, so they are listed
 without measurements and are not in its sums. Because
 `field_effects_companion_decision` evaluates `json_extract` over every
 `field_effects` document on write, an insert or update whose document is not
@@ -371,8 +373,12 @@ well-formed JSON is now refused at write time instead of only at read.
 
 | Exact index | Parent | Entries | KiB |
 | --- | --- | ---: | ---: |
+| `description_decisions_case` | `description_decisions` | — | — |
 | `field_effects_companion_decision` | `field_effects` | — | — |
 | `field_effects_decision` | `field_effects` | — | — |
+| `field_effects_ready` | `field_effects` | — | — |
+| `field_effects_target` | `field_effects` | — | — |
+| `field_effects_waiting` | `field_effects` | — | — |
 | `human_decisions_case_destination` | `human_decisions` | — | — |
 | `metadata_policy_resolutions_resolved` | `metadata_policy_resolutions` | — | — |
 | `metadata_report_cover_references_artifact_id` | `metadata_report_cover_references` | 6,216 | 560 |
@@ -530,7 +536,7 @@ own closed checks and/or domain-document validation.
 
 ## Exact indexes and triggers
 
-The eleven named indexes are all live production access paths: cover artifact
+The fifteen named indexes are all live production access paths: cover artifact
 and preview lookups use `metadata_report_cover_references_artifact_id` and
 `metadata_report_cover_references_preview_digest`; fair claims use
 `review_preparation_work_aged_claim` and
@@ -547,7 +553,13 @@ the authority predecessor ask which effects name a decision as their own
 authority through `field_effects_decision`, or as their subtitle companion's
 through the partial expression index `field_effects_companion_decision` over
 the TEXT cast of that companion authority, where every effect was scanned once
-per candidate or per lookup.
+per candidate or per lookup. A corrective keep_current's predecessor and an
+authored description's reach a case's description decisions through
+`description_decisions_case`; the scheduler's claim and Activity's waiting
+effect walk only live effects through the partial indexes `field_effects_ready`
+and `field_effects_waiting`, each serving only a statement whose state list is
+the one its WHERE clause names; and description advice's target check reaches
+one target's effects through `field_effects_target`.
 Primary and unique keys provide the
 remaining exact indexes; the schema validates their SQLite automatic-index
 objects too.

@@ -17,17 +17,22 @@ import re
 import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from mechanical_librarian.adapters.persistence import field_effects
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_READY_STATES_SQL,
+    _FIELD_EFFECT_WAITING_STATES_SQL,
     _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL,
     _FIELD_EFFECTS_DECISION_INDEX_SQL,
 )
+from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -56,6 +61,7 @@ _CURRENT_PREDICATE = (
 _DECISION_ARM = (
     "SEARCH field_effects USING INDEX field_effects_decision (decision_id=?)"
 )
+_PRIOR_ARM = "SEARCH prior USING INDEX field_effects_decision (decision_id=?)"
 _REPLANS = itertools.count()
 _COMPANION_ARM = (
     "SEARCH field_effects USING INDEX field_effects_companion_decision (<expr>=?)"
@@ -158,12 +164,21 @@ def _effect(
     decision_id: str,
     document: str,
     state: str = "planned",
+    updated_at: int = 1,
+    target: tuple[str, str, str, str] = ("primary", "books", "work", "title"),
 ) -> None:
     connection.execute(
         "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,"
         "work_id,destination,state,attempt,updated_at,document) "
-        "VALUES(?,?,'primary','books','work',?,?,0,1,?)",
-        ("effect_plan_" + _digest(label), decision_id, "title", state, document),
+        "VALUES(?,?,?,?,?,?,?,0,?,?)",
+        (
+            "effect_plan_" + _digest(label),
+            decision_id,
+            *target,
+            state,
+            updated_at,
+            document,
+        ),
     )
 
 
@@ -173,11 +188,41 @@ def _companion(decision_id: object) -> str:
     )
 
 
+# #1204's indexes. The originals run without them, so they answer, and order
+# their answers, as they did before.
+_INDEXES_1204 = (
+    "field_effects_decision",
+    "field_effects_companion_decision",
+    "field_effects_ready",
+    "field_effects_waiting",
+    "field_effects_target",
+    "description_decisions_case",
+)
+
+
+def _before_1204(
+    connection: sqlite3.Connection, queries: list[tuple[str, tuple[object, ...]]]
+) -> list[list[Any]]:
+    connection.execute("SAVEPOINT before_1204")
+    try:
+        for (name,) in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name IN "
+            + str(_INDEXES_1204)
+        ).fetchall():
+            connection.execute(f"DROP INDEX {name}")
+        return [connection.execute(sql, values).fetchall() for sql, values in queries]
+    finally:
+        connection.execute("ROLLBACK TO before_1204")
+        connection.execute("RELEASE before_1204")
+
+
 def _assert_oracle(connection: sqlite3.Connection) -> None:
-    for name, statement in _statements(connection).items():
-        current = connection.execute(statement).fetchall()
-        original = connection.execute(_original(statement)).fetchall()
-        assert current == original, name
+    statements = _statements(connection)
+    originals = _before_1204(
+        connection, [(_original(statement), ()) for statement in statements.values()]
+    )
+    for (name, statement), original in zip(statements.items(), originals, strict=True):
+        assert connection.execute(statement).fetchall() == original, name
 
 
 def test_original_predicate_is_restored_byte_for_byte(
@@ -302,8 +347,16 @@ def _replanned(connection: sqlite3.Connection, statement: str) -> tuple[str, ...
     return _plan(connection, f"{statement} -- {next(_REPLANS)}", ())
 
 
+# Every name these statements give field_effects. A scan, or an index SQLite
+# builds for one statement, walks every effect ever recorded.
+_EFFECTS = r"(field_effects|effect|prior)\b"
+
+
 def _scans_effects(plan: tuple[str, ...]) -> bool:
-    return any(re.match(r"SCAN (field_effects|effect)\b", step) for step in plan)
+    return any(
+        re.match(f"SCAN {_EFFECTS}|SEARCH {_EFFECTS} USING AUTOMATIC", step)
+        for step in plan
+    )
 
 
 def test_every_pending_call_shape_reaches_effects_by_index_only(
@@ -316,14 +369,22 @@ def test_every_pending_call_shape_reaches_effects_by_index_only(
         plan = _plan(connection, statement, ())
         assert not _scans_effects(plan), name
         assert _DECISION_ARM in plan and _COMPANION_ARM in plan, name
+        # The corrective keep_current's predecessor, through the case's
+        # description decisions rather than an automatic index over effects.
+        assert _PRIOR_ARM in plan, name
         # The original predicate is the per-candidate scan being removed.
         assert _scans_effects(_plan(connection, _original(statement), ()))
 
 
 @pytest.mark.parametrize(
-    "index_name", ["field_effects_decision", "field_effects_companion_decision"]
+    "index_name",
+    [
+        "field_effects_decision",
+        "field_effects_companion_decision",
+        "description_decisions_case",
+    ],
 )
-def test_dropping_either_index_restores_the_effect_scan(
+def test_dropping_any_index_restores_the_effect_scan(
     store: tuple[sqlite3.Connection, list[str]], index_name: str
 ) -> None:
     connection, _ = store
@@ -471,7 +532,7 @@ def _lookups(
         ),
         "replacement": (
             lambda: repository.record_human_decision(later),
-            "SELECT 1 FROM field_effects WHERE decision_id=",
+            "SELECT 1 FROM field_effects WHERE rowid IN",
         ),
         "history": (
             lambda: repository.get_review_case_history(case_id, 20),
@@ -521,10 +582,14 @@ def _assert_lookup_oracle(
     connection: sqlite3.Connection,
     lookups: dict[str, tuple[str, tuple[object, ...]]],
 ) -> None:
-    for name, (statement, parameters) in lookups.items():
-        current = connection.execute(statement).fetchall()
-        original = connection.execute(_ORIGINAL_LOOKUPS[name], parameters).fetchall()
-        assert current == original, name
+    originals = _before_1204(
+        connection,
+        [(_ORIGINAL_LOOKUPS[name], values) for name, (_, values) in lookups.items()],
+    )
+    for (name, (statement, _)), original in zip(
+        lookups.items(), originals, strict=True
+    ):
+        assert connection.execute(statement).fetchall() == original, name
 
 
 def test_remaining_authority_lookups_equal_the_original(
@@ -628,3 +693,216 @@ def test_remaining_authority_lookups_reach_effects_by_index_only(
     for statement, _ in lookups.values():
         altered = statement.replace(_FIELD_EFFECT_COMPANION_DECISION_SQL, bare)
         assert _scans_effects(_plan(connection, altered, ()))
+
+
+# The reads #1204 gave a partial or a target index, unchanged in what they ask:
+# each partial index serves only a statement whose state list is its own.
+def _effect_steps(plan: tuple[str, ...]) -> list[str]:
+    return [step for step in plan if re.match(f"(SCAN|SEARCH) {_EFFECTS}", step)]
+
+
+def _quietly(call: Callable[[], object]) -> Callable[[], None]:
+    # The synthetic documents are not valid operations; only the statement
+    # each read issues before decoding one is under test here.
+    def run() -> None:
+        try:
+            call()
+        except FieldEffectError:
+            pass
+
+    return run
+
+
+def test_live_and_target_reads_reach_effects_by_their_indexes(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    connection, _ = store
+    repository = SQLiteMetadataReportRepository(connection)
+    case_id, document = connection.execute(
+        "SELECT review_case_id,document FROM review_cases ORDER BY review_case_id LIMIT 1"
+    ).fetchone()
+    target = ReviewCase.from_json(document).target
+    work = (
+        str(target["connection"]),
+        str(target["library"]),
+        str(target["item"]),
+        "description",
+    )
+    changed = {
+        "plan": {
+            "authority": {"review_case_id": case_id},
+            "pre_value": "before",
+            "desired_value": "after",
+        }
+    }
+    # Updated times run against insertion order, so an index order and a scan
+    # order differ wherever a read's answer depends on order.
+    for index, state in enumerate(
+        ("planned", "claimed", "retryable", "applying", "reconciling", "verified") * 3
+    ):
+        _effect(
+            connection,
+            f"live-{index}",
+            "human_decision_live",
+            json.dumps(changed),
+            state,
+            updated_at=100 - index * 7 % 31,
+            target=(
+                work if index % 4 == 0 else ("primary", "books", f"w{index}", "title")
+            ),
+        )
+    _effect(
+        connection, "same", "human_decision_s", json.dumps(changed), "verified", 1, work
+    )
+    connection.commit()
+    binding = DescriptionAdviceBinding(
+        review_case_id=case_id,
+        report_id="report_" + _digest("report"),
+        proposal_set_id="proposal_set_" + _digest("proposal-set"),
+        target_fingerprint=_digest("fingerprint"),
+        policy_generation=1,
+        access_revision=1,
+        preferences_digest=_digest("preferences"),
+    )
+    reads = {
+        "claim": (
+            lambda: repository.next_field_effect_plan_id(None),
+            ["SCAN field_effects USING INDEX field_effects_ready"],
+            "field_effects_ready",
+        ),
+        "alternating claim": (
+            lambda: repository.next_field_effect_plan_id("books"),
+            ["SCAN field_effects USING INDEX field_effects_ready"],
+            "field_effects_ready",
+        ),
+        "waiting": (
+            _quietly(repository._field_effect_activity._activity_current_waiting),
+            ["SCAN effect USING INDEX field_effects_waiting"],
+            "field_effects_waiting",
+        ),
+        "description target": (
+            _quietly(lambda: repository._description_advice._target_unchanged(binding)),
+            [
+                "SEARCH field_effects USING INDEX field_effects_target "
+                "(connection_name=? AND library_name=? AND work_id=? AND destination=?)"
+            ],
+            "field_effects_target",
+        ),
+    }
+    statements = {}
+    for name, (call, expected, _) in reads.items():
+        (statement,) = (
+            traced
+            for traced in _traced_selects(connection, call)
+            if "FROM field_effects" in traced
+        )
+        statements[name] = statement
+        assert _effect_steps(_plan(connection, statement, ())) == expected, name
+    # Each answer is the one the read gave before #1204, order included.
+    originals = _before_1204(connection, [(sql, ()) for sql in statements.values()])
+    for (name, statement), original in zip(statements.items(), originals, strict=True):
+        assert original, name
+        assert connection.execute(statement).fetchall() == original, name
+    for name, statement in statements.items():
+        index_name = reads[name][2]
+        connection.execute("SAVEPOINT dropped")
+        connection.execute(f"DROP INDEX {index_name}")
+        assert _scans_effects(_replanned(connection, statement)), name
+        connection.execute("ROLLBACK TO dropped")
+        connection.execute("RELEASE dropped")
+    # A state list spelled other than the shared one loses its partial index.
+    for name, states in (
+        ("claim", _FIELD_EFFECT_READY_STATES_SQL),
+        ("waiting", _FIELD_EFFECT_WAITING_STATES_SQL),
+    ):
+        respelled = "(" + ",".join(reversed(states[1:-1].split(","))) + ")"
+        altered = statements[name].replace(states, respelled)
+        assert altered != statements[name]
+        assert _scans_effects(_plan(connection, altered, ())), name
+
+
+# The consent revocation as it stood before #1204, which the claim's partial
+# index would serve, and so reorder, without its explicit rowid order.
+_ORIGINAL_CONSENT_REVOCATION = (
+    "SELECT document,state FROM field_effects WHERE "
+    "(json_extract(document,'$.plan.consent.consent_id')=? OR "
+    "json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) "
+    "AND state IN ('planned','retryable')"
+)
+
+
+def test_consent_revocation_supersedes_in_its_original_order(
+    store: tuple[sqlite3.Connection, list[str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, _ = store
+    consent_id = "effect_consent_" + _digest("consent")
+    connection.execute(
+        "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) "
+        "VALUES(?,1,0,?)",
+        (consent_id, json.dumps({"consent_id": consent_id, "current": True})),
+    )
+    own: dict[str, object] = {"plan": {"consent": {"consent_id": consent_id}}}
+    companion: dict[str, object] = {
+        "plan": {"subtitle_companion": {"consent": {"consent_id": consent_id}}}
+    }
+    other: dict[str, object] = {
+        "plan": {"consent": {"consent_id": "effect_consent_other"}}
+    }
+    for index, (state, document) in enumerate(
+        (
+            ("planned", own),
+            ("retryable", companion),
+            ("verified", own),
+            ("planned", other),
+            ("retryable", own),
+            ("planned", companion),
+            ("claimed", companion),
+            ("planned", own),
+        )
+    ):
+        # Later rows were updated earlier, so the claim index runs backwards.
+        _effect(
+            connection,
+            f"consent-{index}",
+            "human_decision_consent",
+            json.dumps({**document, "n": index}),
+            state,
+            updated_at=100 - index,
+        )
+    connection.commit()
+    (original,) = _before_1204(
+        connection, [(_ORIGINAL_CONSENT_REVOCATION, (consent_id, consent_id))]
+    )
+    assert len(original) == 5
+    assert original != sorted(original, key=lambda row: -json.loads(row[0])["n"])
+
+    class Operation:
+        document: str
+
+        @staticmethod
+        def from_json(document: str) -> Operation:
+            operation = Operation()
+            operation.document = document
+            return operation
+
+        def transition(self, *_: object, **__: object) -> str:
+            return self.document
+
+    effects = SQLiteMetadataReportRepository(connection)._field_effects
+    superseded: list[tuple[object, str]] = []
+    events: list[object] = []
+    monkeypatch.setattr(field_effects, "FieldEffectOperation", Operation)
+    monkeypatch.setattr(
+        effects,
+        "_update_field_effect",
+        lambda operation, state: superseded.append((operation, state)),
+    )
+    monkeypatch.setattr(
+        effects,
+        "_record_field_effect_event",
+        lambda operation, kind, at: events.append(operation),
+    )
+    monkeypatch.setattr(effects, "_schedule_field_effect_cleanup", lambda *_: None)
+    assert effects.revoke_field_effect_consent(consent_id, 200) == len(original)
+    assert superseded == original
+    assert events == [document for document, _ in original]

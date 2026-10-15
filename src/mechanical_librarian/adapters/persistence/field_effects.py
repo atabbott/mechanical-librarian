@@ -56,6 +56,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_READY_STATES_SQL,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -843,7 +844,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 parameters = (last_library,)
             row = self._connection.execute(
                 "SELECT plan_id,library_name FROM field_effects WHERE state IN "
-                "('planned','retryable') ORDER BY "
+                + _FIELD_EFFECT_READY_STATES_SQL
+                + " ORDER BY "
                 + preference
                 + "updated_at,plan_id LIMIT 1",
                 parameters,
@@ -1404,7 +1406,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 (changed_at, canonical_effect_json(raw), consent_id),
             )
             rows = self._connection.execute(
-                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN ('planned','retryable')",
+                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN ('planned','retryable') ORDER BY rowid",
                 (consent_id, consent_id),
             ).fetchall()
             for document, state in rows:

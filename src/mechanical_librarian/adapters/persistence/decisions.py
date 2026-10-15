@@ -545,19 +545,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 automatic = cover_automatic
             if previous is not None:
                 effect = self._connection.execute(
-                    "SELECT 1 FROM field_effects WHERE decision_id=? AND "
-                    + _REPLACEMENT_BLOCKING_EFFECT_SQL
-                    + " UNION ALL SELECT 1 FROM field_effects WHERE "
+                    "SELECT 1 FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects "
+                    "WHERE decision_id=? UNION ALL SELECT rowid FROM field_effects WHERE "
                     + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                    + "=? AND "
+                    + "=?) AND "
                     + _REPLACEMENT_BLOCKING_EFFECT_SQL
                     + " LIMIT 1",
-                    (
-                        previous[0],
-                        decision.destination == "cover",
-                        previous[0],
-                        decision.destination == "cover",
-                    ),
+                    (previous[0], previous[0], decision.destination == "cover"),
                 ).fetchone()
                 if effect is not None:
                     raise HumanDecisionError("already_decided")

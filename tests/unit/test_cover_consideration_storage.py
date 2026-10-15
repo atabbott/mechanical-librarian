@@ -154,7 +154,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's
-    # history indexes and #1204's field-effect indexes.
+    # history indexes and #1204's indexes.
     connection.executescript(
         "DROP TRIGGER metadata_reports_project_browse_facts;"
         "DROP TABLE metadata_report_browse_authors;"
@@ -166,6 +166,10 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP INDEX metadata_policy_resolutions_resolved;"
         "DROP INDEX field_effects_decision;"
         "DROP INDEX field_effects_companion_decision;"
+        "DROP INDEX field_effects_ready;"
+        "DROP INDEX field_effects_waiting;"
+        "DROP INDEX field_effects_target;"
+        "DROP INDEX description_decisions_case;"
     )
     rows = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"

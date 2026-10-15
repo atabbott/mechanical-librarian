@@ -71,6 +71,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_WAITING_STATES_SQL,
     _validate_report_row,
     _validated_report_row,
 )
@@ -3227,8 +3228,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id "
             "LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id "
             "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
-            "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
-            "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
+            "WHERE effect.state IN "
+            + _FIELD_EFFECT_WAITING_STATES_SQL
+            + " ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
         ).fetchone()
         waiting_title = "Recorded work"
         if waiting is not None:
