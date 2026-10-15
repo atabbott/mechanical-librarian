@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library and Attention stay responsive while preparation runs: Activity now
+  reads only the history added since its last check, and re-verifies older
+  history a slice at a time, instead of re-reading all of it on every change
+  while preparation waits. Activity results, counts, order and refusals are
+  unchanged (#1200).
+
 - Library, search, the attention lens and work detail no longer slow as owner
   decisions accumulate: each row's case is projected once for all of its
   decisions, superseded revisions included, rather than once per decision in

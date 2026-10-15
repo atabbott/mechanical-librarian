@@ -1363,6 +1363,23 @@ representation returns to canonical query-scoped validation; overflow never retu
 partial counts. Typed authority objects do not persist between requests. This
 store grants no permission, backup, consent or effect authority.
 
+Changed revisions witness trigger-enforced append-only tables incrementally above
+a recorded `max(rowid)` and `count(*)`; a deletion whose row is not replaced at
+or below the mark, renumbering or a reused key re-witnesses the table at the next
+refresh (#1200). Changes that keep the mark and count (raw file bytes behind an
+ordinary commit, `REPLACE` naming an existing rowid or an unused rowid at or below
+the mark, BLOB I/O, trigger removal through `writable_schema`) are found by a
+rolling 256-row re-verification, covering zero and negative rowids, within
+⌈rows / 256⌉ refreshes or unchanged-revision Activity reads rather than at the
+next refresh; an idle library's reads advance the sweep too, so stale facts
+cannot stay visible across that many reads. Until then Activity may display the
+prior readable fact; Activity facts feed no write, permission or
+effect path, so that exposure is display-only. Every new borrower generation
+performs a full witness against the previous snapshot rather than admitting
+tables from an earlier generation's marks. The product uses none of those routes on
+append-only tables, enforced by a static source test and a schema test requiring
+both refusal triggers. No credential, network, parser or write authority is added.
+
 Ordinary history returns required null backup-readiness and example fields. The
 separate authenticated permission-readiness endpoint checks the existing database
 consistency boundary freshly, then compares that checked revision inside its own

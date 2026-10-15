@@ -85,3 +85,88 @@ combined commit and byte corruption, old/new dependency closure, excluded
 membership, bounded overflow, schema drift and generation drain. Exact-installed
 startup, retained changed-revision and idle reads, preparation contention, RSS,
 and the existing owner browser journey retain their original budgets.
+
+## Amendment: incremental witness with rolling re-verification (#1200)
+
+A full witness held one shared read for the whole history on every changed
+revision. In rollback-journal mode the preparation writer cannot commit while
+that read is held, so it waits while holding root admission (ADR-0077) and owner
+reads queue behind it. The witness is therefore admitted incrementally where the
+schema makes that exact, and verified in full by a rolling sweep.
+
+A changed revision re-witnesses every row of `field_effects`,
+`description_advice_attempts`, `metadata_policy_transitions`,
+`metadata_policy_resolutions`, `current_cover_considerations`, and
+`field_effect_no_changes` (no rowid). For every other source table, whose schema
+raises on every UPDATE and DELETE, the store records `max(rowid)` and `count(*)`
+with its witnesses; a later borrower, in its own snapshot, witnesses only rows
+above the mark and admits the table incrementally only when the mark has not
+decreased, no row above the mark carries a previously witnessed key, and
+`count(*)` equals the recorded count plus those rows; otherwise it re-witnesses
+the whole table.
+
+At the next refresh this detects every SQL insert, every deletion whose row is
+not replaced at or below the mark (including `INSERT OR REPLACE`'s silent delete
+when the replacement takes a new rowid) and rowid renumbering. Changes that
+preserve the mark and count (out-of-band file bytes with an ordinary commit,
+`REPLACE` naming an existing rowid or an unused rowid at or below the mark,
+incremental BLOB I/O, trigger removal through `writable_schema` without a
+schema-version change) are detected by the rolling re-verification within its
+bound, not the next refresh.
+
+Rolling re-verification: each refresh re-verifies the next bounded slice of
+admitted append-only rows (about 256) inside its existing read, and an Activity
+read whose revision is unchanged advances the same sweep without republishing
+unless it finds a difference, so every row is re-verified at least once per
+⌈rows / slice⌉ refreshes or unchanged Activity reads, and stale facts cannot stay
+visible across that many reads of an idle library; the sweep covers every rowid,
+including zero and negative rowids; construction and every new borrower
+generation still perform a full witness; an unchanged revision with a changed
+file identity still refuses. Concurrent reads may repeat a slice but never skip
+one, so the bound counts reads that advance the sweep.
+
+A clean slice in an unchanged-revision read moves only the cursor: the published
+snapshot stays the same object and nothing is reprojected. A slice that finds a
+difference re-witnesses that table and republishes exactly as a changed refresh
+does. The cursor moves only by compare-and-swap against the snapshot and cursor
+the read started from, so a borrower that loses that race skips its advance and
+never publishes over a newer snapshot. A changed refresh still publishes its
+snapshot but keeps a cursor that unchanged reads advanced while it ran. Each
+table's pass stops at the mark the table had when the cursor entered it, so rows
+appended meanwhile wait for the next lap and appends cannot hold the sweep in
+one table.
+
+A row whose witness differs re-witnesses its whole table in that refresh, and so
+does any table whose `max(rowid)` is SQLite's largest rowid: SQLite then
+allocates new rowids at random below it, so a replacement could keep both mark
+and count. A new borrower generation performs a full witness against the
+previous snapshot in its own read: it streams every row of every source table,
+reprojects only candidates whose witnesses differ, records fresh marks and
+counts, and restarts the sweep. It never admits a table from marks recorded by
+an earlier generation.
+
+The table classification is derived from the schema's triggers and verified at
+construction, so a table that loses its append-only triggers falls back to full
+re-witnessing. A table qualifies only when an unconditional `BEFORE UPDATE` and
+`BEFORE DELETE` trigger each raise, it has a rowid, and no column shadows it;
+the classification is re-derived inside every refresh's own read. Shadow outcomes
+bound to a review case appended above its mark are re-bound within the same
+refresh, and a review-case table re-witnessed with any difference re-witnesses
+every outcome.
+
+Marks and the sweep cursor count toward the 64 MiB bound. Overflow, a decoding
+failure and schema drift keep the canonical fallback. The classification reads
+`pragma_table_list`, so the store requires SQLite 3.37 or later. The sweep
+cursor lives beside the published snapshot, so a refresh or unchanged read that
+changes nothing keeps the published store version. The product holds no route
+that changes an append-only row in place: a static test refuses `OR REPLACE`,
+`REPLACE INTO`, BLOB I/O and `writable_schema` in the source, and a schema test
+requires both refusal triggers on every incrementally witnessed table.
+
+Consequences replace the earlier statement that a changed revision scans all
+source bytes: it now scans the mutable tables, the rows above each mark and one
+sweep slice, and an unchanged-revision read scans one sweep slice; a new
+borrower generation still performs a full witness against the previous snapshot.
+Activity facts feed no write path, so the detection delay for an in-place change
+outside SQL's ordinary routes is display-only and bounded by the sweep. Journal
+mode, schema, startup admission and the canonical projection are unchanged.
