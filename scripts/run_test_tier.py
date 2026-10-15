@@ -165,6 +165,7 @@ COHORTS = {
     # Each file stays a member of `fast` or `slow`.
     "shipped-sqlite": TestCohort(
         discoveries=(
+            ("tests/unit", "test_activity_reprojection.py"),
             ("tests/unit", "test_pending_field_effect_lookup.py"),
             ("tests/unit", "test_provider_recovery.py"),
             ("tests/unit", "test_review_pipeline.py"),

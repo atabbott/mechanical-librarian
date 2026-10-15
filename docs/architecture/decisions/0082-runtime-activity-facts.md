@@ -24,9 +24,9 @@ The existing runtime root owns one bounded, in-memory store of serialized readab
 Activity events, search text, exact source witnesses and forward dependencies.
 Generation-owned, explicitly configured query-only Activity readers borrow it.
 The store is initialized before readiness; bounded exact-document parser reuse
-exists only during that construction. Typed reports, cases, proposals and outcomes
-are discarded afterward. Direct and writable repository consumers retain the
-canonical projection.
+exists only during that construction and each later reprojection (#1218). Typed
+reports, cases, proposals and outcomes are discarded afterward. Direct and
+writable repository consumers retain the canonical projection.
 
 A new borrower streams every source witness in its own existing SQLite snapshot
 before sharing facts. Each witness contains every scalar column with exact type
@@ -39,10 +39,17 @@ file/currentness recheck remains mandatory.
 Changed sources identify affected candidates through both old and new bindings,
 including excluded candidates, missing joins, deletion and replacement. A temporary
 reverse index computes that closure and is discarded before canonical reprojection.
+Reprojection restricts each union arm to the requested candidates' whole ranking
+partitions, so the canonical ranking sees every row it would rank, in an order
+fixed by the explicit tiebreak: rows tied within a partition rank the lowest
+witnessed identifier first, and a cover selection before an automatic decision
+of the same id (#1218).
 ISBN refusal candidates bind the exact policy generation/library lookup and the
 generation-one profile fallback, including absent lookups. These policy edges
 refresh only the ISBN candidate, not ordinary automatic decision lineage.
-Affected candidates are admitted before matching search. The canonical projector
+Affected candidates are admitted before matching search. Every path orders
+events by one total key: newest first, then event id descending, then source kind
+and group identity ascending (#1218). The canonical projector
 still owns membership, lineage, target identity, readable composition and
 query-scoped refusal. Initialization or refresh that cannot admit the complete
 optimized representation falls back to the original query-scoped path. This
@@ -117,9 +124,11 @@ bound, not the next refresh.
 Rolling re-verification: each refresh re-verifies the next bounded slice of
 admitted append-only rows (about 256) inside its existing read, and an Activity
 read whose revision is unchanged advances the same sweep without republishing
-unless it finds a difference, so every row is re-verified at least once per
-⌈rows / slice⌉ refreshes or unchanged Activity reads, and stale facts cannot stay
-visible across that many reads of an idle library; the sweep covers every rowid,
+unless it finds a difference. Every row present when the sweep enters its table
+is re-verified within ⌈rows / slice⌉ refreshes or reads that advance the sweep,
+and a row appended while the sweep is inside its table within about two laps
+(#1218), so stale facts cannot stay visible beyond that bound even on an idle
+library; the sweep covers every rowid,
 including zero and negative rowids; construction and every new borrower
 generation still perform a full witness; an unchanged revision with a changed
 file identity still refuses. Concurrent reads may repeat a slice but never skip
@@ -133,8 +142,8 @@ the read started from, so a borrower that loses that race skips its advance and
 never publishes over a newer snapshot. A changed refresh still publishes its
 snapshot but keeps a cursor that unchanged reads advanced while it ran. Each
 table's pass stops at the mark the table had when the cursor entered it, so rows
-appended meanwhile wait for the next lap and appends cannot hold the sweep in
-one table.
+appended meanwhile wait for the next lap, which is why such a row's bound is about
+two laps, and appends cannot hold the sweep in one table.
 
 A row whose witness differs re-witnesses its whole table in that refresh, and so
 does any table whose `max(rowid)` is SQLite's largest rowid: SQLite then
