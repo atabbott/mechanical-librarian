@@ -534,6 +534,10 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         connection.execute("DROP INDEX metadata_policy_resolutions_resolved")
         connection.execute("DROP INDEX field_effects_decision")
         connection.execute("DROP INDEX field_effects_companion_decision")
+        connection.execute("DROP INDEX field_effects_ready")
+        connection.execute("DROP INDEX field_effects_waiting")
+        connection.execute("DROP INDEX field_effects_target")
+        connection.execute("DROP INDEX description_decisions_case")
         connection.commit()
         assert results() == indexed
         repository.close()

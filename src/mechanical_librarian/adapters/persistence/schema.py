@@ -691,10 +691,11 @@ _FIELD_EFFECTS_SQL = (
 # choose the index. Against a TEXT-affinity column it is the conversion a bare
 # json_extract already received; against a bound parameter (revocation,
 # replacement) it differs only for the text of a number a companion holds (a
-# boolean extracts as 1 or 0), which no decision id can be. Every authority id carries the human_decision_ or
-# automatic_decision_ prefix: the human, automatic and description decision
-# domain types derive and validate it, and the human_decisions,
-# automatic_decisions and cover_selection_authorities GLOB checks enforce it.
+# boolean extracts as 1 or 0), which no decision id can be. Every authority id
+# carries the human_decision_ or automatic_decision_ prefix: the human,
+# automatic and description decision domain types derive and validate it, and
+# the human_decisions, automatic_decisions and cover_selection_authorities GLOB
+# checks enforce it.
 _FIELD_EFFECT_COMPANION_DECISION_SQL = "CAST(json_extract(document,'$.plan.subtitle_companion.authority.decision_id') AS TEXT)"
 _FIELD_EFFECTS_DECISION_INDEX_SQL = (
     "CREATE INDEX field_effects_decision ON field_effects(decision_id)"

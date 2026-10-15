@@ -562,7 +562,9 @@ authored description's reach a case's description decisions through
 `description_decisions_case`; the scheduler's claim and Activity's waiting
 effect walk only live effects through the partial indexes `field_effects_ready`
 and `field_effects_waiting`, each serving only a statement whose state list is
-the one its WHERE clause names; and description advice's target check reaches
+the one its WHERE clause names, and a consent revocation walks
+`field_effects_ready` too, then sorts the few live effects it finds into rowid
+order; and description advice's target check reaches
 one target's effects through `field_effects_target`.
 Primary and unique keys provide the
 remaining exact indexes; the schema validates their SQLite automatic-index

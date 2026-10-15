@@ -1219,7 +1219,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
                 "FROM field_effect_no_changes event JOIN description_decisions decision ON decision.decision_id=event.decision_id "
                 "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
-                "WHERE decision.review_case_id=? ORDER BY 2 DESC LIMIT ?",
+                "WHERE decision.review_case_id=? ORDER BY 2 DESC,1 DESC LIMIT ?",
                 (review_case_id, review_case_id, limit),
             ):
                 authored = AuthoredDescriptionDecision.from_json(document)

@@ -1375,7 +1375,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             "SELECT document,state FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects WHERE decision_id=? "
             "UNION ALL SELECT rowid FROM field_effects WHERE "
             + _FIELD_EFFECT_COMPANION_DECISION_SQL
-            + "=?) AND state IN ('planned','retryable') ORDER BY rowid",
+            + "=?) AND state IN "
+            + _FIELD_EFFECT_READY_STATES_SQL
+            + " ORDER BY rowid",
             (decision_id, decision_id),
         ).fetchall()
         for document, state in rows:

@@ -751,9 +751,19 @@ def test_live_and_target_reads_reach_effects_by_their_indexes(
                 work if index % 4 == 0 else ("primary", "books", f"w{index}", "title")
             ),
         )
-    _effect(
-        connection, "same", "human_decision_s", json.dumps(changed), "verified", 1, work
-    )
+    # Several verified changing writes qualify, so the target read's first row
+    # is an answer its order decides.
+    for label in ("same", "again", "later"):
+        changed["plan"]["pre_value"] = "before " + label
+        _effect(
+            connection,
+            label,
+            "human_decision_s",
+            json.dumps(changed),
+            "verified",
+            1,
+            work,
+        )
     connection.commit()
     binding = DescriptionAdviceBinding(
         review_case_id=case_id,
@@ -802,6 +812,11 @@ def test_live_and_target_reads_reach_effects_by_their_indexes(
     originals = _before_1204(connection, [(sql, ()) for sql in statements.values()])
     for (name, statement), original in zip(statements.items(), originals, strict=True):
         assert original, name
+        if name == "description target":
+            assert (
+                len(connection.execute(statement.replace(" LIMIT 1", "")).fetchall())
+                == 3
+            )
         assert connection.execute(statement).fetchall() == original, name
     for name, statement in statements.items():
         index_name = reads[name][2]
@@ -921,3 +936,91 @@ def test_consent_revocation_supersedes_in_its_original_order(
     assert _effect_steps(_plan(connection, statement, ())) == [
         "SCAN field_effects USING INDEX field_effects_ready"
     ]
+
+
+def test_description_application_history_breaks_tied_times_as_displayed(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from tests.support.description_advice import _guarded_application, _prepared
+    from tests.support.field_effects import CAPABILITY
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    decision = store.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    application, _ = _guarded_application(repository, tmp_path, authority)
+    operation = application.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    connection = repository._connection
+    plan_id = operation.plan.plan_id
+    sequence, event_document = connection.execute(
+        "SELECT sequence,document FROM field_effect_events WHERE plan_id=? "
+        "ORDER BY sequence DESC LIMIT 1",
+        (plan_id,),
+    ).fetchone()
+    # Seven applications share one second, across both arms of the read, and
+    # are stored in ascending event-id order, so any order but the displayed
+    # one keeps a different four.
+    tied = 10**9
+    for offset, (digit, kind) in enumerate(
+        zip(
+            "13579b",
+            ("planned", "claimed", "applying", "reconciling", "retryable", "stale"),
+            strict=True,
+        ),
+        start=1,
+    ):
+        connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,"
+            "occurred_at,document) VALUES(?,?,?,?,?,?)",
+            (
+                "effect_event_" + digit * 64,
+                plan_id,
+                sequence + offset,
+                kind,
+                tied,
+                event_document,
+            ),
+        )
+    connection.execute(
+        "INSERT INTO field_effect_no_changes(decision_id,review_case_id,report_id,"
+        "connection_name,library_name,work_id,destination,target_fingerprint,"
+        "target_version,origin,occurred_at,event_id) "
+        "SELECT decision_id,?,?,connection_name,library_name,work_id,destination,"
+        "?,'v','automatic_policy',?,? FROM field_effects WHERE plan_id=?",
+        (
+            binding.review_case_id,
+            binding.report_id,
+            binding.target_fingerprint,
+            tied,
+            "effect_event_" + "8" * 64,
+            plan_id,
+        ),
+    )
+    connection.commit()
+    limited = repository.get_review_case_history(binding.review_case_id, 4)
+    assert [(event["kind"], event["state"]) for event in limited] == [
+        ("description_application", "stale"),
+        ("description_application", "retryable"),
+        ("description_application", "no_change_required"),
+        ("description_application", "reconciling"),
+    ]
+    assert limited == repository.get_review_case_history(binding.review_case_id, 50)[:4]
+    repository.close()
