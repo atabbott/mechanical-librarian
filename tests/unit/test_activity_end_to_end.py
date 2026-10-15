@@ -1240,7 +1240,12 @@ def test_configured_borrowers_rescan_after_another_reader_wins_publication(
         assert refreshes[-1] is readers[2]._connection and len(refreshes) == 4
         readers[0].close()
         assert second.activity(range_days=90) == expected
-        assert facts.snapshot() is published and len(refreshes) == 4
+        # An unchanged refresh may advance the rolling re-verification (#1200),
+        # but never replaces the published facts or their version.
+        current = facts.snapshot()
+        assert current is not None and len(refreshes) == 4
+        assert current.version is published.version
+        assert current.facts is published.facts
     finally:
         for reader in readers:
             reader.close()
