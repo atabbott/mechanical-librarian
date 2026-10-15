@@ -524,11 +524,15 @@ own closed checks and/or domain-document validation.
 
 ## Exact indexes and triggers
 
-The nine named indexes are all live production access paths: cover artifact
-and preview lookups use `metadata_report_cover_references_artifact_id` and
+The schema expects fifteen named indexes, all live production access paths:
+cover artifact and preview lookups use
+`metadata_report_cover_references_artifact_id` and
 `metadata_report_cover_references_preview_digest`; fair claims use
 `review_preparation_work_aged_claim` and
-`review_preparation_work_recent_claim`; latest-work status uses
+`review_preparation_work_recent_claim`, and due-work promotion uses
+`review_preparation_work_due_promotion`; preparation presentation reads use the
+five `review_preparation_presentation_*` indexes (`active`,
+`completion_integrity`, `recent`, `run` and `throughput`); latest-work status uses
 `review_preparation_work_lineage_history`; bounded outcome history uses
 `shadow_decision_outcomes_case_history`; #802 Library/Attention predicates
 use `shadow_outcome_field_facts_case`; and #1202's Library, Attention, search and

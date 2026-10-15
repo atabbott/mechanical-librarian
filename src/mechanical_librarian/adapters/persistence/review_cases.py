@@ -126,7 +126,7 @@ class ReviewLibraryPage:
     # rather than parsing the same bytes again (#1202).
     envelopes: tuple[
         tuple[dict[str, object] | None, str | None, dict[str, object]] | None, ...
-    ] = field(default=(), compare=False, repr=False)
+    ] = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True)
