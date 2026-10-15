@@ -239,8 +239,10 @@ is stated under [Schema admission](#schema-admission).
 row's documents once and reuses them only within that read, for those exact
 bytes. The path and credential scans skip a pattern only for text lacking a
 literal its every match contains, and ASCII text is scanned for forbidden
-codepoints with the forbidden class's ASCII members; both equivalences are
-checked exhaustively over codepoints and against verbatim unguarded copies.
+codepoints with the forbidden class's ASCII members. That no other codepoint
+folds onto a guard literal, and that the ASCII class equals the full class on
+ASCII, are checked exhaustively over codepoints; the guarded scans are compared
+with verbatim unguarded copies on generated and boundary text.
 
 A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,
