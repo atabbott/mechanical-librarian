@@ -14,6 +14,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineError,
@@ -70,6 +71,7 @@ def _pipeline(
     path: Path,
     *,
     blocked_settlement: bool = False,
+    admission: OperationAdmission | None = None,
 ) -> ReviewPreparationPipeline:
     def extract(repository: ReviewPipelineRepository, _: PipelineAction, __: bool):
         concrete = cast("SQLiteMetadataReportRepository", repository)
@@ -78,7 +80,9 @@ def _pipeline(
         return report.report_id, False
 
     def factory() -> SQLiteMetadataReportRepository:
-        repository = open_repository(path, authority=root.authority)
+        repository = open_repository(
+            path, authority=root.authority, admission=admission
+        )
         if blocked_settlement:
             repository._connection.execute("PRAGMA busy_timeout=1")
         return repository
@@ -93,6 +97,7 @@ def _pipeline(
         admit=lambda *_: ("no_case", None),
         project=lambda *_: True,
         clock=lambda: 10,
+        admission=admission,
     )
 
 
@@ -1467,3 +1472,251 @@ def test_dormant_recovery_refuses_connection_check_before_explicit_retry(
     finally:
         release.set()
         supervisor.stop()
+
+
+_CONTENTION_LOG = (
+    '{"code":"contention","event":"preparation_claim_contended","level":"warning"}'
+)
+
+
+def _preparation_rows(root: SQLiteMetadataReportRepository) -> tuple[object, ...]:
+    return tuple(
+        tuple(root._connection.execute(f"SELECT * FROM {table} ORDER BY 1"))
+        for table in (
+            "review_preparation_scans",
+            "review_preparation_work",
+            "review_preparation_control",
+        )
+    )
+
+
+def _admission_free(admission: OperationAdmission) -> bool:
+    import threading
+
+    entered = threading.Event()
+
+    def enter() -> None:
+        with admission.enter():
+            entered.set()
+
+    thread = threading.Thread(target=enter, daemon=True)
+    thread.start()
+    thread.join(5)
+    return entered.is_set()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    (
+        "busy",
+        "busy_snapshot",
+        "busy_recovery",
+        "locked",
+        "ioerr",
+        "busy_unreleased_scope",
+        "busy_open_connection_transaction",
+    ),
+)
+def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    fault: str,
+) -> None:
+    import threading
+
+    from mechanical_librarian.adapters.persistence.transactions import (
+        TransactionScope,
+    )
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPreparationSupervisor,
+    )
+
+    codes = {
+        "busy_snapshot": sqlite3.SQLITE_BUSY_SNAPSHOT,
+        "busy_recovery": sqlite3.SQLITE_BUSY_RECOVERY,
+        "locked": sqlite3.SQLITE_LOCKED,
+        "ioerr": sqlite3.SQLITE_IOERR,
+    }
+    contended = fault == "busy"
+    path = tmp_path / "application.sqlite3"
+    admission = OperationAdmission()
+    pipeline = _pipeline(root, path, admission=admission)
+    pipeline._observation_repository_factory = lambda: open_repository(
+        path, authority=root.authority, cross_thread=True
+    )
+    scopes: list[TransactionScope] = []
+
+    def claim_scope(scope: TransactionScope) -> bool:
+        return scope._savepoint.startswith("claim_review_pipeline_action_")
+
+    def failure() -> sqlite3.OperationalError:
+        error = sqlite3.OperationalError("database is locked")
+        error.sqlite_errorcode = codes.get(fault, sqlite3.SQLITE_BUSY)
+        return error
+
+    original_begin = TransactionScope.begin
+    original_commit = TransactionScope.commit
+
+    def begin(scope: TransactionScope) -> None:
+        if fault == "busy_open_connection_transaction" and claim_scope(scope):
+            # BEGIN's own unwind could not be proven: the scope never started,
+            # but its connection is still inside a transaction.
+            scope._connection.execute("BEGIN")
+            raise failure()
+        original_begin(scope)
+
+    def commit(scope: TransactionScope, **kwargs: object) -> None:
+        if claim_scope(scope):
+            scopes.append(scope)
+            raise failure()
+        original_commit(scope, **kwargs)  # type: ignore[arg-type]
+
+    started = TransactionScope.started
+
+    def unreleased(scope: TransactionScope) -> bool:
+        # A rollback whose release cannot be proven keeps the scope started.
+        return True if claim_scope(scope) else started.fget(scope)
+
+    before = _preparation_rows(root)
+    monkeypatch.setattr(TransactionScope, "begin", begin)
+    monkeypatch.setattr(TransactionScope, "commit", commit)
+    if fault == "busy_unreleased_scope":
+        monkeypatch.setattr(TransactionScope, "started", property(unreleased))
+
+    if contended:
+        assert pipeline.run_next() is False
+        (scope,) = scopes
+        assert not scope.started
+        assert not admission.held
+        assert _admission_free(admission)
+        root._connection.execute("PRAGMA busy_timeout=0")
+        root._connection.execute("BEGIN IMMEDIATE")
+        root._connection.rollback()
+    else:
+        with pytest.raises(ReviewPipelineError) as raised:
+            pipeline.run_next()
+        assert raised.value.code == "persistence"
+    assert pipeline.owned_claims == ()
+    assert pipeline.recovery_incidents == ()
+    assert not pipeline.recovery_required
+    assert _preparation_rows(root) == before
+    assert capsys.readouterr().err == (_CONTENTION_LOG + "\n" if contended else "")
+
+    # The actual lanes: plain released busy retries on the ordinary wake and
+    # never latches; every other claim failure stops for recovery as before.
+    attempts = threading.Semaphore(0)
+    original_claim = SQLiteMetadataReportRepository.claim_review_pipeline_action
+
+    def counted(repository: SQLiteMetadataReportRepository, claimed_at: int):
+        try:
+            return original_claim(repository, claimed_at)
+        finally:
+            attempts.release()
+
+    monkeypatch.setattr(
+        SQLiteMetadataReportRepository, "claim_review_pipeline_action", counted
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    try:
+        supervisor.start()
+        if contended:
+            for _ in range(3):
+                assert attempts.acquire(timeout=5)
+            assert not pipeline.recovery_required
+            assert pipeline.recovery_incidents == ()
+            assert pipeline.owned_claims == ()
+        else:
+            assert pipeline._recovery_stop.wait(5)
+            assert pipeline.owned_claims == ()
+            assert {
+                (incident.stage, incident.code)
+                for incident in supervisor.recovery_incidents
+            } == {("discovery", "persistence")}
+    finally:
+        supervisor.stop()
+    assert _preparation_rows(root) == before
+    lines = capsys.readouterr().err.splitlines()
+    assert lines == [_CONTENTION_LOG] * len(lines)
+    assert bool(lines) is contended
+
+
+def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1216: a SHARED snapshot outliving the busy timeout must not stop preparation."""
+    import threading
+    import time
+
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPipelineClaimContention,
+        ReviewPreparationSupervisor,
+    )
+
+    path = tmp_path / "application.sqlite3"
+    admission = OperationAdmission()
+    pipeline = _pipeline(root, path, blocked_settlement=True, admission=admission)
+    pipeline._observation_repository_factory = lambda: open_repository(
+        path, authority=root.authority, cross_thread=True
+    )
+    before = _preparation_rows(root)
+    reader = sqlite3.connect(path, check_same_thread=False)
+    reading = threading.Lock()
+    read_started: list[bool] = []
+    contentions = threading.Semaphore(0)
+    original_claim = SQLiteMetadataReportRepository.claim_review_pipeline_action
+
+    def claim(repository: SQLiteMetadataReportRepository, claimed_at: int):
+        with reading:
+            if not read_started:
+                # The long Activity snapshot: SHARED held across the claim commit.
+                read_started.append(True)
+                reader.execute("BEGIN")
+                reader.execute("SELECT * FROM review_preparation_work").fetchall()
+        try:
+            return original_claim(repository, claimed_at)
+        except ReviewPipelineClaimContention:
+            contentions.release()
+            raise
+
+    monkeypatch.setattr(
+        SQLiteMetadataReportRepository, "claim_review_pipeline_action", claim
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    released = False
+    try:
+        supervisor.start()
+        # Two contended claims span more than one ordinary wake.
+        for _ in range(2):
+            assert contentions.acquire(timeout=5)
+        assert not pipeline.recovery_required
+        assert pipeline.recovery_incidents == ()
+        assert pipeline.owned_claims == ()
+        assert _admission_free(admission)
+        with reading:
+            reader.rollback()
+            released = True
+        assert _preparation_rows(root) == before
+        deadline = time.monotonic() + 10
+        while _preparation_rows(root) == before:
+            assert time.monotonic() < deadline, "preparation did not resume"
+            assert not pipeline.recovery_required
+            time.sleep(0.05)
+        assert not pipeline.recovery_required
+        assert pipeline.recovery_incidents == ()
+    finally:
+        if not released:
+            reader.rollback()
+        supervisor.stop()
+        reader.close()
+    (stage, state), *_ = root._connection.execute(
+        "SELECT stage,state FROM review_preparation_work"
+    )
+    assert (stage, state) != ("extraction", "queued")
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) >= 2
+    assert set(lines) == {_CONTENTION_LOG}
