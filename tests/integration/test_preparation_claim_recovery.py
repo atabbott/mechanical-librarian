@@ -1717,6 +1717,11 @@ def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
         "SELECT stage,state FROM review_preparation_work"
     )
     assert (stage, state) != ("extraction", "queued")
-    lines = capsys.readouterr().err.splitlines()
-    assert len(lines) >= 2
-    assert set(lines) == {_CONTENTION_LOG}
+    # Resumed work may reach this helper's refusing proposal stub and log it.
+    contended = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if '"preparation_claim_contended"' in line
+    ]
+    assert len(contended) >= 2
+    assert set(contended) == {_CONTENTION_LOG}
