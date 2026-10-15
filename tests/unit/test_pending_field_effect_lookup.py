@@ -1026,11 +1026,12 @@ def test_description_application_history_breaks_tied_times_as_displayed(
     repository.close()
 
 
-# #1205: a pending decision's case must hold a current lineage. The documents
-# statements asked that with a correlated EXISTS for each decision, which the
-# planner served by scanning every lineage, and both statements did the same
-# for the automatic arm's lineage and package. Each is now an uncorrelated IN
-# list built once per statement. These are the texts as they stood at #1204.
+# #1205: a pending decision's case must hold a current lineage. Both statements
+# asked that with a correlated EXISTS for each decision, which the planner served
+# by scanning every lineage (the counts owner arm only on older SQLite, such as
+# the shipped image's 3.40), and did the same for the automatic arm's lineage
+# and package. Each is now an uncorrelated IN list built once per statement.
+# These are the texts as they stood at #1204.
 _PACKAGE_JOIN = (
     "current_review_packages package ON package.connection_name=lineage.connection_name "
     "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
@@ -1060,12 +1061,36 @@ def _automatic_lineage(outcome: str) -> tuple[str, str]:
     )
 
 
+_CURRENT_OWNER_DECISION = (
+    "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
+    "WHERE current.review_case_id=human.review_case_id AND "
+    "current.destination=human.destination)"
+)
 _LINEAGE_REWRITES = {
     "documents": (
         _HUMAN_LINEAGE,
         _automatic_lineage(" IN ('candidate','keep_current')"),
     ),
-    "counts": (_automatic_lineage("='candidate'"),),
+    "counts": (
+        (
+            "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+            "WHERE lineage.review_case_id=human.review_case_id) AND "
+            + _CURRENT_OWNER_DECISION
+            + " AND ",
+            "CASE WHEN human.review_case_id IN (SELECT review_case_id FROM "
+            "current_review_case_lineages) THEN "
+            + _CURRENT_OWNER_DECISION
+            + " END AND ",
+        ),
+        _automatic_lineage("='candidate'"),
+    ),
+}
+# SHA-256 of each statement's text at 2dcf75cd, as this module's store traces it.
+_STATEMENTS_1204 = {
+    "documents": "e62a8aca670e77687afeda2585f588070e80386e773408a62ef496edca4e4d16",
+    "cursor": "820b901727766eaf3a516804cfe1cbd283381fd59b3f9ce36eea506539448608",
+    "example": "7aa5ac04c56ef298a1b0f1e05b08a2cce050309bec37fd2706c4d9cb629a769f",
+    "counts": "6efa0744ef03ff2d0723e653f68c6ee54cbf941cdd295f921f9055918a1f8f0c",
 }
 
 
@@ -1126,12 +1151,11 @@ def test_lineage_membership_restores_the_1204_text(
     store: tuple[sqlite3.Connection, list[str]],
 ) -> None:
     connection, _ = store
-    for name, statement in _statements(connection).items():
-        restored = _before_1205(name, statement)
-        assert "IN (SELECT review_case_id FROM current_review_case_lineages" not in (
-            restored
-        )
-        assert "IN (SELECT lineage.review_case_id" not in restored
+    restored = {
+        name: hashlib.sha256(_before_1205(name, statement).encode()).hexdigest()
+        for name, statement in _statements(connection).items()
+    }
+    assert restored == _STATEMENTS_1204
 
 
 def test_lineage_membership_equals_the_correlated_test_across_lineage_shapes(
@@ -1346,7 +1370,7 @@ def test_lineage_lists_are_built_once_and_arms_keep_their_scans(
             path[0].startswith("LIST SUBQUERY")
             for path in _plan_tree(connection, statement)
         )
-        assert lists == (1 if name == "counts" else 2), name
+        assert lists == 2, name
         # The correlated test is the per-decision scan being removed.
         assert _scans_lineage_per_decision(connection, _before_1205(name, statement))
         # Without the unary plus the planner drives the automatic arm from the

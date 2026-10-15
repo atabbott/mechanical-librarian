@@ -983,10 +983,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # as an uncorrelated IN the lineage list is built once per
             # statement. A caseless lineage makes the IN NULL rather than false
             # for a case it lacks, which this never-negated WHERE treats alike.
-            # The unary plus keeps the automatic arm scanning in rowid order,
-            # which the unordered example's answer depends on, and that arm
-            # still extracts its outcome before testing membership, so the
-            # same rows reach every JSON function.
+            # The unary plus keeps the automatic arm a scan in rowid order,
+            # which the unordered example's answer depends on. It also decides
+            # which rows reach the JSON functions: driven from the list, the
+            # arm would never extract a caseless decision's outcome, so a
+            # malformed one would no longer be refused. The arm still extracts
+            # its outcome before testing membership for the same reason.
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
@@ -1068,8 +1070,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         (#639).
         """
         try:
-            # The automatic arm's lineage list is built once, as in the
-            # documents statement (#1205).
+            # Each arm's lineage list is built once, as in the documents
+            # statement (#1205); older SQLite, the shipped image's among them,
+            # serves the owner arm's correlated lineage EXISTS by scanning
+            # every lineage per decision. SQLite tests an uncorrelated term
+            # before every term holding a correlated subquery, so as a term of
+            # its own the owner arm's IN would turn a caseless decision away
+            # before its corrective keep_current test reads the review
+            # document, and a malformed one would no longer be refused. Inside
+            # the current-decision term it is tested where the EXISTS was:
+            # after that test, before the ordinal, and only as a test, never as
+            # the arm's access path. NULL and false reject a row alike.
             rows = self._connection.execute(
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
@@ -1078,11 +1089,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
-                + "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
-                "WHERE lineage.review_case_id=human.review_case_id) AND "
-                "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
+                + "CASE WHEN human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) "
+                "THEN human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) AND NOT EXISTS ("
+                "current.destination=human.destination) END AND NOT EXISTS ("
                 "SELECT 1 FROM field_effect_manual_holds returned WHERE "
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "

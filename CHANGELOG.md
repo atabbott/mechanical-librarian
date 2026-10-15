@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-- Permission readiness and the pending field-change list no longer slow as
-  decision history grows: each request finds the cases holding a current review
-  once instead of rescanning them for every decision. Which changes are
-  pending, their order, paging and refusals are unchanged (#1205).
+- Permission readiness and the pending field-change list and counts now grow
+  with decision history alone rather than with decisions times current reviews:
+  each request finds the cases holding a current review once instead of once
+  per decision. Which changes are pending, their order, paging and refusals are
+  unchanged (#1205).
 
 - Activity, the scheduler's claim, owner decisions, review history and
   description advice no longer slow as applied changes accumulate: they reach
