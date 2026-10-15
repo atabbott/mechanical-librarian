@@ -38,6 +38,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import (
     RECORDED_ONLY_REASON,
+    DecisionScope,
     HumanDecision,
     HumanDecisionError,
 )
@@ -530,7 +531,7 @@ def test_a_retained_recorded_only_decision_is_history_on_a_recording_only() -> N
             for value in ProposalSet.from_json(case.proposal_document).results
         ],
     }
-    retained.validate_for_browse_case(case.review_case_id, browse)
+    retained.validate_in(DecisionScope.of_browse_case(case.review_case_id, browse))
 
 
 def test_a_retained_recorded_only_decision_is_stale_against_an_ebook_case() -> None:
@@ -554,7 +555,7 @@ def test_a_retained_recorded_only_decision_is_stale_against_an_ebook_case() -> N
         ],
     }
     with pytest.raises(HumanDecisionError) as browsed:
-        retained.validate_for_browse_case(case.review_case_id, browse)
+        retained.validate_in(DecisionScope.of_browse_case(case.review_case_id, browse))
 
     assert "stale" == str(browsed.value)
 

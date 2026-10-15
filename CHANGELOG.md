@@ -8,6 +8,12 @@
   while preparation waits. Activity results, counts, order and refusals are
   unchanged (#1200).
 
+- Library, search, the attention lens and work detail no longer slow as owner
+  decisions accumulate: each row's case is projected once for all of its
+  decisions, superseded revisions included, rather than once per decision in
+  the store and again in the page. Every decision is still validated, and rows,
+  order, paging and refusals are unchanged (#1215).
+
 - Preparation no longer stops until a restart when a long Activity read holds
   the database past a claim's busy timeout: a claim that committed nothing
   retries on its next one-second wake and preparation resumes once the read
