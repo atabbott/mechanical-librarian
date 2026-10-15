@@ -504,24 +504,25 @@ class ActivityFactStore:
         *,
         full: bool = False,
     ) -> _Snapshot | None:
-        """Admit this borrower's snapshot; ``full`` constructs from nothing.
+        """Admit this borrower's snapshot; ``full`` witnesses every row.
 
-        A new borrower generation passes ``full`` so that it witnesses and
-        projects every row in its own snapshot instead of trusting state that
-        an earlier generation admitted, possibly under another schema.
+        A new borrower generation passes ``full`` so that it streams every
+        source witness in its own snapshot and compares it with the previous
+        snapshot, instead of admitting append-only tables from their marks.
+        Only candidates whose witnesses differ are reprojected.
         """
         with self._lock:
             if self._disabled:
                 return None
-            current = self._snapshot
-            previous = None if full else current
-            cursor = self._cursor if previous is not None else _START
+            previous = self._snapshot
+            # A full witness re-verifies every row, so the sweep restarts.
+            cursor = self._cursor if previous is not None and not full else _START
         # Every witness below is read from this borrower's own SQLite snapshot.
         # No object parser or shared connection revision can stand in for it.
         shapes = {table: _shape(connection, table) for table in _TABLES}
         append_only = _append_only(connection, shapes)
         suspect: frozenset[str] = frozenset()
-        if previous is not None:
+        if previous is not None and not full:
             suspect, cursor = _reverify(
                 connection, previous, cursor, shapes, append_only
             )
@@ -549,6 +550,7 @@ class ActivityFactStore:
             size = 0
             if (
                 previous is not None
+                and not full
                 and mark is not None
                 and prior_mark is not None
                 and mark[0] >= prior_mark[0]
@@ -655,7 +657,7 @@ class ActivityFactStore:
                     marks,
                     previous.version,
                 )
-            self._publish(current, result, cursor)
+            self._publish(previous, result, cursor)
             return result
         affected: set[Candidate] | None
         if previous is None:
@@ -735,16 +737,7 @@ class ActivityFactStore:
             witness_bytes,
             marks,
         )
-        if (
-            current is not None
-            and previous is None
-            and (current.witnesses, current.marks, current.facts)
-            == (witnesses, marks, facts)
-        ):
-            # A full construction that agrees with the published store keeps
-            # its version, so other borrowers' stamps stay current.
-            result = current
-        self._publish(current, result, cursor)
+        self._publish(previous, result, cursor)
         return result
 
     def _publish(

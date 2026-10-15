@@ -57,9 +57,9 @@ any statement executed without the lock.
 
 [ADR-0082](decisions/0082-runtime-activity-facts.md) adds a root-owned, 64 MiB
 serialized Activity fact store borrowed by those query-only readers. Initial
-composition completes before readiness. Every new borrower generation constructs
-from no previous snapshot, scanning exact scalar and raw-document byte witnesses
-inside its own snapshot; later reuse requires its own
+composition completes before readiness. Every new borrower generation performs a
+full witness against the previous snapshot, scanning exact scalar and
+raw-document byte witnesses inside its own snapshot; later reuse requires its own
 unchanged revision, file identity and store version. Changed witnesses refresh
 only dependent candidates using old and new bindings. The temporary reverse index
 is discarded before projection. Store locks never span SQL or parsing, and closing

@@ -571,8 +571,11 @@ def test_schema_drift_serves_the_canonical_projection(ledger: _Ledger) -> None:
     ledger.assert_exact()
 
 
-def test_new_borrower_generation_witnesses_every_row_itself(ledger: _Ledger) -> None:
-    """A table recreated with identical DDL and rowids cannot inherit witnesses."""
+@pytest.mark.parametrize("changed", (True, False), ids=("changed", "identical"))
+def test_new_borrower_generation_witnesses_every_row_itself(
+    ledger: _Ledger, changed: bool
+) -> None:
+    """A table recreated with identical DDL and rowids cannot hide a change."""
     raw = _raw(ledger.path)
     try:
         ddl = raw.execute(
@@ -586,7 +589,7 @@ def test_new_borrower_generation_witnesses_every_row_itself(ledger: _Ledger) -> 
             raw.execute(sql)
         for index, row in enumerate(rows):
             values = list(row)
-            if index == 0:
+            if changed and index == 0:
                 values[6] = _changed_document(values[6])
             raw.execute(
                 "INSERT INTO field_effect_events"
@@ -606,13 +609,17 @@ def test_new_borrower_generation_witnesses_every_row_itself(ledger: _Ledger) -> 
     try:
         borrower.configure_activity_page_reader(ledger.store)
         borrower.initialize_activity_facts()
-        # The changed event no longer projects, so a full construction falls
-        # back to the canonical path; reuse would have served the old fact.
+        # The full witness finds the changed event and reprojects it; that
+        # event no longer validates, so the borrower serves the canonical
+        # path. Admission from the marks would have served the old fact.
         assert _pages(borrower) == _pages(ledger.canonical)
-        if borrower._field_effect_activity._activity_facts is not None:
-            current = ledger.snapshot()
-            assert current is not published
-            assert current.witnesses == _full_witness(ledger.path).witnesses
+        serving = borrower._field_effect_activity._activity_facts is not None
+        assert serving is not changed
+        if serving:
+            # Every witness agrees with the previous snapshot: nothing is
+            # reprojected and the published version is kept.
+            assert ledger.snapshot() is published
+            assert published.witnesses == _full_witness(ledger.path).witnesses
     finally:
         borrower.close()
 

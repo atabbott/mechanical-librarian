@@ -122,9 +122,10 @@ generation still perform a full witness; an unchanged revision with a changed
 file identity still refuses.
 
 A row whose witness differs re-witnesses its whole table in that refresh. A new
-borrower generation constructs from no previous snapshot in its own read, so it
-never inherits witnesses admitted under another schema; when its result agrees
-with the published store, that store keeps its version.
+borrower generation performs a full witness against the previous snapshot in its
+own read: it streams every row of every source table, reprojects only candidates
+whose witnesses differ, records fresh marks and counts, and restarts the sweep. It
+never admits a table from marks recorded by an earlier generation.
 
 The table classification is derived from the schema's triggers and verified at
 construction, so a table that loses its append-only triggers falls back to full
@@ -146,7 +147,8 @@ refusal triggers on every incrementally witnessed table.
 
 Consequences replace the earlier statement that a changed revision scans all
 source bytes: it now scans the mutable tables, the rows above each mark and one
-sweep slice; a new borrower generation still scans everything. Activity facts feed no write path, so the detection delay for an
-in-place change outside SQL's ordinary routes is display-only and bounded by the
-sweep. Journal mode, schema, startup admission and the canonical projection are
+sweep slice; a new borrower generation still performs a full witness against the
+previous snapshot. Activity facts feed no write path, so the detection delay for
+an in-place change outside SQL's ordinary routes is display-only and bounded by
+the sweep. Journal mode, schema, startup admission and the canonical projection are
 unchanged.
