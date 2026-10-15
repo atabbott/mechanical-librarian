@@ -116,8 +116,6 @@ class _Snapshot:
     witness_bytes: dict[str, int]
     # Append-only table -> (max(rowid), count(*)) in the witnessing snapshot.
     marks: dict[str, tuple[int, int]]
-    # (_TABLES index, last rowid) of the rolling re-verification.
-    cursor: tuple[int, int]
     version: object = field(default_factory=object)
 
 
@@ -205,6 +203,7 @@ def _lookup(nodes: dict[str, dict[Key, _Witness]], key: Key) -> _Witness | None:
 def _reverify(
     connection: sqlite3.Connection,
     previous: _Snapshot,
+    cursor: tuple[int, int],
     shapes: dict[str, _Shape],
     append_only: frozenset[str],
 ) -> tuple[frozenset[str], tuple[int, int]]:
@@ -214,7 +213,7 @@ def _reverify(
     an in-place change that preserves rowid and count is found within
     ceil(rows / slice) refreshes. A disagreeing table is re-witnessed in full.
     """
-    index, after = previous.cursor
+    index, after = cursor
     eligible = append_only & previous.marks.keys()
     suspect: set[str] = set()
     budget = _REVERIFY_ROWS
@@ -227,13 +226,13 @@ def _reverify(
             shape = shapes[table]
             admitted = previous.witnesses[table]
             read = 0
-            cursor = connection.execute(
+            rows = connection.execute(
                 f"SELECT rowid,{shape.selections} FROM {table} "
                 "WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?",
                 (after, previous.marks[table][0], budget),
             )
             try:
-                for rowid, *row in cursor:
+                for rowid, *row in rows:
                     read += 1
                     after = rowid
                     witness = admitted.get(
@@ -243,7 +242,7 @@ def _reverify(
                         suspect.add(table)
                         break
             finally:
-                cursor.close()
+                rows.close()
             budget -= read
             if budget == 0 and table not in suspect:
                 return frozenset(suspect), (index, after)
@@ -479,6 +478,10 @@ class ActivityFactStore:
         self.max_bytes = max_bytes
         self._lock = Lock()
         self._snapshot: _Snapshot | None = None
+        # (_TABLES index, last rowid) of the rolling re-verification. It lives
+        # beside the published snapshot so an unchanged refresh keeps the
+        # published identity while the sweep still advances.
+        self._cursor = (0, 0)
         self._disabled = False
 
     def snapshot(self) -> _Snapshot | None:
@@ -494,14 +497,16 @@ class ActivityFactStore:
             if self._disabled:
                 return None
             previous = self._snapshot
+            cursor = self._cursor if previous is not None else (0, 0)
         # Every witness below is read from this borrower's own SQLite snapshot.
         # No object parser or shared connection revision can stand in for it.
         shapes = {table: _shape(connection, table) for table in _TABLES}
         append_only = _append_only(connection, shapes)
         suspect: frozenset[str] = frozenset()
-        cursor = (0, 0)
         if previous is not None:
-            suspect, cursor = _reverify(connection, previous, shapes, append_only)
+            suspect, cursor = _reverify(
+                connection, previous, cursor, shapes, append_only
+            )
         witnesses: dict[str, dict[Key, _Witness]] = {}
         witness_bytes: dict[str, int] = {}
         marks: dict[str, tuple[int, int]] = {}
@@ -613,28 +618,26 @@ class ActivityFactStore:
             witness_bytes[table] = size
             accounted += size
         if previous is not None and not changed:
-            if marks == previous.marks and cursor == previous.cursor:
-                return previous
-            # Unchanged facts keep their version, so other borrowers' stamps
-            # stay current; only the marks and re-verification cursor move.
-            accounted += previous.fact_bytes
-            if accounted > self.max_bytes:
-                self._disable()
-                return None
-            result = _Snapshot(
-                witnesses,
-                previous.facts,
-                previous.ordered,
-                accounted,
-                previous.fact_bytes,
-                witness_bytes,
-                marks,
-                cursor,
-                previous.version,
-            )
-            with self._lock:
-                if self._snapshot is previous:
-                    self._snapshot = result
+            if marks == previous.marks:
+                result = previous
+            else:
+                # Unchanged facts keep their version, so borrowers' stamps stay
+                # current; only the marks move.
+                accounted += previous.fact_bytes
+                if accounted > self.max_bytes:
+                    self._disable()
+                    return None
+                result = _Snapshot(
+                    witnesses,
+                    previous.facts,
+                    previous.ordered,
+                    accounted,
+                    previous.fact_bytes,
+                    witness_bytes,
+                    marks,
+                    previous.version,
+                )
+            self._publish(previous, result, cursor)
             return result
         affected: set[Candidate] | None
         if previous is None:
@@ -713,14 +716,20 @@ class ActivityFactStore:
             accounted - state_bytes,
             witness_bytes,
             marks,
-            cursor,
         )
+        self._publish(previous, result, cursor)
+        return result
+
+    def _publish(
+        self, previous: _Snapshot | None, result: _Snapshot, cursor: tuple[int, int]
+    ) -> None:
         with self._lock:
             if self._snapshot is previous:
                 self._snapshot = result
-        return result
+                self._cursor = cursor
 
     def _disable(self) -> None:
         with self._lock:
             self._snapshot = None
+            self._cursor = (0, 0)
             self._disabled = True

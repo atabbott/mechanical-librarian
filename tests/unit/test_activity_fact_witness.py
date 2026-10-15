@@ -189,7 +189,7 @@ class _Ledger:
     def advance_into(self, table: str) -> int:
         """Refresh until the cursor has just re-verified a row of ``table``."""
         for _ in range(4 * self.admitted_rows()):
-            index, after = self.snapshot().cursor
+            index, after = self.store._cursor
             if _TABLES[index] == table and after > 0:
                 return after
             self.commit()
