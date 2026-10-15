@@ -41,9 +41,9 @@ including excluded candidates, missing joins, deletion and replacement. A tempor
 reverse index computes that closure and is discarded before canonical reprojection.
 Reprojection restricts each union arm to the requested candidates' whole ranking
 partitions, so the canonical ranking sees every row it would rank, in an order
-fixed by the explicit tiebreak: rows tied within a partition rank the earliest
-stored row first, and a cover selection before an automatic decision of the
-same id (#1218).
+fixed by the explicit tiebreak: rows tied within a partition rank the lowest
+witnessed identifier first, and a cover selection before an automatic decision
+of the same id (#1218).
 ISBN refusal candidates bind the exact policy generation/library lookup and the
 generation-one profile fallback, including absent lookups. These policy edges
 refresh only the ISBN candidate, not ordinary automatic decision lineage.

@@ -370,8 +370,8 @@ def test_isbn_candidates_keep_blob_rows_of_their_own_partition_only(
             # Newer than its text twin, so it is the partition's ranked row.
             (outcome["outcome_set_id"].encode(), row[6] + 1),
             (("shadow_outcome_set_" + "f" * 64).encode(), row[6]),
-            # Tied with the text twin written after it: the earliest stored
-            # row ranks first, whichever index a projection reads them by.
+            # Tied with its text twin, stored before it: the lower identifier,
+            # text before BLOB, ranks first however the rows are stored or read.
             (twin.encode(), row[6]),
             (twin, row[6]),
         ):
@@ -389,9 +389,9 @@ def test_isbn_candidates_keep_blob_rows_of_their_own_partition_only(
         _, rows, _ = _projected(reader, None)
         assert {_candidate(value) for value in rows if type(value[17]) is bytes} == {
             ("isbn_refusal", outcome["outcome_set_id"] + ":isbn"),
-            ("isbn_refusal", twin + ":isbn"),
             unrequested,
         }
+        assert ("isbn_refusal", twin + ":isbn") in {_candidate(row) for row in rows}
     finally:
         reader.close()
 
@@ -542,17 +542,38 @@ def test_description_and_cover_candidates_project_exactly(tmp_path: Path) -> Non
         repository.close()
 
 
-@pytest.mark.parametrize(
-    "invalid_first", (False, True), ids=("valid_stored_first", "invalid_stored_first")
-)
-def test_tied_partition_rows_rank_the_earliest_stored_first(
-    tmp_path: Path, invalid_first: bool
-) -> None:
-    """Two candidates of one attempt tie in its partition, out of band.
+def _duplicate_candidate(
+    repository: SQLiteMetadataReportRepository, identifier: str, *, first: bool
+) -> str:
+    """An invalid second candidate of the prepared attempt, out of band.
 
-    Nothing makes ``attempt_id`` unique. The earliest stored candidate ranks
-    first whichever order a plan reads them in, so a reprojected candidate and
-    the canonical page agree; an invalid winner refuses on both.
+    Nothing makes ``attempt_id`` unique. ``first`` stores it before the
+    prepared candidate. Returns the prepared candidate's identifier.
+    """
+    candidate, attempt, request = repository._connection.execute(
+        "SELECT candidate_id,attempt_id,request_identity "
+        "FROM description_advice_candidates"
+    ).fetchone()
+    repository._connection.execute(
+        "INSERT INTO description_advice_candidates"
+        "(rowid,candidate_id,attempt_id,request_identity,document) "
+        "VALUES(?,?,?,?,'{\"!\":1}')",
+        (0 if first else None, identifier, attempt, request),
+    )
+    repository._connection.commit()
+    return cast(str, candidate)
+
+
+@pytest.mark.parametrize("stored_first", (False, True), ids=("after", "before"))
+@pytest.mark.parametrize("lower", (False, True), ids=("higher_id", "lower_id"))
+def test_tied_partition_rows_rank_the_lowest_identifier_first(
+    tmp_path: Path, lower: bool, stored_first: bool
+) -> None:
+    """Two candidates of one attempt tie in their partition.
+
+    The lowest candidate identifier ranks first whatever order the rows are
+    stored or read in, so a reprojected candidate and the canonical page
+    agree, and an invalid winner refuses on both.
     """
     repository, _, _, _, _ = _prepared(tmp_path)
     path = tmp_path / "reports.sqlite"
@@ -561,22 +582,68 @@ def test_tied_partition_rows_rank_the_earliest_stored_first(
     reader.configure_activity_page_reader(ActivityFactStore())
     try:
         assert _early_pages(reader) == _early_pages(canonical)
-        attempt, request = repository._connection.execute(
-            "SELECT attempt_id,request_identity FROM description_advice_candidates"
-        ).fetchone()
-        # An invalid document that sorts before the stored candidate's.
-        repository._connection.execute(
-            "INSERT INTO description_advice_candidates"
-            "(rowid,candidate_id,attempt_id,request_identity,document) "
-            "VALUES(?,'zzz',?,?,'{\"!\":1}')",
-            (0 if invalid_first else None, attempt, request),
-        )
-        repository._connection.commit()
+        invalid = "a" if lower else "zzz"
+        prepared = _duplicate_candidate(repository, invalid, first=stored_first)
+        assert (invalid < prepared) is lower
         served = _early_pages(reader)
         expected = _early_pages(canonical)
-        assert [type(page) is tuple for page in expected] == [invalid_first] * 3
+        assert [type(page) is tuple for page in expected] == [lower] * 3
         assert served == expected
-        _assert_restriction(reader, facts=not invalid_first)
+        _assert_restriction(reader, facts=not lower)
+    finally:
+        reader.close()
+        canonical.close()
+        repository.close()
+
+
+@pytest.mark.parametrize("generation", ("borrowed", "new"))
+def test_moving_a_tied_row_in_storage_leaves_its_rank_witnessed(
+    tmp_path: Path, generation: str
+) -> None:
+    """Storage order is not witnessed, so it must not decide a rank.
+
+    Out of band, the prepared candidate is deleted and stored again behind
+    its invalid duplicate: every witnessed value is unchanged, and so is the
+    canonical page the borrowed and a new generation's facts must equal.
+    """
+    repository, _, _, _, _ = _prepared(tmp_path)
+    path = tmp_path / "reports.sqlite"
+    store = ActivityFactStore()
+    reader = open_repository(path, create=False, authority=repository.authority)
+    canonical = open_repository(path, create=False, authority=repository.authority)
+    reader.configure_activity_page_reader(store)
+    try:
+        prepared = _duplicate_candidate(repository, "zzz", first=False)
+        assert _early_pages(reader) == _early_pages(canonical)
+        assert reader._field_effect_activity._activity_facts is not None
+        connection = repository._connection
+        row = connection.execute(
+            "SELECT * FROM description_advice_candidates WHERE candidate_id=?",
+            (prepared,),
+        ).fetchone()
+        (trigger,) = connection.execute(
+            "SELECT sql FROM sqlite_schema "
+            "WHERE name='description_advice_candidates_no_delete'"
+        ).fetchone()
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute("DROP TRIGGER description_advice_candidates_no_delete")
+        connection.execute(
+            "DELETE FROM description_advice_candidates WHERE candidate_id=?",
+            (prepared,),
+        )
+        connection.execute(
+            "INSERT INTO description_advice_candidates VALUES(?,?,?,?)", row
+        )
+        connection.execute(trigger)
+        connection.commit()
+        connection.execute("PRAGMA foreign_keys=ON")
+        if generation == "new":
+            reader.close()
+            reader = open_repository(path, create=False, authority=repository.authority)
+            reader.configure_activity_page_reader(store)
+        expected = _early_pages(canonical)
+        assert not any(type(page) is tuple for page in expected)
+        assert _early_pages(reader) == expected
     finally:
         reader.close()
         canonical.close()

@@ -2880,7 +2880,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    attempt.state, json_extract(report.document,'$.target.item'),
                    json_object('attempt_id',attempt.attempt_id,'engine',attempt.engine,'model',attempt.model,'state',attempt.state,'failure',attempt.failure,'updated_at',attempt.updated_at),
                    'metadata', json_extract(report.document,'$.target.fields[0].value'), NULL,
-                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1, 0, candidate.rowid
+                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1, 0, candidate.candidate_id
               FROM description_advice_attempts attempt
               JOIN review_cases review ON review.review_case_id=json_extract(attempt.binding_document,'$.review_case_id')
               JOIN metadata_reports report ON report.report_id=review.report_id
@@ -2958,7 +2958,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    'unchanged', report.item_id, outcome.document, 'metadata',
                    {selected_isbn_title},
                    NULL, 'isbn_refusal', NULL, outcome.review_case_id, NULL,
-                   outcome.outcome_set_id, NULL, NULL, 1, 0, outcome.rowid
+                   outcome.outcome_set_id, NULL, NULL, 1, 0, outcome.outcome_set_id
               FROM shadow_decision_outcomes outcome
               JOIN metadata_reports report ON report.report_id=outcome.report_id
               JOIN json_each(CASE WHEN json_valid(outcome.document) THEN outcome.document ELSE '{{}}' END, '$.outcomes') field
@@ -2987,9 +2987,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # Rows of one ranking partition tie on time and identifier only as
         # out-of-band duplicates: candidates of one attempt, an ISBN outcome
         # and its BLOB twin, or one automatic decision id in both decision
-        # ledgers. The earliest stored row ranks first, and a cover selection
-        # before an automatic decision, so the choice never depends on a
-        # plan's scan order or the union's arm order (#1218).
+        # ledgers. The lowest witnessed identifier ranks first, and a cover
+        # selection before an automatic decision, so the choice never depends
+        # on scan, storage or arm order (#1218).
         projection = (
             "WITH "
             + requested
