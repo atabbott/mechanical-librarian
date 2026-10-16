@@ -83,7 +83,7 @@ export interface LiveInvalidationOptions {
   readonly observeVisibility?: (listener: () => void) => () => void
   /** Test seam for purposeful owner input. */
   readonly observeActivity?: (listener: () => void) => () => void
-  /** Test seam for the idle boundary. */
+  /** Test seam for the monotonic clock behind the idle boundary and the Library bound. */
   readonly now?: () => number
 }
 
@@ -115,7 +115,7 @@ export const startLiveInvalidation = (
         for (const event of events) document.removeEventListener(event, listener)
       }
     })
-  const now = options.now ?? Date.now
+  const now = options.now ?? (() => performance.now())
   const pending = new Map<string, readonly unknown[]>()
   let stopped = false
   let handle: number | null = null
@@ -176,6 +176,16 @@ export const startLiveInvalidation = (
     forgetSettledKeys(queryClient, libraryKeys)
   }
 
+  // Library and attention share the bound, so a read that began meanwhile can
+  // push this one later.
+  function refreshLibraryWhenDue() {
+    const delay = lastLibraryRefreshAt + libraryRefreshMilliseconds - now()
+    libraryHandle = delay > 0 ? schedule(refreshLibraryWhenDue, delay) : null
+    if (libraryHandle !== null) return
+    refreshLibrary()
+    drainBackgroundWork(queryClient)
+  }
+
   function flush() {
     handle = null
     // A hidden browser does no catch-up work.  Its next foreground transition
@@ -200,10 +210,7 @@ export const startLiveInvalidation = (
         // refetch waits.
         for (const queryKey of libraryKeys)
           void invalidateBackgroundQueries(queryClient, { queryKey, refetchType: 'none' })
-        libraryHandle ??= schedule(() => {
-          refreshLibrary()
-          drainBackgroundWork(queryClient)
-        }, delay)
+        libraryHandle ??= schedule(refreshLibraryWhenDue, delay)
       }
     }
     for (const queryKey of keys) {

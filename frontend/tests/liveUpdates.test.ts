@@ -34,7 +34,11 @@ const startOwnedLiveInvalidation = (...args: Parameters<typeof startLiveInvalida
 
 const CASE = `review_case_${'a'.repeat(64)}`
 
-const collectionHarness = (warm = false, key: readonly string[] = ['library', 'all']) => {
+const collectionHarness = (
+  warm = false,
+  key: readonly string[] = ['library', 'all'],
+  injectClock = true,
+) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   client.mount()
   const reads: {
@@ -75,7 +79,7 @@ const collectionHarness = (warm = false, key: readonly string[] = ['library', 'a
         return () => undefined
       },
       observeActivity: () => () => undefined,
-      now: () => clock,
+      ...(injectClock ? { now: () => clock } : {}),
     },
   )
   const options = {
@@ -261,6 +265,8 @@ describe('live collection completion debt', () => {
     h.reads[1]?.resolve('second')
     await vi.waitFor(() => expect(h.query.state.data).toBe('second'))
     expect(h.query.state.isInvalidated).toBe(true)
+    // The follow-up waits for the bound measured from the read before it.
+    h.elapse(libraryRefreshMilliseconds)
     h.flush()
     expect(h.reads).toHaveLength(3)
     h.reads[2]?.resolve('third')
@@ -298,6 +304,8 @@ describe('live collection completion debt', () => {
     expect(h.pendingDelays().filter((delay) => delay !== coalesceMilliseconds)).toEqual([
       libraryRefreshMilliseconds - coalesceMilliseconds,
     ])
+    // The bound falls due 1.5 s after the last read began.
+    h.elapse(libraryRefreshMilliseconds - coalesceMilliseconds - 1_000)
     h.flush()
     expect(h.reads).toHaveLength(3)
     // Preparation ends. The bounded read began after the last frame, so it is
@@ -474,6 +482,124 @@ describe('live collection completion debt', () => {
     expect(pages.at(-1)?.pageParam).toBe(0)
     h.flush()
     expect(pages).toHaveLength(4)
+  })
+
+  it('still makes an owed read after a next-page read fails', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    const pages: { resolve: (value: string) => void; reject: (error: Error) => void }[] = []
+    const options = {
+      queryKey: ['attention', 'workspace'],
+      staleTime: Infinity,
+      initialPageParam: 0,
+      getNextPageParam: (_last: string, all: string[]) => all.length,
+      queryFn: () => new Promise<string>((resolve, reject) => pages.push({ resolve, reject })),
+    }
+    const unsubscribe = new InfiniteQueryObserver(h.client, options).subscribe(() => undefined)
+    onTestFinished(unsubscribe)
+    const observer = new InfiniteQueryObserver(h.client, options)
+    const rail = h.client.getQueryCache().find({ queryKey: options.queryKey, exact: true })
+    pages[0]?.resolve('first page')
+    await vi.waitFor(() => expect(rail?.state.fetchStatus).toBe('idle'))
+    h.emit()
+    h.flush()
+    h.emit('resync')
+    h.flushCoalesced()
+    const nextPage = observer.fetchNextPage()
+    expect(pages).toHaveLength(3)
+    pages[2]?.reject(new Error('unavailable'))
+    await nextPage
+    h.flush()
+    // The failed page read cannot stand in for the read owed behind it.
+    expect(pages).toHaveLength(4)
+    h.flush()
+    expect(pages).toHaveLength(4)
+  })
+
+  it('reschedules a bounded refresh when a later read moved the bound', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    const rail: { resolve: (value: string) => void }[] = []
+    const railObserver = new QueryObserver(h.client, {
+      queryKey: ['attention', 'rail'],
+      staleTime: Infinity,
+      queryFn: () => new Promise<string>((resolve) => rail.push({ resolve })),
+    })
+    onTestFinished(railObserver.subscribe(() => undefined))
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    // Attention is still reading when the first frame asks for both.
+    expect(rail).toHaveLength(1)
+    h.emit()
+    h.flushCoalesced()
+    expect(h.reads).toHaveLength(2)
+    h.reads[1]?.resolve('library')
+    h.elapse(coalesceMilliseconds)
+    h.emit()
+    h.flushCoalesced()
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - coalesceMilliseconds])
+    // Attention's owed read begins a second after the bound began.
+    h.elapse(1_000 - coalesceMilliseconds)
+    rail[0]?.resolve('slow')
+    const railQuery = h.client.getQueryCache().find({ queryKey: ['attention', 'rail'] })
+    await vi.waitFor(() => expect(railQuery?.state.fetchStatus).toBe('idle'))
+    h.flushCoalesced()
+    expect(rail).toHaveLength(2)
+    rail[1]?.resolve('owed')
+    await vi.waitFor(() => expect(railQuery?.state.data).toBe('owed'))
+    // When the first bound falls due, the shared bound has moved on.
+    h.elapse(libraryRefreshMilliseconds - 1_000)
+    h.flush()
+    expect(rail).toHaveLength(2)
+    expect(h.pendingDelays()).toEqual([1_000])
+    h.elapse(1_000)
+    h.flush()
+    expect(rail).toHaveLength(3)
+  })
+
+  it('times the bound from when a read paused offline begins', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    onlineManager.setOnline(false)
+    onTestFinished(() => onlineManager.setOnline(true))
+    h.emit()
+    h.flush()
+    expect(h.query.state.fetchStatus).toBe('paused')
+    // The read only begins when the browser is back online a second later.
+    h.elapse(1_000)
+    onlineManager.setOnline(true)
+    await vi.waitFor(() => expect(h.reads).toHaveLength(2))
+    h.reads[1]?.resolve('online')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('online'))
+    h.elapse(600)
+    h.emit()
+    h.flushCoalesced()
+    expect(h.reads).toHaveLength(2)
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - 600])
+  })
+
+  it('times the bound on a monotonic clock, not the wall clock', async () => {
+    let monotonic = 0
+    let wall = 1_800_000_000_000
+    vi.spyOn(performance, 'now').mockImplementation(() => monotonic)
+    vi.spyOn(Date, 'now').mockImplementation(() => wall)
+    onTestFinished(() => {
+      vi.restoreAllMocks()
+    })
+    const h = collectionHarness(true, undefined, false)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.emit()
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+    h.reads[1]?.resolve('first work')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('first work'))
+    // The wall clock steps back an hour while 1.6 s really pass.
+    wall -= 3_600_000
+    monotonic += 1_600
+    h.emit()
+    h.flushCoalesced()
+    expect(h.reads).toHaveLength(3)
   })
 
   it('does not time the bound from a read the bridge did not ask for', async () => {

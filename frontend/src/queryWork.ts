@@ -119,7 +119,9 @@ const backgroundOwner = (
     if (begins) starts.delete(query)
     else owed.add(query)
     let result = query.fetch(undefined, { cancelRefetch: false, meta: backgroundFetch })
-    started?.()
+    // A read paused offline begins when it continues.
+    if (started && query.state.fetchStatus === 'paused') starts.set(query, started)
+    else started?.()
     if (!throwOnError) result = result.catch(() => undefined)
     return query.state.fetchStatus === 'paused' ? Promise.resolve() : result
   }
@@ -169,8 +171,19 @@ const backgroundOwner = (
       starts.delete(query)
       return
     }
+    if (event.action.type === 'continue') {
+      starts.get(query)?.()
+      starts.delete(query)
+      return
+    }
     if (event.action.type === 'error') {
       reads.delete(query)
+      // A failed page read leaves owed debt for the read it was waiting for.
+      if (fetchesMore(query.state.fetchMeta)) {
+        if (owed.delete(query)) ready.add(query)
+        queue()
+        return
+      }
       const debt = owed.delete(query) || ready.has(query)
       ready.delete(query)
       if (debt) query.invalidate()
