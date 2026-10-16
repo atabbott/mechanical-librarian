@@ -182,6 +182,21 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
             (title[2],),
         ),
     )
+    # Attention reads that package under its case's report, which it no
+    # longer names.
+    case_report = _one(
+        connection,
+        "SELECT report_id FROM review_cases WHERE review_case_id=?",
+        title[3],
+    )[0]
+    yield (
+        "its case's report becomes a recording",
+        (("metadata_report_browse_facts", "update"),),
+        lambda: run(
+            "UPDATE metadata_report_browse_facts SET format='m4b' WHERE report_id=?",
+            (case_report,),
+        ),
+    )
     title = _attentive(connection, "title")
     yield (
         "field settles",
