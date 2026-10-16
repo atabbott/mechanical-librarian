@@ -85,6 +85,15 @@ every refresh and reads `pragma_table_list`, which needs SQLite 3.37 or later.
 This shortens the shared read that delays the preparation writer's commit;
 journal mode stays `DELETE`.
 
+One refresh also projects at most 512 affected candidates; the rest stay pending,
+and a snapshot with pending candidates is never served (#1225). A read that leaves
+candidates pending ends its read transaction, projects them in bounded read
+transactions of its own, and retries, so a waiting writer commits between steps
+instead of behind the whole catch-up. The third attempt serves the canonical
+projection if candidates are still pending. A read nested in an Activity snapshot
+leaves the catch-up to that snapshot, so one response still reads one snapshot.
+The busy timeout and journal mode are unchanged.
+
 Each query-only Activity reader also keeps its last prepared counts and
 permission-readiness example beside the store, with the connection's revision
 and database file identity sampled before and after reading them. It serves

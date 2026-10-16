@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import re
@@ -58,24 +57,22 @@ _ROWID_NAMES = frozenset({"rowid", "oid", "_rowid_"})
 # At this rowid SQLite allocates new rowids at random below it, so a REPLACE
 # can keep both mark and count; such a table is never admitted incrementally.
 _MAX_ROWID = 2**63 - 1
+# One Activity read transaction projects at most this many affected candidates;
+# the rest stay pending and later bounded transactions project them (#1225).
+_PROJECT_CANDIDATES = 512
 _MARK_BYTES = 16  # max(rowid) and count(*) per append-only table.
 _CURSOR_BYTES = 24  # Re-verification table index, rowid and entry mark.
 _CASE_CHUNK = 500
 
 
 def _encoded(values: object) -> bytes:
-    def encode(value: object) -> object:
-        if type(value) is bytes:
-            return {"b": base64.b64encode(value).decode("ascii")}
-        if type(value) is float:
-            return {"f": value.hex()}
-        if type(value) in (tuple, list):
-            return [
-                encode(item) for item in cast(tuple[object, ...] | list[object], value)
-            ]
-        return value
+    """Encode SQLite or JSON values injectively, keeping each exact type.
 
-    return json.dumps(encode(values), ensure_ascii=True, separators=(",", ":")).encode()
+    The literal form tells 1, 1.0, '1' and b'1' apart, round-trips every float
+    exactly, -0.0 included, and costs a fraction of a JSON encoding on every
+    witnessed row of a changed revision (#1225).
+    """
+    return repr(values).encode()
 
 
 def _key(table: str, *values: object) -> Key:
@@ -88,6 +85,8 @@ class _Witness:
     dependencies: frozenset[Key]
     aliases: frozenset[Key]
     candidates: frozenset[Candidate]
+    # Content bytes other than the key, counted once when the witness is made.
+    size: int = field(default=0, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +124,9 @@ class _Snapshot:
     witness_bytes: dict[str, int]
     # Append-only table -> (max(rowid), count(*)) in the witnessing snapshot.
     marks: dict[str, tuple[int, int]]
+    # Candidates whose facts are absent until a later bounded refresh projects
+    # them. A state with pending candidates is never served (#1225).
+    pending: frozenset[Candidate] = frozenset()
     version: object = field(default_factory=object)
 
 
@@ -191,18 +193,12 @@ def _value(row: Sequence[object], documents: tuple[int, ...]) -> bytes:
     values = list(row)
     for i in documents:
         if values[i] is not None:
-            values[i] = hashlib.sha256(cast(bytes, values[i])).digest()
+            values[i] = hashlib.sha256(cast(bytes, values[i])).hexdigest()
     return _encoded(values)
 
 
 def _witness_bytes(key: Key, witness: _Witness) -> int:
-    return (
-        len(key[0])
-        + len(key[1])
-        + len(witness.value)
-        + sum(len(k[0]) + len(k[1]) for k in witness.dependencies | witness.aliases)
-        + sum(len(k[0]) + len(k[1]) for k in witness.candidates)
-    )
+    return len(key[0]) + len(key[1]) + witness.size
 
 
 def _reverify(
@@ -445,7 +441,62 @@ def _witness(
     # never retained after this row.
     decoded = dict(zip(shape.names, row, strict=False))
     dependencies, aliases, candidates = _bindings(table, decoded, connection)
-    return _Witness(value, dependencies, aliases, candidates)
+    return _Witness(
+        value,
+        dependencies,
+        aliases,
+        candidates,
+        len(value)
+        + sum(len(k[0]) + len(k[1]) for k in dependencies | aliases)
+        + sum(len(k[0]) + len(k[1]) for k in candidates),
+    )
+
+
+def _by_review_case(
+    witnesses: dict[str, dict[Key, _Witness]], candidates: set[Candidate]
+) -> list[Candidate]:
+    """Order candidates so that those of one review case are projected together.
+
+    A bounded share then parses each report, case and proposal set once rather
+    than once per candidate (#1225). The order decides only which candidates a
+    refresh projects first, never what any fact contains.
+    """
+    providers = {
+        alias: node
+        for rows in witnesses.values()
+        for node in rows.values()
+        for alias in node.aliases
+    }
+
+    def case(node: _Witness) -> Key:
+        # A source row names its case directly, or through its effect plan and
+        # decision: at most two dependency hops.
+        frontier = [node]
+        for _ in range(3):
+            following = []
+            for current in frontier:
+                found = min(
+                    (key for key in current.dependencies if key[0] == "review_cases"),
+                    default=None,
+                )
+                if found is not None:
+                    return found
+                for key in sorted(current.dependencies):
+                    target = witnesses.get(key[0], {}).get(key) or providers.get(key)
+                    if target is not None:
+                        following.append(target)
+            frontier = following
+        return ("", b"")
+
+    groups: dict[Candidate, Key] = {}
+    for rows in witnesses.values():
+        for node in rows.values():
+            for candidate in node.candidates & candidates:
+                if candidate not in groups:
+                    groups[candidate] = case(node)
+    return sorted(
+        candidates, key=lambda candidate: (groups.get(candidate, ("", b"")), candidate)
+    )
 
 
 def _rebind_outcomes(
@@ -527,6 +578,12 @@ class ActivityFactStore:
         ``unchanged``. It advances the sweep by one slice; a clean slice moves
         only the cursor and keeps that snapshot published, while a difference
         re-witnesses and republishes exactly as a changed refresh does.
+
+        At most ``_PROJECT_CANDIDATES`` affected candidates are projected; the
+        rest are published as pending, with their facts removed, and the next
+        refresh projects them alongside whatever its own changes affect. A
+        state with pending candidates is complete in its witnesses and exact in
+        every fact it keeps, but it serves nothing (#1225).
         """
         with self._lock:
             if self._disabled:
@@ -545,15 +602,20 @@ class ActivityFactStore:
         shapes = {table: _shape(connection, table) for table in _TABLES}
         append_only = _append_only(connection, shapes)
         suspect: frozenset[str] = frozenset()
+        witnessed = False
         if previous is not None and not full:
             suspect, cursor = _reverify(
                 connection, previous, cursor, shapes, append_only
             )
             if unchanged is not None and not suspect:
-                with self._lock:
-                    if self._snapshot is previous and self._cursor == swept:
-                        self._cursor = cursor
-                return previous
+                if not previous.pending:
+                    with self._lock:
+                        if self._snapshot is previous and self._cursor == swept:
+                            self._cursor = cursor
+                    return previous
+                # The revision is unchanged, so the pending state's witnesses
+                # are still this snapshot's; only its pending candidates remain.
+                witnessed = True
         witnesses: dict[str, dict[Key, _Witness]] = {}
         witness_bytes: dict[str, int] = {}
         marks: dict[str, tuple[int, int]] = {}
@@ -561,7 +623,16 @@ class ActivityFactStore:
         appended_cases: list[object] = []
         cases_rewitnessed = False
         accounted = _CURSOR_BYTES
-        for table in _TABLES:
+        if witnessed:
+            assert previous is not None
+            witnesses, witness_bytes, marks = (
+                previous.witnesses,
+                previous.witness_bytes,
+                previous.marks,
+            )
+            accounted += sum(len(table) + _MARK_BYTES for table in marks)
+            accounted += sum(witness_bytes.values())
+        for table in () if witnessed else _TABLES:
             shape = shapes[table]
             statement = f"SELECT {shape.selections} FROM {table}"
             prior = {} if previous is None else previous.witnesses[table]
@@ -665,7 +736,7 @@ class ActivityFactStore:
             witnesses[table] = rows
             witness_bytes[table] = size
             accounted += size
-        if previous is not None and not changed:
+        if previous is not None and not changed and not previous.pending:
             if marks == previous.marks:
                 result = previous
             else:
@@ -683,7 +754,7 @@ class ActivityFactStore:
                     previous.fact_bytes,
                     witness_bytes,
                     marks,
-                    previous.version,
+                    version=previous.version,
                 )
             self._publish(
                 previous, result, cursor, None if full or previous is None else swept
@@ -694,6 +765,21 @@ class ActivityFactStore:
             affected = None
             facts: dict[Candidate, ActivityFact] = {}
             retained = 0
+            everything = {
+                candidate
+                for rows in witnesses.values()
+                for node in rows.values()
+                for candidate in node.candidates
+            }
+            if len(everything) > _PROJECT_CANDIDATES:
+                # Construction past the bound projects every witnessed
+                # candidate in bounded steps rather than in one read.
+                affected = everything
+        elif not changed:
+            # Nothing moved since the pending state was published.
+            affected = set(previous.pending)
+            facts = dict(previous.facts)
+            retained = previous.fact_bytes
         else:
             # Reverse edges are needed only while computing a changed revision.
             # Retain each forward binding once; discard this temporary traversal
@@ -741,6 +827,7 @@ class ActivityFactStore:
                         pending.append(dependent)
                         reached.add(dependent)
             del reverse, currentness
+            affected |= previous.pending
             # The previous facts' bytes are already counted; subtract only the
             # affected facts instead of re-summing all history (#1218).
             facts = dict(previous.facts)
@@ -749,6 +836,13 @@ class ActivityFactStore:
                 fact = facts.pop(candidate, None)
                 if fact is not None:
                     retained -= activity_fact_bytes(candidate, fact)
+        deferred: frozenset[Candidate] = frozenset()
+        if affected is not None and len(affected) > _PROJECT_CANDIDATES:
+            # Their facts were removed above; they wait for the next refresh.
+            order = _by_review_case(witnesses, affected)
+            affected = set(order[:_PROJECT_CANDIDATES])
+            deferred = frozenset(order[_PROJECT_CANDIDATES:])
+            accounted += sum(len(kind) + len(identity) for kind, identity in deferred)
         state_bytes = accounted
         accounted += retained
         if accounted > self.max_bytes:
@@ -767,12 +861,17 @@ class ActivityFactStore:
         # The canonical total order: newest first, then event id descending,
         # then kind and group identity ascending. The stable second sort keeps
         # the first sort's candidate order among facts tied on time and id.
-        ordered = tuple(
-            fact
-            for _, fact in sorted(
-                sorted(facts.items(), key=lambda item: item[0]),
-                key=lambda item: (item[1].occurred_at, item[1].event_id),
-                reverse=True,
+        # A pending state serves nothing, so it is ordered only once complete.
+        ordered = (
+            ()
+            if deferred
+            else tuple(
+                fact
+                for _, fact in sorted(
+                    sorted(facts.items(), key=lambda item: item[0]),
+                    key=lambda item: (item[1].occurred_at, item[1].event_id),
+                    reverse=True,
+                )
             )
         )
         result = _Snapshot(
@@ -783,6 +882,7 @@ class ActivityFactStore:
             accounted - state_bytes,
             witness_bytes,
             marks,
+            deferred,
         )
         self._publish(
             previous, result, cursor, None if full or previous is None else swept

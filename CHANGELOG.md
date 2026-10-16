@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Opening Activity after a large batch of new history no longer makes a
+  preparation or owner write fail with "database is locked": Activity catches up
+  in short reads that let writes through between them, and each refresh does less
+  work. Activity results, counts, order and refusals are unchanged (#1225).
+
 - Preparation slows far less while Library or Attention is open: an active tab
   refreshes its Library page and attention at most once every 1.5 seconds while
   works keep arriving, instead of once per prepared work, and reads once more
