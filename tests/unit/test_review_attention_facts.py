@@ -544,6 +544,11 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         ),
     )
     yield (
+        "suspension moves to another field",
+        (("field_effect_suspensions", "update"),),
+        lambda: run("UPDATE field_effect_suspensions SET destination='title'"),
+    )
+    yield (
         "suspension cleared",
         (("field_effect_suspensions", "delete"),),
         lambda: run("DELETE FROM field_effect_suspensions"),

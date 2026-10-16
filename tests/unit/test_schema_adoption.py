@@ -248,6 +248,30 @@ def test_a_failed_check_after_commit_requires_recovery_from_the_backup(
     )
 
 
+@pytest.mark.parametrize("tamper", ("canonical row", "backup"))
+def test_a_change_beside_the_derivation_requires_recovery_from_the_backup(
+    _current: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    """The result is proved after commit, not assumed from the plan."""
+    directory = _private(tmp_path)
+    database = _predecessor(_current, directory / "application.sqlite3")
+    backup = directory / "backup.sqlite3"
+    create = adoption._create_attention_facts
+
+    def create_and_tamper(connection: sqlite3.Connection) -> None:
+        create(connection)
+        if tamper == "backup":
+            backup.write_bytes(backup.read_bytes()[:-1] + b"x")
+        else:
+            connection.execute(
+                "UPDATE field_effect_control SET updated_at=updated_at+1"
+            )
+
+    monkeypatch.setattr(adoption, "_create_attention_facts", create_and_tamper)
+    with pytest.raises(SchemaAdoptionRecoveryRequired):
+        adoption.adopt_schema(database, backup, REVIEW_ATTENTION_FACTS_V1)
+
+
 def test_the_offline_command_reports_each_outcome(
     _current: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
