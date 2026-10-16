@@ -20,6 +20,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -190,7 +191,7 @@ def test_the_first_read_after_a_large_change_performs_no_catch_up(
     history, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, facts
     )
-    reader = history._repository
+    reader = cast("SQLiteMetadataReportRepository", history._repository)
     try:
         assert _settled(reader)
         before = facts.snapshot()
@@ -399,9 +400,9 @@ def _immutable(value: object, seen: set[int]) -> bool:
     if isinstance(value, (str, int, float, bytes, enum.Enum)):
         return True
     if type(value) in {tuple, frozenset}:
-        return all(_immutable(item, seen) for item in value)  # type: ignore[attr-defined]
+        return all(_immutable(item, seen) for item in value)
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return type(value).__dataclass_params__.frozen and all(  # type: ignore[attr-defined]
+        return type(value).__dataclass_params__.frozen and all(
             _immutable(getattr(value, field.name), seen)
             for field in dataclasses.fields(value)
         )
@@ -476,7 +477,7 @@ def test_restart_parses_each_report_once_and_releases_the_hand_off(
             configuration, fixture.database, owner.authority, None, facts, startup
         )
         try:
-            assert _settled(history._repository)
+            assert _settled(cast("SQLiteMetadataReportRepository", history._repository))
             state = facts.snapshot()
             assert state is not None and state.facts and not state.pending
             assert set(parsed.values()) == {1}
@@ -584,8 +585,9 @@ def test_a_cutover_hands_the_store_to_the_next_generation_exactly(
     )
     try:
         close_first()
-        assert _settled(second._repository)
-        _assert_exact(second._repository, ledger)
+        borrower = cast("SQLiteMetadataReportRepository", second._repository)
+        assert _settled(borrower)
+        _assert_exact(borrower, ledger)
     finally:
         close_second()
 
@@ -600,7 +602,7 @@ def test_shutdown_stops_the_projector_before_its_admission_closes(
     history, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
-    repository = history._repository
+    repository = cast("SQLiteMetadataReportRepository", history._repository)
     activity = repository._field_effect_activity
     assert _settled(repository)
     step = activity._activity_fact_step
@@ -617,6 +619,7 @@ def test_shutdown_stops_the_projector_before_its_admission_closes(
     ledger.commit()
     assert entered.wait(10)
     admission = repository.operation_admission
+    assert admission is not None
     closing = threading.Thread(target=close)
     closing.start()
     time.sleep(0.1)
