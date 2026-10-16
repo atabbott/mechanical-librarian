@@ -62,11 +62,13 @@ _COMMANDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("--backup", "/backup.sqlite3"),
         ("--output", "/current.sqlite3"),
     ),
+    "schema-adopt": (("--database", "/state.sqlite3"), ("--backup", "/backup.sqlite3")),
 }
 
 _POSITIONALS: dict[str, tuple[str, ...]] = {
     "cover-review": ("show",),
     "qualification-state-bridge": ("retained-library-v26-to-v32",),
+    "schema-adopt": ("review-attention-facts-v1",),
 }
 
 # What each runner must receive for a complete invocation, including the two
@@ -105,6 +107,11 @@ _DELEGATED: dict[str, tuple[object, ...]] = {
         Path("/backup.sqlite3"),
         Path("/current.sqlite3"),
         "retained-library-v26-to-v32",
+    ),
+    "schema-adopt": (
+        Path("/state.sqlite3"),
+        Path("/backup.sqlite3"),
+        "review-attention-facts-v1",
     ),
 }
 
@@ -154,6 +161,7 @@ def _invoke(argv: list[str], calls: list[tuple[str, tuple[object, ...]]], errors
         review_activity_runner=record("review-activity"),
         provider_recovery_runner=record("provider-recovery"),
         qualification_state_bridge_runner=record("qualification-state-bridge"),
+        schema_adoption_runner=record("schema-adopt"),
         stdout=io.StringIO(),
         stderr=errors,
     )

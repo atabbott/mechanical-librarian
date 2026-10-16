@@ -340,7 +340,7 @@ def test_the_shipped_sqlite_cohort_is_every_plan_asserting_file() -> None:
 
     root = Path(__file__).resolve().parents[2]
     asserting = _plan_or_budget_files(root)
-    assert len(asserting) == 6
+    assert len(asserting) == 7
     targets = cohort_targets(root, "shipped-sqlite")
     assert sorted(Path(target) for target in targets) == asserting
     members = set(collect_cohort(root, "shipped-sqlite"))

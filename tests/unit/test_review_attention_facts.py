@@ -147,8 +147,9 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
     run = connection.execute
     saved: dict[str, tuple] = {}
 
-    def save(name: str, sql: str, *parameters: object) -> None:
+    def save(name: str, sql: str, *parameters: object) -> tuple:
         saved[name] = _one(connection, sql, *parameters)
+        return saved[name]
 
     title = _attentive(connection, "title")
     yield (
@@ -325,19 +326,21 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         ),
     )
     quiet = _quiet(connection, "isbn")
+
+    def pause() -> None:
+        _shadow_outcome(repository, quiet, (("isbn", "applied", "automatic"),))
+        run(
+            "UPDATE automatic_safety_state SET paused=1,global_suspension=NULL,"
+            "category_suspensions_document='[]'"
+        )
+
     yield (
         "safety pauses an applied field",
         (
             ("shadow_outcome_field_facts", "insert"),
             ("automatic_safety_state", "update"),
         ),
-        lambda: (
-            _shadow_outcome(repository, quiet, (("isbn", "applied", "automatic"),)),
-            run(
-                "UPDATE automatic_safety_state SET paused=1,global_suspension=NULL,"
-                "category_suspensions_document='[]'"
-            ),
-        ),
+        pause,
     )
     yield (
         "safety reset",

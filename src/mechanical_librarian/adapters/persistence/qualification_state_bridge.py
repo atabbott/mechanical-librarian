@@ -28,9 +28,16 @@ from mechanical_librarian.adapters.persistence.binding import (
     _validate_connection_binding,
     _validate_delete_mode_header,
 )
+from mechanical_librarian.adapters.persistence.offline_backup import (
+    _copy_verified_backup,
+    _descriptor_digest,
+    _expected_schema_objects_digest,
+    _require_backup_current,
+    _require_source_current,
+    _schema_objects_digest,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
-    _expected_schema_objects,
     _register_casefold,
     _validate_schema,
 )
@@ -57,7 +64,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_identifier_evidence,
 )
 
-_CHUNK_BYTES = 1024 * 1024
+_SUBJECT = "qualification-state"
 _SOURCE_SCHEMA_OBJECTS_SHA256 = (
     "e6323cdec1412ab7158ffcde612a927d2ca5e859e7de412041a19af0d6ab1fd1"
 )
@@ -131,183 +138,6 @@ def _strings(value: object) -> tuple[str, ...]:
     if any(type(item) is not str for item in values):
         raise MetadataReportError("qualification-state source is incompatible")
     return cast("tuple[str, ...]", tuple(values))
-
-
-def _schema_objects_digest(connection: sqlite3.Connection) -> str:
-    observed = connection.execute(
-        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-    ).fetchall()
-    return hashlib.sha256(
-        json.dumps(observed, ensure_ascii=True, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
-def _expected_schema_objects_digest() -> str:
-    return hashlib.sha256(
-        json.dumps(
-            _expected_schema_objects(), ensure_ascii=True, separators=(",", ":")
-        ).encode()
-    ).hexdigest()
-
-
-def _descriptor_digest(descriptor: int) -> str:
-    digest = hashlib.sha256()
-    offset = 0
-    while True:
-        block = os.pread(descriptor, _CHUNK_BYTES, offset)
-        if not block:
-            return digest.hexdigest()
-        digest.update(block)
-        offset += len(block)
-
-
-def _copy_verified_backup(
-    source_descriptor: int,
-    parent_descriptor: int,
-    backup_name: str,
-) -> tuple[tuple[int, int], str]:
-    flags = (
-        os.O_RDWR
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-    )
-    backup_descriptor = -1
-    created_identity: tuple[int, int] | None = None
-    succeeded = False
-    try:
-        backup_descriptor = os.open(backup_name, flags, 0o600, dir_fd=parent_descriptor)
-        information = os.fstat(backup_descriptor)
-        created_identity = (information.st_dev, information.st_ino)
-        if (
-            not stat.S_ISREG(information.st_mode)
-            or information.st_uid != os.geteuid()
-            or information.st_mode & 0o077
-        ):
-            raise MetadataReportError("qualification-state backup is unavailable")
-        offset = 0
-        while True:
-            block = os.pread(source_descriptor, _CHUNK_BYTES, offset)
-            if not block:
-                break
-            view = memoryview(block)
-            while view:
-                written = os.write(backup_descriptor, view)
-                if written <= 0:
-                    raise OSError("backup write made no progress")
-                view = view[written:]
-            offset += len(block)
-        os.fsync(backup_descriptor)
-        source_digest = _descriptor_digest(source_descriptor)
-        if source_digest != _descriptor_digest(backup_descriptor):
-            raise MetadataReportError("qualification-state backup is unavailable")
-        os.fsync(parent_descriptor)
-        succeeded = True
-        return created_identity, source_digest
-    except FileExistsError as error:
-        raise MetadataReportError(
-            "qualification-state backup already exists"
-        ) from error
-    except MetadataReportError:
-        raise
-    except OSError as error:
-        raise MetadataReportError(
-            "qualification-state backup is unavailable"
-        ) from error
-    finally:
-        cleanup_failure: BaseException | None = None
-        if backup_descriptor >= 0:
-            try:
-                os.close(backup_descriptor)
-            except OSError as error:
-                cleanup_failure = error
-        if created_identity is not None and not succeeded:
-            try:
-                information = os.stat(
-                    backup_name, dir_fd=parent_descriptor, follow_symlinks=False
-                )
-                if (information.st_dev, information.st_ino) != created_identity:
-                    raise MetadataReportError(
-                        "qualification-state backup identity changed"
-                    )
-                os.unlink(backup_name, dir_fd=parent_descriptor)
-                os.fsync(parent_descriptor)
-            except (MetadataReportError, OSError) as error:
-                cleanup_failure = cleanup_failure or error
-        if cleanup_failure is not None:
-            raise QualificationStateBridgeRecoveryRequired from cleanup_failure
-
-
-def _require_backup_current(
-    parent_descriptor: int,
-    backup_name: str,
-    expected_digest: str,
-    expected_identity: tuple[int, int] | None = None,
-) -> tuple[int, int]:
-    descriptor = -1
-    try:
-        descriptor = os.open(
-            backup_name,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-            dir_fd=parent_descriptor,
-        )
-        information = os.fstat(descriptor)
-        observed_identity = (information.st_dev, information.st_ino)
-        if (
-            not stat.S_ISREG(information.st_mode)
-            or information.st_uid != os.geteuid()
-            or information.st_mode & 0o077
-            or _descriptor_digest(descriptor) != expected_digest
-            or (
-                expected_identity is not None and observed_identity != expected_identity
-            )
-        ):
-            raise MetadataReportError("qualification-state backup identity changed")
-        return observed_identity
-    except OSError as error:
-        raise MetadataReportError(
-            "qualification-state backup identity changed"
-        ) from error
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-
-
-def _require_source_current(
-    database: Path,
-    source_identity: tuple[int, int],
-    parent_descriptor: int,
-    binding: _LinuxDatabaseBinding | None,
-) -> None:
-    if binding is not None:
-        binding.require_current()
-        return
-    current_parent = -1
-    try:
-        current_parent = os.open(
-            database.parent,
-            os.O_RDONLY
-            | os.O_DIRECTORY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
-        )
-        expected_parent = os.fstat(parent_descriptor)
-        observed_parent = os.fstat(current_parent)
-        if (observed_parent.st_dev, observed_parent.st_ino) != (
-            expected_parent.st_dev,
-            expected_parent.st_ino,
-        ):
-            raise MetadataReportError("qualification-state source pathname changed")
-        _require_named_identity(current_parent, database.name, source_identity)
-        _reject_database_sidecars(database)
-    except OSError as error:
-        raise MetadataReportError(
-            "qualification-state source pathname changed"
-        ) from error
-    finally:
-        if current_parent >= 0:
-            os.close(current_parent)
 
 
 def _connect_read_only(
@@ -932,12 +762,14 @@ def bridge_qualification_state(
         source_connection.execute("BEGIN")
         bridge_data = _load_bridge_data(source_connection)
         source_digest = _descriptor_digest(bound_descriptor)
-        _require_source_current(database, source_identity, parent_descriptor, binding)
+        _require_source_current(
+            database, source_identity, parent_descriptor, binding, subject=_SUBJECT
+        )
 
         backup_exists = os.path.lexists(backup)
         if backup_exists:
             backup_identity = _require_backup_current(
-                parent_descriptor, backup.name, source_digest
+                parent_descriptor, backup.name, source_digest, subject=_SUBJECT
             )
         if os.path.lexists(output):
             if not backup_exists:
@@ -957,10 +789,14 @@ def bridge_qualification_state(
             if backup_identity is None:
                 raise QualificationStateBridgeRecoveryRequired
             _require_backup_current(
-                parent_descriptor, backup.name, source_digest, backup_identity
+                parent_descriptor,
+                backup.name,
+                source_digest,
+                backup_identity,
+                subject=_SUBJECT,
             )
             _require_source_current(
-                database, source_identity, parent_descriptor, binding
+                database, source_identity, parent_descriptor, binding, subject=_SUBJECT
             )
             _require_named_identity(parent_descriptor, output.name, output_identity)
             return {
@@ -981,10 +817,14 @@ def bridge_qualification_state(
             if backup_identity is None:
                 raise QualificationStateBridgeRecoveryRequired
             _require_backup_current(
-                parent_descriptor, backup.name, source_digest, backup_identity
+                parent_descriptor,
+                backup.name,
+                source_digest,
+                backup_identity,
+                subject=_SUBJECT,
             )
             _require_source_current(
-                database, source_identity, parent_descriptor, binding
+                database, source_identity, parent_descriptor, binding, subject=_SUBJECT
             )
             _require_named_identity(parent_descriptor, output.name, temp_identity)
             return {
@@ -995,14 +835,24 @@ def bridge_qualification_state(
             }
         if not backup_exists:
             backup_identity, _ = _copy_verified_backup(
-                bound_descriptor, parent_descriptor, backup.name
+                bound_descriptor,
+                parent_descriptor,
+                backup.name,
+                subject=_SUBJECT,
+                recovery=QualificationStateBridgeRecoveryRequired,
             )
         if backup_identity is None:
             raise MetadataReportError("qualification-state backup identity changed")
         _require_backup_current(
-            parent_descriptor, backup.name, source_digest, backup_identity
+            parent_descriptor,
+            backup.name,
+            source_digest,
+            backup_identity,
+            subject=_SUBJECT,
         )
-        _require_source_current(database, source_identity, parent_descriptor, binding)
+        _require_source_current(
+            database, source_identity, parent_descriptor, binding, subject=_SUBJECT
+        )
 
         output_descriptor = os.open(
             temp.name,
@@ -1034,9 +884,15 @@ def bridge_qualification_state(
         os.fsync(parent_descriptor)
         _validate_output(temp, bridge_data)
         _require_backup_current(
-            parent_descriptor, backup.name, source_digest, backup_identity
+            parent_descriptor,
+            backup.name,
+            source_digest,
+            backup_identity,
+            subject=_SUBJECT,
         )
-        _require_source_current(database, source_identity, parent_descriptor, binding)
+        _require_source_current(
+            database, source_identity, parent_descriptor, binding, subject=_SUBJECT
+        )
         published = True
         _publish_temp(parent_descriptor, temp.name, output.name, output_identity)
         temp_created = False
@@ -1044,9 +900,15 @@ def bridge_qualification_state(
         if validated_output_identity != output_identity:
             raise QualificationStateBridgeRecoveryRequired
         _require_backup_current(
-            parent_descriptor, backup.name, source_digest, backup_identity
+            parent_descriptor,
+            backup.name,
+            source_digest,
+            backup_identity,
+            subject=_SUBJECT,
         )
-        _require_source_current(database, source_identity, parent_descriptor, binding)
+        _require_source_current(
+            database, source_identity, parent_descriptor, binding, subject=_SUBJECT
+        )
         _require_named_identity(parent_descriptor, output.name, output_identity)
         return {
             "plan": plan,

@@ -16,6 +16,10 @@ from mechanical_librarian.application.qualification_state_bridge import (
     QUALIFICATION_STATE_BRIDGE_PLANS,
     QualificationStateBridgeRecoveryRequired,
 )
+from mechanical_librarian.application.schema_adoption import (
+    SCHEMA_ADOPTION_PLANS,
+    SchemaAdoptionRecoveryRequired,
+)
 from mechanical_librarian.domain.human_decision import validate_cover_confirmation
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
@@ -28,6 +32,7 @@ CoverReviewRunner = Callable[
 ReviewActivityRunner = Callable[[Path, Path], dict[str, object]]
 ProviderRecoveryRunner = Callable[[Path, Path, Path, Path], None]
 QualificationStateBridgeRunner = Callable[[Path, Path, Path, str], dict[str, str | int]]
+SchemaAdoptionRunner = Callable[[Path, Path, str], dict[str, str]]
 _MAX_PROFILE_BYTES = 16_384
 
 
@@ -128,6 +133,12 @@ def _parser() -> _Parser:
     bridge.add_argument("--database", required=True, metavar="PATH", type=Path)
     bridge.add_argument("--backup", required=True, metavar="PATH", type=Path)
     bridge.add_argument("--output", required=True, metavar="PATH", type=Path)
+    adoption = commands.add_parser(
+        "schema-adopt", help="adopt one exact predecessor schema while offline"
+    )
+    adoption.add_argument("plan", choices=SCHEMA_ADOPTION_PLANS, metavar="PLAN")
+    adoption.add_argument("--database", required=True, metavar="PATH", type=Path)
+    adoption.add_argument("--backup", required=True, metavar="PATH", type=Path)
     return parser
 
 
@@ -140,6 +151,7 @@ def main(
     review_activity_runner: ReviewActivityRunner | None = None,
     provider_recovery_runner: ProviderRecoveryRunner | None = None,
     qualification_state_bridge_runner: QualificationStateBridgeRunner | None = None,
+    schema_adoption_runner: SchemaAdoptionRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -152,6 +164,17 @@ def main(
         errors.write("Review server failed: invalid invocation.\n")
         return 2
     try:
+        if arguments.command == "schema-adopt":
+            if schema_adoption_runner is None:
+                raise RuntimeError("runtime composition unavailable")
+            adoption_result = schema_adoption_runner(
+                arguments.database, arguments.backup, arguments.plan
+            )
+            output.write(
+                json.dumps(adoption_result, sort_keys=True, separators=(",", ":"))
+                + "\n"
+            )
+            return 0
         if arguments.command == "qualification-state-bridge":
             if qualification_state_bridge_runner is None:
                 raise RuntimeError("runtime composition unavailable")
@@ -273,14 +296,18 @@ def main(
     except QualificationStateBridgeRecoveryRequired:
         errors.write("Qualification-state bridge requires recovery.\n")
         return 1
+    except SchemaAdoptionRecoveryRequired:
+        errors.write("Schema adoption requires backup recovery.\n")
+        return 1
     except ConfigurationError:
         errors.write("Review server failed: configuration unavailable.\n")
         return 3
     except Exception:
         errors.write(
-            "Qualification-state bridge failed safely.\n"
-            if arguments.command == "qualification-state-bridge"
-            else "Review server failed safely.\n"
+            {
+                "qualification-state-bridge": "Qualification-state bridge failed safely.\n",
+                "schema-adopt": "Schema adoption failed safely.\n",
+            }.get(arguments.command, "Review server failed safely.\n")
         )
         return 1
     return 0
