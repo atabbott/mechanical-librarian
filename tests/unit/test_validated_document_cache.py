@@ -45,7 +45,7 @@ _REUSE: dict[str, DocumentReuse[Any]] = {
     reuse.kind: reuse
     for reuse in (REVIEW_CASE_REUSE, BROWSE_FACTS_REUSE, BROWSE_SCOPE_REUSE)
 }
-# Retained bytes per entry are about 12 KB for a case and 23 KB for a pair.
+# Key documents are about 12 KB for a case and 23 KB for a case and report pair.
 _BOUNDS: dict[str, Callable[[], ValidatedDocumentCache]] = {
     "default": ValidatedDocumentCache,
     "one entry": lambda: ValidatedDocumentCache(1),
