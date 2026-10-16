@@ -293,3 +293,45 @@ def test_a_transient_refusal_is_read_again_at_the_same_stamp(
     reader.executed.clear()
     assert reader.answers() == expected
     assert reader.executed == ["counts", "example"]
+
+
+@pytest.mark.parametrize("unavailable", ["before", "after", "both"])
+def test_an_unavailable_stamp_is_never_stored_or_served(
+    pair: tuple[sqlite3.Connection, list[str], _Traced, _Traced],
+    monkeypatch: pytest.MonkeyPatch,
+    unavailable: str,
+) -> None:
+    """A read whose identity cannot be sampled before, after or at all runs."""
+    writer, pending, reader, canonical = pair
+    activity = reader.repository._field_effect_activity
+    identity = activity._activity_database_identity
+    started = [0]
+
+    def sample() -> tuple[int, int, int, int]:
+        # A sample taken once this read's statement has run is the one after.
+        after = len(reader.executed) > started[0]
+        if unavailable == "both" or (unavailable == "after") == after:
+            raise FieldEffectError("persistence")
+        return identity()
+
+    monkeypatch.setattr(activity, "_activity_database_identity", sample)
+    answers: list[dict[str, object]] = []
+    for commit in (False, False, True, False):
+        if commit:
+            _effect(writer, "own", pending[0], json.dumps({"plan": {}}))
+            writer.commit()
+        reader.executed.clear()
+        answer: dict[str, object] = {}
+        for name, call in (
+            ("counts", reader.repository.pending_field_effect_decision_counts),
+            (
+                "example",
+                reader.repository.pending_field_effect_activity_example_document,
+            ),
+        ):
+            started[0] = len(reader.executed)
+            answer[name] = call()
+        assert answer == canonical.answers()
+        assert reader.executed == ["counts", "example"]
+        answers.append(answer)
+    assert answers[0] == answers[1] != answers[2] == answers[3]
