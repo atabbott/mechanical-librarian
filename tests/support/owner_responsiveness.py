@@ -84,10 +84,15 @@ class OwnerResponsivenessFixture:
         self.root = root
         self.database = root / "reports.sqlite"
         self.activity_facts = ActivityFactStore()
+        # As a store root does, Activity receives what validation parsed.
+        self.startup_reports: dict[str, MetadataReport] = {}
         self._close_external_actors: Callable[[], None] | None = None
         with ExitStack() as activation:
             self.repository = open_repository(
-                self.database, cross_thread=True, admission=OperationAdmission()
+                self.database,
+                cross_thread=True,
+                admission=OperationAdmission(),
+                validated_reports=self.startup_reports,
             )
             activation.callback(self.repository.close)
             self.recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
@@ -253,6 +258,7 @@ class OwnerResponsivenessFixture:
                     self.repository.authority,
                     self.recovery,
                     self.activity_facts,
+                    self.startup_reports,
                 )
             )
             activation.callback(close_activity)

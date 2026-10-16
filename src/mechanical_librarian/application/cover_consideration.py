@@ -166,6 +166,7 @@ def _cover_incumbent(
 
 def _validated_cover_consideration(
     document: str,
+    parse_report: Callable[[str], MetadataReport] | None = None,
 ) -> tuple[dict[str, object], MetadataReport]:
     """Read one canonical v4 consideration and its bound report."""
     value = _load_object(document, "cover consideration")
@@ -266,7 +267,7 @@ def _validated_cover_consideration(
         + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
     ):
         raise ValueError("cover consideration identity is invalid")
-    report = MetadataReport.from_json(report_document)
+    report = (parse_report or MetadataReport.from_json)(report_document)
     if report.report_id != report_id or report.target.fingerprint != value.get(
         "target_fingerprint"
     ):
@@ -430,14 +431,17 @@ _UNNAMED_COVER_EVIDENCE_STATEMENT: Final = (
 )
 
 
-def cover_consideration_currentness_document(document: str) -> str:
+def cover_consideration_currentness_document(
+    document: str,
+    parse_report: Callable[[str], MetadataReport] | None = None,
+) -> str:
     """Derive immutable collection facts through the complete producer validator.
 
     An inactive projection is canonical even for earlier or malformed producers;
     it grants no collection authority. Detail and effects still read full evidence.
     """
     try:
-        value, report = _validated_cover_consideration(document)
+        value, report = _validated_cover_consideration(document, parse_report)
         replay = value.get("replay_reference")
         fetching = value.get("provider_fetching")
         if (

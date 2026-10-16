@@ -430,6 +430,7 @@ class _StoreRuntimeActivation:
         settings_store: Any,
         repository_authority: object,
         operation_admission: OperationAdmission,
+        startup_reports: dict[str, MetadataReport] | None = None,
     ) -> None:
         self._operation_admission = operation_admission
         self._bootstrap = bootstrap
@@ -442,6 +443,9 @@ class _StoreRuntimeActivation:
         self._lock = threading.RLock()
         self._codex_auth = _CodexAuthLeaseCoordinator()
         self.activity_facts = ActivityFactStore()
+        # Reports root validation parsed, held until Activity's first complete
+        # projection uses them (#1231).
+        self.startup_reports = {} if startup_reports is None else startup_reports
         # Validated browse documents outlive Settings cutovers (#1226).
         self.validated_documents = ValidatedDocumentCache()
 
@@ -785,8 +789,14 @@ def open_field_effect_activity_projection(
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     facts: ActivityFactStore | None = None,
+    readiness_window: threading.Lock | None = None,
+    startup_reports: dict[str, MetadataReport] | None = None,
 ) -> tuple[ContinuousGuardedApplication, Callable[[], None]]:
-    """Open a generation-owned, independently admitted Activity reader."""
+    """Open a generation-owned, independently admitted Activity reader.
+
+    A reader given ``facts`` keeps them caught up on a background thread,
+    stopped and joined before its admission closes (#1231).
+    """
     admission = OperationAdmission()
     try:
         repository = open_repository(
@@ -800,14 +810,27 @@ def open_field_effect_activity_projection(
         admission.close()
         raise
 
+    stop = threading.Event()
+    projector = threading.Thread(
+        target=repository.run_activity_fact_projector,
+        args=(stop,),
+        name="activity-fact-projector",
+        daemon=True,
+    )
+
     def close() -> None:
+        stop.set()
+        if projector.ident is not None:
+            projector.join()
         admission.close()
         repository.close()
 
     try:
-        repository.configure_activity_page_reader(facts)
+        repository.configure_activity_page_reader(
+            facts, readiness_window=readiness_window, startup_reports=startup_reports
+        )
         if facts is not None:
-            repository.initialize_activity_facts()
+            projector.start()
         return (
             compose_field_effect_activity_projection(
                 configuration, repository, provider_recovery
@@ -825,10 +848,14 @@ def open_field_effect_activity_readers(
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     facts: ActivityFactStore | None = None,
+    startup_reports: dict[str, MetadataReport] | None = None,
 ) -> tuple[
     ContinuousGuardedApplication, ContinuousGuardedApplication, Callable[[], None]
 ]:
     """Own both independent readers as one generation resource, including failure."""
+    # Readiness holds this from its fresh check to its snapshot, and the
+    # history reader's background steps wait outside it (#1231).
+    window = threading.Lock()
     with ExitStack() as activation:
         history, close_history = open_field_effect_activity_projection(
             configuration,
@@ -836,10 +863,12 @@ def open_field_effect_activity_readers(
             authority,
             provider_recovery,
             facts if facts is not None else ActivityFactStore(),
+            window,
+            startup_reports,
         )
         activation.callback(close_history)
         permissions, close_permissions = open_field_effect_activity_projection(
-            configuration, database_path, authority
+            configuration, database_path, authority, readiness_window=window
         )
         activation.callback(close_permissions)
         return history, permissions, activation.pop_all().close
@@ -3432,6 +3461,7 @@ def compose_store_runtime_generation(
                     repository.authority,
                     provider_recovery,
                     activation.activity_facts if activation is not None else None,
+                    activation.startup_reports if activation is not None else None,
                 )
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
@@ -3740,12 +3770,19 @@ def run_review_server(
         if authority == "store":
             assert bootstrap is not None
             operation_admission = OperationAdmission()
+            startup_reports: dict[str, MetadataReport] | None = (
+                None
+                if first_boot_mode
+                in {FirstBootMode.INITIALIZE_SETUP, FirstBootMode.RESUME_SETUP}
+                else {}
+            )
             control = open_repository(
                 database_path,
                 create=True,
                 cross_thread=True,
                 admission=operation_admission,
                 recover_stale_bindings=True,
+                validated_reports=startup_reports,
             )
             setup_session_store: SQLiteReviewSessionRepository | None = None
             try:
@@ -3773,6 +3810,7 @@ def run_review_server(
                         control.owner_settings_store(),
                         control.authority,
                         operation_admission=operation_admission,
+                        startup_reports=startup_reports,
                     )
                     runtime, _ = compose_store_runtime_generation(
                         bootstrap,

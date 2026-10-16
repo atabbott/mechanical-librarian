@@ -12,6 +12,7 @@ from _thread import RLock
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
+from threading import Event, Lock
 from typing import cast
 from urllib.parse import quote
 
@@ -954,10 +955,20 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def configure_activity_page_reader(
-        self, facts: ActivityFactStore | None = None
+        self,
+        facts: ActivityFactStore | None = None,
+        *,
+        readiness_window: Lock | None = None,
+        startup_reports: dict[str, MetadataReport] | None = None,
     ) -> None:
         """Bound the independently opened Activity projection reader only."""
-        self._field_effect_activity.configure_activity_page_reader(facts)
+        self._field_effect_activity.configure_activity_page_reader(
+            facts, readiness_window=readiness_window, startup_reports=startup_reports
+        )
+
+    def run_activity_fact_projector(self, stop: Event) -> None:
+        """Keep Activity facts caught up off the request path until ``stop``."""
+        self._field_effect_activity.run_activity_fact_projector(stop)
 
     def initialize_activity_facts(self) -> None:
         """Admit initial readable history before this reader becomes ready."""
@@ -2596,6 +2607,7 @@ def open_repository(
     authority: object | None = None,
     admission: OperationAdmission | None = None,
     recover_stale_bindings: bool = False,
+    validated_reports: dict[str, MetadataReport] | None = None,
 ) -> SQLiteMetadataReportRepository:
     if type(recover_stale_bindings) is not bool or (
         recover_stale_bindings and authority is not None
@@ -2645,12 +2657,14 @@ def open_repository(
                 descriptor = -1
                 schema_validated = binding.borrows_schema_validation()
                 if not schema_validated:
-                    _validate_existing_read_only(binding.alias_path, binding.descriptor)
+                    _validate_existing_read_only(
+                        binding.alias_path, binding.descriptor, validated_reports
+                    )
                     schema_validated = True
                 binding.require_current()
             elif authority is None:
                 _reject_database_sidecars(path)
-                _validate_existing_read_only(path, descriptor)
+                _validate_existing_read_only(path, descriptor, validated_reports)
                 _reject_database_sidecars(path)
                 schema_validated = True
             else:

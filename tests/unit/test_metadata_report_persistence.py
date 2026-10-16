@@ -1769,9 +1769,11 @@ def test_schema_validation_reads_one_transaction_snapshot() -> None:
         validate = persistence_schema._validate_schema
         transactions: list[bool] = []
 
-        def record(connection: sqlite3.Connection) -> None:
+        def record(
+            connection: sqlite3.Connection, *reports: dict[str, MetadataReport] | None
+        ) -> None:
             transactions.append(connection.in_transaction)
-            validate(connection)
+            validate(connection, *reports)
 
         with patch.object(persistence_schema, "_validate_schema", record):
             reopened = open_repository(path, create=False)

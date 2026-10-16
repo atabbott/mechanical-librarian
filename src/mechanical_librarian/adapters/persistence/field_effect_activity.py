@@ -44,12 +44,11 @@ import stat
 import time
 from collections import deque
 from collections.abc import Callable
-from contextlib import closing
+from contextlib import closing, nullcontext
 from copy import deepcopy
 from dataclasses import replace
-from functools import lru_cache
 from pathlib import Path
-from threading import RLock
+from threading import Event, Lock, RLock
 from typing import Any, Literal, TypeVar, cast
 
 from mechanical_librarian.adapters.persistence.activity_facts import (
@@ -81,8 +80,15 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.operation_admission import AdmissionClosedError
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
+)
+from mechanical_librarian.application.review_web import (
+    REVIEW_CASE_REUSE,
+    DocumentReuse,
+    ValidatedDocumentCache,
+    _reused_or_parsed,
 )
 from mechanical_librarian.domain.activity_records import (
     ReadableActivityEvent,
@@ -161,12 +167,29 @@ _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 _ACTIVITY_CATCH_UP_ATTEMPTS = 3
 # Bounded steps stop once this many in a row leave no fewer candidates pending.
 _ACTIVITY_CATCH_UP_STALLS = 4
+# A background projector takes bounded steps this far apart while candidates
+# are pending, leaving a waiting request the cache lock between them, and
+# otherwise looks for a changed revision at most this often (#1231).
+_ACTIVITY_PROJECTOR_GAP_SECONDS = 0.02
+_ACTIVITY_PROJECTOR_POLL_SECONDS = 1.0
 # Oversized pages are still served, but the two-entry cache together retains no
 # more serialized report text than one maximum-size report document.
 _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
 _ActivityRead = TypeVar("_ActivityRead")
 _ActivityDatabaseIdentity = tuple[int, int, int, int]
 _ActivityStamp = tuple[tuple[int, int], _ActivityDatabaseIdentity]
+_Validated = TypeVar("_Validated")
+# These typed documents are deeply immutable, so they are retained and handed
+# out as they are, like a ReviewCase.
+_REPORT_REUSE = DocumentReuse[MetadataReport](
+    "metadata_report", lambda value: value, lambda value: value
+)
+_PROPOSAL_REUSE = DocumentReuse[ProposalSet](
+    "proposal_set", lambda value: value, lambda value: value
+)
+_OUTCOME_REUSE = DocumentReuse[ShadowOutcomeSet](
+    "shadow_outcome_set", lambda value: value, lambda value: value
+)
 
 # A decision retained from before audiobook writes existed is history, not
 # pending work: it must not be offered for consent, counted as prepared, or
@@ -398,12 +421,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # A configured reader's pending counts and readiness example, each with
         # the revision and file identity it was read at (#1223).
         self._pending_reads: dict[str, tuple[_ActivityStamp, object]] | None = None
-        self._reused_report: Callable[[tuple[object, ...]], MetadataReport] | None = (
-            None
-        )
+        # A configured reader reuses exactly validated documents (#1231).
+        self._reused_report: Callable[[str], MetadataReport] | None = None
         self._reused_case: Callable[[str], ReviewCase] | None = None
         self._reused_proposal: Callable[[str], ProposalSet] | None = None
         self._reused_outcome: Callable[[str], ShadowOutcomeSet] | None = None
+        # Held by readiness from its fresh check to its snapshot; a background
+        # projector takes no step inside it (#1231).
+        self._readiness_window = Lock()
+        self._startup_reports: dict[str, MetadataReport] = {}
 
     @property
     def _current_cover_policy_reference(self) -> str | None:
@@ -1649,8 +1675,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
                 ):
                     raise MetadataReportError("persisted report is invalid")
-                reports[report_row[0]] = (self._reused_report or _validated_report_row)(
-                    report_row
+                reports[report_row[0]] = _validated_report_row(
+                    report_row, self._reused_report
                 )
                 report_documents[report_row[0]] = report_row[8]
         except MetadataReportError as error:
@@ -2326,7 +2352,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             (self._reused_proposal or ProposalSet.from_json)(
                                 cover_rows[1]
                             ),
-                            expand_cover_consideration(*cover_rows[2:]),
+                            expand_cover_consideration(
+                                *cover_rows[2:], parse_report=self._reused_report
+                            ),
                         )
                     else:
                         authority = automatic_authority.get(
@@ -2482,9 +2510,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
 
     def configure_activity_page_reader(
-        self, facts: ActivityFactStore | None = None
+        self,
+        facts: ActivityFactStore | None = None,
+        *,
+        readiness_window: Lock | None = None,
+        startup_reports: dict[str, MetadataReport] | None = None,
     ) -> None:
-        """Constrain the independent reader to queries and bounded busy waits."""
+        """Constrain the independent reader to queries and bounded busy waits.
+
+        ``readiness_window`` is shared with the generation's permission reader.
+        ``startup_reports`` holds what root schema validation parsed, keyed by
+        verified digest, until this reader's facts are first complete (#1231).
+        """
 
         try:
             self._connection.execute(
@@ -2501,6 +2538,36 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "PRAGMA schema_version"
         ).fetchone()[0]
         self._pending_reads = {}
+        if readiness_window is not None:
+            self._readiness_window = readiness_window
+        startup = self._startup_reports = (
+            {} if startup_reports is None else startup_reports
+        )
+        # ADR-0083's exact-document reuse, owned by this reader so a catch-up
+        # never evicts what browse retained. A refusal is never retained.
+        documents = ValidatedDocumentCache()
+
+        def reused(
+            reuse: DocumentReuse[_Validated], parse: Callable[[str], _Validated]
+        ) -> Callable[[str], _Validated]:
+            return lambda document: _reused_or_parsed(
+                documents, reuse, lambda: parse(document), document
+            )
+
+        def report(document: str) -> MetadataReport:
+            # Keyed by digest, a validated report is reused only for the exact
+            # canonical bytes it serializes to.
+            known = startup and startup.get(
+                hashlib.sha256(document.encode("utf-8", "surrogatepass")).hexdigest()
+            )
+            if known and known.to_json() == document:
+                return known
+            return MetadataReport.from_json(document)
+
+        self._reused_report = reused(_REPORT_REUSE, report)
+        self._reused_case = reused(REVIEW_CASE_REUSE, ReviewCase.from_json)
+        self._reused_proposal = reused(_PROPOSAL_REUSE, ProposalSet.from_json)
+        self._reused_outcome = reused(_OUTCOME_REUSE, ShadowOutcomeSet.from_json)
 
     @staticmethod
     def _retryable_activity_page_busy(error: FieldEffectError) -> bool:
@@ -2529,7 +2596,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, call: Callable[[bool | None], dict[str, object]]
     ) -> dict[str, object]:
         """Bind one fresh consistency check to the permission read's revision."""
-        with self._activity_page_cache_lock:
+        with self._readiness_window, self._activity_page_cache_lock:
             self._backup_ready_cache = None
             ready = self.field_effect_backup_ready(fresh=True)
             checked = self._backup_ready_cache
@@ -2541,7 +2608,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
 
             # Readiness reads no Activity facts, so no catch-up widens the
-            # window between the fresh check and this snapshot (#1225).
+            # window between the fresh check and this snapshot (#1225), and
+            # no background step runs inside it (#1231).
             return self._activity_snapshot(project)
 
     def field_effect_activity_snapshot(
@@ -2656,34 +2724,65 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
             )
 
+    def run_activity_fact_projector(self, stop: Event) -> None:
+        """Keep this reader's facts caught up off the request path (#1231).
+
+        It takes the bounded step a request would take, never inside the
+        readiness window, and leaves a waiting request the cache lock between
+        steps to finish any remainder itself. Its work is derived, in memory,
+        idempotent and query-only, so it is rebuilt rather than persisted.
+        """
+        admission = self._admission
+        try:
+            with (
+                nullcontext() if admission is None else admission.classify("background")
+            ):
+                while not stop.is_set():
+                    pause = _ACTIVITY_PROJECTOR_POLL_SECONDS
+                    try:
+                        with self._readiness_window, self._activity_page_cache_lock:
+                            store = self._activity_facts
+                            if store is None or stop.is_set():
+                                return
+                            head = store.snapshot()
+                            stamp = self._activity_fact_stamp
+                            if (
+                                head is None
+                                or head.pending
+                                or stamp is None
+                                or stamp[2] != head.version
+                                or stamp[0] != self._activity_projection_revision()
+                            ):
+                                self._activity_fact_step()
+                                head = store.snapshot()
+                        if head is not None and head.pending:
+                            pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
+                        elif head is not None:
+                            self._startup_reports.clear()
+                    except FieldEffectError:
+                        pass
+                    except AdmissionClosedError:
+                        return
+                    stop.wait(pause)
+        finally:
+            # Whatever startup handed over is released once projection ends.
+            self._startup_reports.clear()
+
     def _project_activity_facts(
         self, candidates: set[Candidate] | None, max_bytes: int
     ) -> dict[Candidate, ActivityFact]:
         facts: dict[Candidate, ActivityFact] = {}
-        # Bounded exact-document reuse exists only while this composition or
-        # reprojection runs (#1218). No domain object survives publication or is
-        # shared with another reader.
-        self._reused_report = lru_cache(maxsize=256)(_validated_report_row)
-        self._reused_case = lru_cache(maxsize=256)(ReviewCase.from_json)
-        self._reused_proposal = lru_cache(maxsize=256)(ProposalSet.from_json)
-        self._reused_outcome = lru_cache(maxsize=256)(ShadowOutcomeSet.from_json)
-        try:
-            self._field_effect_activity_page_uncached(
-                search="initialization",
-                event_type="all",
-                occurred_after=0,
-                page=1,
-                page_size=25,
-                _collect=facts,
-                _candidates=candidates,
-                _collect_max_bytes=max_bytes,
-            )
-            return facts
-        finally:
-            self._reused_report = None
-            self._reused_case = None
-            self._reused_proposal = None
-            self._reused_outcome = None
+        self._field_effect_activity_page_uncached(
+            search="initialization",
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+            _collect=facts,
+            _candidates=candidates,
+            _collect_max_bytes=max_bytes,
+        )
+        return facts
 
     @local_operation
     def _activity_fact_page(

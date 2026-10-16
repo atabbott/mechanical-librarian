@@ -8,17 +8,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport
 
 
-def compact_cover_consideration(document: str, report_document: str) -> str:
+def compact_cover_consideration(
+    document: str,
+    report_document: str,
+    parse_report: Callable[[str], MetadataReport] | None = None,
+) -> str:
     """Replace only an exact canonical report, inside the publication transaction."""
     try:
         value = json.loads(document)
-        report = MetadataReport.from_json(report_document)
+        report = (parse_report or MetadataReport.from_json)(report_document)
         if (
             type(value) is not dict
             or value.get("schema_version") != "cover-consideration-v4"
@@ -45,6 +50,8 @@ def expand_cover_consideration(
     report_document_digest: str,
     document_digest: str,
     report_id: str,
+    *,
+    parse_report: Callable[[str], MetadataReport] | None = None,
 ) -> str:
     """Refuse missing or mismatched joins; never turn corrupt evidence into absence."""
     try:
@@ -71,7 +78,8 @@ def expand_cover_consideration(
         value["report_document"] = report_document
         expanded = _canonical_json(value)
         if (
-            compact_cover_consideration(expanded, report_document) != document
+            compact_cover_consideration(expanded, report_document, parse_report)
+            != document
             or hashlib.sha256(expanded.encode("utf-8")).hexdigest() != document_digest
         ):
             raise ValueError
