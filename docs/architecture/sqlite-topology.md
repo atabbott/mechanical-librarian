@@ -641,7 +641,8 @@ fields ask for the owner, and one `INSTEAD OF INSERT` trigger,
 `review_attention_refresh_apply`, on the `review_attention_refresh` view. Each
 input trigger names the packages, and the field when its row has one, that the
 changed row can reach; the view's trigger re-derives exactly those
-`review_attention_facts` rows in the writer's statement. The report trigger folds with
+`review_attention_facts` rows in the writer's statement. An update trigger fires
+only when a column the facts read changes value. The report trigger folds with
 `ml_casefold`, so a connection that has not registered it cannot insert a
 report. Open-time validation compares the derived relations to their canonical
 JSON, so a partial write, manual alteration, or interrupted projection fails

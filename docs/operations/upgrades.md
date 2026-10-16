@@ -5,11 +5,14 @@ written by the exact predecessor, main 441e571f, is adopted offline rather than
 rebuilt. Stop the service, then run
 `mechanical-librarian schema-adopt review-attention-facts-v1 --database DB --backup BACKUP`,
 where `BACKUP` is an absent path in the database's private directory. It prints
-`{"plan": "review-attention-facts-v1", "status": "adopted"}`, or `already-current`
-for a database that already matches. "Schema adoption failed safely" leaves the
-database unchanged. "Schema adoption requires backup recovery" means the result
-could not be proved: with the service still stopped, replace the database with
-the backup. Any other earlier state needs a clean rebuild. See
+`{"plan":"review-attention-facts-v1","status":"adopted"}` on one line, or
+`{"plan":"review-attention-facts-v1","status":"already-current"}` for a database
+that already matches. "Schema adoption failed safely." leaves the database
+unchanged. "Schema adoption requires backup recovery." means the result could
+not be proved: with the service still stopped, replace the database with the
+backup. The restored backup has the predecessor schema, so this build will not
+start on it: run the adoption again with a new, absent backup path, or run the
+previous build. Any other earlier state needs a clean rebuild. See
 [ADR-0084](../architecture/decisions/0084-persisted-attention-facts.md).
 
 #1166 enables source-bound audiobook description/genre owner review without

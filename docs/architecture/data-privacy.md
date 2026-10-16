@@ -204,8 +204,8 @@ requests and disappears with its runtime owner; canonical retention is unchanged
 Browse also retains case and report documents, and facts derived from them, in
 process memory across requests under ADR-0083's bound; they are never persisted.
 The application database also holds `review_attention_facts` (#1232): for each
-current package and field that asks for the owner, the package's library and
-item keys, a report identifier and the field, and for a cover its consideration
+current package and field that asks for the owner, the package's connection
+name, library and item keys, a report identifier and the field, and for a cover its consideration
 identifier, policy reference and whether a refresh admits it. Every value is
 copied or derived from rows the database already retains, so it adds no new
 personal data and shares their backup and retention obligations. It is

@@ -1985,5 +1985,6 @@ input re-derive the reachable facts in the writer's own statement, so a fact can
 never be committed apart from its inputs; refusals and rollbacks take both
 together. The active cover policy and replay references and live cover
 currentness are not database writes, so each read still tests them per request
-over the stored facts. No writer uses `REPLACE`, which would skip a delete
-trigger. See [ADR-0084](decisions/0084-persisted-attention-facts.md).
+over the stored facts. Nothing in `src` or `scripts` writes with `REPLACE`, and
+no table declares a `REPLACE` conflict clause, either of which would skip a
+delete trigger. See [ADR-0084](decisions/0084-persisted-attention-facts.md).

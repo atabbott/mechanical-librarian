@@ -36,10 +36,13 @@ reduced to the stored part.
   names the packages, and the field when the row has one, that the changed row
   can reach. It inserts them into the view `review_attention_refresh`, whose one
   `INSTEAD OF` trigger deletes those facts and re-derives them from current
-  state. This runs in the writer's own statement and transaction. A re-recorded
-  suspension rewrites only its reason and time, so it refreshes nothing.
-  No application writer uses `REPLACE`, which would skip a delete trigger, and
-  a test holds that.
+  state. This runs in the writer's own statement and transaction. An update
+  fires only when a column the facts read changes value, so re-recording the
+  safety state's time, a suspension's reason or a package's checkpoint
+  refreshes nothing; a test derives those columns from the source statement.
+  Nothing in `src` or `scripts` writes with `REPLACE`, and no table declares a
+  `REPLACE` conflict clause, either of which would skip a delete trigger; a
+  test holds that.
 - **What stays per request.** The active cover policy reference and replay
   reference are bound per runtime generation, and `ml_cover_consideration_current`
   reads live cover currentness. Neither is written to the database when it
@@ -74,9 +77,22 @@ reduced to the stored part.
 
 ### Negative
 
-- Every input write pays to re-derive the facts it can reach. A field write
-  re-derives one package; a connection-wide suspension re-derives every package
-  on that connection.
+- Every input write pays to re-derive the facts it can reach. Measured on
+  SQLite 3.40.1 at 2,300 works and again after 8,000 owner decisions, as
+  medians of five over two rounds, against 2-7 ms for the same write before:
+  - An owner decision re-derives one field, at 14.6-19.4 ms a decision against
+    14.9-16.8 ms before; the difference is not resolvable.
+  - A connection-wide suspension or its clearing re-derives every package on
+    the connection: 90-107 ms.
+  - A cover suspension or its clearing re-derives every package's cover field:
+    71-92 ms.
+  - Pausing or resuming automatic safety re-derives every package with an
+    automatically decided field: 188-214 ms.
+  - A policy activation re-derives every package whose proposal it resolves; it
+    was not measured.
+
+  These are owner actions and failures, not per-request work. Re-recording a
+  suspension's reason or the safety state's time re-derives nothing: 6-10 ms.
 - The facts are one more derived relation that open validates.
 
 ### Neutral or deferred
