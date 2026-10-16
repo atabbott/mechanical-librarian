@@ -243,7 +243,10 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_pipeline_stages import (
     ReviewPipelineStages,
 )
-from mechanical_librarian.application.review_web import OwnerSessionService
+from mechanical_librarian.application.review_web import (
+    OwnerSessionService,
+    ValidatedDocumentCache,
+)
 from mechanical_librarian.application.reviewer_access import (
     CodexAuth,
     ReviewerAccessApplicationError,
@@ -438,6 +441,8 @@ class _StoreRuntimeActivation:
         self._lock = threading.RLock()
         self._codex_auth = _CodexAuthLeaseCoordinator()
         self.activity_facts = ActivityFactStore()
+        # Validated browse documents outlive Settings cutovers (#1226).
+        self.validated_documents = ValidatedDocumentCache()
 
     @property
     def dispatcher(self) -> MutableRuntimeDispatcher:
@@ -3465,6 +3470,9 @@ def compose_store_runtime_generation(
                 settings_activation=None if activation is None else activation.activate,
                 first_boot=first_boot,
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
+                validated_documents=(
+                    None if activation is None else activation.validated_documents
+                ),
             )
             review_app = create_review_app(review_application, review)
         except BaseException:

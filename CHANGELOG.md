@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Library, search, the attention lens and Attention answer faster on repeat
+  visits: each work's case and report are checked once per process and reused
+  while their stored bytes are unchanged, instead of on every request. Pages,
+  order, paging and refusals are unchanged, and the reuse is bounded (#1226).
+
 - Activity keeps up with each change at scale: a change re-reads only the
   history of the events it affects instead of all history for each one, and a
   large refresh parses each report once. Results and counts are unchanged;
