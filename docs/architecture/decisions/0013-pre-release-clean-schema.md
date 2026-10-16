@@ -102,7 +102,7 @@ re-derives current reports, invalidates provider observations that predate
 mandatory work-dispatch lineage, their dependent covers, and artifact-bearing
 cover references whose complete private store was not verified, and creates
 fresh report-only current state. The earlier `schema-adopt` plans remain
-retired.
+retired; #1232 below is the command's only plan.
 
 Issue #939 adds the bounded provider-evidence authority above after inventory
 proved that existing durable reports begin after provider parsing. Its sealed
@@ -118,3 +118,10 @@ sequence count, Settings-revision-bound deferred enrollments, and exact-cycle
 recovery high-water markers used for authoritative recent ordering, and supplies no
 migration, adoption, repair, or compatibility path. Absent state is created at
 bootstrap; any earlier application schema is rejected before mutation.
+
+Issue #1232 takes the adoption branch. Its `review-attention-facts-v1` plan
+adds only ADR-0084's derived attention facts, their maintenance triggers and
+three indexes to the exact 441e571f schema, derives every fact from existing
+rows through the same code that creates them for absent state, and proves every
+other table's rows unchanged. It runs only through the offline `schema-adopt`
+command, never at startup.

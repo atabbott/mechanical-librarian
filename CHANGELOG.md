@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library, search, the attention lens and Attention no longer re-check every
+  field on each request: which fields ask for the owner is kept current as each
+  write lands. Results, order and refusals are unchanged. Adopt a database from
+  the previous build offline with `schema-adopt review-attention-facts-v1`
+  instead of rebuilding it (#1232).
+
 - Opening Activity after a large batch of new history no longer makes
   preparation or owner writes fail with "database is locked": the catch-up now
   proceeds in short reads that let writes through. That first read takes
