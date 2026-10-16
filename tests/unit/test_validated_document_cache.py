@@ -14,8 +14,10 @@ import dataclasses
 import enum
 import json
 import threading
+from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -392,6 +394,102 @@ def test_threads_sharing_one_cache_keep_its_bound_and_its_values() -> None:
     for thread in threads:
         thread.join()
     assert failures == []
+    _check_bound(validated)
+
+
+class _Interleaved(OrderedDict[tuple[str, ...], tuple[object, int]]):
+    """Entries that run `between` once, just after the first call `at` returns."""
+
+    def __init__(
+        self,
+        entries: OrderedDict[tuple[str, ...], tuple[object, int]],
+        at: str,
+        between: Callable[[], None],
+    ) -> None:
+        self._at: str | None = at
+        self._between = between
+        super().__init__(entries)
+
+    def _then(self, name: str, result: Any) -> Any:
+        if self._at == name:
+            self._at = None
+            self._between()
+        return result
+
+    def get(self, *args: Any, **kwargs: Any) -> Any:
+        return self._then("get", super().get(*args, **kwargs))
+
+    def __contains__(self, key: object) -> bool:
+        return bool(self._then("contains", super().__contains__(key)))
+
+
+def _race(
+    validated: ValidatedDocumentCache,
+    at: str,
+    first: Callable[[], object],
+    second: Callable[[], object],
+) -> object:
+    """Run `first`, letting `second` loose on another thread at `at` inside it.
+
+    `first` resumes only once `second` has finished or has reached the cache's
+    lock, so without the lock `second` always lands inside `first`, and with it
+    never does. Nothing sleeps: events order the two threads exactly.
+    """
+    reached = threading.Event()
+    lock = validated._lock
+    failures: list[BaseException] = []
+
+    class Announcing:
+        def __enter__(self) -> None:
+            if threading.current_thread() is racer:
+                reached.set()
+            lock.acquire()
+
+        def __exit__(self, *exc_info: object) -> None:
+            lock.release()
+
+    def run_second() -> None:
+        try:
+            second()
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            reached.set()
+
+    def release() -> None:
+        racer.start()
+        assert reached.wait(timeout=30)
+
+    racer = threading.Thread(target=run_second)
+    validated._entries = _Interleaved(validated._entries, at, release)
+    with patch.object(validated, "_lock", Announcing()):
+        try:
+            result = first()
+        finally:
+            if racer.ident is not None:
+                racer.join(timeout=30)
+    assert not racer.is_alive()
+    assert failures == []
+    return result
+
+
+def test_the_lock_keeps_an_eviction_out_of_a_read() -> None:
+    validated = ValidatedDocumentCache(1)
+    validated.retain(_TEXT, "a", "aaa")
+    # Unlocked, the eviction lands between the read's lookup and its reordering.
+    read = partial(validated.reused, _TEXT, "aaa")
+    evict = partial(validated.retain, _TEXT, "b", "bbb")
+    assert _race(validated, "get", read, evict) == "a"
+    assert [key[1] for key in validated._entries] == ["bbb"]
+    _check_bound(validated)
+
+
+def test_the_lock_keeps_a_duplicate_out_of_a_retain() -> None:
+    validated = ValidatedDocumentCache()
+    # Unlocked, both retains find the key absent and both count its bytes.
+    retain = partial(validated.retain, _TEXT, "a", "aaa")
+    _race(validated, "contains", retain, retain)
+    assert [key[1] for key in validated._entries] == ["aaa"]
     _check_bound(validated)
 
 

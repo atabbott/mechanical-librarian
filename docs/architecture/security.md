@@ -263,9 +263,11 @@ by both documents, because a report identity is not the address of its bytes.
 A refusal is never retained, so the same bytes refuse again with the same error
 and cause. A stored object is frozen, and each request receives its own detached
 copy, so no request can alter what another reads. Decisions are still validated
-on every request. The cache holds at most 512 entries and 8 MiB of document
-bytes, and evicts least recently used first. Measured retention stays within
-roughly 30 MiB. It lives in the process, is never persisted, and holds only
+on every request. The enforced bounds are 512 entries and 8 MiB of key
+document bytes, evicting least recently used first. Memory itself is not
+bounded directly: measured retention was 2.4 to 3.8 times the key bytes, about
+20 to 30 MiB when full, an estimate rather than a limit. It lives in the
+process, is never persisted, and holds only
 documents the single owner's own library already stored. There is no second
 tenant whose data could reach another, and nothing in it is a credential.
 

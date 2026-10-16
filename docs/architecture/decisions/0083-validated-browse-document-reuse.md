@@ -64,6 +64,9 @@ writers are unchanged. Detail and every write path still parse canonically.
 - The process holds up to the bound in memory for as long as it runs.
 - The first request for each document is no faster, and neither is a page whose
   rows were evicted.
+- The effective working set is small: roughly 170 decided to 360 undecided
+  works, about 3 to 7 pages of 50. Paging cyclically through more than that
+  evicts each page before it is revisited, so it gets no reuse.
 
 ### Neutral or deferred
 
