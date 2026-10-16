@@ -107,3 +107,4 @@ an accepted ADR to make history match current preference; supersede it.
 | [0081](0081-image-owned-reviewer-provisioning.md) | accepted | Ship and validate the contained reviewer profile |
 
 | [0082](0082-runtime-activity-facts.md) | accepted | Reuse readable Activity facts with exact source witnesses |
+| [0083](0083-validated-browse-document-reuse.md) | accepted | Reuse validated browse documents across requests by their exact bytes |

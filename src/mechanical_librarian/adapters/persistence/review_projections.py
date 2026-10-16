@@ -63,10 +63,12 @@ from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineAction
 from mechanical_librarian.application.review_web import (
+    BROWSE_SCOPE_REUSE,
     CurrentReviewCaseSnapshot,
     LibraryLabels,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
+    ValidatedDocumentCache,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import FieldEffectError
@@ -435,6 +437,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         offset: int,
         attention: bool | None,
         library_labels: LibraryLabels = (),
+        validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot:
         with self._consistent_review_read():
             page = self.read_current_library_page(
@@ -505,7 +508,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 decisions, scope = (
                     ((), None)
                     if case is None
-                    else self._browse_decision_documents(cast("str", case_id), case)
+                    else self._browse_decision_documents(
+                        cast("str", case_id), case, case_document, validated
+                    )
                 )
                 scopes.append(scope)
                 projected_rows.append(
@@ -540,7 +545,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return snapshot
 
     def _browse_decision_documents(
-        self, review_case_id: str, case: dict[str, object]
+        self,
+        review_case_id: str,
+        case: dict[str, object],
+        case_document: str | None = None,
+        validated: ValidatedDocumentCache | None = None,
     ) -> tuple[tuple[str, ...], DecisionScope | None]:
         """Validate only the decision documents attached to one visible row.
 
@@ -548,7 +557,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         so every refusal is still raised at the step and in the order it was
         when each decision projected the case again (#1215). The scope goes
         out with the documents so the row's projection need not project the
-        same case a third time.
+        same case a third time. The page read derived `review_case_id` and
+        `case` from `case_document`, so a scope retained for those exact bytes
+        is the one this projection would build (#1226).
         """
         human_rows = self._connection.execute(
             "SELECT decision_id,proposal_id,target_fingerprint,destination,"
@@ -564,8 +575,12 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 if len(row) != 11 or type(row[10]) is not str:
                     raise MetadataReportError("review library is unavailable")
                 decision = HumanDecision.from_json(row[10])
+                if scope is None and validated is not None:
+                    scope = validated.reused(BROWSE_SCOPE_REUSE, case_document)
                 if scope is None:
                     scope = DecisionScope.of_browse_case(review_case_id, case)
+                    if validated is not None:
+                        validated.retain(BROWSE_SCOPE_REUSE, scope, case_document)
                 decision.validate_in(scope)
                 if (
                     decision.decision_id,

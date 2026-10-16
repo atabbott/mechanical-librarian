@@ -243,7 +243,7 @@ folded through the deterministic `ml_casefold` (`str.casefold`, as the query is)
 A connection without that function cannot insert a report; what open validates
 is stated under [Schema admission](#schema-admission).
 #1202 changes what a request repeats, never what it refuses. A read validates a
-row's documents once and reuses them only within that read, for those exact
+row's documents once and reuses them within that read, for those exact
 bytes. The path and credential scans skip a pattern only for text lacking a
 literal its every match contains, and ASCII text is scanned for forbidden
 codepoints with the forbidden class's ASCII members. That no other codepoint
@@ -256,6 +256,18 @@ case, built when the first decision has parsed, so every refusal keeps its step
 and order. The page projection reuses that projection only for a canonical case
 with the same content address, the SHA-256 of the same case bytes; otherwise it
 projects the case itself. Either way it validates every decision it renders.
+#1226 extends that reuse across requests, still only for the exact bytes
+(ADR-0083). A row's case, its case and report facts, and its decision scope are
+retained for the document strings they were validated from. The pair is keyed
+by both documents, because a report identity is not the address of its bytes.
+A refusal is never retained, so the same bytes refuse again with the same error
+and cause. A stored object is frozen, and each request receives its own detached
+copy, so no request can alter what another reads. Decisions are still validated
+on every request. The cache holds at most 512 entries and 8 MiB of document
+bytes, and evicts least recently used first. Measured retention stays within
+roughly 30 MiB. It lives in the process, is never persisted, and holds only
+documents the single owner's own library already stored. There is no second
+tenant whose data could reach another, and nothing in it is a credential.
 
 A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,

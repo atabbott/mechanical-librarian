@@ -7,12 +7,15 @@ import hashlib
 import json
 import re
 import secrets
+import threading
 import unicodedata
+from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
-from typing import Protocol, cast
+from functools import partial
+from typing import Generic, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
@@ -75,7 +78,11 @@ from mechanical_librarian.domain.review_browse import (
     library_report_facts,
     provider_lane_facts,
 )
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import (
+    ReviewCase,
+    _freeze_json_object,
+    _thaw_json_object,
+)
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
@@ -270,6 +277,122 @@ class CurrentReviewCaseStore(Protocol):
 # One active-settings snapshot: connection, stable library name, display label.
 LibraryLabels = tuple[tuple[str, str, str], ...]
 
+_Validated = TypeVar("_Validated")
+
+
+@dataclass(frozen=True, slots=True)
+class DocumentReuse(Generic[_Validated]):
+    """How one kind of validated object is held frozen and handed out detached."""
+
+    kind: str
+    freeze: Callable[[_Validated], _Validated]
+    thaw: Callable[[_Validated], _Validated]
+
+
+class ValidatedDocumentCache:
+    """Bounded reuse of validated immutable browse objects across requests (#1226).
+
+    An entry is keyed by its kind and the exact document strings it was
+    validated from, so it is found only for those same bytes, and holds the
+    object frozen: each reader receives a detached copy, so no reader's object
+    is shared with another. Only a parse that returned is retained; a refusal
+    is never stored, so the same bytes are parsed again and refuse exactly as
+    before. Least recently used entries are evicted beyond the entry and
+    document-byte bounds (ADR-0083).
+    """
+
+    def __init__(
+        self, max_entries: int = 512, max_document_bytes: int = 8 * 1024 * 1024
+    ) -> None:
+        self._max_entries = max_entries
+        self._max_document_bytes = max_document_bytes
+        self._lock = threading.Lock()
+        self._entries: OrderedDict[tuple[str, ...], tuple[object, int]] = OrderedDict()
+        self._document_bytes = 0
+
+    def reused(
+        self, reuse: DocumentReuse[_Validated], *documents: object
+    ) -> _Validated | None:
+        """A detached copy of what these exact documents validated as, if retained."""
+        if any(type(document) is not str for document in documents):
+            return None
+        key = (reuse.kind, *cast("tuple[str, ...]", documents))
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            self._entries.move_to_end(key)
+        return reuse.thaw(cast("_Validated", entry[0]))
+
+    def retain(
+        self, reuse: DocumentReuse[_Validated], value: _Validated, *documents: object
+    ) -> None:
+        """Hold a frozen copy of what these exact documents just validated as."""
+        if any(type(document) is not str for document in documents):
+            return
+        key = (reuse.kind, *cast("tuple[str, ...]", documents))
+        size = sum(len(document.encode("utf-8")) for document in key[1:])
+        if size > self._max_document_bytes:
+            return
+        frozen = reuse.freeze(value)
+        with self._lock:
+            if key in self._entries:
+                return
+            self._entries[key] = (frozen, size)
+            self._document_bytes += size
+            while (
+                len(self._entries) > self._max_entries
+                or self._document_bytes > self._max_document_bytes
+            ):
+                self._document_bytes -= self._entries.popitem(last=False)[1][1]
+
+
+def _case_facts(
+    case: CaseBrowseFacts, convert: Callable[[dict[str, object]], dict[str, object]]
+) -> CaseBrowseFacts:
+    return replace(
+        case,
+        target=convert(case.target),
+        proposals=tuple(convert(value) for value in case.proposals),
+    )
+
+
+def _scope(
+    scope: DecisionScope, convert: Callable[[dict[str, object]], dict[str, object]]
+) -> DecisionScope:
+    return replace(scope, proposals=tuple(convert(value) for value in scope.proposals))
+
+
+# A ReviewCase already holds its content frozen and hands out detached copies.
+REVIEW_CASE_REUSE = DocumentReuse[ReviewCase](
+    "review_case", lambda case: case, lambda case: case
+)
+BROWSE_FACTS_REUSE = DocumentReuse[tuple[CaseBrowseFacts, LibraryReportFacts]](
+    "browse_facts",
+    lambda facts: (_case_facts(facts[0], _freeze_json_object), facts[1]),
+    lambda facts: (_case_facts(facts[0], _thaw_json_object), facts[1]),
+)
+BROWSE_SCOPE_REUSE = DocumentReuse[DecisionScope](
+    "browse_scope",
+    lambda scope: _scope(scope, _freeze_json_object),
+    lambda scope: _scope(scope, _thaw_json_object),
+)
+
+
+def _reused_or_parsed(
+    validated: ValidatedDocumentCache | None,
+    reuse: DocumentReuse[_Validated],
+    parse: Callable[[], _Validated],
+    *documents: str,
+) -> _Validated:
+    """Reuse what these exact documents validated as, or parse and retain them."""
+    value = None if validated is None else validated.reused(reuse, *documents)
+    if value is None:
+        value = parse()
+        if validated is not None:
+            validated.retain(reuse, value, *documents)
+    return value
+
 
 class ReviewLibraryStore(Protocol):
     def read_review_library(
@@ -279,6 +402,7 @@ class ReviewLibraryStore(Protocol):
         offset: int,
         attention: bool | None,
         library_labels: LibraryLabels = (),
+        validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot: ...
     def read_review_attention(
         self,
@@ -1342,8 +1466,13 @@ class RecordHumanDecision:
 
 
 class BrowseReviewLibrary:
-    def __init__(self, repository: ReviewLibraryStore) -> None:
+    def __init__(
+        self,
+        repository: ReviewLibraryStore,
+        validated: ValidatedDocumentCache | None = None,
+    ) -> None:
         self._repository = repository
+        self._validated = validated
 
     def library(
         self,
@@ -1362,7 +1491,12 @@ class BrowseReviewLibrary:
         attention = None if lens == "all" else lens == "needs_attention"
         try:
             snapshot = self._repository.read_review_library(
-                normalized, bounded_limit + 1, offset, attention, library_labels
+                normalized,
+                bounded_limit + 1,
+                offset,
+                attention,
+                library_labels,
+                self._validated,
             )
             items = []
             scopes = snapshot.decision_scopes or (None,) * len(snapshot.rows)
@@ -1390,6 +1524,7 @@ class BrowseReviewLibrary:
                         terminal_document,
                         attention_count,
                         decision_scope=scope,
+                        validated=self._validated,
                     )
                 )
         except Exception as error:
@@ -1474,7 +1609,13 @@ class BrowseReviewLibrary:
                         or type(report_document) is not str
                         or previous_documents != (case_document, report_document)
                     ):
-                        parsed = _case_and_report(case_document, report_document)
+                        parsed = _reused_or_parsed(
+                            self._validated,
+                            BROWSE_FACTS_REUSE,
+                            partial(_case_and_report, case_document, report_document),
+                            case_document,
+                            report_document,
+                        )
                         previous_documents = (case_document, report_document)
                     item = _attention_item(
                         *parsed,
@@ -2662,6 +2803,7 @@ def _library_item(
     attention_count: int | None = None,
     *,
     decision_scope: DecisionScope | None = None,
+    validated: ValidatedDocumentCache | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         try:
@@ -2756,7 +2898,13 @@ def _library_item(
     if case_document is None:
         report, case = _report_facts(report_document), None
     else:
-        case, report = _case_and_report(case_document, report_document)
+        case, report = _reused_or_parsed(
+            validated,
+            BROWSE_FACTS_REUSE,
+            partial(_case_and_report, case_document, report_document),
+            case_document,
+            report_document,
+        )
     decisions: set[str] = set()
     automatic_outcomes: dict[str, str] = {}
     scope: DecisionScope | None = None
@@ -2776,7 +2924,12 @@ def _library_item(
             # A human decision binds a proposal identity, which only the
             # canonical case carries, so this row is validated against it.
             if scope is None:
-                canonical_case = ReviewCase.from_json(case_document)
+                canonical_case = _reused_or_parsed(
+                    validated,
+                    REVIEW_CASE_REUSE,
+                    partial(ReviewCase.from_json, case_document),
+                    case_document,
+                )
                 # The store's scope is reused only for this exact case. Both
                 # identities are the SHA-256 of the same case bytes: the store
                 # hashes the row's `case_document` (`browse_case_with_id`), and

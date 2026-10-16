@@ -60,6 +60,7 @@ from mechanical_librarian.application.review_web import (
     ReviewSessionStore,
     ReviewWebError,
     SessionTokens,
+    ValidatedDocumentCache,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -1615,6 +1616,7 @@ def compose_review_application(
     ) = None,
     first_boot: bool = False,
     acknowledge_first_boot: Callable[[], None] | None = None,
+    validated_documents: ValidatedDocumentCache | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = operation_lock or RLock()
@@ -1665,7 +1667,12 @@ def compose_review_application(
         ),
         cases=InspectCurrentReviewCase(case_store, cover_considerations),
         decisions=RecordHumanDecision(decision_store, clock, timing),
-        browse=BrowseReviewLibrary(library_store),
+        browse=BrowseReviewLibrary(
+            library_store,
+            ValidatedDocumentCache()
+            if validated_documents is None
+            else validated_documents,
+        ),
         policy=PolicyNotebook(
             policy_store,
             tuple(name for name, _ in policy_libraries),

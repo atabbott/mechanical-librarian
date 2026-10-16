@@ -124,6 +124,7 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
+    ValidatedDocumentCache,
 )
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.automatic_decision import (
@@ -1501,6 +1502,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         attention: bool | None,
         library_labels: LibraryLabels = (),
+        validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot:
         try:
             with (
@@ -1512,7 +1514,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 ),
             ):
                 return self._review_projections.read_review_library(
-                    search, limit, offset, attention, library_labels
+                    search, limit, offset, attention, library_labels, validated
                 )
         except (CatalogueError, OSError, sqlite3.Error) as error:
             raise MetadataReportError("review library is unavailable") from error

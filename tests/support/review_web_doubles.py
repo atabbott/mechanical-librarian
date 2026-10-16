@@ -43,6 +43,7 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
+    ValidatedDocumentCache,
 )
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import LIST_DESTINATIONS
@@ -650,6 +651,7 @@ class FakeReviewRepository:
         offset: int,
         attention: bool | None,
         library_labels: LibraryLabels = (),
+        validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot:
         rows = self.list_current_review_case_documents(
             search, limit, offset, attention, library_labels

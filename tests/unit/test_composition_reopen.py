@@ -54,9 +54,10 @@ async def _runtime_app(scope: object, receive: object, send: object) -> None:
     return None
 
 
+@pytest.mark.parametrize("activated", (False, True))
 @pytest.mark.parametrize("failure", (None, "composition", "http"))
 def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
-    failure: str | None,
+    failure: str | None, activated: bool
 ) -> None:
     repository = Mock()
     settings = repository.owner_settings_store.return_value
@@ -153,18 +154,35 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
                 )
             assert close_order == ["root"]
             return
+        bootstrap = ReviewBootstrap(
+            schema_version="review-bootstrap-v2",
+            canonical_origin="https://library.invalid",
+            tls_certificate_file="/synthetic/certificate",
+            tls_private_key_file="/synthetic/private-key",
+        )
+        # A Settings cutover's generation reuses the process's validated
+        # browse documents; a standalone one composes its own (#1226).
+        activation = (
+            composition._StoreRuntimeActivation(
+                bootstrap,
+                Path("application.sqlite3"),
+                Path("catalogue.sqlite3"),
+                Path("artifacts"),
+                Mock(),
+                object(),
+                operation_admission=OperationAdmission(),
+            )
+            if activated
+            else None
+        )
         runtime, _configuration = composition.compose_store_runtime_generation(
-            ReviewBootstrap(
-                schema_version="review-bootstrap-v2",
-                canonical_origin="https://library.invalid",
-                tls_certificate_file="/synthetic/certificate",
-                tls_private_key_file="/synthetic/private-key",
-            ),
+            bootstrap,
             Path("application.sqlite3"),
             Path("catalogue.sqlite3"),
             Path("artifacts"),
             repository_authority=object(),
             operation_admission=OperationAdmission(),
+            activation=activation,
         )
 
     repository.bind_library_catalogue.assert_called_once_with(
@@ -174,6 +192,9 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
     assert create_pipeline.call_args.args[4] is reviewer_access
     assert compose_application.call_args.kwargs["library_store"] is repository
     assert compose_application.call_args.kwargs["browse_observation"] is repository
+    assert compose_application.call_args.kwargs["validated_documents"] is (
+        None if activation is None else activation.validated_documents
+    )
     assert compose_cover.call_args.args[3] is reviewer_access
     assert compose_application.call_args.kwargs["reviewer_access"] is reviewer_access
     assert (
