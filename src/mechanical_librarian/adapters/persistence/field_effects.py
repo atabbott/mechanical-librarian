@@ -50,9 +50,9 @@ from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _ATTENTION_FACT_CURRENT_SQL,
+    _ATTENTION_FACTS_JOIN_SQL,
     _CURRENT_REVIEW_FROM_SQL,
-    _EPUB_INAPPLICABLE_ATTENTION_SQL,
-    _REVIEW_FIELD_ATTENTION_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
@@ -1226,7 +1226,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         self, connection: str, destination: str | None
     ) -> tuple[str, ...]:
         """Read the authoritative Library/Attention filter under the write lock."""
-        clause = "" if destination is None else " AND result.destination=?"
+        clause = "" if destination is None else " AND f.destination=?"
         cover_authority = self._current_cover_authority()
         parameters: tuple[str | None, ...] = (
             (connection, *cover_authority)
@@ -1236,12 +1236,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         rows = self._connection.execute(
             "SELECT DISTINCT rc.review_case_id "
             + _CURRENT_REVIEW_FROM_SQL
-            + " JOIN review_case_field_facts result "
-            "ON result.review_case_id=rc.review_case_id WHERE c.connection_name=?"
+            + _ATTENTION_FACTS_JOIN_SQL
+            + "WHERE c.connection_name=?"
             + clause
             + " AND "
-            + _REVIEW_FIELD_ATTENTION_SQL
-            + _EPUB_INAPPLICABLE_ATTENTION_SQL
+            + _ATTENTION_FACT_CURRENT_SQL
             + " ORDER BY rc.review_case_id",
             parameters,
         ).fetchall()

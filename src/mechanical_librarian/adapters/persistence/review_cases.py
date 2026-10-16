@@ -51,18 +51,18 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _ATTENTION_FACT_CURRENT_SQL,
+    _ATTENTION_FACTS_JOIN_SQL,
     _AUTOMATIC_SAFETY_ATTENTION_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
-    _EPUB_INAPPLICABLE_ATTENTION_SQL,
+    _LIBRARY_ATTENTION_SQL,
     _POLICY_ASK_ATTENTION_SQL,
     _REPORT_BROWSE_FACTS_JOIN_SQL,
     _REVIEW_ATTENTION_SQL,
-    _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
     _TERMINAL_LIBRARY_SEARCH_SQL,
-    _browse_scalar_sql,
     _terminal_library_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -638,7 +638,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "ml.connection_name AS connection_name,ml.library_name AS library_name,"
                 "ml.item_id AS item_id,c.outcome AS outcome,"
                 "CASE WHEN "
-                + _browse_scalar_sql(_REVIEW_ATTENTION_SQL)
+                + _LIBRARY_ATTENTION_SQL
                 + " THEN 1 ELSE 0 END AS attention,"
                 # Provider completeness matters only inside the attention
                 # group: the no-attention lens remains alphabetical.
@@ -871,20 +871,18 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "mr.report_id AS report_id,CASE WHEN "
                 "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
                 "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
-                "result.destination AS destination,"
+                "f.destination AS destination,"
                 "facts.title_key "
                 "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
                 + _CURRENT_REVIEW_FROM_SQL
                 + _REPORT_BROWSE_FACTS_JOIN_SQL
-                + "JOIN review_case_field_facts result "
-                "ON result.review_case_id=rc.review_case_id "
-                "WHERE (c.connection_name,c.library_name,c.item_id) IN "
+                + _ATTENTION_FACTS_JOIN_SQL
+                + "WHERE (c.connection_name,c.library_name,c.item_id) IN "
                 "(SELECT connection_name,library_name,item_id FROM search_matches)"
-                # A filter, not a column (#1202): only attentive fields are
-                # materialized, and the planner may test the cheap terms first.
+                # Only attentive fields have facts (#1232); a cover field's
+                # live authority is the one term left to test per request.
                 " AND "
-                + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
-                + _browse_scalar_sql(_EPUB_INAPPLICABLE_ATTENTION_SQL)
+                + _ATTENTION_FACT_CURRENT_SQL
                 + "),attentive AS MATERIALIZED (SELECT review_case_id,report_id,"
                 "proposal_set_id,destination,count(*) OVER (PARTITION BY review_case_id) "
                 "AS attention_count,title_order,library_name,item_id "
@@ -1011,10 +1009,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "SELECT count(*) "
                 + _CURRENT_REVIEW_FROM_SQL
                 + _REPORT_BROWSE_FACTS_JOIN_SQL
-                + "JOIN review_case_field_facts result "
-                "ON result.review_case_id=rc.review_case_id WHERE "
-                + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
-                + _browse_scalar_sql(_EPUB_INAPPLICABLE_ATTENTION_SQL)
+                + _ATTENTION_FACTS_JOIN_SQL
+                + "WHERE "
+                + _ATTENTION_FACT_CURRENT_SQL
                 + _REVIEW_SEARCH_SQL,
                 (
                     *cover_authority,

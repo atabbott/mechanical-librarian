@@ -494,6 +494,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("proposal_set_browse_facts",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
+            ("review_attention_facts",),
             ("review_case_field_facts",),
             ("review_case_transitions",),
             ("review_cases",),
@@ -707,9 +708,16 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         )
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
-            # history indexes, #1204's indexes and #1211's case indexes.
+            # history indexes, #1204's indexes, #1211's case indexes and #1232's
+            # attention facts.
             repository._connection.executescript(
-                "DROP TRIGGER metadata_reports_project_browse_facts;"
+                "".join(
+                    f"DROP {kind.upper()} {name};"
+                    for kind, name, _ in reversed(
+                        persistence_schema._ATTENTION_FACT_OBJECTS
+                    )
+                )
+                + "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_browse_facts;"
                 "DROP TRIGGER proposal_sets_project_browse_facts;"
@@ -2360,9 +2368,16 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         )
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
-            # history indexes, #1204's indexes and #1211's case indexes.
+            # history indexes, #1204's indexes, #1211's case indexes and #1232's
+            # attention facts.
             repository._connection.executescript(
-                "DROP TRIGGER metadata_reports_project_browse_facts;"
+                "".join(
+                    f"DROP {kind.upper()} {name};"
+                    for kind, name, _ in reversed(
+                        persistence_schema._ATTENTION_FACT_OBJECTS
+                    )
+                )
+                + "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_browse_facts;"
                 "DROP TRIGGER proposal_sets_project_browse_facts;"

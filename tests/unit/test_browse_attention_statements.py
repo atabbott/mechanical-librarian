@@ -9,7 +9,9 @@ projecting the predicate as a column and filtering that afterwards. The
 `_PRE_1202_*` texts below are the work probe, the count statement and the
 Attention page statement exactly as they read before #1202, kept verbatim; the
 Library page statement changed only through the probe, so its oracle is the
-current reader run with the old probe. Every equality test here compares the
+current reader run with the old probe. #1232 then read the probe, the count
+and the Attention candidates from persisted attention facts; the oracles here
+stayed the live statements, so they also prove that change returns the same. Every equality test here compares the
 old statements with the current ones on the same database across the
 authority, fetching, decision, selection, suspension, safety and policy states
 that decide a field's attention.
@@ -141,8 +143,12 @@ def _search_parameters(search: str | None) -> tuple[object, ...]:
 def _pre_1202_library(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Run the Library page and counts with the single attention probe."""
     with monkeypatch.context() as patch:
+        # #1232 reads the work probe from persisted facts; the oracle is
+        # still the single live probe as the page read it before #1202.
         patch.setattr(
-            review_cases, "_REVIEW_ATTENTION_SQL", _PRE_1202_REVIEW_ATTENTION_SQL
+            review_cases,
+            "_LIBRARY_ATTENTION_SQL",
+            _browse_scalar_sql(_PRE_1202_REVIEW_ATTENTION_SQL),
         )
         patch.setattr(
             review_cases,

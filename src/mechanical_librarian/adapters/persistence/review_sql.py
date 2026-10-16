@@ -79,7 +79,12 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
 _AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL = (
     "json_extract(mr.document,'$.file.format') <> 'epub'"
 )
-_CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
+# A case has at most one current cover pointer. The authority admits a cover
+# field when it has none, or when the pointed consideration agrees with the
+# case and report rows (`_STORED`), is manually ready, matches the live policy
+# reference, and is current or refreshable under the live replay reference.
+# The persisted attention facts (#1232) evaluate only the stored part.
+_CURRENT_COVER_AUTHORITY_PREFIX_SQL = (
     "(result.destination<>'cover' OR NOT EXISTS (SELECT 1 "
     "FROM current_cover_considerations current_cover_pointer "
     "WHERE current_cover_pointer.review_case_id=rc.review_case_id) "
@@ -97,10 +102,21 @@ _CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
     "AND authority_consideration.report_id=mr.report_id "
     "AND json_extract(authority_consideration.document,'$.report_document_digest')="
     "mr.document_digest "
-    "AND json_extract(authority_consideration.document,'$.policy_reference')=? "
+)
+_CURRENT_COVER_AUTHORITY_MANUAL_READY_SQL = (
     "AND json_extract(authority_consideration.currentness_document,'$.manual_ready')=1 "
-    "AND CASE ml_cover_consideration_current(authority_consideration.currentness_document,?) "
+)
+_CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
+    _CURRENT_COVER_AUTHORITY_PREFIX_SQL
+    + "AND json_extract(authority_consideration.document,'$.policy_reference')=? "
+    + _CURRENT_COVER_AUTHORITY_MANUAL_READY_SQL
+    + "AND CASE ml_cover_consideration_current(authority_consideration.currentness_document,?) "
     "WHEN 1 THEN 1 WHEN 2 THEN result.unresolved_choice ELSE 0 END=1))"
+)
+_STORED_COVER_ATTENTION_AUTHORITY_SQL = (
+    _CURRENT_COVER_AUTHORITY_PREFIX_SQL
+    + _CURRENT_COVER_AUTHORITY_MANUAL_READY_SQL
+    + "))"
 )
 # A field asks for the owner when one of these reasons holds, the cover
 # authority below admits it, and nothing in `_REVIEW_FIELD_ATTENTION_CLEAR_SQL`
@@ -214,9 +230,74 @@ def _browse_scalar_sql(sql: str) -> str:
     )
 
 
+# #1232: one row per current package, report and field that asks for the
+# owner on every stored input. A package's attention is read under both the
+# report it names (Library) and its case's report (Attention); they are the
+# same report whenever the preparation pipeline wrote the package. A cover
+# field whose case has a current consideration keeps the parts that depend on
+# live authority -- the policy and replay references and provider fetching --
+# for `_ATTENTION_FACT_CURRENT_SQL` to decide per request.
+_ATTENTION_FACT_SOURCE_SQL = (
+    "SELECT c.connection_name,c.library_name,c.item_id,mr.report_id,"
+    "result.destination,CASE WHEN result.destination='cover' THEN (SELECT "
+    "pointer.consideration_id FROM current_cover_considerations pointer "
+    "WHERE pointer.review_case_id=rc.review_case_id) END,"
+    "CASE WHEN result.destination='cover' THEN (SELECT "
+    "json_extract(pointed.document,'$.policy_reference') "
+    "FROM current_cover_considerations pointer JOIN cover_considerations pointed "
+    "ON pointed.consideration_id=pointer.consideration_id "
+    "WHERE pointer.review_case_id=rc.review_case_id) END,"
+    "CASE WHEN result.destination='cover' AND EXISTS (SELECT 1 "
+    "FROM current_cover_considerations pointer "
+    "WHERE pointer.review_case_id=rc.review_case_id) "
+    "THEN result.unresolved_choice END "
+    "FROM current_review_packages c "
+    "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
+    "JOIN metadata_reports mr ON mr.report_id IN (c.report_id,rc.report_id)"
+    + _REPORT_BROWSE_FACTS_JOIN_SQL
+    + "JOIN review_case_field_facts result "
+    "ON result.review_case_id=rc.review_case_id WHERE "
+    + _browse_scalar_sql(
+        _REVIEW_FIELD_ATTENTION_REASON_SQL
+        + " AND "
+        + _STORED_COVER_ATTENTION_AUTHORITY_SQL
+        + _REVIEW_FIELD_ATTENTION_CLEAR_SQL
+        + _EPUB_INAPPLICABLE_ATTENTION_SQL
+    )
+)
+# The live remainder of `_CURRENT_COVER_ATTENTION_AUTHORITY_SQL` over one
+# fact row `f`, binding the same policy and replay references in that order.
+_ATTENTION_FACT_CURRENT_SQL = (
+    "(f.cover_consideration_id IS NULL OR (f.cover_policy_reference=? AND "
+    "CASE ml_cover_consideration_current((SELECT pointed.currentness_document "
+    "FROM cover_considerations pointed "
+    "WHERE pointed.consideration_id=f.cover_consideration_id),?) "
+    "WHEN 1 THEN 1 WHEN 2 THEN f.cover_refresh_admits ELSE 0 END=1))"
+)
+_PACKAGE_ATTENTION_FACT_SQL = (
+    "f.connection_name=ml.connection_name AND f.library_name=ml.library_name "
+    "AND f.item_id=ml.item_id AND f.report_id=ml.report_id"
+)
+# As `_REVIEW_ATTENTION_SQL`, a work's live cover authority is read only when
+# no other field already put it in attention.
+_LIBRARY_ATTENTION_SQL = (
+    "(EXISTS (SELECT 1 FROM review_attention_facts f WHERE "
+    + _PACKAGE_ATTENTION_FACT_SQL
+    + " AND f.cover_consideration_id IS NULL) OR EXISTS (SELECT 1 "
+    "FROM review_attention_facts f WHERE "
+    + _PACKAGE_ATTENTION_FACT_SQL
+    + " AND f.cover_consideration_id IS NOT NULL AND "
+    + _ATTENTION_FACT_CURRENT_SQL
+    + "))"
+)
+_ATTENTION_FACTS_JOIN_SQL = (
+    "JOIN review_attention_facts f ON f.connection_name=c.connection_name "
+    "AND f.library_name=c.library_name AND f.item_id=c.item_id "
+    "AND f.report_id=mr.report_id "
+)
 _CURRENT_REVIEW_CASE_COUNT_SQL = (
     "SELECT count(*),COALESCE(sum(CASE WHEN "
-    + _browse_scalar_sql(_REVIEW_ATTENTION_SQL)
+    + _LIBRARY_ATTENTION_SQL
     + " THEN 1 ELSE 0 END),0) "
     + _CURRENT_LIBRARY_FROM_SQL
     + _REPORT_BROWSE_FACTS_JOIN_SQL
@@ -237,6 +318,11 @@ _SHADOW_OUTCOME_HISTORY_SQL = (
 
 
 __all__ = [
+    "_ATTENTION_FACT_CURRENT_SQL",
+    "_ATTENTION_FACT_SOURCE_SQL",
+    "_ATTENTION_FACTS_JOIN_SQL",
+    "_LIBRARY_ATTENTION_SQL",
+    "_STORED_COVER_ATTENTION_AUTHORITY_SQL",
     "_AUTOMATIC_SAFETY_ATTENTION_SQL",
     "_CURRENT_COVER_ATTENTION_AUTHORITY_SQL",
     "_CURRENT_LIBRARY_FROM_SQL",

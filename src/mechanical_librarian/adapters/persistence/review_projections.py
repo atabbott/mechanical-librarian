@@ -46,11 +46,9 @@ from mechanical_librarian.adapters.persistence.review_cases import (
     ReviewLibraryPage,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
-    _CURRENT_REVIEW_FROM_SQL,
-    _EPUB_INAPPLICABLE_ATTENTION_SQL,
+    _ATTENTION_FACT_CURRENT_SQL,
     _LATEST_PREPARATION_WORK_SQL,
     _POLICY_ASK_ATTENTION_SQL,
-    _REVIEW_FIELD_ATTENTION_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
@@ -604,16 +602,21 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return tuple(documents), scope
 
     def _current_attention_count(self, review_case_id: str) -> int:
-        """Use the same persisted field-membership predicate as every attention view."""
+        """Count the case's persisted attention facts that are current (#1232).
+
+        A fact exists only for a current package and a stored report, so the
+        package's self-join and the report join of the other attention reads
+        add nothing here; leaving them out keeps planning this per-row read to
+        a few dozen steps instead of about a thousand.
+        """
         cover_authority = self._current_cover_authority()
         row = self._connection.execute(
-            "SELECT count(*) "
-            + _CURRENT_REVIEW_FROM_SQL
-            + " JOIN review_case_field_facts result "
-            "ON result.review_case_id=c.review_case_id "
-            "WHERE result.review_case_id=? AND "
-            + _REVIEW_FIELD_ATTENTION_SQL
-            + _EPUB_INAPPLICABLE_ATTENTION_SQL,
+            "SELECT count(*) FROM review_cases rc "
+            "JOIN current_review_packages c ON c.review_case_id=rc.review_case_id "
+            "JOIN review_attention_facts f ON f.connection_name=c.connection_name "
+            "AND f.library_name=c.library_name AND f.item_id=c.item_id "
+            "AND f.report_id=rc.report_id WHERE rc.review_case_id=? AND "
+            + _ATTENTION_FACT_CURRENT_SQL,
             (review_case_id, *cover_authority),
         ).fetchone()
         if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
