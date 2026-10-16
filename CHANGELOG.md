@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Opening Activity after a large batch of new history no longer makes
+  preparation or owner writes fail with "database is locked": the catch-up now
+  proceeds in short reads that let writes through. That first read takes
+  longer, about 12 s instead of 8-9 s at 8,000 decisions. Results, counts,
+  order and refusals are unchanged (#1225).
+
 - Preparation slows far less while Library or Attention is open: an active tab
   refreshes its Library page and attention at most once every 1.5 seconds while
   works keep arriving, instead of once per prepared work, and reads once more

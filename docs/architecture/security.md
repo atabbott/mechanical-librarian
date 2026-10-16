@@ -1406,6 +1406,19 @@ tables from an earlier generation's marks. The product uses none of those routes
 append-only tables, enforced by a static source test and a schema test requiring
 both refusal triggers. No credential, network, parser or write authority is added.
 
+A refresh projects at most 512 affected candidates in one read transaction and
+records the rest as pending; a snapshot with pending candidates is never served,
+so no read sees a partly projected history (#1225). A pending candidate is
+projected from the snapshot of the refresh that projects it, and every step still
+witnesses, sweeps and falls back exactly as one refresh does. A read that leaves
+candidates pending finishes them in bounded read transactions of its own and
+retries; its third attempt serves the canonical projection. Witness values use an
+injective literal encoding that keeps exact SQLite types. This bounds how long a
+read that reaches the store delays a writer's commit; the canonical fallback and
+the appended-row witness remain unbounded. Readiness runs no catch-up between its
+fresh check and its snapshot. It changes no busy timeout, journal mode, result,
+refusal, or authority.
+
 Ordinary history returns required null backup-readiness and example fields. The
 separate authenticated permission-readiness endpoint checks the existing database
 consistency boundary freshly, then compares that checked revision inside its own

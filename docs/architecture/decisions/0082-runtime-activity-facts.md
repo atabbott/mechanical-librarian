@@ -179,3 +179,67 @@ borrower generation still performs a full witness against the previous snapshot.
 Activity facts feed no write path, so the detection delay for an in-place change
 outside SQL's ordinary routes is display-only and bounded by the sweep. Journal
 mode, schema, startup admission and the canonical projection are unchanged.
+
+## Amendment: bounded projection per read transaction (#1225)
+
+Witnessing is cheap per row; projecting a candidate is not. After a large history
+change, the first Activity read projected every affected candidate in one read
+transaction, about 0.8 ms each, and at 8,000 owner decisions that read held SHARED
+past the writer's 5 s busy timeout, so its COMMIT failed with `database is
+locked`. One refresh now projects at most 512 affected candidates and records
+the rest as pending in the published snapshot. A snapshot with pending candidates
+is never served.
+
+Witnessing, marks, the sweep, overflow and fallback are unchanged. A changed
+revision still runs them in full in its own read; an unchanged revision with
+candidates pending advances the sweep and reuses the witnesses admitted at that
+revision, since nothing they witness has changed. The next refresh adds the pending
+candidates to the candidates its own changed witnesses affect, so a pending
+candidate is always projected from the snapshot of the refresh that projects it.
+A fact projected by an earlier step stays exact for as long as its witnesses are
+unchanged, which is the rule every reuse already relies on, and a step whose
+witnesses differ reprojects through the ordinary closure. Once nothing is pending,
+the facts are exactly what one unbounded refresh of that snapshot admits, and only
+then is the total order computed and the snapshot served. Candidates are taken
+grouped by review case so a step parses each report once. The order changes only
+which candidates a step projects first, never what a fact contains. Pending
+identities count toward the 64 MiB bound. An explicit candidate set cannot name
+an identity that contains NUL, so a construction that witnesses one keeps the one
+unbounded projection, which falls back only when a later refresh touches that
+candidate, exactly as before.
+
+A read whose refresh leaves candidates pending abandons its read transaction. It
+projects the pending candidates in bounded read transactions of their own, between
+which a waiting writer commits, and then retries. It stops early when four steps
+in a row leave no fewer pending, or on any refusal, and the retry then decides the
+outcome exactly as the read would have alone. The third attempt that still finds
+candidates pending serves the canonical projection and keeps the store. A read
+nested inside an Activity snapshot leaves the catch-up to that snapshot, which
+retries as a whole, so the summary, page, counts and readiness of one response
+still share one read. Permission readiness reads no Activity facts, so it runs no
+catch-up between its fresh consistency check and its snapshot. Initialization
+performs the same bounded steps.
+
+Witness values are now encoded with Python's literal form, and document hashes
+with their hexadecimal digest. The encoding remains injective and keeps exact
+SQLite types (1, 1.0, '1' and b'1' differ, and every float, -0.0 included,
+round-trips), and it costs a fraction of the JSON encoding on every witnessed row
+of a changed revision. Each witness counts its own bytes once, when it is made.
+
+After a large change, the longest Activity read transaction on a path that
+reaches the store is now one step or the witness of the rows appended since the
+previous read, whichever is longer: 0.5-0.8 s at 8,000 owner decisions, against
+8-10 s before. Two costs are not bounded by this amendment. The appended-row
+witness costs about 30 µs per row. The third-attempt canonical fallback costs what
+the canonical projection does, about 1.0 s for a page and 2.9 s for a search at
+8,000 decisions, and grows with history; in an Activity snapshot it runs inside
+that snapshot's read.
+
+The bound trades latency for the writer. The first Activity read after a large
+change now takes longer to complete, about 11.5-13 s against 8-9 s at 8,000
+decisions, because each step repeats a small fixed cost. In exchange, measured at
+8,000 decisions on the paths that reach the store, no Activity read held the
+database long enough to fail a commit, and preparation did not fail; the
+canonical fallback and a NUL-identity construction, stated above, remain single
+unbounded reads. Journal mode, the busy timeout, schema, startup admission, the
+ADR-0077 lane and the canonical projection are unchanged.

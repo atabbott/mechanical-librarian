@@ -57,6 +57,7 @@ from mechanical_librarian.adapters.persistence.activity_facts import (
     ActivityFactCapacity,
     ActivityFactStore,
     Candidate,
+    _Snapshot,
     activity_fact_bytes,
 )
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -155,6 +156,11 @@ from mechanical_librarian.domain.shadow_outcome import (
 
 _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS = 150
 _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
+# A read whose own refresh leaves candidates pending finishes them in bounded
+# transactions and retries; the last attempt serves the canonical page (#1225).
+_ACTIVITY_CATCH_UP_ATTEMPTS = 3
+# Bounded steps stop once this many in a row leave no fewer candidates pending.
+_ACTIVITY_CATCH_UP_STALLS = 4
 # Oversized pages are still served, but the two-entry cache together retains no
 # more serialized report text than one maximum-size report document.
 _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
@@ -285,6 +291,10 @@ def _bounded_fetch(cursor: sqlite3.Cursor, expected_max: int) -> list[tuple[Any,
     return rows
 
 
+class _ActivityFactsBehind(Exception):
+    """This read's refresh left candidates pending; finish them and retry."""
+
+
 def _validate_activity_query(
     search: str | None, event_type: str, occurred_after: int, page: int, page_size: int
 ) -> None:
@@ -382,6 +392,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             tuple[tuple[int, int], _ActivityDatabaseIdentity, object] | None
         ) = None
         self._activity_fact_schema: int | None = None
+        # Set, under the page cache lock, while a pending refresh may abandon
+        # its read for bounded catch-up and a retry (#1225).
+        self._activity_fact_retry = False
         # A configured reader's pending counts and readiness example, each with
         # the revision and file identity it was read at (#1223).
         self._pending_reads: dict[str, tuple[_ActivityStamp, object]] | None = None
@@ -2527,34 +2540,82 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     ready if checked is not None and checked[0] == current else None
                 )
 
-            return self.field_effect_activity_snapshot(project)
+            # Readiness reads no Activity facts, so no catch-up widens the
+            # window between the fresh check and this snapshot (#1225).
+            return self._activity_snapshot(project)
 
     def field_effect_activity_snapshot(
         self, call: Callable[[], dict[str, object]]
     ) -> dict[str, object]:
         """Run one Activity projection in a bounded exact read snapshot."""
-
         with self._activity_page_cache_lock:
-            transaction = self._transaction(
-                "field_effect_activity_snapshot", deferred=True
-            )
+            return self._caught_up(lambda: self._activity_snapshot(call))
 
-            def begin() -> None:
-                try:
-                    transaction.begin()
-                    self._activity_projection_revision()
-                except sqlite3.Error as error:
-                    transaction.rollback()
-                    raise FieldEffectError("persistence") from error
-                except Exception:
-                    transaction.rollback()
-                    raise
+    def _activity_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        transaction = self._transaction("field_effect_activity_snapshot", deferred=True)
 
-            self._retry_activity_busy(begin)
+        def begin() -> None:
             try:
-                return call()
-            finally:
+                transaction.begin()
+                self._activity_projection_revision()
+            except sqlite3.Error as error:
                 transaction.rollback()
+                raise FieldEffectError("persistence") from error
+            except Exception:
+                transaction.rollback()
+                raise
+
+        self._retry_activity_busy(begin)
+        try:
+            return call()
+        finally:
+            transaction.rollback()
+
+    def _caught_up(self, read: Callable[[], _ActivityRead]) -> _ActivityRead:
+        """Run ``read``; if its refresh leaves candidates pending, retry it.
+
+        Before each attempt the pending candidates are projected in bounded
+        read transactions of their own, so a writer can commit between them.
+        Only the last attempt may serve the canonical page instead (#1225).
+        """
+        attempt = 1
+        while True:
+            self._catch_up_activity_facts()
+            self._activity_fact_retry = attempt < _ACTIVITY_CATCH_UP_ATTEMPTS
+            try:
+                return read()
+            except _ActivityFactsBehind:
+                attempt += 1
+            finally:
+                self._activity_fact_retry = False
+
+    def _catch_up_activity_facts(self) -> None:
+        """Project pending candidates in bounded read transactions of their own.
+
+        A writer commits between steps. Steps stop once none remain, once they
+        stop reducing what is pending, or on any refusal: the read that follows
+        then decides the outcome exactly as it would have alone.
+        """
+        store = self._activity_facts
+        head = None if store is None else store.snapshot()
+        if store is None or head is None or not head.pending:
+            return
+        least: int | None = None
+        stalls = 0
+        try:
+            while stalls < _ACTIVITY_CATCH_UP_STALLS:
+                self._retry_activity_busy(self._activity_fact_step)
+                head = store.snapshot() if store is self._activity_facts else None
+                if head is None or not head.pending:
+                    return
+                if least is not None and len(head.pending) >= least:
+                    stalls += 1
+                else:
+                    least, stalls = len(head.pending), 0
+        except FieldEffectError:
+            return
 
     def field_effect_activity_page(
         self,
@@ -2566,20 +2627,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         page_size: int,
     ) -> dict[str, object]:
         """Return a current bounded page, retrying only this reader's busy lock."""
-        return self._retry_activity_busy(
-            lambda: self._field_effect_activity_page_once(
-                search=search,
-                event_type=event_type,
-                occurred_after=occurred_after,
-                page=page,
-                page_size=page_size,
+
+        def read() -> dict[str, object]:
+            return self._retry_activity_busy(
+                lambda: self._field_effect_activity_page_once(
+                    search=search,
+                    event_type=event_type,
+                    occurred_after=occurred_after,
+                    page=page,
+                    page_size=page_size,
+                )
             )
-        )
+
+        with self._activity_page_cache_lock:
+            # Inside an enclosing read snapshot this read cannot release its
+            # lock between steps; that snapshot owns the catch-up instead.
+            return read() if self._connection.in_transaction else self._caught_up(read)
 
     def initialize_activity_facts(self) -> None:
-        self._activity_fact_page(
-            search=None, event_type="all", occurred_after=0, page=1, page_size=25
-        )
+        with self._activity_page_cache_lock:
+            self._caught_up(
+                lambda: self._activity_fact_page(
+                    search=None,
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+            )
 
     def _project_activity_facts(
         self, candidates: set[Candidate] | None, max_bytes: int
@@ -2627,59 +2702,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         transaction = self._transaction("activity_facts", deferred=True)
         try:
             transaction.begin()
-            self._connection.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
-            revision = self._activity_projection_revision()
-            identity = self._activity_database_identity()
-            if self._connection.execute("PRAGMA query_only").fetchone() != (
-                1,
-            ) or self._connection.execute("PRAGMA schema_version").fetchone() != (
-                self._activity_fact_schema,
-            ):
-                self._activity_facts = None
-                self._activity_page_cache.clear()
-                self._activity_page_cache_bytes = 0
+            admitted = self._admit_activity_facts(store)
+            if admitted is None:
                 return None
-            prior = self._activity_fact_stamp
-            if prior is not None and prior[0] == revision and prior[1] != identity:
-                raise FieldEffectError("persistence")
-            snapshot = store.snapshot()
-            current = snapshot is not None and prior == (
-                revision,
-                identity,
-                snapshot.version,
-            )
-            try:
-                # A new borrower generation witnesses every row itself; an
-                # unchanged revision advances the re-verification sweep.
-                snapshot = store.refresh(
-                    self._connection,
-                    self._project_activity_facts,
-                    full=prior is None,
-                    unchanged=snapshot if current else None,
-                )
-            except (
-                FieldEffectError,
-                MetadataReportError,
-                ValueError,
-                TypeError,
-                KeyError,
-                RecursionError,
-                sqlite3.OperationalError,
-            ) as error:
-                if isinstance(error, sqlite3.OperationalError) and not (
-                    getattr(error, "sqlite_errorcode", None) is None
-                    and str(error).startswith("Could not decode to UTF-8 column ")
-                ):
-                    raise
-                # Full initialization must not broaden a normal page's
-                # candidate validation. Malformed unrelated history uses
-                # the original query-scoped canonical path.
-                self._activity_facts = None
-                self._activity_page_cache.clear()
-                self._activity_page_cache_bytes = 0
-                return None
-            if snapshot is None:
-                self._activity_facts = None
+            snapshot, identity = admitted
+            if snapshot.pending:
+                if self._activity_fact_retry:
+                    raise _ActivityFactsBehind
                 return None
             selected = [
                 fact
@@ -2705,12 +2734,95 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             }
             if identity != self._activity_database_identity():
                 raise FieldEffectError("persistence")
-            self._activity_fact_stamp = revision, identity, snapshot.version
             return result
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
         finally:
             transaction.rollback()
+
+    @local_operation
+    def _activity_fact_step(self) -> None:
+        """Project the next bounded share of pending candidates in its own read."""
+        store = self._activity_facts
+        if store is None:
+            return
+        transaction = self._transaction("activity_fact_step", deferred=True)
+        try:
+            transaction.begin()
+            self._admit_activity_facts(store)
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+        finally:
+            transaction.rollback()
+
+    def _admit_activity_facts(
+        self, store: ActivityFactStore
+    ) -> tuple[_Snapshot, _ActivityDatabaseIdentity] | None:
+        """Refresh ``store`` from this reader's open read snapshot.
+
+        Returns the admitted state, which may still have candidates pending, or
+        None when this reader must serve the canonical projection instead.
+        """
+        self._connection.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
+        revision = self._activity_projection_revision()
+        identity = self._activity_database_identity()
+        if self._connection.execute("PRAGMA query_only").fetchone() != (
+            1,
+        ) or self._connection.execute("PRAGMA schema_version").fetchone() != (
+            self._activity_fact_schema,
+        ):
+            self._activity_facts = None
+            self._activity_page_cache.clear()
+            self._activity_page_cache_bytes = 0
+            return None
+        prior = self._activity_fact_stamp
+        if prior is not None and prior[0] == revision and prior[1] != identity:
+            raise FieldEffectError("persistence")
+        snapshot = store.snapshot()
+        current = snapshot is not None and prior == (
+            revision,
+            identity,
+            snapshot.version,
+        )
+        try:
+            # A new borrower generation witnesses every row itself; an
+            # unchanged revision advances the re-verification sweep.
+            snapshot = store.refresh(
+                self._connection,
+                self._project_activity_facts,
+                full=prior is None,
+                unchanged=snapshot if current else None,
+            )
+        except (
+            FieldEffectError,
+            MetadataReportError,
+            ValueError,
+            TypeError,
+            KeyError,
+            RecursionError,
+            sqlite3.OperationalError,
+        ) as error:
+            if isinstance(error, sqlite3.OperationalError) and not (
+                getattr(error, "sqlite_errorcode", None) is None
+                and str(error).startswith("Could not decode to UTF-8 column ")
+            ):
+                raise
+            # Full initialization must not broaden a normal page's
+            # candidate validation. Malformed unrelated history uses
+            # the original query-scoped canonical path.
+            self._activity_facts = None
+            self._activity_page_cache.clear()
+            self._activity_page_cache_bytes = 0
+            return None
+        if snapshot is None:
+            self._activity_facts = None
+            return None
+        if identity != self._activity_database_identity():
+            raise FieldEffectError("persistence")
+        # Witnesses admitted at this revision, pending or complete, are reused
+        # by the next read only while the revision and file stay the same.
+        self._activity_fact_stamp = revision, identity, snapshot.version
+        return snapshot, identity
 
     def _field_effect_activity_page_once(
         self,
