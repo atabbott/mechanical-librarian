@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Preparation keeps its pace while Library or Attention is open: an active tab
+  refreshes its Library page and attention at most once every 1.5 seconds while
+  works keep arriving, instead of once per prepared work, and reads once more
+  after the last. Owner navigation and input still read immediately; results
+  and refusals are unchanged (#1224).
+
 - Activity and permission readiness no longer recount pending changes, or pick
   the readiness example again, on every read: each reader reuses them until the
   database changes. The fresh consistency check still runs on every readiness

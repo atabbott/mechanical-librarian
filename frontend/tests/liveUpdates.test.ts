@@ -3,7 +3,9 @@ import { QueryClient, QueryObserver, onlineManager } from '@tanstack/react-query
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
+  coalesceMilliseconds,
   invalidationKeys,
+  libraryRefreshMilliseconds,
   ownerIdleMilliseconds,
   startLiveInvalidation,
 } from '../src/liveInvalidation'
@@ -32,8 +34,10 @@ const collectionHarness = (warm = false, key: readonly string[] = ['library', 'a
     signal: AbortSignal
   }[] = []
   const timers = new Map<number, () => void>()
+  const delays = new Map<number, number>()
   let timerId = 0
   let visible = true
+  let clock = 0
   let visibilityListener: () => void = () => undefined
   const listeners = new Set<(update: LiveUpdate) => void>()
   const stop = startOwnedLiveInvalidation(
@@ -48,8 +52,9 @@ const collectionHarness = (warm = false, key: readonly string[] = ['library', 'a
     },
     client,
     {
-      schedule: (run) => {
+      schedule: (run, delay) => {
         timers.set(++timerId, run)
+        delays.set(timerId, delay)
         return timerId
       },
       cancel: (id) => {
@@ -61,7 +66,7 @@ const collectionHarness = (warm = false, key: readonly string[] = ['library', 'a
         return () => undefined
       },
       observeActivity: () => () => undefined,
-      now: () => 0,
+      now: () => clock,
     },
   )
   const options = {
@@ -102,6 +107,20 @@ const collectionHarness = (warm = false, key: readonly string[] = ['library', 'a
       const pending = [...timers.values()]
       timers.clear()
       for (const run of pending) run()
+    },
+    /** Run only the timers due within the ordinary coalescing. */
+    flushCoalesced: () => {
+      for (const [id, run] of [...timers]) {
+        if ((delays.get(id) ?? 0) > coalesceMilliseconds) continue
+        timers.delete(id)
+        run()
+      }
+    },
+    /** The delays of the timers still waiting to run. */
+    pendingDelays: () => [...timers.keys()].map((id) => delays.get(id)),
+    /** Let the bridge's clock pass, e.g. beyond the Library refresh bound. */
+    elapse: (milliseconds: number) => {
+      clock += milliseconds
     },
     hide: () => {
       visible = false
@@ -164,6 +183,7 @@ describe('live collection completion debt', () => {
     void h.client.invalidateQueries({ queryKey: h.query.queryKey, exact: true })
     expect(h.reads[0]?.signal.aborted).toBe(true)
     expect(h.reads).toHaveLength(2)
+    h.elapse(libraryRefreshMilliseconds)
     h.emit()
     h.flush()
     expect(h.reads[1]?.signal.aborted).toBe(false)
@@ -240,6 +260,102 @@ describe('live collection completion debt', () => {
     expect(h.query.state.isInvalidated).toBe(false)
   })
 
+  it('refetches a sustained run of Library frames once per bound and converges after the last', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    // The first frame after a quiet bound reads at the ordinary coalescing.
+    h.emit()
+    expect(h.pendingDelays()).toEqual([coalesceMilliseconds])
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+    h.reads[1]?.resolve('first work')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('first work'))
+    expect(h.query.state.isInvalidated).toBe(false)
+    // Preparation keeps publishing: each frame marks the page stale at once,
+    // but the next read waits for the bound measured from the last one.
+    h.elapse(coalesceMilliseconds)
+    h.emit()
+    h.flush()
+    expect(h.query.state.isInvalidated).toBe(true)
+    expect(h.reads).toHaveLength(2)
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - coalesceMilliseconds])
+    for (let i = 0; i < 20; i += 1) {
+      h.elapse(50)
+      h.emit()
+      const [coalesce] = [...h.pendingDelays()].slice(-1)
+      expect(coalesce).toBe(coalesceMilliseconds)
+    }
+    // Twenty more frames schedule no further Library read of their own.
+    expect(h.pendingDelays().filter((delay) => delay !== coalesceMilliseconds)).toEqual([
+      libraryRefreshMilliseconds - coalesceMilliseconds,
+    ])
+    h.flush()
+    expect(h.reads).toHaveLength(3)
+    // Preparation ends. The bounded read began after the last frame, so it is
+    // the converged answer and nothing further is owed.
+    h.reads[2]?.resolve('final')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('final'))
+    expect(h.query.state.isInvalidated).toBe(false)
+    expect(h.timers.size).toBe(0)
+    h.flush()
+    expect(h.reads).toHaveLength(3)
+    // After a quiet bound the next frame is immediate again.
+    h.elapse(libraryRefreshMilliseconds)
+    h.emit()
+    h.flush()
+    expect(h.reads).toHaveLength(4)
+  })
+
+  it('pays bounded Library debt at once when a resync reads, and bounds from there', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.emit()
+    h.flush()
+    h.reads[1]?.resolve('first work')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('first work'))
+    h.elapse(400)
+    h.emit()
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - 400])
+    h.emit('resync')
+    h.flushCoalesced()
+    // The resync's own read pays the debt; its bounded timer is withdrawn.
+    expect(h.reads).toHaveLength(3)
+    expect(h.timers.size).toBe(0)
+    h.reads[2]?.resolve('resynced')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('resynced'))
+    h.elapse(100)
+    h.emit()
+    h.flush()
+    expect(h.reads).toHaveLength(3)
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - 100])
+  })
+
+  it('reads nothing when bounded Library debt falls due in a hidden tab, and reads on return', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.emit()
+    h.flush()
+    h.reads[1]?.resolve('first work')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('first work'))
+    h.elapse(coalesceMilliseconds)
+    h.emit()
+    h.flush()
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - coalesceMilliseconds])
+    h.hide()
+    h.flush()
+    // A hidden browser does no catch-up work, even when the bound falls due.
+    expect(h.reads).toHaveLength(2)
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.show()
+    h.flush()
+    expect(h.reads).toHaveLength(3)
+  })
+
   it('does not discharge an in-flight debt through a manual cache update', async () => {
     const h = collectionHarness(true)
     h.emit()
@@ -264,6 +380,7 @@ describe('live collection completion debt', () => {
     h.flush()
     h.flush()
     expect(h.reads).toHaveLength(1)
+    h.elapse(libraryRefreshMilliseconds)
     h.emit()
     h.flush()
     expect(h.reads).toHaveLength(2)

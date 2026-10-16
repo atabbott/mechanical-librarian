@@ -15,10 +15,12 @@ import re
 import tempfile
 import time
 from contextlib import closing
+from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 from argon2 import PasswordHasher
-from playwright.sync_api import Page, Response, expect, sync_playwright
+from playwright.sync_api import Page, Request, Response, expect, sync_playwright
 
 from tests.browser.test_review_browser import (
     _PASSWORD,
@@ -366,6 +368,95 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
                     == "rgb(15, 21, 18)"
                 )
                 assert len(documents) == documents_before
+
+
+# `libraryRefreshMilliseconds` in frontend/src/liveInvalidation.ts (#1224).
+_LIBRARY_REFRESH_SECONDS = 1.5
+
+
+def test_a_preparation_burst_refreshes_library_once_per_bound_and_converges() -> None:
+    """An active tab reads Library at the bound, not at the rate of works (#1224).
+
+    Preparation announces `library` once per published work. The bundle must
+    read the page and its rail at most once per bound while frames keep coming,
+    stay immediate for the first one, and read once more after the last frame so
+    the tab ends on the server's answer.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        channels: list[Any] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = context.new_page()
+            # Browser-clock start of every finished read, by surface.
+            reads: dict[str, list[float]] = {"library": [], "attention": []}
+
+            def record(request: Request) -> None:
+                path = request.url.split("?", 1)[0]
+                for surface in reads:
+                    if path.endswith(f"/api/v1/{surface}"):
+                        reads[surface].append(request.timing["startTime"] / 1000)
+
+            page.on("requestfinished", record)
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    on_app=lambda app: channels.append(
+                        app.state.review_application.updates
+                    ),
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.get_by_role("heading", name="Works", exact=True).wait_for()
+                assert _wait_until(page, lambda: bool(reads["library"]))
+                page.wait_for_timeout(1_500)
+                settled = {surface: len(times) for surface, times in reads.items()}
+
+                # Five seconds of preparation publishing a work every 100 ms,
+                # with the owner pressing a key now and then: an active tab.
+                first = time.time()
+                last = first
+                for frame in range(50):
+                    channels[0].publish("library", None)
+                    last = time.time()
+                    if frame % 10 == 0:
+                        page.keyboard.press("Shift")
+                    page.wait_for_timeout(100)
+                page.wait_for_timeout(int(_LIBRARY_REFRESH_SECONDS * 1000) + 1_500)
+                after = {surface: len(times) for surface, times in reads.items()}
+                page.wait_for_timeout(1_000)
+                assert {surface: len(times) for surface, times in reads.items()} == (
+                    after
+                ), "reads continued after preparation stopped announcing"
+
+                for surface, times in reads.items():
+                    burst = sorted(times[settled[surface] :])
+                    # Fifty frames: an unbounded tab reads every ~120 ms. The
+                    # bound allows one immediate read, one per bound, and the
+                    # converging read after the last frame.
+                    assert 3 <= len(burst) <= 5, (surface, burst)
+                    assert burst[0] - first < 1.0, (surface, burst[0] - first)
+                    gaps = [later - earlier for earlier, later in pairwise(burst)]
+                    assert min(gaps) >= _LIBRARY_REFRESH_SECONDS - 0.15, (surface, gaps)
+                    # Converged: the final read began after the final frame.
+                    assert burst[-1] > last, (surface, burst[-1] - last)
+                assert "Reconnecting" not in page.locator("body").inner_text()
+            browser.close()
 
 
 def test_preparation_run_shares_library_workspace_and_compacts_without_losing_state() -> (

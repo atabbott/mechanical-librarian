@@ -24,10 +24,22 @@ import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from './liveUpdate
 /**
  * Long enough that fifty works finishing in a burst cost a handful of refetches
  * instead of fifty, short enough that one work finishing still reads as
- * immediate. The bar this serves is "no visible cadence", which a multi-second
- * batch would fail exactly as the 1.5-second poll it replaces did.
+ * immediate. The bar this serves is "no visible cadence" for a change, which a
+ * multi-second batch would fail exactly as the 1.5-second poll it replaces did;
+ * a sustained run of Library frames is bounded separately below.
  */
 export const coalesceMilliseconds = 120
+
+/**
+ * While `library` frames keep arriving -- preparation publishing one work after
+ * another -- an active tab refetches its Library page and attention at most
+ * once per this bound, so the tab costs the database in proportion to what the
+ * owner looks at rather than to the rate of prepared works (#1224). The first
+ * frame after a quiet bound still refetches after the 120 ms coalescing, every
+ * frame still marks both stale at once, and navigation and a resync (owner
+ * input after idle, a foreground return) still read immediately.
+ */
+export const libraryRefreshMilliseconds = 1_500
 
 /**
  * An untouched foreground tab still shows truthful preparation progress, but
@@ -105,6 +117,9 @@ export const startLiveInvalidation = (
   const pending = new Map<string, readonly unknown[]>()
   let stopped = false
   let handle: number | null = null
+  let libraryHandle: number | null = null
+  let libraryOwed = false
+  let lastLibraryRefreshAt = Number.NEGATIVE_INFINITY
   let idleHandle: number | null = null
   let deferredWhileIdle = false
   let lastActivityAt = now()
@@ -147,6 +162,17 @@ export const startLiveInvalidation = (
     handle ??= schedule(flush, coalesceMilliseconds)
   }
 
+  const refreshLibrary = () => {
+    // This read covers every frame received so far.
+    libraryHandle = null
+    libraryOwed = false
+    lastLibraryRefreshAt = now()
+    for (const queryKey of invalidationKeys({ sequence: 0, subject: null, topic: 'library' })) {
+      void invalidateBackgroundQueries(queryClient, { queryKey })
+      forgetSettledKeys(queryClient, [queryKey])
+    }
+  }
+
   function flush() {
     handle = null
     // A hidden browser does no catch-up work.  Its next foreground transition
@@ -155,6 +181,28 @@ export const startLiveInvalidation = (
     if (stopped || !visible()) return
     const keys = [...pending.values()]
     pending.clear()
+    if (keys.some((key) => key[0] === 'library')) {
+      // A resync reads Library and attention now, which pays any bounded debt.
+      libraryOwed = false
+      lastLibraryRefreshAt = now()
+      if (libraryHandle !== null) cancel(libraryHandle)
+      libraryHandle = null
+    }
+    if (libraryOwed) {
+      libraryOwed = false
+      const delay = lastLibraryRefreshAt + libraryRefreshMilliseconds - now()
+      if (delay <= 0) refreshLibrary()
+      else {
+        // Marked stale exactly when an unbounded frame would have been; only
+        // the refetch waits for the bound.
+        for (const queryKey of invalidationKeys({ sequence: 0, subject: null, topic: 'library' }))
+          void queryClient.invalidateQueries({ queryKey, refetchType: 'none' })
+        libraryHandle ??= schedule(() => {
+          refreshLibrary()
+          drainBackgroundWork(queryClient)
+        }, delay)
+      }
+    }
     for (const queryKey of keys) {
       if (
         queryKey[0] === 'review-preparation' &&
@@ -210,7 +258,8 @@ export const startLiveInvalidation = (
       deferIdleUpdate()
       return
     }
-    for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
+    if (update.topic === 'library') libraryOwed = true
+    else for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
     handle ??= schedule(flush, coalesceMilliseconds)
   })
   const handleStreamState = (state: LiveStreamState) => {
@@ -292,8 +341,10 @@ export const startLiveInvalidation = (
     stopObservingVisibility()
     if (handle !== null) cancel(handle)
     if (idleHandle !== null) cancel(idleHandle)
+    if (libraryHandle !== null) cancel(libraryHandle)
     handle = null
     idleHandle = null
+    libraryHandle = null
     confirmationBeganLive = false
   }
 }

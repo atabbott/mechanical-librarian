@@ -570,7 +570,11 @@ current redacted state and no stale frame can manufacture a transition. An
 untouched visible tab defers Library and attention frames and takes only bounded
 preparation snapshots; pointer or keyboard input pays that deferred debt with
 the same one ordinary snapshot resync, while active input retains immediate
-coalesced invalidation.
+coalesced invalidation. While Library frames keep arriving, an active tab marks
+Library and attention stale at once but reads them at most once per 1.5
+seconds, and reads once more after the last frame (#1224); this bounds how much
+of the shared database lane one tab can take during preparation and changes no
+authority, redaction or refusal.
 Activity keeps at most two reader-local pages, stamped inside the same SQLite
 snapshot from the five append-only ledgers and the exact owner-visible policy
 transition shape. Field-effect rows resolve their optional report through the

@@ -256,7 +256,12 @@ or keyboard intent on pager controls, lenses and work rows prefetches that read
 and its route code as background work.
 Owner navigation, typing, paging, retries and command results take priority over
 background refreshes at the next safe local-operation boundary. Recurring polls
-join ongoing work without accumulating redundant requests. A recorded choice is
+join ongoing work without accumulating redundant requests. While preparation
+keeps publishing works, an open tab refreshes its Library page and attention at
+most once every 1.5 seconds rather than once per work: the first work after a
+quiet 1.5 seconds still appears after the ordinary 120 ms coalescing, and one
+read after the last published work leaves the tab on the server's current
+answer (#1224). A recorded choice is
 confirmed from the server's actual post-commit case before the interface advances;
 failed confirmation stays visibly unconfirmed with an explicit reload. A partially
 completed reviewer sign-in change retains its explanation after state is reloaded,
