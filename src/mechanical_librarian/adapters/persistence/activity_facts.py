@@ -771,9 +771,14 @@ class ActivityFactStore:
                 for node in rows.values()
                 for candidate in node.candidates
             }
-            if len(everything) > _PROJECT_CANDIDATES:
+            if len(everything) > _PROJECT_CANDIDATES and not any(
+                "\x00" in identity for _, identity in everything
+            ):
                 # Construction past the bound projects every witnessed
-                # candidate in bounded steps rather than in one read.
+                # candidate in bounded steps rather than in one read. An
+                # explicit candidate set cannot name a NUL identity, so such a
+                # ledger keeps the one unbounded projection, which falls back
+                # only when a later refresh touches that candidate.
                 affected = everything
         elif not changed:
             # Nothing moved since the pending state was published.

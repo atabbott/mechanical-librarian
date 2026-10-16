@@ -10,6 +10,7 @@ between them and the refusals a step can meet.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -29,6 +30,14 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    human_review_destinations,
+    resolve_policy,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from tests.support.activity_seed import SEED_NOW
+from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
 from tests.support.field_effects import (  # noqa: F401
     _EffectEnvironment,
     effects,
@@ -422,5 +431,223 @@ def test_a_step_whose_file_moves_during_its_refresh_refuses_and_keeps_its_stamp(
         assert activity._activity_fact_stamp is stamp
         monkeypatch.setattr(activity, "_activity_database_identity", identity)
         assert _pages(borrower) == _pages(ledger.canonical)
+    finally:
+        borrower.close()
+
+
+def test_a_nul_identity_keeps_the_one_unbounded_construction(
+    effects: _EffectEnvironment,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit candidate set cannot name a NUL identity, so a ledger that
+    witnesses one is constructed by the one unbounded projection, exactly as
+    without the bound, and falls back only when a refresh touches it."""
+    _bound(monkeypatch, 1)
+    root = effects.repository
+    report = synthetic_audiobook_isbn_reason_report("conflict")
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    root.enter_shadow_preview(1)
+    root.publish(report, lambda: True)
+    proposal = evaluate_report(
+        report, policy.resolved_id, human_review_destinations(policy)
+    )
+    root.publish_proposal(proposal)
+    case_id = json.loads(root.admit_review_case(proposal))["review_case_id"]
+    outcome = json.loads(root.persist_shadow_outcome(case_id, SEED_NOW))
+    row = list(
+        root._connection.execute(
+            "SELECT * FROM shadow_decision_outcomes WHERE outcome_set_id=?",
+            (outcome["outcome_set_id"],),
+        ).fetchone()
+    )
+    row[0] = "shadow_outcome_set_" + "d" * 64 + "\x00z"
+    row[6] = SEED_NOW + 60
+    root._connection.execute(
+        "INSERT INTO shadow_decision_outcomes VALUES ("
+        + ",".join("?" * len(row))
+        + ")",
+        row,
+    )
+    root._connection.commit()
+    projected: list[set[Candidate] | None] = []
+
+    def project(
+        candidates: set[Candidate] | None, _budget: int
+    ) -> dict[Candidate, ActivityFact]:
+        projected.append(candidates)
+        return {}
+
+    connection = sqlite3.connect(f"file:{effects.database_path}?mode=ro", uri=True)
+    try:
+        connection.execute("BEGIN")
+        state = ActivityFactStore().refresh(connection, project)
+    finally:
+        connection.close()
+    assert state is not None and not state.pending
+    witnessed = {
+        candidate
+        for rows in state.witnesses.values()
+        for node in rows.values()
+        for candidate in node.candidates
+    }
+    assert len(witnessed) > 1
+    assert any("\x00" in identity for _, identity in witnessed)
+    assert projected == [None]
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    canonical = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    reader.configure_activity_page_reader(ActivityFactStore())
+    try:
+        assert _pages(reader) == _pages(canonical)
+    finally:
+        reader.close()
+        canonical.close()
+
+
+def _readiness(repository: SQLiteMetadataReportRepository) -> object:
+    return _outcome(
+        lambda: repository.field_effect_permission_readiness_snapshot(
+            lambda ready: {
+                "backup_ready": ready,
+                "summary": repository.field_effect_activity_summary(),
+            }
+        )
+    )
+
+
+def test_readiness_runs_no_catch_up_between_its_check_and_its_snapshot(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Readiness reads no Activity facts, so pending work never delays it."""
+    _bound(monkeypatch, 3)
+    borrower = _borrower(ledger)
+    activity = borrower._field_effect_activity
+    try:
+        activity._activity_fact_step()
+        store = activity._activity_facts
+        assert store is not None
+        state = store.snapshot()
+        assert state is not None and state.pending
+        steps: list[str] = []
+        monkeypatch.setattr(
+            activity, "_catch_up_activity_facts", lambda: steps.append("catch-up")
+        )
+        monkeypatch.setattr(
+            activity, "_activity_fact_step", lambda: steps.append("step")
+        )
+        assert _readiness(borrower) == _readiness(ledger.canonical)
+        assert steps == []
+        assert store.snapshot() is state
+    finally:
+        borrower.close()
+
+
+def test_a_busy_step_leaves_the_read_that_follows_to_finish_exactly(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bound(monkeypatch, 2)
+    borrower = _borrower(ledger)
+    activity = borrower._field_effect_activity
+    monkeypatch.setattr(activity, "_activity_page_busy_retry_seconds", 0)
+    step = activity._activity_fact_step
+    calls: list[int] = []
+
+    def busy_once() -> None:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise FieldEffectError("busy")
+        step()
+
+    monkeypatch.setattr(activity, "_activity_fact_step", busy_once)
+    try:
+        served = _page(borrower)
+        assert type(served) is dict
+        assert len(calls) > 1
+        store = activity._activity_facts
+        assert store is not None
+        state = store.snapshot()
+        assert state is not None and not state.pending
+        assert _pages(borrower) == _pages(ledger.canonical)
+    finally:
+        borrower.close()
+
+
+def test_steps_that_leave_as_many_pending_stop_and_the_last_attempt_is_canonical(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four steps in a row that pending does not shrink end each catch-up."""
+    _bound(monkeypatch, 2)
+    borrower = _borrower(ledger)
+    activity = borrower._field_effect_activity
+    calls: list[None] = []
+
+    def stalled() -> None:
+        calls.append(None)
+        assert len(calls) <= 50, "catch-up did not stop on a stall"
+
+    monkeypatch.setattr(activity, "_activity_fact_step", stalled)
+    try:
+        assert _page(borrower) == _page(ledger.canonical)
+        # Attempts two and three each run one step and four stalled steps.
+        assert len(calls) == 10
+    finally:
+        borrower.close()
+
+
+def test_bounded_steps_take_each_review_case_candidates_together(
+    ledger: _Ledger,  # noqa: F811
+) -> None:
+    """A step parses a case's report once only if the case's candidates are
+    adjacent in the order steps take them. Without that order, catch-up at
+    8,000 decisions took 20 s and one step held 2 s, against 11-13 s and
+    0.5 s with it (#1225). The order never changes what a fact contains."""
+    for index in range(6):
+        _record_decision(ledger.root, 50 + index)
+    ledger.read()
+    state = ledger.snapshot()
+    cases: dict[Candidate, set[object]] = {}
+    for rows in state.witnesses.values():
+        for node in rows.values():
+            direct = {key for key in node.dependencies if key[0] == "review_cases"}
+            for candidate in node.candidates:
+                cases.setdefault(candidate, set()).update(direct)
+    order = activity_facts._by_review_case(state.witnesses, set(cases))
+    assert sorted(order) == sorted(cases)
+    positions: dict[object, list[int]] = {}
+    for position, candidate in enumerate(order):
+        if len(cases[candidate]) == 1:
+            positions.setdefault(next(iter(cases[candidate])), []).append(position)
+    spread = [found for found in positions.values() if len(found) > 1]
+    assert spread
+    for found in spread:
+        assert found == list(range(found[0], found[0] + len(found)))
+
+
+def test_a_pending_state_counts_its_pending_identities_toward_the_bound(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bound(monkeypatch, 3)
+    borrower = _borrower(ledger)
+    activity = borrower._field_effect_activity
+    try:
+        activity._activity_fact_step()
+        store = activity._activity_facts
+        assert store is not None
+        state = store.snapshot()
+        assert state is not None and state.pending and not state.ordered
+        assert state.accounted_bytes == (
+            activity_facts._CURSOR_BYTES
+            + sum(len(table) + activity_facts._MARK_BYTES for table in state.marks)
+            + sum(state.witness_bytes.values())
+            + state.fact_bytes
+            + sum(len(kind) + len(identity) for kind, identity in state.pending)
+        )
     finally:
         borrower.close()

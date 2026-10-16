@@ -2540,37 +2540,38 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     ready if checked is not None and checked[0] == current else None
                 )
 
-            return self.field_effect_activity_snapshot(project)
+            # Readiness reads no Activity facts, so no catch-up widens the
+            # window between the fresh check and this snapshot (#1225).
+            return self._activity_snapshot(project)
 
     def field_effect_activity_snapshot(
         self, call: Callable[[], dict[str, object]]
     ) -> dict[str, object]:
         """Run one Activity projection in a bounded exact read snapshot."""
-
-        def snapshot() -> dict[str, object]:
-            transaction = self._transaction(
-                "field_effect_activity_snapshot", deferred=True
-            )
-
-            def begin() -> None:
-                try:
-                    transaction.begin()
-                    self._activity_projection_revision()
-                except sqlite3.Error as error:
-                    transaction.rollback()
-                    raise FieldEffectError("persistence") from error
-                except Exception:
-                    transaction.rollback()
-                    raise
-
-            self._retry_activity_busy(begin)
-            try:
-                return call()
-            finally:
-                transaction.rollback()
-
         with self._activity_page_cache_lock:
-            return self._caught_up(snapshot)
+            return self._caught_up(lambda: self._activity_snapshot(call))
+
+    def _activity_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        transaction = self._transaction("field_effect_activity_snapshot", deferred=True)
+
+        def begin() -> None:
+            try:
+                transaction.begin()
+                self._activity_projection_revision()
+            except sqlite3.Error as error:
+                transaction.rollback()
+                raise FieldEffectError("persistence") from error
+            except Exception:
+                transaction.rollback()
+                raise
+
+        self._retry_activity_busy(begin)
+        try:
+            return call()
+        finally:
+            transaction.rollback()
 
     def _caught_up(self, read: Callable[[], _ActivityRead]) -> _ActivityRead:
         """Run ``read``; if its refresh leaves candidates pending, retry it.

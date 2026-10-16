@@ -1414,7 +1414,9 @@ witnesses, sweeps and falls back exactly as one refresh does. A read that leaves
 candidates pending finishes them in bounded read transactions of its own and
 retries; its third attempt serves the canonical projection. Witness values use an
 injective literal encoding that keeps exact SQLite types. This bounds how long a
-read delays a writer's commit. It changes no busy timeout, journal mode, result,
+read that reaches the store delays a writer's commit; the canonical fallback and
+the appended-row witness remain unbounded. Readiness runs no catch-up between its
+fresh check and its snapshot. It changes no busy timeout, journal mode, result,
 refusal, or authority.
 
 Ordinary history returns required null backup-readiness and example fields. The
