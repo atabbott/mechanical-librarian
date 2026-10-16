@@ -265,7 +265,10 @@ the page is marked stale at once and navigation still reads it immediately, and
 one read after the last published work leaves the tab on the server's current
 answer (#1224). Reading the next page does not clear that stale mark. During
 preparation a decision recorded in another tab can take about 1.6 seconds (the
-bound plus 120 ms coalescing) to appear, not about 120 ms. A recorded choice is
+bound plus 120 ms coalescing) to appear, not about 120 ms, and longer while
+Attention reads are slow: Library and Attention share the bound, so its period
+is then about Attention's read time plus 1.5 seconds, and reads still start at
+most once per 1.5 seconds. A recorded choice is
 confirmed from the server's actual post-commit case before the interface advances;
 failed confirmation stays visibly unconfirmed with an explicit reload. A partially
 completed reviewer sign-in change retains its explanation after state is reloaded,
