@@ -57,7 +57,8 @@ any statement executed without the lock.
 
 [ADR-0082](decisions/0082-runtime-activity-facts.md) adds a root-owned, 64 MiB
 serialized Activity fact store borrowed by those query-only readers. Initial
-composition completes before readiness. Every new borrower generation performs a
+composition completes after the server binds, on the history reader's background
+projector (#1231). Every new borrower generation performs a
 full witness against the previous snapshot, scanning exact scalar and
 raw-document byte witnesses inside its own snapshot; later reuse requires its own
 unchanged revision, file identity and store version. Changed witnesses refresh
@@ -93,6 +94,16 @@ instead of behind the whole catch-up. The third attempt serves the canonical
 projection if candidates are still pending. A read nested in an Activity snapshot
 leaves the catch-up to that snapshot, so one response still reads one snapshot.
 The busy timeout and journal mode are unchanged.
+
+The history reader runs the same bounded steps on a background thread, at startup
+and when its revision moves or candidates are pending (#1231). Each step is one
+read transaction under the reader's own query-only connection and local
+admission, never the root admission. Steps are 20 ms apart while candidates are
+pending, and a changed revision is looked for once a second. The projector takes
+each step inside a lock the permission reader holds from its fresh consistency
+check to its snapshot, so no step runs inside that window. A writer still waits
+for at most one step, and a request for at most the step in progress, though a
+step takes longer while requests share the interpreter with it.
 
 Each query-only Activity reader also keeps its last prepared counts and
 permission-readiness example beside the store, with the connection's revision

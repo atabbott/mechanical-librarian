@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Activity opens in under 2 s after a large batch of new history, and a
+  restart answers in about half the time (10-12 s instead of 20-23 s at 8,000
+  decisions): catch-up now runs in the background and startup checks each report
+  once. An Activity read that arrives before catch-up finishes completes it
+  itself, so the first one just after a restart takes 5-8 s, and the catch-up
+  uses CPU while Activity is closed. Results and refusals are unchanged (#1231).
+
 - Library, search, the attention lens and Attention no longer re-check every
   field on each request: which fields ask for the owner is kept current as each
   write lands. Results, order and refusals are unchanged. Adopt a database from

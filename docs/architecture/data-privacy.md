@@ -199,8 +199,11 @@ authenticated private-cache behavior.
 The process may also retain up to 64 MiB of serialized readable Activity facts,
 search text, source/dependency witnesses, and each append-only table's row mark
 and a re-verification cursor. This private in-memory store is not
-an export or another durable ledger. It retains no domain report objects between
-requests and disappears with its runtime owner; canonical retention is unchanged.
+an export or another durable ledger. Each Activity reader also keeps validated
+reports, cases, proposals and outcomes it parsed, by their exact bytes, under
+ADR-0083's bound, and at startup the reports schema validation parsed until the
+store is first complete (#1231). All of it disappears with its runtime owner;
+canonical retention is unchanged.
 Browse also retains case and report documents, and facts derived from them, in
 process memory across requests under ADR-0083's bound; they are never persisted.
 The application database also holds `review_attention_facts` (#1232): for each
