@@ -470,6 +470,16 @@ def test_library_and_attention_equal_the_pre_1202_statements(
         states["decided"] = compare_every_authority()
         _resolve_policies(repository, "books-1")
         states["policy ask"] = compare_every_authority()
+        # An EPUB has no narrators or explicit field to ask about, however
+        # either field's facts read.
+        connection.executemany(
+            "UPDATE review_case_field_facts SET unresolved_choice=1,"
+            "has_owner_decision_actions=1 WHERE review_case_id=? AND destination=?",
+            ((cases[12], "narrators"), (cases[13], "explicit")),
+        )
+        connection.commit()
+        states["epub narrators and explicit"] = compare_every_authority()
+        assert states["epub narrators and explicit"] == states["policy ask"]
 
         # A refresh admits a cover only while its choice is unresolved.
         def refreshing_total() -> int:

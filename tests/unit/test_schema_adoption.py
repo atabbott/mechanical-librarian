@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
@@ -270,6 +271,93 @@ def test_a_change_beside_the_derivation_requires_recovery_from_the_backup(
     monkeypatch.setattr(adoption, "_create_attention_facts", create_and_tamper)
     with pytest.raises(SchemaAdoptionRecoveryRequired):
         adoption.adopt_schema(database, backup, REVIEW_ATTENTION_FACTS_V1)
+
+
+def test_an_already_current_database_is_validated_before_it_is_reported(
+    _current: bytes, tmp_path: Path
+) -> None:
+    directory = _private(tmp_path)
+    database = _write(directory / "application.sqlite3", _current)
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            "DELETE FROM review_attention_facts WHERE destination='cover'"
+        )
+        connection.commit()
+    _refused_without_mutation(
+        database,
+        directory / "backup.sqlite3",
+        "database is unavailable or incompatible",
+    )
+    assert not (directory / "backup.sqlite3").exists()
+
+
+def test_a_non_delete_journal_header_is_refused_before_sqlite_opens(
+    _current: bytes, tmp_path: Path
+) -> None:
+    directory = _private(tmp_path)
+    database = _predecessor(_current, directory / "application.sqlite3")
+    data = bytearray(database.read_bytes())
+    data[18:20] = b"\x02\x02"
+    _write(database, bytes(data))
+    _refused_without_mutation(
+        database,
+        directory / "backup.sqlite3",
+        "database recovery mode is unsupported",
+    )
+    assert not (directory / "backup.sqlite3").exists()
+    assert sorted(path.name for path in directory.iterdir()) == ["application.sqlite3"]
+
+
+def test_a_source_replaced_after_commit_requires_recovery_from_the_backup(
+    _current: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The last check is the source pathname, after the backup's."""
+    directory = _private(tmp_path)
+    database = _predecessor(_current, directory / "application.sqlite3")
+    backup = directory / "backup.sqlite3"
+    check_backup = adoption._require_backup_current
+
+    def check_backup_then_replace_source(*arguments: object, **options: str) -> None:
+        check_backup(*arguments, **options)  # type: ignore[arg-type]
+        replacement = _write(directory / "replacement.sqlite3", database.read_bytes())
+        os.replace(replacement, database)
+
+    monkeypatch.setattr(
+        adoption, "_require_backup_current", check_backup_then_replace_source
+    )
+    with pytest.raises(SchemaAdoptionRecoveryRequired):
+        adoption.adopt_schema(database, backup, REVIEW_ATTENTION_FACTS_V1)
+
+
+class _CommitFails:
+    """A bound connection whose commit fails, as a full disk would make it."""
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._connection, name)
+
+    def commit(self) -> None:
+        raise sqlite3.OperationalError("database or disk is full")
+
+
+def test_a_failed_commit_requires_recovery_and_is_not_reported_safe(
+    _current: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = _private(tmp_path)
+    database = _predecessor(_current, directory / "application.sqlite3")
+    connect = adoption._connect_bound
+    monkeypatch.setattr(
+        adoption,
+        "_connect_bound",
+        lambda *arguments: _CommitFails(connect(*arguments)),
+    )
+    with pytest.raises(SchemaAdoptionRecoveryRequired) as raised:
+        adoption.adopt_schema(
+            database, directory / "backup.sqlite3", REVIEW_ATTENTION_FACTS_V1
+        )
+    assert isinstance(raised.value.__cause__, sqlite3.OperationalError)
 
 
 def test_the_offline_command_reports_each_outcome(
