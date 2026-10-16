@@ -49,7 +49,7 @@ _SUBJECT = "schema adoption"
 # base. Both are literals: a later schema change fails the target check before
 # any filesystem access, and needs its own reviewed plan or a clean rebuild.
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "9efca0ecbc2ff52cdf0ee9f528cf9dce6af477e9dc7b2878d6ee983c3b567a51"
+    "70b931d7b27d807bb3761cee88ab9a6d66d50e2719edb45cd69a4d01a36e07e3"
 )
 _PREDECESSOR_SCHEMA_OBJECTS_SHA256 = (
     "0b5809bf9da236afc78310eee994552d6fffa8b91d6e145736238245f3ca76ca"

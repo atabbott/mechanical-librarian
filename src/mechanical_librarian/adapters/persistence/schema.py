@@ -1040,19 +1040,64 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
 }
 
 
-# Re-recording a suspension rewrites only its reason and time, which no fact
-# reads; without this a repeated failure would refresh the whole connection.
-_ATTENTION_UPDATED_COLUMNS = {
-    "field_effect_suspensions": " OF scope,connection_name,destination"
+# The columns of each updatable input that the source, or the facts a row
+# reaches, read. An update refreshes only when one of them changes value, so a
+# write of anything else -- a safety state's time, a suspension's reason, a
+# package's checkpoint -- refreshes nothing. `test_review_attention_facts`
+# derives these from the source statement through SQLite's authorizer.
+_ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "current_review_packages": (
+        "connection_name",
+        "library_name",
+        "item_id",
+        "report_id",
+        "review_case_id",
+    ),
+    "review_case_field_facts": (
+        "review_case_id",
+        "destination",
+        "unresolved_choice",
+        "manual_bibliographic_attention",
+        "has_owner_decision_actions",
+    ),
+    "metadata_report_browse_facts": ("report_id", "format"),
+    "proposal_set_browse_facts": ("proposal_set_id", "resolved_policy_id"),
+    "metadata_policy_resolutions": ("resolved_policy_id", "library_name", "document"),
+    "shadow_outcome_field_facts": (
+        "review_case_id",
+        "destination",
+        "disposition",
+        "policy_category",
+        "automatic_destination",
+    ),
+    "automatic_safety_state": (
+        "paused",
+        "global_suspension",
+        "category_suspensions_document",
+    ),
+    "current_description_decisions": ("review_case_id",),
+    "current_cover_considerations": ("review_case_id", "consideration_id"),
+    "current_cover_selection_authorities": (
+        "connection_name",
+        "library_name",
+        "item_id",
+        "selection_id",
+    ),
+    "field_effect_suspensions": ("scope", "connection_name", "destination"),
 }
 
 
 def _attention_input_trigger_sql(table: str, operation: str, scope: str) -> str:
     rows = {"insert": ("NEW",), "update": ("OLD", "NEW"), "delete": ("OLD",)}
-    columns = _ATTENTION_UPDATED_COLUMNS.get(table, "") if operation == "update" else ""
+    target = f" ON {table}"
+    if operation == "update":
+        columns = _ATTENTION_UPDATED_COLUMNS[table]
+        target = f" OF {','.join(columns)} ON {table} WHEN " + " OR ".join(
+            f"OLD.{name} IS NOT NEW.{name} COLLATE BINARY" for name in columns
+        )
     return (
         f"CREATE TRIGGER {table}_refresh_attention_{operation} AFTER "
-        f"{operation.upper()}{columns} ON {table} BEGIN INSERT INTO review_attention_refresh"
+        f"{operation.upper()}{target} BEGIN INSERT INTO review_attention_refresh"
         "(connection_name,library_name,item_id,destination) "
         + " UNION ".join(scope.format(row=row) for row in rows[operation])
         + "; END"

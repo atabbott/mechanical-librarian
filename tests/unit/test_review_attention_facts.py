@@ -11,6 +11,7 @@ VM-step cost of the maintenance and the reads that use it.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shutil
@@ -630,7 +631,7 @@ def test_input_map_names_every_table_the_derivation_reads(tmp_path: Path) -> Non
             for operation in operations:
                 assert re.match(
                     f"CREATE TRIGGER {table}_refresh_attention_{operation} AFTER "
-                    f"{operation.upper()}( OF [a-z_,]+)? ON {table} BEGIN ",
+                    f"{operation.upper()}( OF [a-z_,]+)? ON {table}( WHEN .+?)? BEGIN ",
                     triggers[f"{table}_refresh_attention_{operation}"],
                 )
         for table, children in _PARENTS.items():
@@ -645,13 +646,41 @@ def test_input_map_names_every_table_the_derivation_reads(tmp_path: Path) -> Non
         )
 
 
-def test_no_write_replaces_a_row_without_its_delete_trigger() -> None:
-    # REPLACE deletes a conflicting row without firing delete triggers unless
-    # recursive triggers are on, which would leave that row's facts behind.
-    source = Path(schema.__file__).parent
-    for path in source.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        assert not re.search(r"OR\s+REPLACE|REPLACE\s+INTO", text), path
+_REPLACE = re.compile(
+    r"\bOR\s+REPLACE\b|\bREPLACE\s+INTO\b|\bON\s+CONFLICT\s+REPLACE\b"
+)
+
+
+def _literal(node: ast.expr) -> str | None:
+    """A string constant, or a `+` chain of them, as the statement it builds."""
+    if isinstance(node, ast.Constant) and type(node.value) is str:
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _literal(node.left), _literal(node.right)
+        return None if left is None or right is None else left + right
+    return None
+
+
+def test_no_write_replaces_a_row_without_its_delete_trigger(tmp_path: Path) -> None:
+    """REPLACE deletes a conflicting row without firing its delete triggers.
+
+    Unless recursive triggers are on, that row's facts would be left behind.
+    Every string literal in `src` and `scripts` is read, with adjacent and `+`
+    joined literals as one, in the upper case this repository writes SQL in so
+    that prose is not mistaken for it. A statement assembled from a name or an
+    f-string field at run time is not seen, which is why the created schema is
+    also read for a table-level conflict clause.
+    """
+    root = Path(__file__).resolve().parents[2]
+    for path in (*(root / "src").rglob("*.py"), *(root / "scripts").rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.expr) and (text := _literal(node)) is not None:
+                assert not _REPLACE.search(text), (path, text)
+    with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
+        for (sql,) in repository._connection.execute(
+            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL"
+        ):
+            assert not _REPLACE.search(sql), sql
 
 
 def test_every_maintained_write_keeps_facts_equal_to_their_derivation(
@@ -816,21 +845,97 @@ def test_one_decision_refreshes_one_field_at_any_library_size() -> None:
     assert costs[1] <= costs[0] * 1.5 + 200, costs
 
 
-def test_rerecording_a_suspension_refreshes_no_fact(
+def test_update_guards_name_exactly_the_columns_the_facts_read(
+    tmp_path: Path,
+) -> None:
+    """Derived from the source statement and each scope, not from reading them."""
+    with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
+        connection = repository._connection
+        reads: dict[str, set[str]] = {}
+
+        def record(
+            action: int, table: str | None, column: str | None, *_: object
+        ) -> int:
+            if action == sqlite3.SQLITE_READ and table and column:
+                reads.setdefault(table, set()).add(column)
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(record)
+        connection.execute("EXPLAIN " + _ATTENTION_FACT_SOURCE_SQL).fetchall()
+        connection.set_authorizer(None)
+    updated = {
+        table: reads.get(table, set()) | set(re.findall(r"\{row\}\.(\w+)", scope))
+        for table, (operations, scope) in schema._ATTENTION_INPUTS.items()
+        if "update" in operations
+    }
+    assert {
+        table: set(columns)
+        for table, columns in schema._ATTENTION_UPDATED_COLUMNS.items()
+    } == updated
+    # Every guarded column is compared by its stored value alone.
+    for table, columns in schema._ATTENTION_UPDATED_COLUMNS.items():
+        assert all(
+            f"OLD.{name} IS NOT NEW.{name} COLLATE BINARY"
+            in schema._ATTENTION_INPUT_TRIGGERS[f"{table}_refresh_attention_update"]
+            for name in columns
+        ), table
+
+
+def test_a_write_that_changes_no_read_column_refreshes_no_fact(
     _state: Path, tmp_path: Path
 ) -> None:
     with closing(_open(_state, tmp_path)) as repository:
         connection = repository._connection
+        _replay(repository)
+        _resolve_policies(repository, "books-1")
         connection.execute(
             "INSERT INTO field_effect_suspensions(scope,connection_name,destination,"
             "reason,updated_at,document) "
             "VALUES('connection','primary','','connection_unavailable',1,'{}')"
         )
-        before = connection.total_changes
-        connection.execute(
+
+        def changes(sql: str, *parameters: object) -> tuple[int, int]:
+            before = connection.total_changes
+            rows = connection.execute(sql, parameters).rowcount
+            return rows, connection.total_changes - before
+
+        # Each input rewritten to its own values: only the rows themselves.
+        rewritten = []
+        for table in schema._ATTENTION_UPDATED_COLUMNS:
+            assignments = ",".join(
+                f"{name}={name}" for name in _columns(connection, table)
+            )
+            rows, changed = changes(f"UPDATE {table} SET {assignments}")
+            assert changed == rows, table
+            if rows:
+                rewritten.append(table)
+        assert {
+            "current_review_packages",
+            "automatic_safety_state",
+            "field_effect_suspensions",
+            "metadata_policy_resolutions",
+        } <= set(rewritten), rewritten
+        # A repeated failure re-records only a suspension's reason and time.
+        assert changes(
             "UPDATE field_effect_suspensions SET reason='insufficient_permission',"
             "updated_at=2,document='{\"again\":1}'"
+        ) == (1, 1)
+        connection.execute("DELETE FROM field_effect_suspensions")
+        # Re-recording the safety state writes every column; only its time moves.
+        decisions = repository._decisions
+        state = decisions.automatic_safety_state()
+        _shadow_outcome(
+            repository, _quiet(connection, "isbn"), (("isbn", "applied", "automatic"),)
         )
-        # The suspension row alone: no fact was deleted or re-derived.
+        before = connection.total_changes
+        decisions._set_automatic_safety_state(state, 2)
         assert connection.total_changes - before == 1
-        assert _facts(connection) == _derived(connection)
+        facts = _facts(connection)
+        decisions._set_automatic_safety_state(
+            type(state)(
+                not state.paused, state.global_suspension, state.category_suspensions
+            ),
+            3,
+        )
+        assert connection.total_changes - before > 2
+        assert _facts(connection) == _derived(connection) != facts
