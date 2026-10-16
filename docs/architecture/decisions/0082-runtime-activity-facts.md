@@ -237,7 +237,9 @@ that snapshot's read.
 
 The bound trades latency for the writer. The first Activity read after a large
 change now takes longer to complete, about 11.5-13 s against 8-9 s at 8,000
-decisions, because each step repeats a small fixed cost. In exchange no read holds
-the database long enough to fail a commit, and preparation no longer fails. Journal
-mode, the busy timeout, schema, startup admission, the ADR-0077 lane and the
-canonical projection are unchanged.
+decisions, because each step repeats a small fixed cost. In exchange, measured at
+8,000 decisions on the paths that reach the store, no Activity read held the
+database long enough to fail a commit, and preparation did not fail; the
+canonical fallback and a NUL-identity construction, stated above, remain single
+unbounded reads. Journal mode, the busy timeout, schema, startup admission, the
+ADR-0077 lane and the canonical projection are unchanged.

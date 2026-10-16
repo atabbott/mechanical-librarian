@@ -165,7 +165,7 @@
   "source_bindings": {
     ".github/renovate.json": "73410ae39e3bf61dd070c43b12b754bcb92d505660828947500f5243965ae64b",
     "AGENTS.md": "5082e5a52f671caba825bb92cdb47bfc99abbe054e5c4309174c9adc59eb9df2",
-    "CHANGELOG.md": "02247ace3724eb2903c3f4f4208b006098c56bab19a23800a43fb9838e3f2413",
+    "CHANGELOG.md": "bb7cceb21cd6174f966f305b4cf9355e4136fbca7f4a8ed428781e28a898eb37",
     "CONTRIBUTING.md": "95dea6457d3b73e65cd8d7068c8ff47e32af817b187aab64f1a1df8bf87c716b",
     "README.md": "3e229e43335d39199d97979f271c44ca3973de5515506dc137e85d63e1070d1d",
     "docs/architecture/decisions/0021-coherent-bibliographic-combinations.md": "1fc08c98c404d1e085330804c342e59e65c6f6bea1b478f3b5679ada07831533",
