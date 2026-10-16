@@ -1,4 +1,8 @@
-import { invalidateForegroundQueries, mountBackgroundWork } from '../src/queryWork'
+import {
+  invalidateBackgroundQueries,
+  invalidateForegroundQueries,
+  mountBackgroundWork,
+} from '../src/queryWork'
 import {
   InfiniteQueryObserver,
   QueryClient,
@@ -433,6 +437,66 @@ describe('live collection completion debt', () => {
       unsubscribe()
     },
   )
+
+  it('still makes an owed read after a next-page read replaces the read it was owed behind', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    const pages: { resolve: (value: string) => void; pageParam: unknown }[] = []
+    const options = {
+      queryKey: ['attention', 'workspace'],
+      staleTime: Infinity,
+      initialPageParam: 0,
+      getNextPageParam: (_last: string, all: string[]) => all.length,
+      queryFn: ({ pageParam }: { pageParam: unknown }) =>
+        new Promise<string>((resolve) => pages.push({ resolve, pageParam })),
+    }
+    const unsubscribe = new InfiniteQueryObserver(h.client, options).subscribe(() => undefined)
+    onTestFinished(unsubscribe)
+    const observer = new InfiniteQueryObserver(h.client, options)
+    const rail = h.client.getQueryCache().find({ queryKey: options.queryKey, exact: true })
+    pages[0]?.resolve('first page')
+    await vi.waitFor(() => expect(rail?.state.fetchStatus).toBe('idle'))
+    // A refresh is under way and a resync owes one more read behind it.
+    h.emit()
+    h.flush()
+    expect(pages).toHaveLength(2)
+    h.emit('resync')
+    h.flushCoalesced()
+    expect(pages).toHaveLength(2)
+    // The owner pages on, which cancels the refresh under way.
+    const nextPage = observer.fetchNextPage()
+    expect(pages.at(-1)?.pageParam).toBe(1)
+    pages.at(-1)?.resolve('second page')
+    await nextPage
+    h.flush()
+    // The owed read still happens, once, from the first page.
+    expect(pages).toHaveLength(4)
+    expect(pages.at(-1)?.pageParam).toBe(0)
+    h.flush()
+    expect(pages).toHaveLength(4)
+  })
+
+  it('does not time the bound from a read the bridge did not ask for', async () => {
+    const h = collectionHarness(true)
+    // A frame's read is owed behind the read under way.
+    h.emit()
+    h.flushCoalesced()
+    // The owner's own read takes that obligation over, so the owed read never begins.
+    const replacement = invalidateForegroundQueries(h.client, { queryKey: ['library'] })
+    await vi.waitFor(() => expect(h.reads).toHaveLength(2))
+    h.reads[1]?.resolve('owner')
+    await replacement
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    // Later, an unrelated background refresh begins a read.
+    h.elapse(1_000)
+    void invalidateBackgroundQueries(h.client, { queryKey: ['library'] })
+    expect(h.reads).toHaveLength(3)
+    // The bridge's own reads never began, so a frame is not bounded by that read.
+    h.elapse(100)
+    h.emit()
+    h.flushCoalesced()
+    expect(h.pendingDelays().filter((delay) => delay !== coalesceMilliseconds)).toEqual([])
+  })
 
   it('keeps a bounded frame stale through a manual cache update', async () => {
     const h = collectionHarness(true)

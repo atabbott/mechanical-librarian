@@ -161,10 +161,12 @@ const backgroundOwner = (
     if (stopped || event.type !== 'updated') return
     if (event.action.type === 'fetch') {
       reads.add(query)
+      if (stale.has(query)) stale.set(query, true)
+      // A page read re-reads no page owed debt is for; the debt waits for it.
+      if (fetchesMore(event.action.meta)) return
       owed.delete(query)
       ready.delete(query)
       starts.delete(query)
-      if (stale.has(query)) stale.set(query, true)
       return
     }
     if (event.action.type === 'error') {
