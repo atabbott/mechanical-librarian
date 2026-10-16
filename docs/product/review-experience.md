@@ -258,10 +258,13 @@ Owner navigation, typing, paging, retries and command results take priority over
 background refreshes at the next safe local-operation boundary. Recurring polls
 join ongoing work without accumulating redundant requests. While preparation
 keeps publishing works, an open tab refreshes its Library page and attention at
-most once every 1.5 seconds rather than once per work: the first work after a
-quiet 1.5 seconds still appears after the ordinary 120 ms coalescing, and one
-read after the last published work leaves the tab on the server's current
-answer (#1224). A recorded choice is
+most once every 1.5 seconds rather than once per work, counting only the reads
+the live channel starts and measuring from each one's start: the first work
+after a quiet 1.5 seconds still appears after the ordinary 120 ms coalescing,
+the page is marked stale at once and navigation still reads it immediately, and
+one read after the last published work leaves the tab on the server's current
+answer (#1224). During preparation a decision recorded in another tab can take
+up to 1.5 seconds to appear here, rather than about 120 ms. A recorded choice is
 confirmed from the server's actual post-commit case before the interface advances;
 failed confirmation stays visibly unconfirmed with an explicit reload. A partially
 completed reviewer sign-in change retains its explanation after state is reloaded,

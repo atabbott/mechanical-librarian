@@ -427,16 +427,23 @@ def test_a_preparation_burst_refreshes_library_once_per_bound_and_converges() ->
                 page.wait_for_timeout(1_500)
                 settled = {surface: len(times) for surface, times in reads.items()}
 
-                # Five seconds of preparation publishing a work every 100 ms,
-                # with the owner pressing a key now and then: an active tab.
+                # Preparation publishes a work every 100 ms, with the owner
+                # pressing a key now and then: an active tab. It stops about
+                # 0.4 s after the second bounded read began, off the bound's
+                # phase, so only the bounded timer can read after the last frame.
                 first = time.time()
-                last = first
-                for frame in range(50):
+                frame = 0
+                while True:
                     channels[0].publish("library", None)
                     last = time.time()
                     if frame % 10 == 0:
                         page.keyboard.press("Shift")
+                    frame += 1
                     page.wait_for_timeout(100)
+                    begun = reads["library"][settled["library"] :]
+                    if len(begun) >= 3 and time.time() - max(begun) >= 0.4:
+                        break
+                    assert time.time() - first < 10, begun
                 page.wait_for_timeout(int(_LIBRARY_REFRESH_SECONDS * 1000) + 1_500)
                 after = {surface: len(times) for surface, times in reads.items()}
                 page.wait_for_timeout(1_000)
@@ -446,15 +453,16 @@ def test_a_preparation_burst_refreshes_library_once_per_bound_and_converges() ->
 
                 for surface, times in reads.items():
                     burst = sorted(times[settled[surface] :])
-                    # Fifty frames: an unbounded tab reads every ~120 ms. The
-                    # bound allows one immediate read, one per bound, and the
-                    # converging read after the last frame.
-                    assert 3 <= len(burst) <= 5, (surface, burst)
+                    # An unbounded tab reads every ~120 ms. The bound allows one
+                    # immediate read, one per bound, and the converging read.
+                    assert 4 <= len(burst) <= 5, (surface, burst)
                     assert burst[0] - first < 1.0, (surface, burst[0] - first)
                     gaps = [later - earlier for earlier, later in pairwise(burst)]
                     assert min(gaps) >= _LIBRARY_REFRESH_SECONDS - 0.15, (surface, gaps)
-                    # Converged: the final read began after the final frame.
+                    # Converged by the bounded timer: the final read began after
+                    # the final frame, one bound after the read before it.
                     assert burst[-1] > last, (surface, burst[-1] - last)
+                    assert gaps[-1] < _LIBRARY_REFRESH_SECONDS + 0.5, (surface, gaps)
                 assert "Reconnecting" not in page.locator("body").inner_text()
             browser.close()
 

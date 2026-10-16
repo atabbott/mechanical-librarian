@@ -183,7 +183,6 @@ describe('live collection completion debt', () => {
     void h.client.invalidateQueries({ queryKey: h.query.queryKey, exact: true })
     expect(h.reads[0]?.signal.aborted).toBe(true)
     expect(h.reads).toHaveLength(2)
-    h.elapse(libraryRefreshMilliseconds)
     h.emit()
     h.flush()
     expect(h.reads[1]?.signal.aborted).toBe(false)
@@ -305,6 +304,30 @@ describe('live collection completion debt', () => {
     h.emit()
     h.flush()
     expect(h.reads).toHaveLength(4)
+  })
+
+  it('keeps a bounded frame stale across the read it arrived during', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.emit()
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+    // A frame lands while that read is under way; its own read waits for the bound.
+    h.elapse(coalesceMilliseconds)
+    h.emit()
+    h.flushCoalesced()
+    expect(h.reads).toHaveLength(2)
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - coalesceMilliseconds])
+    // The older read cannot settle the newer frame.
+    h.reads[1]?.resolve('before the frame')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('before the frame'))
+    expect(h.query.state.isInvalidated).toBe(true)
+    expect(h.reads).toHaveLength(2)
+    // Navigation within the bound still reads at once.
+    h.unmount()
+    h.remount()
+    expect(h.reads).toHaveLength(3)
   })
 
   it('pays bounded Library debt at once when a resync reads, and bounds from there', async () => {

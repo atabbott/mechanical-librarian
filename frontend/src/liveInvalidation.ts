@@ -72,6 +72,8 @@ export const invalidationKeys = (update: LiveUpdate): readonly (readonly unknown
   }
 }
 
+const libraryKeys = invalidationKeys({ sequence: 0, subject: null, topic: 'library' })
+
 export interface LiveInvalidationOptions {
   readonly schedule?: (run: () => void, delay: number) => number
   readonly cancel?: (handle: number) => void
@@ -167,10 +169,8 @@ export const startLiveInvalidation = (
     libraryHandle = null
     libraryOwed = false
     lastLibraryRefreshAt = now()
-    for (const queryKey of invalidationKeys({ sequence: 0, subject: null, topic: 'library' })) {
-      void invalidateBackgroundQueries(queryClient, { queryKey })
-      forgetSettledKeys(queryClient, [queryKey])
-    }
+    for (const queryKey of libraryKeys) void invalidateBackgroundQueries(queryClient, { queryKey })
+    forgetSettledKeys(queryClient, libraryKeys)
   }
 
   function flush() {
@@ -193,10 +193,10 @@ export const startLiveInvalidation = (
       const delay = lastLibraryRefreshAt + libraryRefreshMilliseconds - now()
       if (delay <= 0) refreshLibrary()
       else {
-        // Marked stale exactly when an unbounded frame would have been; only
-        // the refetch waits for the bound.
-        for (const queryKey of invalidationKeys({ sequence: 0, subject: null, topic: 'library' }))
-          void queryClient.invalidateQueries({ queryKey, refetchType: 'none' })
+        // Marked stale exactly when an unbounded frame would have been, and
+        // kept stale across a read already under way; only the refetch waits.
+        for (const queryKey of libraryKeys)
+          void invalidateBackgroundQueries(queryClient, { queryKey, refetchType: 'none' })
         libraryHandle ??= schedule(() => {
           refreshLibrary()
           drainBackgroundWork(queryClient)
