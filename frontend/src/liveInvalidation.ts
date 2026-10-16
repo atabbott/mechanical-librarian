@@ -24,10 +24,22 @@ import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from './liveUpdate
 /**
  * Long enough that fifty works finishing in a burst cost a handful of refetches
  * instead of fifty, short enough that one work finishing still reads as
- * immediate. The bar this serves is "no visible cadence", which a multi-second
- * batch would fail exactly as the 1.5-second poll it replaces did.
+ * immediate. The bar this serves is "no visible cadence" for a change, which a
+ * multi-second batch would fail exactly as the 1.5-second poll it replaces did;
+ * a sustained run of Library frames is bounded separately below.
  */
 export const coalesceMilliseconds = 120
+
+/**
+ * While `library` frames keep arriving -- preparation publishing one work after
+ * another -- an active tab refetches its Library page and attention at most
+ * once per this bound, so the tab costs the database in proportion to what the
+ * owner looks at rather than to the rate of prepared works (#1224). The first
+ * frame after a quiet bound still refetches after the 120 ms coalescing, every
+ * frame still marks both stale at once, and navigation and a resync (owner
+ * input after idle, a foreground return) still read immediately.
+ */
+export const libraryRefreshMilliseconds = 1_500
 
 /**
  * An untouched foreground tab still shows truthful preparation progress, but
@@ -60,6 +72,8 @@ export const invalidationKeys = (update: LiveUpdate): readonly (readonly unknown
   }
 }
 
+const libraryKeys = invalidationKeys({ sequence: 0, subject: null, topic: 'library' })
+
 export interface LiveInvalidationOptions {
   readonly schedule?: (run: () => void, delay: number) => number
   readonly cancel?: (handle: number) => void
@@ -69,7 +83,7 @@ export interface LiveInvalidationOptions {
   readonly observeVisibility?: (listener: () => void) => () => void
   /** Test seam for purposeful owner input. */
   readonly observeActivity?: (listener: () => void) => () => void
-  /** Test seam for the idle boundary. */
+  /** Test seam for the monotonic clock behind the idle boundary and the Library bound. */
   readonly now?: () => number
 }
 
@@ -101,10 +115,13 @@ export const startLiveInvalidation = (
         for (const event of events) document.removeEventListener(event, listener)
       }
     })
-  const now = options.now ?? Date.now
+  const now = options.now ?? (() => performance.now())
   const pending = new Map<string, readonly unknown[]>()
   let stopped = false
   let handle: number | null = null
+  let libraryHandle: number | null = null
+  let libraryOwed = false
+  let lastLibraryRefreshAt = Number.NEGATIVE_INFINITY
   let idleHandle: number | null = null
   let deferredWhileIdle = false
   let lastActivityAt = now()
@@ -147,6 +164,28 @@ export const startLiveInvalidation = (
     handle ??= schedule(flush, coalesceMilliseconds)
   }
 
+  // The bound runs from when a read this bridge asked for actually begins,
+  // including one the coordinator owed behind a read already under way.
+  const libraryRead = { onStart: () => (lastLibraryRefreshAt = now()) }
+  const refreshLibrary = () => {
+    // This read covers every frame received so far.
+    libraryHandle = null
+    libraryOwed = false
+    for (const queryKey of libraryKeys)
+      void invalidateBackgroundQueries(queryClient, { queryKey }, libraryRead)
+    forgetSettledKeys(queryClient, libraryKeys)
+  }
+
+  // Library and attention share the bound, so a read that began meanwhile can
+  // push this one later.
+  function refreshLibraryWhenDue() {
+    const delay = lastLibraryRefreshAt + libraryRefreshMilliseconds - now()
+    libraryHandle = delay > 0 ? schedule(refreshLibraryWhenDue, delay) : null
+    if (libraryHandle !== null) return
+    refreshLibrary()
+    drainBackgroundWork(queryClient)
+  }
+
   function flush() {
     handle = null
     // A hidden browser does no catch-up work.  Its next foreground transition
@@ -155,6 +194,25 @@ export const startLiveInvalidation = (
     if (stopped || !visible()) return
     const keys = [...pending.values()]
     pending.clear()
+    if (keys.some((key) => key[0] === 'library')) {
+      // A resync reads Library and attention now, which pays any bounded debt.
+      libraryOwed = false
+      if (libraryHandle !== null) cancel(libraryHandle)
+      libraryHandle = null
+    }
+    if (libraryOwed) {
+      libraryOwed = false
+      const delay = lastLibraryRefreshAt + libraryRefreshMilliseconds - now()
+      if (delay <= 0) refreshLibrary()
+      else {
+        // Marked stale exactly when an unbounded frame would have been, and
+        // kept stale until a full read begun after it settles; only the
+        // refetch waits.
+        for (const queryKey of libraryKeys)
+          void invalidateBackgroundQueries(queryClient, { queryKey, refetchType: 'none' })
+        libraryHandle ??= schedule(refreshLibraryWhenDue, delay)
+      }
+    }
     for (const queryKey of keys) {
       if (
         queryKey[0] === 'review-preparation' &&
@@ -164,7 +222,8 @@ export const startLiveInvalidation = (
         setPreparationDebt(true)
         continue
       }
-      void invalidateBackgroundQueries(queryClient, { queryKey })
+      const ownRead = queryKey[0] === 'library' || queryKey[0] === 'attention'
+      void invalidateBackgroundQueries(queryClient, { queryKey }, ownRead ? libraryRead : {})
       // Each collection obligation is now a fresh read, concrete completion
       // debt, or an inactive stale page. Its decision echo can relinquish it.
       forgetSettledKeys(queryClient, [queryKey])
@@ -210,7 +269,8 @@ export const startLiveInvalidation = (
       deferIdleUpdate()
       return
     }
-    for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
+    if (update.topic === 'library') libraryOwed = true
+    else for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
     handle ??= schedule(flush, coalesceMilliseconds)
   })
   const handleStreamState = (state: LiveStreamState) => {
@@ -292,8 +352,10 @@ export const startLiveInvalidation = (
     stopObservingVisibility()
     if (handle !== null) cancel(handle)
     if (idleHandle !== null) cancel(idleHandle)
+    if (libraryHandle !== null) cancel(libraryHandle)
     handle = null
     idleHandle = null
+    libraryHandle = null
     confirmationBeganLive = false
   }
 }

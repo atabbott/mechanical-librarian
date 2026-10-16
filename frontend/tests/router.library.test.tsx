@@ -6,7 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { ApiError, mapCaseDetail } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
-import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
 import { ownerChoiceCount } from '../src/reviewChoiceCounts'
 import { reconciliationKey } from '../src/reviewDecisionController'
 import { sourceStatusLabel } from '../src/routes/LibraryPage'
@@ -6729,6 +6729,8 @@ describe('Library route', () => {
       await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds * 2 + 40))
     })
     await waitFor(() => expect(getCaseSuccessor).toHaveBeenCalledTimes(2))
+    // A later preparation frame, past the Library refresh bound.
+    await act(() => new Promise((resolve) => setTimeout(resolve, libraryRefreshMilliseconds)))
 
     stale = true
     await act(async () => {
@@ -6739,7 +6741,7 @@ describe('Library route', () => {
     expect(await screen.findByRole('heading', { name: 'Later successor' })).toBeVisible()
     expect(getCaseSuccessor).toHaveBeenCalledTimes(4)
     expect(router.state.location.search.preview).toBe('case-2')
-  })
+  }, 15_000)
 
   it('reconciles a buffered successor after deferred detail proves its predecessor historical', async () => {
     const predecessor = { ...detail, id: 'case-1', current: false }
@@ -6895,7 +6897,8 @@ describe('Library route', () => {
     await waitFor(() => expect(libraryReads()).toBe(2))
     await waitFor(() => expect(detailReads('case-3')).toBe(1))
     expect(detailReads('case-1')).toBe(2)
-    await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    // No loop, and the next frame arrives past the Library refresh bound.
+    await new Promise((resolve) => setTimeout(resolve, libraryRefreshMilliseconds + 20))
     expect(libraryReads()).toBe(2)
     expect(detailReads('case-1')).toBe(2)
     expect(detailReads('case-3')).toBe(1)
@@ -6918,7 +6921,7 @@ describe('Library route', () => {
     // One read proves target identity before navigation; the other is the
     // ordinary selected-case query for the replacement URL.
     expect(detailReads('case-2')).toBe(2)
-  })
+  }, 15_000)
 
   it('acts on every Library announcement except the echo of its own decision', async () => {
     const user = userEvent.setup()
@@ -6991,6 +6994,8 @@ describe('Library route', () => {
         await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
       })
     }
+    const crossLibraryBound = () =>
+      act(() => new Promise((resolve) => setTimeout(resolve, libraryRefreshMilliseconds)))
 
     await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
     expect(await screen.findByText('Review complete')).toBeVisible()
@@ -7008,7 +7013,9 @@ describe('Library route', () => {
     await announce({ sequence: 55, subject: 'case-2', topic: 'library' })
     await waitFor(() => expect([libraryReads, attentionReads]).toEqual([3, 3]))
 
-    // A work that could not finish names no case at all.
+    // A work that could not finish names no case at all. Each later frame
+    // arrives past the Library refresh bound, so each is its own read.
+    await crossLibraryBound()
     await announce({ sequence: 56, subject: null, topic: 'library' })
     await waitFor(() => expect([libraryReads, attentionReads]).toEqual([4, 4]))
 
@@ -7017,6 +7024,7 @@ describe('Library route', () => {
     // position it replaced -- which can be one this tab caused. Acting on it is
     // one redundant read; recognising it would discard every work collapsed
     // into it, so position alone is never enough.
+    await crossLibraryBound()
     await announce({ sequence: 42, subject: null, topic: 'library' })
     await waitFor(() => expect([libraryReads, attentionReads]).toEqual([5, 5]))
 
@@ -7030,7 +7038,7 @@ describe('Library route', () => {
     await user.click(screen.getByRole('button', { name: 'Back to works' }))
     expect(await screen.findByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
     expect([libraryReads, attentionReads]).toEqual([5, 5])
-  })
+  }, 15_000)
 
   it('settles a recognised echo on the way out when nothing else read the Library', async () => {
     const user = userEvent.setup()

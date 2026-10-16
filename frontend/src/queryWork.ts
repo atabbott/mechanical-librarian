@@ -27,6 +27,7 @@ type OwnerFetchMeta = NonNullable<Query['state']['fetchMeta']> & {
 }
 const backgroundFetch: OwnerFetchMeta = { ownerWorkClass: 'background' }
 const foregroundFetch: OwnerFetchMeta = { ownerWorkClass: 'foreground' }
+const fetchesMore = (meta: Query['state']['fetchMeta'] | undefined) => meta?.fetchMore !== undefined
 const isBackground = (meta: Query['state']['fetchMeta']) =>
   meta !== null && 'ownerWorkClass' in meta && meta.ownerWorkClass === 'background'
 
@@ -47,8 +48,9 @@ export interface BackgroundWorkOptions {
 }
 interface BackgroundOwner {
   references: number
-  invalidate: (query: Query, throwOnError: boolean) => Promise<unknown>
+  invalidate: (query: Query, throwOnError: boolean, onStart?: () => void) => Promise<unknown>
   hasDebt: (query: Query) => boolean
+  markStale: (query: Query) => void
   hold: (query: Query) => (succeeded: boolean) => void
   drain: () => void
   stop: () => void
@@ -65,6 +67,11 @@ const backgroundOwner = (
   const reads = new Set(cache.getAll().filter((query) => query.state.fetchStatus !== 'idle'))
   const owed = new Set<Query>()
   const ready = new Set<Query>()
+  // Marked stale owing no read of its own (true once a read began after the
+  // mark) until a full read begun after it settles; a page read never does.
+  const stale = new Map<Query, boolean>()
+  // Told when the read an invalidation owes actually begins.
+  const starts = new Map<Query, () => void>()
   const held = new Map<Query, { count: number; debt: boolean }>()
   const schedule = options.schedule ?? ((run, delay) => window.setTimeout(run, delay))
   const cancel = options.cancel ?? ((handle) => window.clearTimeout(handle))
@@ -77,19 +84,26 @@ const backgroundOwner = (
   const eligible = (query: Query) =>
     same(query) && query.isActive() && !query.isDisabled() && !query.isStatic()
   const hasDebt = (query: Query) =>
-    owed.has(query) || ready.has(query) || held.get(query)?.debt === true
+    owed.has(query) || ready.has(query) || stale.has(query) || held.get(query)?.debt === true
   const queue = () => {
     if (!stopped && visible() && ready.size > 0)
       timer ??= schedule(drain, backgroundCoalesceMilliseconds)
   }
-  const invalidate = (query: Query, throwOnError = false): Promise<unknown> => {
+  const invalidate = (
+    query: Query,
+    throwOnError = false,
+    onStart?: () => void,
+  ): Promise<unknown> => {
     if (stopped || !same(query)) return Promise.resolve()
+    stale.delete(query)
     query.invalidate()
     if (!eligible(query)) {
       owed.delete(query)
       ready.delete(query)
+      starts.delete(query)
       return Promise.resolve()
     }
+    if (onStart) starts.set(query, onStart)
     const hold = held.get(query)
     if (hold) {
       hold.debt = true
@@ -100,8 +114,14 @@ const backgroundOwner = (
       return Promise.resolve()
     }
     ready.delete(query)
-    if (query.state.fetchStatus !== 'idle') owed.add(query)
+    const begins = query.state.fetchStatus === 'idle'
+    const started = begins ? starts.get(query) : undefined
+    if (begins) starts.delete(query)
+    else owed.add(query)
     let result = query.fetch(undefined, { cancelRefetch: false, meta: backgroundFetch })
+    // A read paused offline begins when it continues.
+    if (started && query.state.fetchStatus === 'paused') starts.set(query, started)
+    else started?.()
     if (!throwOnError) result = result.catch(() => undefined)
     return query.state.fetchStatus === 'paused' ? Promise.resolve() : result
   }
@@ -113,13 +133,17 @@ const backgroundOwner = (
   const unsubscribe = cache.subscribe((event) => {
     const query =
       event.type === 'removed'
-        ? [...reads, ...owed, ...ready, ...held.keys()].find((retained) => retained === event.query)
+        ? [...reads, ...owed, ...ready, ...stale.keys(), ...held.keys()].find(
+            (retained) => retained === event.query,
+          )
         : cache.get(event.query.queryHash)
     if (!query || query !== event.query) return
     if (event.type === 'removed') {
       reads.delete(query)
       owed.delete(query)
       ready.delete(query)
+      stale.delete(query)
+      starts.delete(query)
       held.delete(query)
       return
     }
@@ -128,8 +152,10 @@ const backgroundOwner = (
       !eligible(query)
     ) {
       if (held.has(query)) return
-      if (owed.delete(query) || ready.delete(query)) {
+      starts.delete(query)
+      if (owed.delete(query) || ready.delete(query) || stale.has(query)) {
         ready.delete(query)
+        stale.delete(query)
         query.invalidate()
       }
       return
@@ -137,12 +163,27 @@ const backgroundOwner = (
     if (stopped || event.type !== 'updated') return
     if (event.action.type === 'fetch') {
       reads.add(query)
+      if (stale.has(query)) stale.set(query, true)
+      // A page read re-reads no page owed debt is for; the debt waits for it.
+      if (fetchesMore(event.action.meta)) return
       owed.delete(query)
       ready.delete(query)
+      starts.delete(query)
+      return
+    }
+    if (event.action.type === 'continue') {
+      starts.get(query)?.()
+      starts.delete(query)
       return
     }
     if (event.action.type === 'error') {
       reads.delete(query)
+      // A failed page read leaves owed debt for the read it was waiting for.
+      if (fetchesMore(query.state.fetchMeta)) {
+        if (owed.delete(query)) ready.add(query)
+        queue()
+        return
+      }
       const debt = owed.delete(query) || ready.has(query)
       ready.delete(query)
       if (debt) query.invalidate()
@@ -154,6 +195,9 @@ const backgroundOwner = (
       return
     }
     reads.delete(query)
+    const covered = stale.get(query)
+    if (covered === true && !fetchesMore(query.state.fetchMeta)) stale.delete(query)
+    else if (covered !== undefined) query.invalidate()
     if (owed.delete(query)) {
       ready.add(query)
       query.invalidate()
@@ -176,6 +220,9 @@ const backgroundOwner = (
     references: 0,
     invalidate,
     hasDebt,
+    markStale(query) {
+      if (!stopped && same(query)) stale.set(query, false)
+    },
     drain,
     hold(query) {
       let state = held.get(query)
@@ -201,7 +248,7 @@ const backgroundOwner = (
     },
     stop() {
       stopped = true
-      for (const query of new Set([...reads, ...owed, ...ready])) {
+      for (const query of new Set([...reads, ...owed, ...ready, ...stale.keys()])) {
         if (!same(query)) continue
         void query.cancel({ silent: true })
         query.invalidate()
@@ -209,6 +256,8 @@ const backgroundOwner = (
       reads.clear()
       owed.clear()
       ready.clear()
+      stale.clear()
+      starts.clear()
       held.clear()
       unsubscribe()
       unobserve()
@@ -239,20 +288,30 @@ export const holdBackgroundQuery = (
   query: Query,
 ): ((succeeded: boolean) => void) => backgroundOwner(client).hold(query)
 
-/** Mark every match stale and coalesce a concrete refresh obligation. */
+/**
+ * Mark every match stale and coalesce a concrete refresh obligation, telling
+ * `onStart` when each owed read actually begins; or with `refetchType: 'none'`
+ * only keep each match stale until a full read begun after now settles.
+ */
 export function invalidateBackgroundQueries(
   client: QueryClient,
   filters: InvalidateQueryFilters = {},
-  options: InvalidateOptions = {},
+  options: InvalidateOptions & { onStart?: () => void } = {},
 ): Promise<void> {
   void client.invalidateQueries({ ...filters, refetchType: 'none' })
-  if (filters.refetchType === 'none') return Promise.resolve()
+  if (filters.refetchType === 'none') {
+    // Stale now, across a read already under way and any page-only read; the
+    // caller owns the read that follows.
+    for (const query of client.getQueryCache().findAll(filters))
+      backgroundOwners.get(client)?.markStale(query)
+    return Promise.resolve()
+  }
   const owner = backgroundOwner(client)
   const queries = client
     .getQueryCache()
     .findAll({ ...filters, type: filters.refetchType ?? filters.type ?? 'active' })
   return Promise.all(
-    queries.map((query) => owner.invalidate(query, options.throwOnError === true)),
+    queries.map((query) => owner.invalidate(query, options.throwOnError === true, options.onStart)),
   ).then(() => undefined)
 }
 
