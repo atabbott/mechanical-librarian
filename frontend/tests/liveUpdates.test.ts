@@ -1,4 +1,4 @@
-import { mountBackgroundWork } from '../src/queryWork'
+import { invalidateForegroundQueries, mountBackgroundWork } from '../src/queryWork'
 import { QueryClient, QueryObserver, onlineManager } from '@tanstack/react-query'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -325,6 +325,30 @@ describe('live collection completion debt', () => {
     expect(h.query.state.isInvalidated).toBe(true)
     expect(h.reads).toHaveLength(2)
     // Navigation within the bound still reads at once.
+    h.unmount()
+    h.remount()
+    expect(h.reads).toHaveLength(3)
+  })
+
+  it('lets a foreground read begun after a bounded frame settle it', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.emit()
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+    // A frame lands while that read is under way and keeps the page stale.
+    h.elapse(coalesceMilliseconds)
+    h.emit()
+    h.flushCoalesced()
+    expect(h.query.state.isInvalidated).toBe(true)
+    // The owner's own read replaces it; it began after the frame, so it covers it.
+    const replacement = invalidateForegroundQueries(h.client, { queryKey: ['library'] })
+    await vi.waitFor(() => expect(h.reads).toHaveLength(3))
+    h.reads[2]?.resolve('after the frame')
+    await replacement
+    await vi.waitFor(() => expect(h.query.state.data).toBe('after the frame'))
+    expect(h.query.state.isInvalidated).toBe(false)
     h.unmount()
     h.remount()
     expect(h.reads).toHaveLength(3)
