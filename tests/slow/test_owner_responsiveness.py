@@ -59,6 +59,11 @@ def test_complete_cover_owner_routes_at_2300_works(tmp_path: Path) -> None:
             catalogue.acquire_refresh()
             generation = catalogue.publish(fingerprint, (*entries, terminal))
             fixture.repository.bind_library_catalogue(path, fingerprint)
+            # The live lanes would race the manual claims below whenever a
+            # background Activity step delays these commits (#1231).
+            preparation = fixture.preparation
+            assert preparation is not None
+            preparation.suspend_admission()
             fixture.repository.request_review_scan(
                 "primary", terminal.library, terminal.library_id, "f" * 64, 10
             )
@@ -72,6 +77,7 @@ def test_complete_cover_owner_routes_at_2300_works(tmp_path: Path) -> None:
             fixture.repository.fail_review_pipeline_action(
                 action, "unreadable_media", False, 14
             )
+            preparation.resume_admission()
             with (
                 patch.object(
                     catalogue_adapter,
