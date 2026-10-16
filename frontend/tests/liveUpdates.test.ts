@@ -1,5 +1,10 @@
 import { invalidateForegroundQueries, mountBackgroundWork } from '../src/queryWork'
-import { QueryClient, QueryObserver, onlineManager } from '@tanstack/react-query'
+import {
+  InfiniteQueryObserver,
+  QueryClient,
+  QueryObserver,
+  onlineManager,
+} from '@tanstack/react-query'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
@@ -349,6 +354,99 @@ describe('live collection completion debt', () => {
     await replacement
     await vi.waitFor(() => expect(h.query.state.data).toBe('after the frame'))
     expect(h.query.state.isInvalidated).toBe(false)
+    h.unmount()
+    h.remount()
+    expect(h.reads).toHaveLength(3)
+  })
+
+  it('times the bound from when an owed Library read actually begins', async () => {
+    const h = collectionHarness(true)
+    // A frame lands while a read is under way, so its read is owed behind it.
+    h.emit()
+    h.flushCoalesced()
+    expect(h.reads).toHaveLength(1)
+    // That read is slow: the owed read only begins a second later.
+    h.elapse(1_000)
+    h.reads[0]?.resolve('slow')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+    h.reads[1]?.resolve('owed')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('owed'))
+    // 600 ms after the owed read began, the next frame waits out the rest.
+    h.elapse(600)
+    h.emit()
+    h.flushCoalesced()
+    expect(h.reads).toHaveLength(2)
+    expect(h.pendingDelays()).toEqual([libraryRefreshMilliseconds - 600])
+  })
+
+  it.each(['nothing', 'a full read', 'a next-page read'] as const)(
+    'keeps a bounded frame stale across a next-page read when %s is under way',
+    async (during) => {
+      const h = collectionHarness(true)
+      h.reads[0]?.resolve('initial')
+      const pages: ((value: string) => void)[] = []
+      const options = {
+        queryKey: ['attention', 'workspace'],
+        staleTime: Infinity,
+        initialPageParam: 0,
+        getNextPageParam: (_last: string, all: string[]) => all.length,
+        queryFn: () => new Promise<string>((resolve) => pages.push(resolve)),
+      }
+      let unsubscribe = new InfiniteQueryObserver(h.client, options).subscribe(() => undefined)
+      const observer = new InfiniteQueryObserver(h.client, options)
+      const rail = h.client.getQueryCache().find({ queryKey: options.queryKey, exact: true })
+      const settle = async (value: string) => {
+        pages.at(-1)?.(value)
+        await vi.waitFor(() => expect(rail?.state.fetchStatus).toBe('idle'))
+      }
+      await settle('first page')
+      h.emit()
+      h.flush()
+      await settle('first work')
+      const underWay =
+        during === 'a full read'
+          ? observer.refetch()
+          : during === 'a next-page read'
+            ? observer.fetchNextPage()
+            : null
+      // A bounded frame marks the rail stale; its read waits for the bound.
+      h.elapse(coalesceMilliseconds)
+      h.emit()
+      h.flushCoalesced()
+      expect(rail?.state.isInvalidated).toBe(true)
+      if (during === 'a full read') {
+        // That read began before the frame, so it cannot settle it.
+        await settle('before the frame')
+        expect(rail?.state.isInvalidated).toBe(true)
+      }
+      const nextPage = during === 'a next-page read' ? underWay : observer.fetchNextPage()
+      await settle('next page')
+      await nextPage
+      // A page read never re-reads the pages the frame changed.
+      expect(rail?.state.isInvalidated).toBe(true)
+      const before = pages.length
+      unsubscribe()
+      unsubscribe = new InfiniteQueryObserver(h.client, options).subscribe(() => undefined)
+      expect(pages).toHaveLength(before + 1)
+      unsubscribe()
+    },
+  )
+
+  it('keeps a bounded frame stale through a manual cache update', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('initial')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.emit()
+    h.flush()
+    h.reads[1]?.resolve('first work')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('first work'))
+    h.elapse(coalesceMilliseconds)
+    h.emit()
+    h.flushCoalesced()
+    h.client.setQueryData(h.query.queryKey, 'edited here')
+    expect(h.query.state.isInvalidated).toBe(true)
     h.unmount()
     h.remount()
     expect(h.reads).toHaveLength(3)

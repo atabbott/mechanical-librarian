@@ -164,12 +164,15 @@ export const startLiveInvalidation = (
     handle ??= schedule(flush, coalesceMilliseconds)
   }
 
+  // The bound runs from when a read this bridge asked for actually begins,
+  // including one the coordinator owed behind a read already under way.
+  const libraryRead = { onStart: () => (lastLibraryRefreshAt = now()) }
   const refreshLibrary = () => {
     // This read covers every frame received so far.
     libraryHandle = null
     libraryOwed = false
-    lastLibraryRefreshAt = now()
-    for (const queryKey of libraryKeys) void invalidateBackgroundQueries(queryClient, { queryKey })
+    for (const queryKey of libraryKeys)
+      void invalidateBackgroundQueries(queryClient, { queryKey }, libraryRead)
     forgetSettledKeys(queryClient, libraryKeys)
   }
 
@@ -184,7 +187,6 @@ export const startLiveInvalidation = (
     if (keys.some((key) => key[0] === 'library')) {
       // A resync reads Library and attention now, which pays any bounded debt.
       libraryOwed = false
-      lastLibraryRefreshAt = now()
       if (libraryHandle !== null) cancel(libraryHandle)
       libraryHandle = null
     }
@@ -194,7 +196,8 @@ export const startLiveInvalidation = (
       if (delay <= 0) refreshLibrary()
       else {
         // Marked stale exactly when an unbounded frame would have been, and
-        // kept stale across a read already under way; only the refetch waits.
+        // kept stale until a full read begun after it settles; only the
+        // refetch waits.
         for (const queryKey of libraryKeys)
           void invalidateBackgroundQueries(queryClient, { queryKey, refetchType: 'none' })
         libraryHandle ??= schedule(() => {
@@ -212,7 +215,8 @@ export const startLiveInvalidation = (
         setPreparationDebt(true)
         continue
       }
-      void invalidateBackgroundQueries(queryClient, { queryKey })
+      const ownRead = queryKey[0] === 'library' || queryKey[0] === 'attention'
+      void invalidateBackgroundQueries(queryClient, { queryKey }, ownRead ? libraryRead : {})
       // Each collection obligation is now a fresh read, concrete completion
       // debt, or an inactive stale page. Its decision echo can relinquish it.
       forgetSettledKeys(queryClient, [queryKey])

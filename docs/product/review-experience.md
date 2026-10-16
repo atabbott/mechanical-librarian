@@ -263,8 +263,9 @@ the live channel starts and measuring from each one's start: the first work
 after a quiet 1.5 seconds still appears after the ordinary 120 ms coalescing,
 the page is marked stale at once and navigation still reads it immediately, and
 one read after the last published work leaves the tab on the server's current
-answer (#1224). During preparation a decision recorded in another tab can take
-up to 1.5 seconds to appear here, rather than about 120 ms. A recorded choice is
+answer (#1224). Reading the next page does not clear that stale mark. During
+preparation a decision recorded in another tab can take about 1.6 seconds (the
+bound plus 120 ms coalescing) to appear, not about 120 ms. A recorded choice is
 confirmed from the server's actual post-commit case before the interface advances;
 failed confirmation stays visibly unconfirmed with an explicit reload. A partially
 completed reviewer sign-in change retains its explanation after state is reloaded,
