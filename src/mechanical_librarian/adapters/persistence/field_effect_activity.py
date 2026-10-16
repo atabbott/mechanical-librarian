@@ -160,6 +160,7 @@ _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
 _ActivityRead = TypeVar("_ActivityRead")
 _ActivityDatabaseIdentity = tuple[int, int, int, int]
+_ActivityStamp = tuple[tuple[int, int], _ActivityDatabaseIdentity]
 
 # A decision retained from before audiobook writes existed is history, not
 # pending work: it must not be offered for consent, counted as prepared, or
@@ -381,6 +382,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             tuple[tuple[int, int], _ActivityDatabaseIdentity, object] | None
         ) = None
         self._activity_fact_schema: int | None = None
+        # A configured reader's pending counts and readiness example, each with
+        # the revision and file identity it was read at (#1223).
+        self._pending_reads: dict[str, tuple[_ActivityStamp, object]] | None = None
         self._reused_report: Callable[[tuple[object, ...]], MetadataReport] | None = (
             None
         )
@@ -946,10 +950,49 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     @local_operation
     def pending_field_effect_activity_example_document(self) -> str | None:
         """Select one exact-current pending decision for illustration."""
-        documents = self._pending_field_effect_decision_documents(
-            1, None, ordered=False
-        )
-        return documents[0] if documents else None
+
+        def example() -> str | None:
+            documents = self._pending_field_effect_decision_documents(
+                1, None, ordered=False
+            )
+            return documents[0] if documents else None
+
+        return self._pending_read("example", example)
+
+    def _pending_read(
+        self, kind: str, read: Callable[[], _ActivityRead]
+    ) -> _ActivityRead:
+        """Serve a configured reader's ``read`` once per exact stamp (#1223).
+
+        An entry holds a value with the revision and file identity sampled
+        both before and after it was read, and is served only while both are
+        unchanged, so a lost race costs a recomputation and never a stale
+        answer. A refusal raises out of ``read`` and is never stored, and a
+        stamp that cannot be sampled leaves the read exactly as it was.
+        """
+        entries = self._pending_reads
+        if entries is None:
+            return read()
+        try:
+            stamp = (
+                self._activity_projection_revision(),
+                self._activity_database_identity(),
+            )
+        except FieldEffectError:
+            return read()
+        entry = entries.get(kind)
+        if entry is not None and entry[0] == stamp:
+            return cast("_ActivityRead", entry[1])
+        value = read()
+        try:
+            if stamp == (
+                self._activity_projection_revision(),
+                self._activity_database_identity(),
+            ):
+                entries[kind] = stamp, value
+        except FieldEffectError:
+            pass
+        return value
 
     def _pending_field_effect_decision_documents(
         self,
@@ -1082,7 +1125,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # the current-decision term it is tested where the EXISTS was:
             # after that test, before the ordinal, and only as a test, never as
             # the arm's access path. NULL and false reject a row alike.
-            rows = self._connection.execute(
+            statement = (
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
                 "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
@@ -1141,7 +1184,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination ORDER BY lineage.connection_name,"
                 "lineage.library_name,pending.origin,pending.destination"
-            ).fetchall()
+            )
+            rows = self._pending_read(
+                "counts",
+                lambda: tuple(self._connection.execute(statement).fetchall()),
+            )
             return tuple(
                 {
                     "connection": connection,
@@ -2440,6 +2487,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._activity_fact_schema = self._connection.execute(
             "PRAGMA schema_version"
         ).fetchone()[0]
+        self._pending_reads = {}
 
     @staticmethod
     def _retryable_activity_page_busy(error: FieldEffectError) -> bool:

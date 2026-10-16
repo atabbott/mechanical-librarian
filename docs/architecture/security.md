@@ -1407,6 +1407,10 @@ separate authenticated permission-readiness endpoint checks the existing databas
 consistency boundary freshly, then compares that checked revision inside its own
 read snapshot. Only equality permits a true or false result; drift or an unavailable
 check is null. One response supplies all consent-display gates and no ledger.
+Each reader reuses its prepared counts and that example only at the exact
+SQLite revision and database file identity it read them at, sampled before and
+after the read. A refusal and the consistency check are never reused, and the
+consent grant and every claim still read the writable store afresh (#1223).
 The browser discards known-stale permission responses; command and preclaim
 checks remain authoritative, with no TTL or cross-system atomicity claim.
 

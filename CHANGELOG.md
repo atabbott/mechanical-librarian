@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Activity and permission readiness no longer recount pending changes, or pick
+  the readiness example again, on every read: each reader reuses them until the
+  database changes. The fresh consistency check still runs on every readiness
+  request, and counts, the example and refusals are unchanged (#1223).
+
 - Library, search, the attention lens and Attention answer faster on repeat
   visits: each work's case and report are checked once per process and reused
   while their stored bytes are unchanged, instead of on every request. Pages,

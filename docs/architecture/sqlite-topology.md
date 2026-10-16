@@ -85,6 +85,14 @@ every refresh and reads `pragma_table_list`, which needs SQLite 3.37 or later.
 This shortens the shared read that delays the preparation writer's commit;
 journal mode stays `DELETE`.
 
+Each query-only Activity reader also keeps its last prepared counts and
+permission-readiness example beside the store, with the connection's revision
+and database file identity sampled before and after reading them. It serves
+them only while both are unchanged, so an unchanged Activity or readiness read
+no longer repeats those statements, and a refusal is read again every time
+(#1223). The revision is connection-local, so nothing is shared between
+readers or through the store, and writable repositories still count each read.
+
 Library and Attention need no additional browse borrower. Membership, counts and
 row facts share a short deferred transaction; visible projection remains inside
 the bounded local operation after that transaction ends. External policy/replay
