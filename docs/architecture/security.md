@@ -1438,9 +1438,11 @@ permission readiness is between its fresh check and its snapshot, and readiness
 never queues behind a history request. The check is neither cached nor deferred.
 A request still finds the store current at its own snapshot or finishes the
 remaining steps itself, so it serves no pending or stale facts. Its exit is
-logged as one value-free record, an unexpected error by type only, and shutdown
-and Settings cutover stop it before its reader closes, waiting for at most the
-step in progress and never more than 30 s. A
+logged as one value-free record, an unexpected error by type only. It starts
+only after composition binds the reader's authority, and shutdown and Settings
+cutover stop it before its reader closes, waiting for the step in progress to
+finish: one bounded step, never a request's catch-up. Past 30 s that wait logs a
+warning and continues; it is not cut short under a live step. A
 tampered report validated at startup refuses as before, because reuse is keyed
 by its exact bytes.
 

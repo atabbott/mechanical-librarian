@@ -277,9 +277,11 @@ their own catch-up. Every exit is logged as one value-free record naming its
 cause and, for an unexpected error, only the exception's type. The work is
 derived, held in memory, idempotent (a deterministic refresh published by
 compare-and-swap) and rebuilt from durable state, so it is exempt from persisting
-background work before it runs. Shutdown and Settings cutover stop it and join
-it before the reader's admission closes. The join waits for at most the step in
-progress, never a request's catch-up, and gives up after 30 s with a warning.
+background work before it runs. It starts only once composition has bound the
+reader's authority. Shutdown and Settings cutover stop it before the reader's
+admission closes and wait for the step in progress to finish: one bounded step,
+never a request's catch-up. A join still running after 30 s logs a warning and is
+not a cap, because closing the admission still waits for that step's lease.
 The successor generation's projector performs the full witness every new
 borrower performs.
 
