@@ -1387,11 +1387,11 @@ alongside raw-byte hashes, so a normal commit cannot conceal a same-ID byte chan
 Affected canonical candidates are revalidated before search, including old and new
 missing/excluded dependencies. Schema drift or inability to admit the optimized
 representation returns to canonical query-scoped validation; overflow never returns
-partial counts. Each configured reader reuses the reports, cases, proposals and
-outcomes it validated across requests through its own ADR-0083 cache, keyed by
-exact document bytes, bounded at 512 entries and 8 MiB of document text, and
-never retaining a refusal; these types are deeply immutable, so no reader can
-change what another receives (#1231). Reprojected candidates reach SQL as one bound
+partial counts. Schema validation and both Activity readers of every generation
+reuse the metadata reports they validated through one store per store root,
+keyed by the SHA-256 of the exact document bytes, bounded at 48 Mi characters of
+report text and never keeping a refusal; a report is deeply immutable, so no
+reader can change what another receives (#1231). Reprojected candidates reach SQL as one bound
 JSON parameter; source kinds are code literals. A candidate identity containing
 NUL, or a persisted outcome that fails validation during a refresh, returns reads
 to the canonical query-scoped path, which refuses only the queries selecting it.
@@ -1432,16 +1432,16 @@ refusal, or authority.
 The history reader's background projector runs those same bounded steps off the
 request path, at startup and after commits (#1231). It holds no write, credential,
 network or root-admission authority: it uses the reader's own query-only
-connection and local admission. It never steps while permission readiness is
-between its fresh check and its snapshot, and the check is neither cached nor
-deferred. A request still finds the store current at its own snapshot or finishes
-the remaining steps itself, so it serves no pending or stale facts. The projector
-stops before its reader closes at shutdown and Settings cutover. At startup the
-store root hands the reports that schema validation parsed to Activity. They are
-keyed by their verified digest and bounded at 32 Mi characters of report text.
-One is reused only when it serializes to the stored bytes exactly, so a tampered
-report still refuses as before. The hand-off is released once the store is first
-complete or the projector stops.
+connection and local admission. It takes the readiness window only without
+waiting and only while holding the reader's cache lock, so it never steps while
+permission readiness is between its fresh check and its snapshot, and readiness
+never queues behind a history request. The check is neither cached nor deferred.
+A request still finds the store current at its own snapshot or finishes the
+remaining steps itself, so it serves no pending or stale facts. Its exit is
+logged as one value-free line, an unexpected error by type only, and shutdown
+and Settings cutover stop it before its reader closes, waiting at most 30 s. A
+tampered report validated at startup refuses as before, because reuse is keyed
+by its exact bytes.
 
 Ordinary history returns required null backup-readiness and example fields. The
 separate authenticated permission-readiness endpoint checks the existing database
