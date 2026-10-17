@@ -53,6 +53,9 @@ class _SerializationLock:
     def acquire(self) -> None:
         self._lock.acquire()
 
+    def try_acquire(self) -> bool:
+        return self._lock.acquire(blocking=False)
+
     def release(self) -> None:
         self._lock.release()
 
@@ -218,6 +221,19 @@ class LocalOperationLease:
                 self._admission.release()
             raise
         self._held = True
+
+    def try_acquire(self) -> bool:
+        """Take admission and the physical owner only if neither must be waited for."""
+        if self._admission is not None and not self._admission.try_acquire():
+            return False
+        if self._lock is not None:
+            self._depth = self._lock.depth()
+            if not self._lock.try_acquire():
+                if self._admission is not None:
+                    self._admission.release()
+                return False
+        self._held = True
+        return True
 
     def release(self) -> None:
         if not self._held:

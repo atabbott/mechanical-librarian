@@ -919,6 +919,66 @@ def test_readiness_never_waits_for_a_request_holding_the_history_reader(
         close()
 
 
+def test_readiness_and_stop_never_wait_for_a_request_holding_admission(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The projector never holds the window while it waits for admission.
+
+    A request such as an Activity transition holds the history reader's
+    admission without its cache lock. Before the fix the projector took the
+    window and then waited for that admission inside it, so readiness waited
+    out the request, and so did the projector's stop.
+    """
+    _poll(monkeypatch)
+    history, permissions, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    reader = cast("SQLiteMetadataReportRepository", history._repository)
+    checker = cast("SQLiteMetadataReportRepository", permissions._repository)
+    admission = reader.operation_admission
+    assert admission is not None
+    holder: threading.Thread | None = None
+    release = threading.Event()
+    try:
+        assert _settled(reader)
+        held = threading.Event()
+
+        def request() -> None:
+            with admission.enter():
+                held.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=request)
+        holder.start()
+        assert held.wait(10)
+        ledger.commit()
+        time.sleep(0.2)
+        start = time.monotonic()
+        assert _readiness(checker) == _readiness(ledger.canonical)
+        assert time.monotonic() - start < 1.5
+        # Closing drains the request's accepted turn, as for any request, but
+        # the projector itself is gone at once.
+        closing = threading.Thread(target=close)
+        closing.start()
+        deadline = time.monotonic() + 1.5
+        while any(
+            thread.name == "activity-fact-projector" and thread.is_alive()
+            for thread in threading.enumerate()
+        ):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert closing.is_alive() and holder.is_alive()
+        release.set()
+        closing.join(10)
+        assert not closing.is_alive()
+    finally:
+        release.set()
+        if holder is not None:
+            holder.join(10)
+        close()
+
+
 def test_both_readers_of_a_generation_share_one_window_and_one_store(
     ledger: _Ledger,  # noqa: F811
 ) -> None:

@@ -2716,12 +2716,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def run_activity_fact_projector(self, stop: Event) -> None:
         """Keep this reader's facts caught up off the request path (#1231).
 
-        It takes the bounded step a request would take, and only while both the
-        cache lock and the readiness window are free: it waits for neither, so
-        readiness, and a stop, wait at most for the one step in progress. A
-        request takes the cache lock between steps and finishes any remainder
-        itself. The work is derived, in memory, idempotent and query-only, so it
-        is rebuilt rather than persisted.
+        It takes the bounded step a request would take, and only while the
+        cache lock, the reader's admission and the readiness window are all
+        free: it waits for none of them, so readiness, and a stop, wait at most
+        for the one step in progress. A request takes the cache lock between
+        steps and finishes any remainder itself. The work is derived, in memory,
+        idempotent and query-only, so it is rebuilt rather than persisted.
         """
         admission = self._admission
         code = "stopped"
@@ -2737,13 +2737,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 while not stop.is_set():
                     pause = _ACTIVITY_PROJECTOR_POLL_SECONDS
                     try:
-                        # Neither lock is waited for: a request holding the
-                        # cache lock finishes any remainder itself, so stop
-                        # never waits out its catch-up.
+                        # Nothing is waited for: a request holding the cache
+                        # lock or the reader's admission finishes its own
+                        # work, so neither stop nor readiness waits it out.
+                        # The window is taken last, so inside it the step's
+                        # own reads re-enter the turn already held.
                         held = self._activity_page_cache_lock.acquire(blocking=False)
+                        lease = self._operation_lease()
                         try:
-                            if not held or not self._readiness_window.acquire(
-                                blocking=False
+                            if (
+                                not held
+                                or not lease.try_acquire()
+                                or not self._readiness_window.acquire(blocking=False)
                             ):
                                 pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
                                 head = None
@@ -2788,6 +2793,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                                 finally:
                                     self._readiness_window.release()
                         finally:
+                            lease.release()
                             if held:
                                 self._activity_page_cache_lock.release()
                         if head is not None and head.pending:
