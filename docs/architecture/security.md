@@ -1433,12 +1433,13 @@ The history reader's background projector runs those same bounded steps off the
 request path, at startup and after commits (#1231). It holds no write, credential,
 network or root-admission authority: it uses the reader's own query-only
 connection and local admission. It waits for none of the reader's cache lock,
-its admission and the readiness window, and steps only while holding all three,
-so it never steps while permission readiness is between its fresh check and its
-snapshot, and readiness never queues behind a history request holding the cache
-lock or the admission. Readiness can wait for the one step in progress, which
-may itself wait out a writer's commit as readiness's own check can. The check is
-neither cached nor deferred.
+its admission and the readiness window. It decides whether to step, including
+its revision probe, under the first two alone, and holds the window only for a
+step, so it never steps while permission readiness is between its fresh check
+and its snapshot, and readiness never queues behind a probe or a history request
+holding the cache lock or the admission. Readiness can wait for the one step in
+progress, which may itself wait out a writer's commit as readiness's own check
+can. The check is neither cached nor deferred.
 A request still finds the store current at its own snapshot or finishes the
 remaining steps itself, so it serves no pending or stale facts. Its exit is
 logged as one value-free record, an unexpected error by type only. It starts

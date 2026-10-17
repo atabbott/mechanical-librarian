@@ -104,8 +104,9 @@ looked for once a second, and a run of commits is refreshed once it pauses or
 after five seconds. Each step holds the reader's cache lock, a turn of its
 admission, taken only when none is active or queued, and a lock the permission
 reader holds from its fresh consistency check to its snapshot, waiting for none
-of them, so no step runs inside that window, readiness waits for at most the
-step in progress, and shutdown waits for that one bounded step to
+of them. The revision probe and the decision to step take only the first two, so
+no step runs inside that window, readiness waits for at most the step in
+progress and never for a probe, and shutdown waits for that one bounded step to
 finish, logging a warning past 30 s rather than abandoning it. A writer still waits for at most one step, and a request for at most
 the step in progress, though a step takes longer while requests share the
 interpreter with it.

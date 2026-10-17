@@ -287,17 +287,20 @@ borrower performs.
 
 **Readiness window.** The generation's two readers share one lock. Permission
 readiness holds it from its fresh consistency check to the end of its snapshot.
-The projector tries the reader's cache lock, then a turn of the reader's
-admission, then the window, waiting for none of them; when any is held, it
-releases what it took, skips that step and tries again 20 ms later. A turn is
-taken only when no operation is active or queued, so it never precedes queued
-work. Inside the window it only runs the step, whose reads re-enter the turn it
-already holds. So no background step runs between readiness's check and its
-snapshot, and readiness waits at most for the one step already in progress,
-never for a history request, such as a transition, holding the cache lock or the
-admission. That step can still wait out SQLite's busy timeout behind a writer's
-commit, as readiness's own check can. The check is neither memoised nor
-deferred.
+The projector tries the reader's cache lock and then a turn of the reader's
+admission, and under those two alone decides whether to step, including its
+revision probe, which can wait out SQLite's busy timeout behind a writer's
+commit. Only when a step will run does it try the window, and it holds the
+window for that step alone, whose reads re-enter the turn it already holds. It
+waits for none of the three; when any is held, it releases what it took, skips
+that step and tries again 20 ms later, and a probe refused behind a writer is
+tried again at the next poll. A turn is taken only when no operation is active
+or queued, so it never precedes queued work. So no background step runs between
+readiness's check and its snapshot, and readiness waits at most for the one step
+already in progress, never for a probe or for a history request, such as a
+transition, holding the cache lock or the admission. That step can still wait
+out SQLite's busy timeout behind a writer's commit, as readiness's own check
+can. The check is neither memoised nor deferred.
 
 **Writer and cost.** Each background step is one bounded read transaction, so a
 writer waits for at most one step, as #1225 bounds a request's steps. The
