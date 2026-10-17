@@ -12,19 +12,24 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import hashlib
 import json
 import sqlite3
 import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from pathlib import Path
 from typing import cast
+from unittest.mock import Mock, patch
 
 import pytest
 
 from mechanical_librarian.adapters.persistence import field_effect_activity
+from mechanical_librarian.adapters.persistence.activity_documents import (
+    ACTIVITY_DOCUMENT_CHARACTERS,
+    ActivityDocuments,
+)
 from mechanical_librarian.adapters.persistence.activity_facts import (
     ActivityFact,
     ActivityFactStore,
@@ -41,6 +46,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
+from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.bootstrap.composition import (
     open_field_effect_activity_readers,
 )
@@ -49,7 +55,13 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.infrastructure.first_boot import FirstBootMode
+from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+from tests.support.automatic_decisions import _automatic_decisions
+from tests.support.automatic_no_change import _automatic_no_change_inputs
+from tests.support.field_effects import _EffectEnvironment, effects  # noqa: F401
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_activity_catch_up import (
     _bound,
@@ -308,14 +320,7 @@ def test_an_unreadable_document_stops_projection_and_refuses_as_canonical(
     borrower = open_repository(
         ledger.path, create=False, authority=ledger.root.authority, cross_thread=True
     )
-    (document,) = ledger.root._connection.execute(
-        "SELECT document FROM metadata_reports LIMIT 1"
-    ).fetchone()
-    # A hand-off is released when projection stops short of completing.
-    startup = {"unused": MetadataReport.from_json(document)}
-    borrower.configure_activity_page_reader(
-        ActivityFactStore(), startup_reports=startup
-    )
+    borrower.configure_activity_page_reader(ActivityFactStore())
     halt = _projecting(borrower)
     try:
         assert _settled(borrower)
@@ -324,7 +329,6 @@ def test_an_unreadable_document_stops_projection_and_refuses_as_canonical(
     finally:
         halt()
         borrower.close()
-    assert startup == {}
 
 
 def test_a_tampered_report_refuses_and_no_refusal_is_retained(
@@ -362,35 +366,97 @@ def test_a_tampered_report_refuses_and_no_refusal_is_retained(
     assert parsed.count(document) <= 1
 
 
-def test_a_startup_report_is_reused_only_for_its_own_bytes(
+def test_a_document_is_reused_only_for_its_own_bytes_and_kind(
     ledger: _Ledger,  # noqa: F811
 ) -> None:
     rows = ledger.root._connection.execute(
         "SELECT document FROM metadata_reports ORDER BY report_id LIMIT 2"
     ).fetchall()
     first, second = (row[0] for row in rows)
-    known = MetadataReport.from_json(first)
-    borrower = open_repository(
-        ledger.path, create=False, authority=ledger.root.authority
-    )
-    try:
-        # A digest naming different bytes is never trusted: it parses them.
-        startup = {
-            hashlib.sha256(first.encode()).hexdigest(): known,
-            hashlib.sha256(second.encode()).hexdigest(): known,
-        }
-        borrower.configure_activity_page_reader(
-            ActivityFactStore(), startup_reports=startup
+    documents = ActivityDocuments()
+    known = documents.report(first)
+    assert documents.report(first) is known
+    reparsed = documents.report(second)
+    assert reparsed is not known
+    assert reparsed == MetadataReport.from_json(second)
+    assert reparsed.to_json() == second
+    # The same bytes under another kind are that kind's to validate.
+    with pytest.raises(Exception) as refused:
+        documents.proposal(first)
+    with pytest.raises(Exception) as canonical:
+        ProposalSet.from_json(first)
+    assert type(refused.value) is type(canonical.value)
+    assert str(refused.value) == str(canonical.value)
+
+
+def test_the_document_store_keeps_its_character_bound(
+    ledger: _Ledger,  # noqa: F811
+) -> None:
+    rows = [
+        row[0]
+        for row in ledger.root._connection.execute(
+            "SELECT document FROM metadata_reports ORDER BY report_id LIMIT 3"
         )
-        reuse = borrower._field_effect_activity._reused_report
-        assert reuse is not None
-        assert reuse(first) is known
-        reparsed = reuse(second)
-        assert reparsed is not known
-        assert reparsed == MetadataReport.from_json(second)
-        assert reparsed.to_json() == second
+    ]
+    assert len(rows) == 3
+    bound = len(rows[0]) + max(len(rows[1]), len(rows[2]))
+    documents = ActivityDocuments(bound)
+    held = [documents.report(document) for document in rows[:2]]
+    assert [documents.report(document) for document in rows[:2]] == held
+    assert all(
+        documents.report(document) is value
+        for document, value in zip(rows[:2], held, strict=True)
+    )
+    documents.report(rows[0])
+    documents.report(rows[2])
+    assert documents._characters <= bound
+    # The least recently used entry went first.
+    assert documents.report(rows[0]) is held[0]
+    assert documents.report(rows[1]) is not held[1]
+    # A document over the whole bound is not kept, and evicts nothing.
+    small, large = sorted(rows, key=len)[:: len(rows) - 1]
+    assert len(small) < len(large)
+    narrow = ActivityDocuments(len(small))
+    kept = narrow.report(small)
+    assert narrow.report(large) is not narrow.report(large)
+    assert narrow.report(small) is kept
+    assert narrow._characters == len(small)
+    assert ACTIVITY_DOCUMENT_CHARACTERS == 128 * 1024 * 1024
+
+
+def test_a_case_refuses_as_canonical_when_its_proposal_is_reused(
+    tmp_path: Path,
+) -> None:
+    """A case parses its proposal through the store and refuses exactly alike."""
+    root = tmp_path / "owner"
+    root.mkdir(mode=0o700)
+    fixture = OwnerResponsivenessFixture(root, 2, mixed=True)
+    try:
+        (document,) = fixture.repository._connection.execute(
+            "SELECT document FROM review_cases LIMIT 1"
+        ).fetchone()
     finally:
-        borrower.close()
+        fixture.close()
+        fixture.repository.close()
+    documents = ActivityDocuments()
+    case = documents.case(document)
+    assert documents.case(document) is case
+    assert case == ReviewCase.from_json(document)
+    assert documents.proposal(case.proposal_document) is documents.proposal(
+        case.proposal_document
+    )
+    value = json.loads(document)
+    proposal = json.loads(value["proposal_document"])
+    proposal["schema_version"] = "unknown"
+    value["proposal_document"] = json.dumps(proposal, sort_keys=True)
+    for tampered in (json.dumps(value, sort_keys=True), document[:-1]):
+        for _ in range(2):
+            with pytest.raises(Exception) as refused:
+                documents.case(tampered)
+            with pytest.raises(Exception) as canonical:
+                ReviewCase.from_json(tampered)
+            assert type(refused.value) is type(canonical.value)
+            assert str(refused.value) == str(canonical.value)
 
 
 def _immutable(value: object, seen: set[int]) -> bool:
@@ -433,66 +499,83 @@ def test_reused_kinds_are_deeply_immutable(tmp_path: Path) -> None:
         fixture.repository.close()
 
 
-def test_restart_parses_each_report_once_and_releases_the_hand_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("history", ["covers", "decisions"])
+def test_restart_parses_each_document_once_and_projects_as_a_cold_reader(
+    history: str,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Validation parses each report once and hands it to Activity (#1231)."""
+    """What validation parsed, Activity reuses, and reuse changes nothing (#1231).
+
+    Validation parses the reports cover considerations name; Activity parses
+    the cases, proposals and reports of owner decisions.
+    """
     _poll(monkeypatch)
-    root = tmp_path / "owner"
-    root.mkdir(mode=0o700)
-    fixture = OwnerResponsivenessFixture(root, 8, mixed=True)
-    configuration = fixture.configuration
-    documents = {
-        document
-        for (document,) in fixture.repository._connection.execute(
-            "SELECT document FROM metadata_reports"
+    if history == "covers":
+        root = tmp_path / "owner"
+        root.mkdir(mode=0o700)
+        fixture = OwnerResponsivenessFixture(root, 8, mixed=True)
+        configuration, path = fixture.configuration, fixture.database
+        fixture.close()
+        fixture.repository.close()
+        expected = {"MetadataReport"}
+    else:
+        environment = cast("_EffectEnvironment", request.getfixturevalue("effects"))
+        report, category, option, _ = _automatic_no_change_inputs("exact_title")
+        assert _automatic_decisions(
+            environment, report, category, option, qualified=True
         )
-    }
-    considered = fixture.repository._connection.execute(
-        "SELECT count(DISTINCT report_id) FROM cover_considerations"
-    ).fetchone()[0]
-    fixture.close()
-    fixture.repository.close()
-    assert considered > 1
-    parsed: Counter[str] = Counter()
-    parse = MetadataReport.from_json
+        configuration, path = _configuration(), environment.database_path
+        environment.repository.close()
+        expected = {"MetadataReport", "ReviewCase", "ProposalSet"}
+    parsed: Counter[tuple[str, str]] = Counter()
+    for kind in (MetadataReport, ReviewCase, ProposalSet, ShadowOutcomeSet):
+        parse = kind.from_json
 
-    def counted(document: str) -> MetadataReport:
-        parsed[document] += 1
-        return parse(document)
+        def counted(
+            document: str, *options: object, _kind: str = kind.__name__, _parse=parse
+        ) -> object:
+            parsed[(_kind, document)] += 1
+            return _parse(document, *options)
 
-    monkeypatch.setattr(MetadataReport, "from_json", counted)
-    startup: dict[str, MetadataReport] = {}
+        monkeypatch.setattr(kind, "from_json", counted)
+    documents = ActivityDocuments()
     facts = ActivityFactStore()
     owner = open_repository(
-        fixture.database,
+        path,
         cross_thread=True,
         admission=OperationAdmission(),
-        validated_reports=startup,
+        activity_documents=documents,
     )
     try:
-        assert len(startup) == considered
-        assert set(parsed) <= documents and set(parsed.values()) == {1}
-        history, _, close = open_field_effect_activity_readers(
-            configuration, fixture.database, owner.authority, None, facts, startup
+        validated = set(parsed)
+        assert bool(validated) is (history == "covers")
+        readers, _, close = open_field_effect_activity_readers(
+            configuration, path, owner.authority, None, facts, documents
         )
         try:
-            assert _settled(cast("SQLiteMetadataReportRepository", history._repository))
-            state = facts.snapshot()
-            assert state is not None and state.facts and not state.pending
-            assert set(parsed.values()) == {1}
-            assert startup == {}
+            reader = cast("SQLiteMetadataReportRepository", readers._repository)
+            assert _settled(reader)
+            handed = _pages(reader)
         finally:
             close()
-        # Without the hand-off the same projection parses reports again.
+        state = facts.snapshot()
+        assert state is not None and state.facts and not state.pending
+        assert expected <= {kind for kind, _ in parsed}
+        assert set(parsed.values()) == {1}
+        # The oracle: a cold reader holding nothing projects the same pages.
         parsed.clear()
-        control = open_repository(
-            fixture.database, create=False, authority=owner.authority
-        )
+        cold = ActivityFactStore()
+        control = open_repository(path, create=False, authority=owner.authority)
         try:
-            control.configure_activity_page_reader(ActivityFactStore())
-            control.initialize_activity_facts()
-            assert parsed and set(parsed) <= documents
+            control.configure_activity_page_reader(cold)
+            assert _pages(control) == handed
+            rebuilt = cold.snapshot()
+            assert rebuilt is not None
+            assert rebuilt.facts == state.facts and rebuilt.ordered == state.ordered
+            assert expected <= {kind for kind, _ in parsed}
+            assert validated <= set(parsed)
         finally:
             control.close()
     finally:
@@ -660,3 +743,325 @@ def test_a_stop_requested_while_the_projector_waits_takes_no_further_step(
         stop.set()
         thread.join(10)
         reader.close()
+
+
+def test_readiness_never_waits_for_a_request_holding_the_history_reader(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The projector never holds the window while it waits for the cache lock.
+
+    Before the fix it took the window first, so readiness waited out the rest
+    of whatever history request held the cache lock.
+    """
+    _poll(monkeypatch)
+    history, permissions, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    reader = cast("SQLiteMetadataReportRepository", history._repository)
+    checker = cast("SQLiteMetadataReportRepository", permissions._repository)
+    try:
+        assert _settled(reader)
+        held, release = threading.Event(), threading.Event()
+
+        def request() -> None:
+            with reader._field_effect_activity._activity_page_cache_lock:
+                held.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=request)
+        holder.start()
+        try:
+            assert held.wait(10)
+            ledger.commit()
+            time.sleep(0.2)
+            start = time.monotonic()
+            assert _readiness(checker) == _readiness(ledger.canonical)
+            assert time.monotonic() - start < 1.5
+            assert holder.is_alive()
+        finally:
+            release.set()
+            holder.join(10)
+    finally:
+        close()
+
+
+def test_both_readers_of_a_generation_share_one_window_and_one_store(
+    ledger: _Ledger,  # noqa: F811
+) -> None:
+    history, permissions, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    try:
+        first = history._repository._field_effect_activity
+        second = permissions._repository._field_effect_activity
+        assert first._readiness_window is second._readiness_window
+        assert first._reused_report.__self__ is second._reused_report.__self__
+    finally:
+        close()
+    _, other, close_other = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    try:
+        third = other._repository._field_effect_activity
+        assert third._readiness_window is not second._readiness_window
+    finally:
+        close_other()
+
+
+def test_the_projector_steps_as_background_work(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _poll(monkeypatch)
+    history, _, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    repository = cast("SQLiteMetadataReportRepository", history._repository)
+    activity = repository._field_effect_activity
+    admission = repository.operation_admission
+    assert admission is not None
+    step = activity._activity_fact_step
+    classes: list[object] = []
+
+    def observed() -> None:
+        classes.append(admission._classification.get(None))
+        step()
+
+    monkeypatch.setattr(activity, "_activity_fact_step", observed)
+    try:
+        ledger.commit()
+        assert _settled(repository)
+        assert classes and set(classes) == {"background"}
+    finally:
+        close()
+
+
+def _events(captured: str) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in captured.splitlines()
+        if line.startswith("{") and '"activity_projector"' in line
+    ]
+
+
+def test_an_unexpected_projector_failure_is_logged_without_its_values(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _poll(monkeypatch)
+    reader = _reader(ledger)
+    activity = reader._field_effect_activity
+
+    def failing() -> None:
+        raise RuntimeError("/private/library/path secret")
+
+    monkeypatch.setattr(activity, "_activity_fact_step", failing)
+    ledger.commit()
+    stop = threading.Event()
+    thread = threading.Thread(target=reader.run_activity_fact_projector, args=(stop,))
+    try:
+        thread.start()
+        thread.join(10)
+        assert not thread.is_alive()
+        captured = capsys.readouterr().err
+        assert _events(captured) == [
+            {
+                "code": "unexpected",
+                "error": "RuntimeError",
+                "event": "activity_projector",
+                "level": "warning",
+            }
+        ]
+        assert "secret" not in captured and "Traceback" not in captured
+        # Requests still catch up themselves.
+        assert _pages(reader) == _pages(ledger.canonical)
+    finally:
+        stop.set()
+        thread.join(10)
+        reader.close()
+
+
+def test_a_stopped_projector_logs_its_exit(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _poll(monkeypatch)
+    reader = _reader(ledger)
+    try:
+        _projecting(reader)()
+        assert _events(capsys.readouterr().err) == [
+            {"code": "stopped", "event": "activity_projector", "level": "info"}
+        ]
+    finally:
+        reader.close()
+
+
+def test_a_projector_outliving_its_join_bound_is_logged(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _poll(monkeypatch)
+    monkeypatch.setattr(composition, "_ACTIVITY_PROJECTOR_JOIN_SECONDS", 0.1)
+    history, _, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    repository = cast("SQLiteMetadataReportRepository", history._repository)
+    activity = repository._field_effect_activity
+    assert _settled(repository)
+    entered, release = threading.Event(), threading.Event()
+
+    def blocking() -> None:
+        entered.set()
+        release.wait(10)
+
+    monkeypatch.setattr(activity, "_activity_fact_step", blocking)
+    ledger.commit()
+    assert entered.wait(10)
+    capsys.readouterr()
+    try:
+        start = time.monotonic()
+        close()
+        assert time.monotonic() - start < 5
+        assert {"code": "join_timeout", "event": "activity_projector"}.items() <= (
+            _events(capsys.readouterr().err)[0].items()
+        )
+    finally:
+        release.set()
+        deadline = time.monotonic() + 10
+        while any(
+            thread.name == "activity-fact-projector" and thread.is_alive()
+            for thread in threading.enumerate()
+        ):
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+
+
+def test_every_readiness_check_is_fresh(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reader = _reader(ledger)
+    activity = reader._field_effect_activity
+    check = activity._fresh_database_quick_check
+    checks: list[None] = []
+
+    def counted() -> tuple[object, ...] | None:
+        checks.append(None)
+        return check()
+
+    monkeypatch.setattr(activity, "_fresh_database_quick_check", counted)
+    try:
+        for expected in range(1, 4):
+            assert _readiness(reader) == _readiness(ledger.canonical)
+            assert len(checks) == expected
+    finally:
+        reader.close()
+
+
+def test_the_projector_coalesces_commits_and_backs_off_a_stalled_catch_up(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bound(monkeypatch, 1)
+    monkeypatch.setattr(field_effect_activity, "_ACTIVITY_PROJECTOR_POLL_SECONDS", 0.1)
+    monkeypatch.setattr(
+        field_effect_activity, "_ACTIVITY_PROJECTOR_COALESCE_SECONDS", 0.5
+    )
+    reader = _reader(ledger)
+    activity = reader._field_effect_activity
+    step = activity._activity_fact_step
+    steps: list[float] = []
+
+    def counted() -> None:
+        steps.append(time.monotonic())
+        step()
+
+    monkeypatch.setattr(activity, "_activity_fact_step", counted)
+    halt = _projecting(reader)
+    try:
+        assert _settled(reader)
+        # Commits every 20 ms for 1.5 s: at most one refresh per coalescing
+        # period, where a refresh per commit would be about 75.
+        steps.clear()
+        end = time.monotonic() + 1.5
+        while time.monotonic() < end:
+            ledger.commit()
+            time.sleep(0.02)
+        assert len(steps) <= 4
+        # Once commits pause, one quiet poll brings it current.
+        assert _settled(reader, 2)
+        _assert_exact(reader, ledger)
+        # A catch-up whose steps stop shrinking what is pending backs off to
+        # the poll interval instead of stepping every gap.
+        monkeypatch.setattr(activity, "_activity_fact_step", lambda: steps.append(0))
+        activity._activity_facts._snapshot = dataclasses.replace(  # type: ignore[union-attr]
+            ledger.snapshot(), pending=frozenset({cast("Candidate", ("stuck",))})
+        )
+        steps.clear()
+        time.sleep(1.0)
+        assert 4 <= len(steps) <= 4 + 12
+    finally:
+        halt()
+        reader.close()
+
+
+@pytest.mark.parametrize("mode", [None, FirstBootMode.INITIALIZE_SETUP])
+def test_a_store_root_hands_what_it_validated_to_its_activity_readers(
+    tmp_path: Path, mode: FirstBootMode | None
+) -> None:
+    """An ordinary store root validates into the store its generations reuse."""
+
+    class Stop(Exception):
+        pass
+
+    seen: dict[str, object] = {}
+
+    def opened(*_args: object, **kwargs: object) -> object:
+        seen["root"] = kwargs["activity_documents"]
+        if mode is not None:
+            raise Stop
+        return Mock()
+
+    def activation(*_args: object, **kwargs: object) -> object:
+        seen["activation"] = kwargs["activity_documents"]
+        return Mock()
+
+    bootstrap = ReviewBootstrap(
+        schema_version="review-bootstrap-v2",
+        tls_certificate_file="/synthetic/certificate",
+        tls_private_key_file="/synthetic/private-key",
+        canonical_origin="https://library.invalid",
+    )
+    with (
+        patch.object(
+            composition, "load_configuration_file", side_effect=FileNotFoundError
+        ),
+        patch.object(composition, "load_review_bootstrap", return_value=bootstrap),
+        patch.object(
+            composition,
+            "open_review_tls_identity",
+            return_value=nullcontext(None),
+        ),
+        patch.object(composition, "open_repository", side_effect=opened),
+        patch.object(composition, "_StoreRuntimeActivation", side_effect=activation),
+        patch.object(composition, "compose_store_runtime_generation", side_effect=Stop),
+        pytest.raises(Stop),
+    ):
+        composition.run_review_server(
+            tmp_path / "config.json",
+            tmp_path / "application.sqlite3",
+            tmp_path / "catalogue.sqlite3",
+            tmp_path / "artifacts",
+            "127.0.0.1",
+            18444,
+            first_boot_mode=mode,
+        )
+    if mode is None:
+        assert type(seen["root"]) is ActivityDocuments
+        assert seen["activation"] is seen["root"]
+    else:
+        assert seen == {"root": None}

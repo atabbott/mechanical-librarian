@@ -21,6 +21,9 @@ import pytest
 import mechanical_librarian.adapters.persistence.binding as persistence_binding
 import mechanical_librarian.adapters.persistence.metadata_reports as persistence_reports
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
+from mechanical_librarian.adapters.persistence.activity_documents import (
+    ActivityDocuments,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
@@ -1770,10 +1773,10 @@ def test_schema_validation_reads_one_transaction_snapshot() -> None:
         transactions: list[bool] = []
 
         def record(
-            connection: sqlite3.Connection, *reports: dict[str, MetadataReport] | None
+            connection: sqlite3.Connection, *documents: ActivityDocuments | None
         ) -> None:
             transactions.append(connection.in_transaction)
-            validate(connection, *reports)
+            validate(connection, *documents)
 
         with patch.object(persistence_schema, "_validate_schema", record):
             reopened = open_repository(path, create=False)

@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote
 
+from mechanical_librarian.adapters.persistence.activity_documents import (
+    ActivityDocuments,
+)
 from mechanical_librarian.adapters.persistence.binding import (
     _validate_connection_binding,
 )
@@ -98,9 +101,6 @@ if TYPE_CHECKING:
     pass
 
 
-# A root keeps at most this much report text's parsed reports for Activity's
-# first projection; beyond it a report is parsed again there (#1231).
-_STARTUP_REPORT_CHARACTERS = 32 * 1024 * 1024
 _REPORTS_SQL = (
     "CREATE TABLE metadata_reports ("
     "report_id TEXT PRIMARY KEY NOT NULL CHECK (report_id GLOB 'report_[0-9a-f]*' AND length(report_id) = 71), "
@@ -1300,7 +1300,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
 
 
 def _validate_existing_read_only(
-    path: Path, descriptor: int, reports: dict[str, MetadataReport] | None = None
+    path: Path, descriptor: int, documents: ActivityDocuments | None = None
 ) -> None:
     absolute = str(path.absolute())
     uri = f"file:{quote(absolute, safe='/')}?mode=ro"
@@ -1315,7 +1315,7 @@ def _validate_existing_read_only(
         # one from after it and reject a database that was never inconsistent.
         connection.execute("BEGIN")
         connection.execute("PRAGMA schema_version").fetchone()
-        _validate_schema(connection, reports)
+        _validate_schema(connection, documents)
     finally:
         if connection is not None:
             try:
@@ -1738,20 +1738,20 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
 def _validate_schema_against(
     connection: sqlite3.Connection,
     expected_objects: list[tuple[str, str, str | None]],
-    reports: dict[str, MetadataReport] | None = None,
+    documents: ActivityDocuments | None = None,
 ) -> None:
     objects = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
     ).fetchall()
     if objects != expected_objects:
         raise MetadataReportError("database is unavailable or incompatible")
-    _validate_schema_contents(connection, reports)
+    _validate_schema_contents(connection, documents)
 
 
 def _validate_schema_contents(
-    connection: sqlite3.Connection, reports: dict[str, MetadataReport] | None = None
+    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
 ) -> None:
-    _validate_schema_contents_without_attention_facts(connection, reports)
+    _validate_schema_contents_without_attention_facts(connection, documents)
     _require_equal_facts(
         connection,
         (
@@ -1766,35 +1766,31 @@ def _validate_schema_contents(
 
 
 def _validate_schema_contents_without_attention_facts(
-    connection: sqlite3.Connection, reports: dict[str, MetadataReport] | None = None
+    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
 ) -> None:
     """Validate every content rule #1232's exact predecessor also enforced.
 
-    Each consideration's report is parsed once for both of its checks, and a
-    root hands the parsed reports, keyed by their verified digest and bounded
-    by document size, to Activity's first projection (#1231).
+    Each consideration's report is parsed once for both of its checks. Given a
+    root's ``documents``, what validates is kept there by its exact bytes for
+    the Activity reader (#1231).
     """
-    _validate_schema_contents_without_review_field_facts(connection)
+    _validate_schema_contents_without_review_field_facts(connection, documents)
     _validate_review_field_facts(connection)
-    parse = lru_cache(maxsize=1)(MetadataReport.from_json)
-    retained = 0
+    parse = (
+        lru_cache(maxsize=1)(MetadataReport.from_json)
+        if documents is None
+        else documents.report
+    )
     for row in connection.execute(
         "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id,consideration.currentness_document FROM cover_considerations consideration LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id"
     ):
         document = expand_cover_consideration(*row[:5], parse_report=parse)
         if cover_consideration_currentness_document(document, parse) != row[5]:
             raise MetadataReportError("database is unavailable or incompatible")
-        if (
-            reports is not None
-            and row[2] not in reports
-            and retained + len(row[1]) <= _STARTUP_REPORT_CHARACTERS
-        ):
-            reports[row[2]] = parse(row[1])
-            retained += len(row[1])
 
 
 def _validate_schema_contents_without_review_field_facts(
-    connection: sqlite3.Connection,
+    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
 ) -> None:
     if connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute(
         "PRAGMA integrity_check"
@@ -1805,7 +1801,7 @@ def _validate_schema_contents_without_review_field_facts(
     except ValueError as error:
         raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)
-    _validate_cover_selection_authorities(connection)
+    _validate_cover_selection_authorities(connection, documents)
     _validate_field_effect_state(connection)
     validate_preparation_presentation(connection)
     try:
@@ -1820,8 +1816,11 @@ def _validate_schema_contents_without_review_field_facts(
         _validate_provider_recovery_outbox_row(row)
 
 
-def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> None:
+def _validate_cover_selection_authorities(
+    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
+) -> None:
     """Require append-only cover authority rows to equal their canonical facts."""
+    parse_case = ReviewCase.from_json if documents is None else documents.case
     try:
         selections: dict[str, tuple[str, str, str, dict[str, object]]] = {}
         selection_decision_ids: dict[str, str] = {}
@@ -1867,7 +1866,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             ).fetchone()
             if case_row is None:
                 raise ValueError
-            case = ReviewCase.from_json(case_row[0])
+            case = parse_case(case_row[0])
             target = case.target
             expected_artifact = None
             expected_rank = None
@@ -2169,9 +2168,9 @@ def _require_equal_facts(
 
 
 def _validate_schema(
-    connection: sqlite3.Connection, reports: dict[str, MetadataReport] | None = None
+    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
 ) -> None:
-    _validate_schema_against(connection, _expected_schema_objects(), reports)
+    _validate_schema_against(connection, _expected_schema_objects(), documents)
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:

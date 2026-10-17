@@ -14,6 +14,9 @@ from pathlib import Path
 import uvicorn
 from argon2 import PasswordHasher
 
+from mechanical_librarian.adapters.persistence.activity_documents import (
+    ActivityDocuments,
+)
 from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
@@ -85,14 +88,14 @@ class OwnerResponsivenessFixture:
         self.database = root / "reports.sqlite"
         self.activity_facts = ActivityFactStore()
         # As a store root does, Activity receives what validation parsed.
-        self.startup_reports: dict[str, MetadataReport] = {}
+        self.activity_documents = ActivityDocuments()
         self._close_external_actors: Callable[[], None] | None = None
         with ExitStack() as activation:
             self.repository = open_repository(
                 self.database,
                 cross_thread=True,
                 admission=OperationAdmission(),
-                validated_reports=self.startup_reports,
+                activity_documents=self.activity_documents,
             )
             activation.callback(self.repository.close)
             self.recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
@@ -258,7 +261,7 @@ class OwnerResponsivenessFixture:
                     self.repository.authority,
                     self.recovery,
                     self.activity_facts,
-                    self.startup_reports,
+                    self.activity_documents,
                 )
             )
             activation.callback(close_activity)

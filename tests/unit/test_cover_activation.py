@@ -30,6 +30,9 @@ from mechanical_librarian.adapters.field_effect_runtime import (
     PersistedEffectDependencies,
 )
 from mechanical_librarian.adapters.persistence import schema as persistence_schema
+from mechanical_librarian.adapters.persistence.activity_documents import (
+    ActivityDocuments,
+)
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
@@ -239,6 +242,18 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             "SELECT document FROM review_cases WHERE review_case_id=?",
             (automatic.review_case_id,),
         ).fetchone()[0]
+        # Startup validation keeps the selection's case for Activity (#1231).
+        documents = ActivityDocuments()
+        descriptor = os.open(database, os.O_RDONLY)
+        try:
+            persistence_schema._validate_existing_read_only(
+                database, descriptor, documents
+            )
+        finally:
+            os.close(descriptor)
+        with patch.object(ReviewCase, "from_json", side_effect=AssertionError):
+            validated = documents.case(case_document)
+        assert validated == ReviewCase.from_json(case_document)
         with pytest.raises(FieldEffectError, match="authority_binding"):
             _cover_automatic_decision_value(
                 repository._connection,
