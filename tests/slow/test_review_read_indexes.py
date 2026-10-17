@@ -17,6 +17,11 @@ from mechanical_librarian.application.review_web import (
 )
 from tests.unit import test_review_read_indexes as support
 
+_FACTS_BY_KEY = (
+    "SEARCH f USING PRIMARY KEY "
+    "(connection_name=? AND library_name=? AND item_id=? AND report_id=?)"
+)
+
 
 def test_measured_indexes_bound_representative_library_reads() -> None:
     with tempfile.TemporaryDirectory() as directory:
@@ -50,8 +55,11 @@ def test_measured_indexes_bound_representative_library_reads() -> None:
                 for step in shadow_plan
             )
             assert not any("TEMP B-TREE" in step for step in shadow_plan)
-            assert any("SEARCH result USING PRIMARY KEY" in step for step in count_plan)
-            assert any("shadow_outcome_field_facts_case" in step for step in count_plan)
+            # Since #1232 the count reads each work's persisted attention facts
+            # by key, and a cover fact's consideration by index, per work.
+            assert any(_FACTS_BY_KEY in step for step in count_plan)
+            assert any("SEARCH pointed USING INDEX" in step for step in count_plan)
+            assert not any(re.match(r"SCAN (f|pointed)\b", step) for step in count_plan)
             assert not any("result VIRTUAL TABLE" in step for step in count_plan)
 
             result, steps, elapsed = support._count_with_step_limit(
@@ -177,18 +185,14 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
                 if "CANDIDATES AS MATERIALIZED (SELECT" in statement.upper()
             )
             materialized_plan = support._plan(connection, materialized, ())
+            # Since #1232 candidates read persisted attention facts by key and
+            # test a cover fact's live authority through its consideration.
+            assert any(_FACTS_BY_KEY in step for step in materialized_plan), name
             assert any(
-                "SEARCH current_cover_authority USING INDEX" in step
-                for step in materialized_plan
-            ), name
-            assert any(
-                "SEARCH authority_consideration USING INDEX" in step
-                for step in materialized_plan
+                "SEARCH pointed USING INDEX" in step for step in materialized_plan
             ), name
             assert not any(
-                "SCAN current_cover_authority" in step
-                or "SCAN authority_consideration" in step
-                for step in materialized_plan
+                re.match(r"SCAN (f|pointed)\b", step) for step in materialized_plan
             ), name
 
         plan_calls = calls + (
