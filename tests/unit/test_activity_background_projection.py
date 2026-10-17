@@ -50,6 +50,7 @@ from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.bootstrap.composition import (
     open_field_effect_activity_readers,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
@@ -72,6 +73,7 @@ from tests.unit.test_activity_fact_witness import (  # noqa: F401
     _blob_write,
     _full_witness,
     _Ledger,
+    _outcome,
     _pages,
     _record_decision,
     ledger,
@@ -364,6 +366,32 @@ def test_a_tampered_report_refuses_and_no_refusal_is_retained(
     assert reuse(document) is first
     assert first == parse(document)
     assert parsed.count(document) <= 1
+
+
+@pytest.mark.parametrize(
+    ("column", "tamper"),
+    [
+        pytest.param("document_digest", repr("0" * 64), id="digest"),
+        pytest.param("item_id", "item_id || '-moved'", id="envelope"),
+    ],
+)
+def test_a_kept_report_still_answers_to_its_row(
+    ledger: _Ledger,  # noqa: F811
+    column: str,
+    tamper: str,
+) -> None:
+    """A row whose digest or envelope no longer matches its bytes refuses alike."""
+    reader = ledger.reader
+    assert reader._field_effect_activity._reused_report is not None
+    before = _pages(reader)
+    connection = ledger.root._connection
+    connection.execute("DROP TRIGGER metadata_reports_no_update")
+    connection.execute(f"UPDATE metadata_reports SET {column}={tamper}")
+    connection.commit()
+    expected = _pages(ledger.canonical)
+    refused = [page for page in expected if type(page) is tuple]
+    assert len(refused) > sum(type(page) is tuple for page in before)
+    assert _pages(reader) == expected
 
 
 def test_a_report_is_reused_only_for_its_own_bytes(
@@ -1054,6 +1082,14 @@ def test_a_store_root_hands_what_it_validated_to_its_activity_readers(
         assert seen == {"root": None}
 
 
+def _whole_history(repository: SQLiteMetadataReportRepository) -> object:
+    return _outcome(
+        lambda: repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=25
+        )
+    )
+
+
 def test_a_proposal_row_unlike_its_cases_bytes_is_parsed_on_its_own(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1087,7 +1123,10 @@ def test_a_proposal_row_unlike_its_cases_bytes_is_parsed_on_its_own(
     )
     try:
         reader.configure_activity_page_reader(ActivityFactStore())
-        _pages(reader)
+        refused = _whole_history(reader)
     finally:
         reader.close()
     assert tampered in parsed
+    # It refuses exactly as the cold canonical path does.
+    assert refused == _whole_history(owner)
+    assert refused == ("refused", FieldEffectError, "persistence")
