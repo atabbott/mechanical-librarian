@@ -2740,58 +2740,58 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         # Nothing is waited for: a request holding the cache
                         # lock or the reader's admission finishes its own
                         # work, so neither stop nor readiness waits it out.
-                        # The window is taken last, so inside it the step's
-                        # own reads re-enter the turn already held.
+                        # The decision to step needs only those two; the
+                        # window is tried last and held for the step alone,
+                        # whose own reads re-enter the turn already held.
                         held = self._activity_page_cache_lock.acquire(blocking=False)
                         lease = self._operation_lease()
                         try:
-                            if (
-                                not held
-                                or not lease.try_acquire()
-                                or not self._readiness_window.acquire(blocking=False)
-                            ):
+                            if not held or not lease.try_acquire():
                                 pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
                                 head = None
                             else:
-                                try:
-                                    store = self._activity_facts
-                                    if store is None or stop.is_set():
-                                        code = (
-                                            "stopped" if stop.is_set() else "released"
-                                        )
-                                        return
-                                    head = store.snapshot()
-                                    step = head is None or bool(head.pending)
-                                    if head is not None and not step:
-                                        stamp = self._activity_fact_stamp
-                                        # A stamp for another version steps
-                                        # without reading the revision.
-                                        revision = (
-                                            self._activity_projection_revision()
-                                            if stamp is not None
-                                            and stamp[2] == head.version
-                                            else None
-                                        )
-                                        if stamp is not None and stamp[0] == revision:
-                                            behind_since = None
-                                        else:
-                                            # Coalesce a run of commits into one
-                                            # refresh once they pause or age.
-                                            now = time.monotonic()
-                                            if behind_since is None:
-                                                behind_since = now
-                                            step = (
-                                                revision == seen
-                                                or now - behind_since
-                                                >= _ACTIVITY_PROJECTOR_COALESCE_SECONDS
-                                            )
-                                        seen = revision
-                                    if step:
-                                        self._activity_fact_step()
+                                store = self._activity_facts
+                                if store is None or stop.is_set():
+                                    code = "stopped" if stop.is_set() else "released"
+                                    return
+                                head = store.snapshot()
+                                step = head is None or bool(head.pending)
+                                if head is not None and not step:
+                                    stamp = self._activity_fact_stamp
+                                    # A stamp for another version steps
+                                    # without reading the revision.
+                                    revision = (
+                                        self._activity_projection_revision()
+                                        if stamp is not None
+                                        and stamp[2] == head.version
+                                        else None
+                                    )
+                                    if stamp is not None and stamp[0] == revision:
                                         behind_since = None
-                                        head = store.snapshot()
-                                finally:
-                                    self._readiness_window.release()
+                                    else:
+                                        # Coalesce a run of commits into one
+                                        # refresh once they pause or age.
+                                        now = time.monotonic()
+                                        if behind_since is None:
+                                            behind_since = now
+                                        step = (
+                                            revision == seen
+                                            or now - behind_since
+                                            >= _ACTIVITY_PROJECTOR_COALESCE_SECONDS
+                                        )
+                                    seen = revision
+                                if step and not self._readiness_window.acquire(
+                                    blocking=False
+                                ):
+                                    pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
+                                    head = None
+                                elif step:
+                                    try:
+                                        self._activity_fact_step()
+                                    finally:
+                                        self._readiness_window.release()
+                                    behind_since = None
+                                    head = store.snapshot()
                         finally:
                             lease.release()
                             if held:

@@ -979,6 +979,86 @@ def test_readiness_and_stop_never_wait_for_a_request_holding_admission(
         close()
 
 
+def test_readiness_never_waits_behind_a_revision_probe(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The projector decides whether to step outside the readiness window.
+
+    Its revision probe can wait out SQLite's busy timeout behind a writer, so it
+    runs under the cache lock and admission alone, and the window is held for a
+    step only.
+    """
+    _poll(monkeypatch)
+    history, permissions, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    reader = cast("SQLiteMetadataReportRepository", history._repository)
+    checker = cast("SQLiteMetadataReportRepository", permissions._repository)
+    activity = reader._field_effect_activity
+    probe = activity._activity_projection_revision
+    entered, release = threading.Event(), threading.Event()
+
+    def busy() -> tuple[int, int]:
+        if threading.current_thread().name == "activity-fact-projector":
+            entered.set()
+            release.wait(10)
+        return probe()
+
+    try:
+        assert _settled(reader)
+        monkeypatch.setattr(activity, "_activity_projection_revision", busy)
+        assert entered.wait(10)
+        start = time.monotonic()
+        assert _readiness(checker) == _readiness(ledger.canonical)
+        assert time.monotonic() - start < 1.5
+    finally:
+        release.set()
+        close()
+
+
+def test_a_locked_revision_probe_is_skipped_and_the_projector_continues(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe refused as locked behind a writer's lock is retried, not fatal."""
+    _poll(monkeypatch)
+    reader = _reader(ledger)
+    activity = reader._field_effect_activity
+    reader._connection.execute("PRAGMA busy_timeout=20")
+    probe = activity._activity_projection_revision
+    refused: list[str] = []
+
+    def observed() -> tuple[int, int]:
+        try:
+            return probe()
+        except FieldEffectError as error:
+            refused.append(error.code)
+            raise
+
+    monkeypatch.setattr(activity, "_activity_projection_revision", observed)
+    halt = _projecting(reader)
+    writer = sqlite3.connect(ledger.path, isolation_level=None)
+    try:
+        assert _settled(reader)
+        writer.execute("BEGIN EXCLUSIVE")
+        deadline = time.monotonic() + 10
+        while not refused:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        writer.execute("ROLLBACK")
+        assert set(refused) == {"persistence"}
+        ledger.commit()
+        assert _settled(reader)
+        _assert_exact(reader, ledger)
+    finally:
+        if writer.in_transaction:
+            writer.execute("ROLLBACK")
+        writer.close()
+        halt()
+        reader.close()
+
+
 def test_both_readers_of_a_generation_share_one_window_and_one_store(
     ledger: _Ledger,  # noqa: F811
 ) -> None:
