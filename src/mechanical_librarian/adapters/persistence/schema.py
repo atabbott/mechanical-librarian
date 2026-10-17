@@ -47,6 +47,7 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     validate_preparation_presentation,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _ATTENTION_FACT_SOURCE_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_FROM_SQL,
 )
@@ -911,6 +912,232 @@ _DESCRIPTION_DECISIONS_CASE_INDEX_SQL = (
 )
 
 
+# #1232: Library, search, the attention lens and Attention read which fields
+# ask for the owner from these facts instead of re-evaluating the attention
+# predicate over every field per request. `_ATTENTION_FACT_SOURCE_SQL` is the
+# one definition; open compares the table with it. The untyped
+# `cover_policy_reference` keeps the stored JSON value's own type, so the live
+# comparison is the one `_CURRENT_COVER_ATTENTION_AUTHORITY_SQL` makes.
+_ATTENTION_FACTS_SQL = (
+    "CREATE TABLE review_attention_facts ("
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "report_id TEXT NOT NULL, destination TEXT NOT NULL, cover_consideration_id TEXT, "
+    "cover_policy_reference, cover_refresh_admits INTEGER, "
+    "PRIMARY KEY(connection_name,library_name,item_id,report_id,destination)) WITHOUT ROWID"
+)
+# Every maintenance trigger names the packages and fields a changed row can
+# reach by inserting into this view; its one INSTEAD OF trigger recomputes
+# exactly those facts from current state in the writer's own statement.
+_ATTENTION_REFRESH_VIEW_SQL = (
+    "CREATE VIEW review_attention_refresh(connection_name,library_name,item_id,destination) "
+    "AS SELECT NULL,NULL,NULL,NULL WHERE 0"
+)
+_ATTENTION_REFRESH_SQL = (
+    "CREATE TRIGGER review_attention_refresh_apply INSTEAD OF INSERT ON review_attention_refresh "
+    "BEGIN DELETE FROM review_attention_facts WHERE connection_name=NEW.connection_name "
+    "AND library_name=NEW.library_name AND item_id=NEW.item_id "
+    "AND (NEW.destination IS NULL OR destination=NEW.destination); "
+    "INSERT INTO review_attention_facts(connection_name,library_name,item_id,report_id,"
+    "destination,cover_consideration_id,cover_policy_reference,cover_refresh_admits) "
+    + _ATTENTION_FACT_SOURCE_SQL
+    + " AND c.connection_name=NEW.connection_name AND c.library_name=NEW.library_name "
+    "AND c.item_id=NEW.item_id AND (NEW.destination IS NULL OR result.destination=NEW.destination); END"
+)
+# Maintenance reaches a changed report or proposal through these.
+_CURRENT_REVIEW_PACKAGES_REPORT_INDEX_SQL = (
+    "CREATE INDEX current_review_packages_report ON current_review_packages(report_id)"
+)
+_REVIEW_CASES_REPORT_INDEX_SQL = (
+    "CREATE INDEX review_cases_report ON review_cases(report_id)"
+)
+_REVIEW_CASES_PROPOSAL_INDEX_SQL = (
+    "CREATE INDEX review_cases_proposal ON review_cases(proposal_set_id)"
+)
+
+
+def _packages_of_case(destination: str) -> str:
+    return (
+        "SELECT c.connection_name,c.library_name,c.item_id," + destination + " "
+        "FROM current_review_packages c WHERE c.review_case_id={row}.review_case_id"
+    )
+
+
+# Each input of `_ATTENTION_FACT_SOURCE_SQL`, the operations that can change
+# it, and the facts a changed row (`{row}`, NEW or OLD) can reach. An
+# operation an append-only table refuses has no trigger, because it cannot
+# happen. The source reaches its four append-only parents -- review cases,
+# reports, cover considerations and selections -- only through a child row
+# whose immediate foreign key names them, so inserting one reaches no fact and
+# none of the four is listed; `test_review_attention_facts` holds this map to
+# the source's tables and those keys.
+_ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
+    "current_review_packages": (
+        ("insert", "update", "delete"),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,NULL",
+    ),
+    "review_case_field_facts": (
+        ("insert", "update", "delete"),
+        _packages_of_case("{row}.destination"),
+    ),
+    "metadata_report_browse_facts": (
+        ("insert", "update", "delete"),
+        "SELECT c.connection_name,c.library_name,c.item_id,NULL "
+        "FROM current_review_packages c WHERE c.report_id={row}.report_id UNION "
+        "SELECT c.connection_name,c.library_name,c.item_id,NULL FROM review_cases rc "
+        "JOIN current_review_packages c ON c.review_case_id=rc.review_case_id "
+        "WHERE rc.report_id={row}.report_id",
+    ),
+    "proposal_set_browse_facts": (
+        ("insert", "update", "delete"),
+        "SELECT c.connection_name,c.library_name,c.item_id,NULL FROM review_cases rc "
+        "JOIN current_review_packages c ON c.review_case_id=rc.review_case_id "
+        "WHERE rc.proposal_set_id={row}.proposal_set_id",
+    ),
+    "metadata_policy_resolutions": (
+        ("insert", "update", "delete"),
+        "SELECT c.connection_name,c.library_name,c.item_id,NULL "
+        "FROM proposal_set_browse_facts policy JOIN review_cases rc "
+        "ON rc.proposal_set_id=policy.proposal_set_id JOIN current_review_packages c "
+        "ON c.review_case_id=rc.review_case_id "
+        "WHERE policy.resolved_policy_id={row}.resolved_policy_id",
+    ),
+    "shadow_outcome_field_facts": (
+        ("insert", "update", "delete"),
+        _packages_of_case("{row}.destination"),
+    ),
+    "automatic_safety_state": (
+        ("insert", "update", "delete"),
+        "SELECT DISTINCT c.connection_name,c.library_name,c.item_id,outcome.destination "
+        "FROM shadow_outcome_field_facts outcome JOIN current_review_packages c "
+        "ON c.review_case_id=outcome.review_case_id WHERE outcome.automatic_destination=1",
+    ),
+    "human_decisions": (
+        ("insert",),
+        _packages_of_case("{row}.destination"),
+    ),
+    "automatic_decisions": (
+        ("insert",),
+        _packages_of_case("{row}.destination"),
+    ),
+    "current_description_decisions": (
+        ("insert", "update", "delete"),
+        _packages_of_case("'description'"),
+    ),
+    "current_cover_considerations": (
+        ("insert", "update", "delete"),
+        _packages_of_case("'cover'"),
+    ),
+    "current_cover_selection_authorities": (
+        ("insert", "update", "delete"),
+        "SELECT {row}.connection_name,{row}.library_name,{row}.item_id,'cover'",
+    ),
+    "field_effect_suspensions": (
+        ("insert", "update", "delete"),
+        "SELECT c.connection_name,c.library_name,c.item_id,"
+        "CASE WHEN {row}.scope='destination' THEN {row}.destination END "
+        "FROM current_review_packages c WHERE c.connection_name={row}.connection_name",
+    ),
+}
+
+
+# The columns of each updatable input that the source, or the facts a row
+# reaches, read. An update refreshes only when one of them changes value, so a
+# write of anything else -- a safety state's time, a suspension's reason, a
+# package's checkpoint -- refreshes nothing. `test_review_attention_facts`
+# derives these from the source statement through SQLite's authorizer.
+_ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "current_review_packages": (
+        "connection_name",
+        "library_name",
+        "item_id",
+        "report_id",
+        "review_case_id",
+    ),
+    "review_case_field_facts": (
+        "review_case_id",
+        "destination",
+        "unresolved_choice",
+        "manual_bibliographic_attention",
+        "has_owner_decision_actions",
+    ),
+    "metadata_report_browse_facts": ("report_id", "format"),
+    "proposal_set_browse_facts": ("proposal_set_id", "resolved_policy_id"),
+    "metadata_policy_resolutions": ("resolved_policy_id", "library_name", "document"),
+    "shadow_outcome_field_facts": (
+        "review_case_id",
+        "destination",
+        "disposition",
+        "policy_category",
+        "automatic_destination",
+    ),
+    "automatic_safety_state": (
+        "paused",
+        "global_suspension",
+        "category_suspensions_document",
+    ),
+    "current_description_decisions": ("review_case_id",),
+    "current_cover_considerations": ("review_case_id", "consideration_id"),
+    "current_cover_selection_authorities": (
+        "connection_name",
+        "library_name",
+        "item_id",
+        "selection_id",
+    ),
+    "field_effect_suspensions": ("scope", "connection_name", "destination"),
+}
+
+
+def _attention_input_trigger_sql(table: str, operation: str, scope: str) -> str:
+    rows = {"insert": ("NEW",), "update": ("OLD", "NEW"), "delete": ("OLD",)}
+    target = f" ON {table}"
+    if operation == "update":
+        columns = _ATTENTION_UPDATED_COLUMNS[table]
+        target = f" OF {','.join(columns)} ON {table} WHEN " + " OR ".join(
+            f"OLD.{name} IS NOT NEW.{name} COLLATE BINARY" for name in columns
+        )
+    return (
+        f"CREATE TRIGGER {table}_refresh_attention_{operation} AFTER "
+        f"{operation.upper()}{target} BEGIN INSERT INTO review_attention_refresh"
+        "(connection_name,library_name,item_id,destination) "
+        + " UNION ".join(scope.format(row=row) for row in rows[operation])
+        + "; END"
+    )
+
+
+_ATTENTION_INPUT_TRIGGERS = {
+    f"{table}_refresh_attention_{operation}": _attention_input_trigger_sql(
+        table, operation, scope
+    )
+    for table, (operations, scope) in _ATTENTION_INPUTS.items()
+    for operation in operations
+}
+# The exact objects #1232 adds to its predecessor, in creation order.
+_ATTENTION_FACT_OBJECTS: tuple[tuple[str, str, str], ...] = (
+    ("table", "review_attention_facts", _ATTENTION_FACTS_SQL),
+    ("view", "review_attention_refresh", _ATTENTION_REFRESH_VIEW_SQL),
+    ("trigger", "review_attention_refresh_apply", _ATTENTION_REFRESH_SQL),
+    (
+        "index",
+        "current_review_packages_report",
+        _CURRENT_REVIEW_PACKAGES_REPORT_INDEX_SQL,
+    ),
+    ("index", "review_cases_report", _REVIEW_CASES_REPORT_INDEX_SQL),
+    ("index", "review_cases_proposal", _REVIEW_CASES_PROPOSAL_INDEX_SQL),
+    *(("trigger", name, sql) for name, sql in _ATTENTION_INPUT_TRIGGERS.items()),
+)
+
+
+def _create_attention_facts(connection: sqlite3.Connection) -> None:
+    """Create #1232's objects and derive every fact from the current rows."""
+    for _kind, _name, statement in _ATTENTION_FACT_OBJECTS:
+        connection.execute(statement)
+    connection.execute(
+        "INSERT INTO review_attention_refresh(connection_name,library_name,item_id,"
+        "destination) SELECT connection_name,library_name,item_id,NULL "
+        "FROM current_review_packages"
+    )
+
+
 def _create_schema(connection: sqlite3.Connection) -> None:
     for statement in (
         *_DESCRIPTION_ADVICE_TABLES.values(),
@@ -1063,6 +1290,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOME_NO_DELETE_SQL)
     connection.execute(_NO_DELETE_SQL)
+    _create_attention_facts(connection)
     connection.commit()
 
 
@@ -1495,6 +1723,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "shadow_outcomes_project_field_facts",
                 _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
             ),
+            *_ATTENTION_FACT_OBJECTS,
         )
     )
 
@@ -1512,6 +1741,24 @@ def _validate_schema_against(
 
 
 def _validate_schema_contents(connection: sqlite3.Connection) -> None:
+    _validate_schema_contents_without_attention_facts(connection)
+    _require_equal_facts(
+        connection,
+        (
+            (
+                _ATTENTION_FACT_SOURCE_SQL,
+                "SELECT connection_name,library_name,item_id,report_id,destination,"
+                "cover_consideration_id,cover_policy_reference,cover_refresh_admits "
+                "FROM review_attention_facts",
+            ),
+        ),
+    )
+
+
+def _validate_schema_contents_without_attention_facts(
+    connection: sqlite3.Connection,
+) -> None:
+    """Validate every content rule #1232's exact predecessor also enforced."""
     _validate_schema_contents_without_review_field_facts(connection)
     _validate_review_field_facts(connection)
     for row in connection.execute(

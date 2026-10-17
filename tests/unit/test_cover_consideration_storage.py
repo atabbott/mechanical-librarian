@@ -154,9 +154,14 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's
-    # history indexes, #1204's indexes and #1211's case indexes.
+    # history indexes, #1204's indexes, #1211's case indexes and #1232's
+    # attention facts.
     connection.executescript(
-        "DROP TRIGGER metadata_reports_project_browse_facts;"
+        "".join(
+            f"DROP {kind.upper()} {name};"
+            for kind, name, _ in reversed(schema._ATTENTION_FACT_OBJECTS)
+        )
+        + "DROP TRIGGER metadata_reports_project_browse_facts;"
         "DROP TABLE metadata_report_browse_authors;"
         "DROP TABLE metadata_report_browse_facts;"
         "DROP TRIGGER proposal_sets_project_browse_facts;"

@@ -14,6 +14,7 @@ import pytest
 import mechanical_librarian.adapters.persistence.qualification_state_bridge as bridge
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.schema import _expected_schema_objects
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.qualification_state_bridge import (
     RETAINED_LIBRARY_V26_TO_V32,
@@ -401,10 +402,10 @@ def test_prior_v22_output_is_rejected_without_mutating_any_file(
         old_names = {name for _kind, name, _sql in predecessor}
         extra = [
             (kind, name, statement)
-            for kind, name, statement in bridge._expected_schema_objects()
+            for kind, name, statement in _expected_schema_objects()
             if name not in old_names
         ]
-        for removal_kind in ("trigger", "index", "table"):
+        for removal_kind in ("trigger", "view", "index", "table"):
             for kind, name, statement in extra:
                 if kind == removal_kind and statement is not None:
                     connection.execute(f'DROP {kind.upper()} "{name}"')
@@ -1071,12 +1072,14 @@ def test_path_recheck_failure_never_reports_success(
         identity: tuple[int, int],
         parent_descriptor: int,
         binding: object,
+        *,
+        subject: str,
     ) -> None:
         nonlocal checks
         checks += 1
         if checks == 2:
             raise MetadataReportError("qualification-state source pathname changed")
-        real_require(database, identity, parent_descriptor, binding)  # type: ignore[arg-type]
+        real_require(database, identity, parent_descriptor, binding, subject=subject)  # type: ignore[arg-type]
 
     monkeypatch.setattr(bridge, "_require_source_current", fail_after_backup)
     with pytest.raises(

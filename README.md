@@ -35,9 +35,10 @@ preview, and contained-reviewer scenarios remain available through the typed
 source workbench against disposable or explicitly approved private test state.
 They are not installed runtime commands and cannot bridge to production targets.
 
-Ordinary startup supports only absent or exact-current pre-release state. This
-build retires the previous offline schema-adoption plans and command; every
-earlier database, manifest, configuration schema, or retired command is
+Ordinary startup supports only absent or exact-current pre-release state. The
+offline `schema-adopt review-attention-facts-v1` command adopts a database from
+the exact predecessor schema ([upgrades](docs/operations/upgrades.md)); every
+other earlier database, manifest, configuration schema, or retired command is
 rejected rather than interpreted and the application state needs a clean
 rebuild.
 

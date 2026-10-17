@@ -1,5 +1,23 @@
 # Upgrades and compatibility
 
+#1232 adds derived attention facts to the application schema. A database
+written by the exact predecessor, main 441e571f, is adopted offline rather than
+rebuilt. Stop the service, then run
+`mechanical-librarian schema-adopt review-attention-facts-v1 --database DB --backup BACKUP`,
+where `BACKUP` is an absent path in the database's private directory. It prints
+`{"plan":"review-attention-facts-v1","status":"adopted"}` on one line, or
+`{"plan":"review-attention-facts-v1","status":"already-current"}` for a database
+that already matches. "Schema adoption failed safely." leaves the database
+unchanged, but a failure after the backup copy and before commit can leave the
+backup file in place: rerun with a new, absent backup path, or remove that file
+once the database is confirmed unchanged. "Schema adoption requires backup
+recovery." means the result could not be proved: with the service still
+stopped, replace the database with the backup. The restored backup has the
+predecessor schema, so this build will not start on it: run the adoption again
+with a new, absent backup path, or run the previous build. Any other earlier
+state needs a clean rebuild. See
+[ADR-0084](../architecture/decisions/0084-persisted-attention-facts.md).
+
 #1166 enables source-bound audiobook description/genre owner review without
 recording admission. **Clean rebuild required** for `fixed-conservative-v33`,
 including empty predecessor proposal tables. No migration or historical-document
@@ -161,8 +179,8 @@ recognized-sidecar manifest.
 The three earlier exact-predecessor plans, including #830's owner-decision
 action predecessor, have been retired because each names a schema older than
 this build. The v13 title-policy change supplies no adoption route for them.
-The installed runtime no longer exposes a
-`schema-adopt` command. Retain an older database and its matching artifact
+The installed `schema-adopt` command carries only #1232's
+`review-attention-facts-v1` plan, described above. Retain an older database and its matching artifact
 directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.
 

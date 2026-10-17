@@ -102,10 +102,17 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
-This build has no offline product schema-adoption command. Earlier
-exact-predecessor plans are retired because reviewer-access and owner-state
-tables change the current application schema. Older runtime state is rejected
-before mutation and needs a clean rebuild.
+The offline `schema-adopt` command carries one plan,
+`review-attention-facts-v1` (#1232). It accepts only the exact 441e571f
+application schema with valid contents, an owner-only database in delete
+journal mode, and an absent backup path beside it under another name. It holds
+an exclusive transaction, copies and verifies the backup, then only creates the
+derived attention-fact objects and derives their rows. After commit it
+re-validates the exact current schema and contents and proves every other
+table's rows unchanged; a failure there tells the owner to recover from the
+backup. It makes no network, provider, reviewer, credential, media or
+target-service request and never runs at startup. Every other earlier state is
+rejected before mutation and needs a clean rebuild.
 
 The installed qualification-state bridge is a maintainer test-state boundary,
 not upgrade authority. It reads only one exact owner-only retained clone,
@@ -1002,7 +1009,9 @@ a stored proposal again, compare that one row's facts inside their transaction
 and roll back on a difference, so moving a pointer never brings an unchecked
 fact into row selection or counts. An edit bypassing
 `metadata_reports_no_update` after open is refused where the row renders and at
-the next open. The facts are bound to the interpreter's
+the next open. Open also compares every attention fact with its definition in
+both directions (#1232), so a missing, extra or altered fact refuses the
+database. The facts are bound to the interpreter's
 `unicodedata.unidata_version`, so a Python upgrade that changes it is an upgrade
 event: open refuses with a clean-rebuild-required message and never repairs or
 re-derives at startup. Recovery uses clean current state plus
@@ -1967,3 +1976,15 @@ owner confirmation, automatic permission, currentness and guarded effects retain
 their checks. No atomicity across artifact staging or backup files is implied.
 Exact predecessor schemas require a clean rebuild; reports and history remain
 append-only, with no migration, adoption or new cleanup authority.
+
+## Persisted attention facts (#1232)
+
+Which fields ask for the owner is derived inside the database from already
+admitted rows, with no new input. Triggers on every write that can change an
+input re-derive the reachable facts in the writer's own statement, so a fact can
+never be committed apart from its inputs; refusals and rollbacks take both
+together. The active cover policy and replay references and live cover
+currentness are not database writes, so each read still tests them per request
+over the stored facts. Nothing in `src` or `scripts` writes with `REPLACE`, and
+no table declares a `REPLACE` conflict clause, either of which would skip a
+delete trigger. See [ADR-0084](decisions/0084-persisted-attention-facts.md).

@@ -759,9 +759,10 @@ def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
 def test_browse_probes_decision_and_policy_history_by_index() -> None:
     """Library, Attention, search and counts reach history by index (#1202).
 
-    Each candidate probes its case's decisions per destination and its
-    proposal's policy resolution; scanning either history instead made every
-    browse grow with the owner's decisions and policy activations. Plans
+    Scanning decision or policy history made every browse grow with the
+    owner's decisions and policy activations. Since #1232 the attention
+    membership reads persisted facts and probes neither history; what browse
+    still reads of either (a page row's policy ask) it reaches by index. Plans
     depend on the schema alone (nothing is analysed), so a small store fixes
     the plan an owner-scale store gets.
     """
@@ -784,27 +785,30 @@ def test_browse_probes_decision_and_policy_history_by_index() -> None:
                     repository.count_current_attention_fields(None),
                 ),
             )
+            membership = tuple(
+                statement
+                for statement in statements
+                if "review_attention_facts" in statement
+            )
+            assert len(membership) >= 6
+            assert not any("human_decisions" in statement for statement in membership)
             probing = tuple(
                 statement
                 for statement in statements
                 if "metadata_policy_resolutions" in statement
             )
-            assert len(probing) >= 6
+            assert probing
             for statement in probing:
                 plan = _plan(connection, statement, ())
-                assert any(
-                    "INDEX human_decisions_case_destination "
-                    "(review_case_id=? AND destination=?)" in step
-                    for step in plan
-                )
                 assert any(
                     "INDEX metadata_policy_resolutions_resolved "
                     "(library_name=? AND resolved_policy_id=?)" in step
                     for step in plan
                 )
+            for statement in statements:
                 assert not any(
                     re.match(r"SCAN (decision|policy_resolution)\b", step)
-                    for step in plan
+                    for step in _plan(connection, statement, ())
                 )
         finally:
             repository.close()

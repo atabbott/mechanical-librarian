@@ -297,6 +297,13 @@ def leave_hot_journal(path: Path) -> Path:
 def create_pre_currentness_schema(connection: sqlite3.Connection) -> None:
     """Build the exact #1072 predecessor, with no derived cover facts column."""
     persistence_schema._create_schema(connection)
+    # #1232's attention facts read the dropped column, so they go first.
+    connection.executescript(
+        "".join(
+            f"DROP {kind.upper()} {name};"
+            for kind, name, _ in reversed(persistence_schema._ATTENTION_FACT_OBJECTS)
+        )
+    )
     connection.execute(
         "ALTER TABLE cover_considerations DROP COLUMN currentness_document"
     )

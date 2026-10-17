@@ -9,7 +9,9 @@ projecting the predicate as a column and filtering that afterwards. The
 `_PRE_1202_*` texts below are the work probe, the count statement and the
 Attention page statement exactly as they read before #1202, kept verbatim; the
 Library page statement changed only through the probe, so its oracle is the
-current reader run with the old probe. Every equality test here compares the
+current reader run with the old probe. #1232 then read the probe, the count
+and the Attention candidates from persisted attention facts; the oracles here
+stayed the live statements, so they also prove that change returns the same. Every equality test here compares the
 old statements with the current ones on the same database across the
 authority, fetching, decision, selection, suspension, safety and policy states
 that decide a field's attention.
@@ -19,8 +21,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from functools import partial
 from itertools import repeat
 from pathlib import Path
 
@@ -42,6 +46,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_SEARCH_SQL,
     _browse_scalar_sql,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import CoverReadObservation
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_report_browse_facts import _resolve_policies
@@ -141,8 +146,12 @@ def _search_parameters(search: str | None) -> tuple[object, ...]:
 def _pre_1202_library(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Run the Library page and counts with the single attention probe."""
     with monkeypatch.context() as patch:
+        # #1232 reads the work probe from persisted facts; the oracle is
+        # still the single live probe as the page read it before #1202.
         patch.setattr(
-            review_cases, "_REVIEW_ATTENTION_SQL", _PRE_1202_REVIEW_ATTENTION_SQL
+            review_cases,
+            "_LIBRARY_ATTENTION_SQL",
+            _browse_scalar_sql(_PRE_1202_REVIEW_ATTENTION_SQL),
         )
         patch.setattr(
             review_cases,
@@ -208,6 +217,33 @@ def _assert_equal_to_oracle(
             assert (page.rows, page.total) == _oracle_attention(
                 repository, search, limit, offset
             ), (search, limit, offset)
+        assert (
+            repository.count_current_attention_fields(search, _LABELS)
+            == (_oracle_attention(repository, search, 1, 0)[1])
+        ), search
+    rows = repository._connection.execute(
+        _PRE_1202_ATTENTION_SQL,
+        (*_search_parameters(None), *repository._cover_read_authority(), 10_000, 0),
+    ).fetchall()
+    cases = {
+        document: case
+        for case, document in repository._connection.execute(
+            "SELECT review_case_id,document FROM review_cases"
+        )
+    }
+    for destination in (None, "cover", "title", "description"):
+        # The cases a field-effect suspension tells the owner about.
+        assert repository._field_effects._current_attention_review_case_ids(
+            "primary", destination
+        ) == tuple(
+            sorted(
+                {
+                    cases[row[0]]
+                    for row in rows
+                    if row[8] == 1 and destination in (None, row[3])
+                }
+            )
+        ), destination
     library = repository.read_current_library_page(None, 1, 0, None, _LABELS)
     attention = repository.read_current_attention_page(None, 1, 0, _LABELS)
     return library.attention_total, attention.total
@@ -434,6 +470,41 @@ def test_library_and_attention_equal_the_pre_1202_statements(
         states["decided"] = compare_every_authority()
         _resolve_policies(repository, "books-1")
         states["policy ask"] = compare_every_authority()
+        # An EPUB has no narrators or explicit field to ask about, however
+        # either field's facts read.
+        connection.executemany(
+            "UPDATE review_case_field_facts SET unresolved_choice=1,"
+            "has_owner_decision_actions=1 WHERE review_case_id=? AND destination=?",
+            ((cases[12], "narrators"), (cases[13], "explicit")),
+        )
+        connection.commit()
+        states["epub narrators and explicit"] = compare_every_authority()
+        assert states["epub narrators and explicit"] == states["policy ask"]
+
+        # A refresh admits a cover only while its choice is unresolved.
+        def refreshing_total() -> int:
+            repository.bind_cover_read_observation(repeat(observations[2]).__next__)
+            with repository.browse_observation():
+                return repository.read_current_attention_page(None, 1, 0, _LABELS).total
+
+        refreshing = refreshing_total()
+        choices = connection.execute(
+            "SELECT unresolved_choice,review_case_id FROM review_case_field_facts "
+            "WHERE destination='cover'"
+        ).fetchall()
+        connection.execute(
+            "UPDATE review_case_field_facts SET unresolved_choice=0 "
+            "WHERE destination='cover'"
+        )
+        connection.commit()
+        states["cover choice resolved"] = compare_every_authority()
+        assert refreshing_total() < refreshing
+        connection.executemany(
+            "UPDATE review_case_field_facts SET unresolved_choice=? "
+            "WHERE destination='cover' AND review_case_id=?",
+            choices,
+        )
+        connection.commit()
         for suspension in (
             ("destination", "primary", "cover"),
             ("destination", "primary", "title"),
@@ -465,5 +536,104 @@ def test_library_and_attention_equal_the_pre_1202_statements(
         assert states["policy ask"] != states["decided"], states
         assert states["suspended ('connection', 'primary', '')"] == {(0, 0)}
         assert len(set().union(*states.values())) >= 10, states
+    finally:
+        fixture.close()
+
+
+def _outcome(read: Callable[[], object]) -> object:
+    try:
+        return read()
+    except MetadataReportError as error:
+        return ("refused", str(error))
+
+
+def test_package_and_case_reports_are_read_as_before_when_they_differ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Library reads a package's own report and Attention its case's (#1232)."""
+    fixture = OwnerResponsivenessFixture(tmp_path, 30, mixed=True)
+    try:
+        repository = fixture.repository
+        connection = repository._connection
+        packages = connection.execute(
+            "SELECT item_id,report_id FROM current_review_packages "
+            "WHERE review_case_id IS NOT NULL ORDER BY item_id"
+        ).fetchall()
+        # A cover-only work leaves Library's attention under another report,
+        # and a work with a title field keeps it there as well as under its own.
+        moves = ((packages[0], packages[1]), (packages[2], packages[3]))
+        for (item, _), (_, other) in moves:
+            connection.execute(
+                "UPDATE current_review_packages SET report_id=? WHERE item_id=?",
+                (other, item),
+            )
+        connection.commit()
+        facts = {
+            (item, report): connection.execute(
+                "SELECT group_concat(destination) FROM (SELECT destination "
+                "FROM review_attention_facts WHERE item_id=? AND report_id=? "
+                "ORDER BY destination)",
+                (item, report),
+            ).fetchone()[0]
+            for (item, own), (_, other) in moves
+            for report in (own, other)
+        }
+        assert list(facts.values()) == ["cover", None, "cover,title", "title"]
+        documents = dict(
+            connection.execute("SELECT review_case_id,document FROM review_cases")
+        )
+
+        def page(search: str | None, lens: bool | None) -> object:
+            read = repository.read_current_library_page(search, 50, 0, lens, _LABELS)
+            return read.rows, read.total, read.attention_total
+
+        def library() -> list[object]:
+            values = []
+            for search in _SEARCHES:
+                values.append(
+                    _outcome(
+                        partial(repository.count_current_review_cases, search, _LABELS)
+                    )
+                )
+                for lens in (None, True, False):
+                    values.append(_outcome(partial(page, search, lens)))
+            return values
+
+        policy, replay = repository._cover_read_authority()
+        assert policy is not None and replay is not None
+        observations: tuple[CoverReadObservation, ...] = (
+            ((policy, replay), frozenset()),
+            ((f"cover_policy_{_hex('another policy')}", replay), frozenset()),
+        )
+        for observation in observations:
+            repository.bind_cover_read_observation(repeat(observation).__next__)
+            with repository.browse_observation():
+                current = library()
+                with _pre_1202_library(monkeypatch):
+                    assert library() == current
+                assert ("refused", "review library is unavailable") in current
+                for search in _SEARCHES:
+                    rows = connection.execute(
+                        _PRE_1202_ATTENTION_SQL,
+                        (
+                            *_search_parameters(search),
+                            *repository._cover_read_authority(),
+                            10_000,
+                            0,
+                        ),
+                    ).fetchall()
+                    assert (
+                        repository.count_current_attention_fields(search)
+                        == (rows[0][9])
+                    )
+                    if search is None:
+                        per_case = Counter(row[0] for row in rows if row[8] == 1)
+                        for case, document in documents.items():
+                            assert (
+                                repository._review_projections._current_attention_count(
+                                    case
+                                )
+                                == (per_case[document])
+                            ), case
     finally:
         fixture.close()

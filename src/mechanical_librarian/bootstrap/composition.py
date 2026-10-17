@@ -78,6 +78,7 @@ from mechanical_librarian.adapters.persistence.qualification_state_bridge import
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
+from mechanical_librarian.adapters.persistence.schema_adoption import adopt_schema
 from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
     require_private_directory,
@@ -4828,6 +4829,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         review_activity_runner=run_review_activity,
         provider_recovery_runner=run_provider_recovery_once,
         qualification_state_bridge_runner=bridge_qualification_state,
+        schema_adoption_runner=adopt_schema,
     )
 
 

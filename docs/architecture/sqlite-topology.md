@@ -232,6 +232,7 @@ nearest KiB.
 | Current pointer/projection | `metadata_report_browse_facts` | added after the snapshot (#1199) | insert trigger from `metadata_reports`; Library/Attention/search candidate and count readers | One row per report holds the folded title order key, format and folded format, and the provider-limited flag, so candidate clauses never read a report document. Open-time equivalence validation rejects drift. |
 | Current pointer/projection | `metadata_report_browse_authors` | added after the snapshot (#1199) | insert trigger from `metadata_reports`; search readers | One row per distinct folded author keeps author search an exact per-value `LIKE` instead of a joined string. Open-time equivalence validation rejects drift. |
 | Current pointer/projection | `proposal_set_browse_facts` | added after the snapshot (#1199) | insert trigger from `proposal_sets`; Library/Attention policy-ask candidate and count readers | One row per proposal holds its resolved policy id, so the policy-ask clause joins policy resolutions without parsing a proposal document per candidate. Open-time equivalence validation rejects drift. |
+| Current pointer/projection | `review_attention_facts` | added after the snapshot (#1232) | `review_attention_refresh_apply`, reached from a trigger on each of its thirteen inputs; Library/Attention/search page and count, per-case count and field-effect suspension readers | One row per current package, report and field whose stored inputs ask for the owner, so no browse re-evaluates the attention predicate per candidate. A cover row keeps its consideration, policy reference and refresh admission for the live check each read makes. Open-time equivalence validation rejects drift. |
 | Operational/recovery | `review_preparation_scans` | 3 R / 4 KiB | discovery scheduling/completion; pipeline activity readers | One scan is the bounded discovery lifecycle parent, distinct from its many item work rows. |
 | Operational/recovery | `review_preparation_work` | 2,053 R / 1,740 KiB | claim, advance, complete and fail pipeline actions; latest-work and recovery readers | Restart, attempt, fair claim and per-item state require a mutable work row; it is not audit history. |
 | Operational/recovery | `review_preparation_absences` | 0 R / 4 KiB | discovery confirmation; pipeline transition reader | Bounded staged absence prevents an incomplete scan from tombstoning a lineage. |
@@ -311,6 +312,7 @@ source symbols at the time of the audit.
 | `proposal_set_browse_facts` | `proposal_sets_project_browse_facts` trigger | `review_cases` Library/Attention page and count SQL through `review_sql._browse_scalar_sql` | `_validate_review_field_facts` reconstructs it |
 | `proposal_sets` | `proposal_sets.publish_proposal` | `proposal_sets.get_proposal`; admission | `_validate_proposal_row`; adoption parses canonical proposal documents |
 | `provider_recovery_outbox` | `recovery_outbox.enqueue`, `complete_provider_recovery_outbox` | no direct owner DTO; recovery runner drain | `_validate_provider_recovery_outbox_row` on open and drain |
+| `review_attention_facts` | `review_attention_refresh_apply`, reached from each input's `*_refresh_attention_*` trigger | `review_cases` Library/Attention page and count SQL, `review_projections._current_attention_count`, `field_effects._current_attention_review_case_ids` | open compares it with `review_sql._ATTENTION_FACT_SOURCE_SQL`; `schema-adopt review-attention-facts-v1` derives it |
 | `review_case_field_facts` | `review_cases_project_field_facts` trigger | `review_projections` and `review_cases` Library/Attention SQL | `_validate_review_field_facts` and adoption reconstruct it |
 | `review_case_transitions` | `review_cases.admit_review_case`; pipeline and policy activation | `decisions.get_review_case_history`; Activity | transition shape is checked by current-pointer reads |
 | `review_cases` | `review_cases.admit_review_case` | `review_projections`, `review_cases.get_review_case` | `ReviewCase.from_json`; adoption parses every case |
@@ -368,6 +370,7 @@ column are module-local persistence symbols.
 | `proposal_set_browse_facts` | `proposal_sets_project_browse_facts` trigger | — | `review_cases` Library/Attention | `S,F` | — |
 | `proposal_sets` | `proposal_sets.publish_proposal` | admission/policy | `proposal_sets.get_proposal` | `S,_validate_proposal_row` | `D,C` |
 | `provider_recovery_outbox` | `recovery_outbox.enqueue`, complete | recovery drain | — | `S,_validate_provider_recovery_outbox_row` | `D` |
+| `review_attention_facts` | `review_attention_refresh_apply` trigger | field-effect suspension | `review_cases` Library/Attention, `review_projections` | `S`, fact equality | `review-attention-facts-v1` |
 | `review_case_field_facts` | `review_cases_project_field_facts` trigger | admission predicates | `review_projections` Library/Attention | `S,F` | `F` |
 | `review_case_transitions` | admission/pipeline/policy activation | current-pointer recovery | case history, `field_effect_activity` | `S`, transition shape | `D,C` |
 | `review_cases` | `review_cases.admit_review_case` | admission/currentness | `review_projections`, `get_review_case` | `S`, `ReviewCase.from_json` | `D,C` |
@@ -402,7 +405,8 @@ automatic index.
 `field_effects_companion_decision`, `field_effects_ready`,
 `field_effects_waiting`, `field_effects_target` and
 `description_decisions_case`, and #1211's `current_review_case_lineages_case`
-and `current_review_packages_case`, postdate this snapshot, so they are listed
+and `current_review_packages_case`, and #1232's `current_review_packages_report`,
+`review_cases_report` and `review_cases_proposal`, postdate this snapshot, so they are listed
 without measurements and are not in its sums. Because
 `field_effects_companion_decision` evaluates `json_extract` over every
 `field_effects` document on write, an insert or update whose document is not
@@ -412,6 +416,7 @@ well-formed JSON is now refused at write time instead of only at read.
 | --- | --- | ---: | ---: |
 | `current_review_case_lineages_case` | `current_review_case_lineages` | — | — |
 | `current_review_packages_case` | `current_review_packages` | — | — |
+| `current_review_packages_report` | `current_review_packages` | — | — |
 | `description_decisions_case` | `description_decisions` | — | — |
 | `field_effects_companion_decision` | `field_effects` | — | — |
 | `field_effects_decision` | `field_effects` | — | — |
@@ -422,6 +427,8 @@ well-formed JSON is now refused at write time instead of only at read.
 | `metadata_policy_resolutions_resolved` | `metadata_policy_resolutions` | — | — |
 | `metadata_report_cover_references_artifact_id` | `metadata_report_cover_references` | 6,216 | 560 |
 | `metadata_report_cover_references_preview_digest` | `metadata_report_cover_references` | 6,216 | 508 |
+| `review_cases_proposal` | `review_cases` | — | — |
+| `review_cases_report` | `review_cases` | — | — |
 | `review_preparation_work_aged_claim` | `review_preparation_work` | 2,053 | 100 |
 | `review_preparation_work_lineage_history` | `review_preparation_work` | 2,053 | 328 |
 | `review_preparation_work_recent_claim` | `review_preparation_work` | 2,053 | 148 |
@@ -575,7 +582,7 @@ own closed checks and/or domain-document validation.
 
 ## Exact indexes and triggers
 
-The schema expects twenty-three named indexes, all live production access paths:
+The schema expects twenty-six named indexes, all live production access paths:
 cover artifact and preview lookups use
 `metadata_report_cover_references_artifact_id` and
 `metadata_report_cover_references_preview_digest`; fair claims use
@@ -610,7 +617,10 @@ detail reach a case's current lineage through
 `current_review_packages_case` for suspensions, attention counts, overrides and
 cover selection, where every lineage or package was walked once per row; SQLite
 3.53 skipped the lineage walk only while no field-effect suspension existed,
-and the shipped 3.40.1 never did.
+and the shipped 3.40.1 never did. #1232's attention maintenance reaches the
+packages a changed report or proposal can affect through
+`current_review_packages_report`, `review_cases_report` and
+`review_cases_proposal`, instead of walking every package per write.
 Primary and unique keys provide the
 remaining exact indexes; the schema validates their SQLite automatic-index
 objects too.
@@ -625,7 +635,14 @@ after-insert triggers, `review_cases_project_field_facts`,
 `shadow_outcomes_project_field_facts` and #1199's
 `metadata_reports_project_browse_facts` and
 `proposal_sets_project_browse_facts`, populate the derived facts in the
-same transaction as their canonical documents. The report trigger folds with
+same transaction as their canonical documents. #1232 adds thirty-five
+after-write triggers, one per input table and operation that can change which
+fields ask for the owner, and one `INSTEAD OF INSERT` trigger,
+`review_attention_refresh_apply`, on the `review_attention_refresh` view. Each
+input trigger names the packages, and the field when its row has one, that the
+changed row can reach; the view's trigger re-derives exactly those
+`review_attention_facts` rows in the writer's statement. An update trigger fires
+only when a column the facts read changes value. The report trigger folds with
 `ml_casefold`, so a connection that has not registered it cannot insert a
 report. Open-time validation compares the derived relations to their canonical
 JSON, so a partial write, manual alteration, or interrupted projection fails
@@ -652,6 +669,7 @@ same-transaction, reconstructible read projection; no cluster is `redundant`.
 | shadow outcomes / shadow facts | View-derived | insert trigger | same insert | open-time equivalence | outcome identity | — | outcome document |
 | reports / report browse facts and authors | View-derived | insert trigger | same insert | open-time equivalence | report identity | — | report document |
 | proposals / proposal browse facts | View-derived | insert trigger | same insert | open-time equivalence | proposal identity | — | proposal document |
+| attention inputs / attention facts | View-derived | input triggers | same statement | open-time equivalence | package, report and field | — | the inputs |
 | shadow outcomes / automatic decisions | Required | each authority command | local command | reread authority | decision key | — | both immutable facts |
 | human decisions / events | Required | `record_human_decision` | same command | history reread | decision key | decision only | event/history |
 | decisions / no-change / effect plans | Required | each state command | command scope | plan/action recovery | plan/action keys | decision authority | events/no-change |
