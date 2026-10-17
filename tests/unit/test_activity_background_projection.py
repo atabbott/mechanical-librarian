@@ -51,6 +51,7 @@ from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.bootstrap.composition import (
     open_field_effect_activity_readers,
 )
+from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -63,6 +64,7 @@ from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
+from tests.support.description_advice import _prepared
 from tests.support.field_effects import _EffectEnvironment, effects  # noqa: F401
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_activity_catch_up import (
@@ -79,6 +81,7 @@ from tests.unit.test_activity_fact_witness import (  # noqa: F401
     _record_decision,
     ledger,
 )
+from tests.unit.test_activity_reprojection import _early_pages
 
 
 def _configuration() -> ApplicationConfiguration:
@@ -718,6 +721,93 @@ def test_a_cutover_hands_the_store_to_the_next_generation_exactly(
         close_second()
 
 
+def test_a_step_reads_no_authority_composition_binds_later(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A step before binding projects exactly what a bound cold reader serves.
+
+    Description authority is the one dependency composition binds after the
+    reader opens. Unbound, it refuses an authored decision that a bound reader
+    accepts, yet a store stepped to completion without it consults it nowhere,
+    stays admitted, and serves the pages of a bound reader without a store.
+    """
+    repository, advice, binding, candidate, _ = _prepared(tmp_path)
+    advice.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
+    (document,) = repository._connection.execute(
+        "SELECT document FROM description_decisions"
+    ).fetchone()
+    authored = AuthoredDescriptionDecision.from_json(document)
+    path = tmp_path / "reports.sqlite"
+    early = open_repository(path, create=False, authority=repository.authority)
+    cold = open_repository(path, create=False, authority=repository.authority)
+    try:
+        activity = early._field_effect_activity
+        unbound = activity._description_authority_value
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            unbound(authored)
+        cold.description_advice_store().bind_identity(advice._identity)
+        cold.description_advice_store().bind_settings(advice._settings)
+        assert cold._field_effect_activity._description_authority_value(authored)
+        consulted: list[object] = []
+
+        def observed(decision: AuthoredDescriptionDecision) -> object:
+            consulted.append(decision)
+            return unbound(decision)
+
+        monkeypatch.setattr(activity, "_description_authority_value", observed)
+        facts = ActivityFactStore()
+        early.configure_activity_page_reader(facts)
+        for _ in range(4):
+            activity._activity_fact_step()
+            head = facts.snapshot()
+            if head is not None and not head.pending:
+                break
+        assert head is not None and not head.pending
+        assert "description_decision" in {kind for kind, _ in head.facts}
+        pages = _early_pages(early)
+        assert activity._activity_facts is facts
+        assert consulted == []
+        assert pages == _early_pages(cold)
+        assert "Authored synthetic description." in json.dumps(pages, default=str)
+    finally:
+        cold.close()
+        early.close()
+        repository.close()
+
+
+def test_the_projector_starts_only_after_composition_binds_authority(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[tuple[str, int]] = []
+    bind = composition._bind_description_authority
+
+    def bound(repository: object, review: object) -> None:
+        bind(repository, review)  # type: ignore[arg-type]
+        order.append(("bound", id(repository)))
+
+    start = threading.Thread.start
+
+    def started(thread: threading.Thread) -> None:
+        if thread.name == "activity-fact-projector":
+            order.append(("started", id(thread._target.__self__)))
+        start(thread)
+
+    monkeypatch.setattr(composition, "_bind_description_authority", bound)
+    monkeypatch.setattr(threading.Thread, "start", started)
+    history, _, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    try:
+        reader = id(history._repository)
+        assert [entry for entry in order if entry[1] == reader] == [
+            ("bound", reader),
+            ("started", reader),
+        ]
+    finally:
+        close()
+
+
 def test_shutdown_stops_the_projector_before_its_admission_closes(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
@@ -958,11 +1048,16 @@ def test_a_stopped_projector_logs_its_exit(
         reader.close()
 
 
-def test_a_projector_outliving_its_join_bound_is_logged(
+def test_close_waits_out_the_step_in_progress_past_its_join_bound(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The join bound only warns; closing admission waits for the step's lease.
+
+    The step blocks inside its real admitted read, so close logs the overrun,
+    keeps waiting while that one step runs, and returns once it ends.
+    """
     caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     _poll(monkeypatch)
     monkeypatch.setattr(composition, "_ACTIVITY_PROJECTOR_JOIN_SECONDS", 0.1)
@@ -970,34 +1065,72 @@ def test_a_projector_outliving_its_join_bound_is_logged(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     repository = cast("SQLiteMetadataReportRepository", history._repository)
-    activity = repository._field_effect_activity
+    admission = repository.operation_admission
+    assert admission is not None
     assert _settled(repository)
     entered, release = threading.Event(), threading.Event()
+    refresh = ActivityFactStore.refresh
 
-    def blocking() -> None:
-        entered.set()
-        release.wait(10)
+    def blocking(store: ActivityFactStore, *args: object, **kwargs: object) -> object:
+        if threading.current_thread().name == "activity-fact-projector":
+            entered.set()
+            release.wait(10)
+        return refresh(store, *args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(activity, "_activity_fact_step", blocking)
+    monkeypatch.setattr(ActivityFactStore, "refresh", blocking)
     ledger.commit()
     assert entered.wait(10)
+    assert admission._active is not None
     caplog.clear()
+    closing = threading.Thread(target=close)
+    closing.start()
     try:
-        start = time.monotonic()
-        close()
-        assert time.monotonic() - start < 5
-        assert {"code": "join_timeout", "event": "activity_projector"}.items() <= (
-            _events(caplog)[0].items()
-        )
-    finally:
-        release.set()
-        deadline = time.monotonic() + 10
-        while any(
-            thread.name == "activity-fact-projector" and thread.is_alive()
-            for thread in threading.enumerate()
-        ):
+        deadline = time.monotonic() + 5
+        while not (events := _events(caplog)):
             assert time.monotonic() < deadline
             time.sleep(0.01)
+        time.sleep(0.2)
+        assert closing.is_alive()
+        assert admission._closed and admission._active is not None
+        released = time.monotonic()
+        release.set()
+        closing.join(5)
+        assert not closing.is_alive()
+        assert time.monotonic() - released < 1
+        assert admission._active is None
+        deadline = time.monotonic() + 5
+        while len(events) < 2:
+            assert time.monotonic() < deadline
+            events += _events(caplog)
+            time.sleep(0.01)
+        timeout, stopped = events
+        assert {"code": "join_timeout", "level": "warning"}.items() <= timeout.items()
+        assert stopped == {
+            "code": "stopped",
+            "event": "activity_projector",
+            "level": "info",
+        }
+    finally:
+        release.set()
+        closing.join(10)
+
+
+def test_close_returns_promptly_when_no_step_is_in_progress(
+    ledger: _Ledger,  # noqa: F811
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
+    history, _, close = open_field_effect_activity_readers(
+        _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
+    )
+    assert _settled(cast("SQLiteMetadataReportRepository", history._repository))
+    caplog.clear()
+    started = time.monotonic()
+    close()
+    assert time.monotonic() - started < 1
+    assert _events(caplog) == [
+        {"code": "stopped", "event": "activity_projector", "level": "info"}
+    ]
 
 
 def test_every_readiness_check_is_fresh(

@@ -791,7 +791,8 @@ def compose_field_effect_activity_projection(
     )
 
 
-# Each projector step is bounded, so a stop is seen within one step (#1231).
+# Each projector step is bounded, so a stop is seen within one step. Past this
+# the join logs a warning; closing admission still waits out that step (#1231).
 _ACTIVITY_PROJECTOR_JOIN_SECONDS = 30.0
 
 
@@ -807,7 +808,8 @@ def open_field_effect_activity_projection(
     """Open a generation-owned, independently admitted Activity reader.
 
     A reader given ``facts`` keeps them caught up on a background thread,
-    stopped and joined, for a bounded time, before its admission closes (#1231).
+    started once composition has bound its authority and stopped before its
+    admission closes, which waits for the one step in progress (#1231).
     """
     admission = OperationAdmission()
     try:
@@ -843,14 +845,13 @@ def open_field_effect_activity_projection(
         repository.configure_activity_page_reader(
             facts, readiness_window=readiness_window, documents=documents
         )
+        application = compose_field_effect_activity_projection(
+            configuration, repository, provider_recovery
+        )
+        # Steps start only once composition has bound every authority.
         if facts is not None:
             projector.start()
-        return (
-            compose_field_effect_activity_projection(
-                configuration, repository, provider_recovery
-            ),
-            close,
-        )
+        return application, close
     except BaseException:
         close()
         raise
