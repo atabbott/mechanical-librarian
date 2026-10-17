@@ -1342,6 +1342,102 @@ def test_the_projector_coalesces_commits_and_backs_off_a_stalled_catch_up(
         reader.close()
 
 
+def test_a_step_skipped_for_a_busy_window_is_not_a_stalled_step(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retries refused by the readiness window never count towards backing off.
+
+    While candidates are pending, the window refuses more retries than the
+    stall guard allows. The first step after it frees, which does not shrink
+    what is pending, still waits only the gap: a skipped step is not a stall.
+    """
+    reader = _reader(ledger)
+    activity = reader._field_effect_activity
+    log: list[object] = []
+    changed = threading.Condition()
+
+    def note(entry: object) -> None:
+        with changed:
+            log.append(entry)
+            changed.notify_all()
+
+    def until(predicate: Callable[[], bool]) -> None:
+        with changed:
+            assert changed.wait_for(predicate, timeout=10)
+
+    class Window:
+        busy = False
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+
+        def acquire(self, blocking: bool = True) -> bool:
+            if self.busy:
+                note("refused")
+                return False
+            return self._lock.acquire(blocking)
+
+        def release(self) -> None:
+            self._lock.release()
+
+    class Stop(threading.Event):
+        def wait(self, timeout: float | None = None) -> bool:
+            note(timeout)
+            return super().wait(timeout)
+
+    pending = {("stuck", str(index)) for index in range(10)}
+    shrinking = True
+
+    def publish() -> None:
+        ledger.store._snapshot = dataclasses.replace(
+            ledger.snapshot(), pending=frozenset(pending)
+        )
+
+    def step() -> None:
+        # A step after new commits can leave more pending than before it.
+        if shrinking:
+            pending.pop()
+        else:
+            pending.add(("stuck", str(len(pending) + 100)))
+        publish()
+        note("step")
+
+    window = Window()
+    monkeypatch.setattr(activity, "_activity_fact_step", step)
+    monkeypatch.setattr(activity, "_readiness_window", window)
+    publish()
+    stop = Stop()
+    thread = threading.Thread(
+        target=reader.run_activity_fact_projector, args=(stop,), daemon=True
+    )
+    thread.start()
+    try:
+        until(lambda: log.count("step") >= 2)
+        window.busy = True
+        until(
+            lambda: (
+                log.count("refused")
+                > field_effect_activity._ACTIVITY_CATCH_UP_STALLS + 1
+            )
+        )
+        shrinking = False
+        with changed:
+            freed = len(log)
+            window.busy = False
+        until(lambda: "step" in log[freed:] and type(log[-1]) is float)
+        after = log[freed:]
+        resumed = after[after.index("step") + 1 :]
+        gap = field_effect_activity._ACTIVITY_PROJECTOR_GAP_SECONDS
+        assert next(entry for entry in resumed if type(entry) is float) == gap
+        assert {entry for entry in log[:freed] if type(entry) is float} == {gap}
+    finally:
+        stop.set()
+        thread.join(10)
+        assert not thread.is_alive()
+        reader.close()
+
+
 @pytest.mark.parametrize("mode", [None, FirstBootMode.INITIALIZE_SETUP])
 def test_a_store_root_hands_what_it_validated_to_its_activity_readers(
     tmp_path: Path, mode: FirstBootMode | None
