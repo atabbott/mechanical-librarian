@@ -38,10 +38,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import stat
-import sys
 import time
 from collections import deque
 from collections.abc import Callable
@@ -330,18 +330,22 @@ def _validate_activity_query(
 def activity_projector_event(
     code: str, *, level: str = "info", error: str | None = None
 ) -> None:
-    """Record one value-free projector lifecycle event; a failing sink is ignored.
+    """Log one value-free projector lifecycle event.
 
     It carries a closed code and at most an exception type name, never a
     message, document or path, so it needs no further redaction (#1231).
     """
-    payload = {"code": code, "event": "activity_projector", "level": level}
+    extra = {"event": "activity_projector", "code": code}
+    message, values = "activity projector %s", [code]
     if error is not None:
-        payload["error"] = error
-    try:
-        sys.stderr.write(json.dumps(payload, sort_keys=True) + "\n")
-    except Exception:
-        pass
+        extra["error"] = error
+        message, values = "activity projector %s (%s)", [code, error]
+    logging.getLogger(__name__).log(
+        logging.INFO if level == "info" else logging.WARNING,
+        message,
+        *values,
+        extra=extra,
+    )
 
 
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
@@ -2712,12 +2716,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def run_activity_fact_projector(self, stop: Event) -> None:
         """Keep this reader's facts caught up off the request path (#1231).
 
-        It takes the bounded step a request would take, and only while the
-        readiness window is free: it never waits for that window while holding
-        the cache lock a request needs, so readiness waits at most for the one
-        step in progress. A waiting request takes the cache lock between steps
-        and finishes any remainder itself. The work is derived, in memory,
-        idempotent and query-only, so it is rebuilt rather than persisted.
+        It takes the bounded step a request would take, and only while both the
+        cache lock and the readiness window are free: it waits for neither, so
+        readiness, and a stop, wait at most for the one step in progress. A
+        request takes the cache lock between steps and finishes any remainder
+        itself. The work is derived, in memory, idempotent and query-only, so it
+        is rebuilt rather than persisted.
         """
         admission = self._admission
         code = "stopped"
@@ -2733,8 +2737,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 while not stop.is_set():
                     pause = _ACTIVITY_PROJECTOR_POLL_SECONDS
                     try:
-                        with self._activity_page_cache_lock:
-                            if not self._readiness_window.acquire(blocking=False):
+                        # Neither lock is waited for: a request holding the
+                        # cache lock finishes any remainder itself, so stop
+                        # never waits out its catch-up.
+                        held = self._activity_page_cache_lock.acquire(blocking=False)
+                        try:
+                            if not held or not self._readiness_window.acquire(
+                                blocking=False
+                            ):
                                 pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
                                 head = None
                             else:
@@ -2777,6 +2787,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                                         head = store.snapshot()
                                 finally:
                                     self._readiness_window.release()
+                        finally:
+                            if held:
+                                self._activity_page_cache_lock.release()
                         if head is not None and head.pending:
                             # Steps that stop shrinking what is pending back off.
                             if least is not None and len(head.pending) >= least:

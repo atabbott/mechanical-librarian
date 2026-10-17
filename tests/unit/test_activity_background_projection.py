@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import enum
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -597,6 +598,33 @@ def test_restart_parses_each_document_once_and_projects_as_a_cold_reader(
         owner.close()
 
 
+def test_stop_returns_while_a_request_holds_the_cache_lock(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shutdown never waits out a request's catch-up; the request finishes it."""
+    _poll(monkeypatch)
+    reader = _reader(ledger)
+    activity = reader._field_effect_activity
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=reader.run_activity_fact_projector, args=(stop,), daemon=True
+    )
+    try:
+        with activity._activity_page_cache_lock:
+            thread.start()
+            time.sleep(0.2)
+            stop.set()
+            started = time.monotonic()
+            thread.join(2)
+            assert not thread.is_alive()
+            assert time.monotonic() - started < 1
+    finally:
+        stop.set()
+        thread.join(10)
+        reader.close()
+
+
 def test_readiness_runs_inside_a_window_no_background_step_enters(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
@@ -852,19 +880,34 @@ def test_the_projector_steps_as_background_work(
         close()
 
 
-def _events(captured: str) -> list[dict[str, object]]:
-    return [
-        json.loads(line)
-        for line in captured.splitlines()
-        if line.startswith("{") and '"activity_projector"' in line
-    ]
+def _events(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
+    """The projector's records: its logger, closed fields, and nothing else."""
+    events = []
+    for record in caplog.records:
+        if getattr(record, "event", None) != "activity_projector":
+            continue
+        assert record.name == field_effect_activity.__name__
+        detail = f" ({record.error})" if hasattr(record, "error") else ""
+        assert record.exc_info is None
+        assert record.getMessage() == f"activity projector {record.code}{detail}"
+        events.append(
+            {
+                key: getattr(record, key)
+                for key in ("code", "error", "event")
+                if hasattr(record, key)
+            }
+            | {"level": record.levelname.lower()}
+        )
+    caplog.clear()
+    return events
 
 
 def test_an_unexpected_projector_failure_is_logged_without_its_values(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     _poll(monkeypatch)
     reader = _reader(ledger)
     activity = reader._field_effect_activity
@@ -880,8 +923,8 @@ def test_an_unexpected_projector_failure_is_logged_without_its_values(
         thread.start()
         thread.join(10)
         assert not thread.is_alive()
-        captured = capsys.readouterr().err
-        assert _events(captured) == [
+        captured = caplog.text
+        assert _events(caplog) == [
             {
                 "code": "unexpected",
                 "error": "RuntimeError",
@@ -901,13 +944,14 @@ def test_an_unexpected_projector_failure_is_logged_without_its_values(
 def test_a_stopped_projector_logs_its_exit(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     _poll(monkeypatch)
     reader = _reader(ledger)
     try:
         _projecting(reader)()
-        assert _events(capsys.readouterr().err) == [
+        assert _events(caplog) == [
             {"code": "stopped", "event": "activity_projector", "level": "info"}
         ]
     finally:
@@ -917,8 +961,9 @@ def test_a_stopped_projector_logs_its_exit(
 def test_a_projector_outliving_its_join_bound_is_logged(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     _poll(monkeypatch)
     monkeypatch.setattr(composition, "_ACTIVITY_PROJECTOR_JOIN_SECONDS", 0.1)
     history, _, close = open_field_effect_activity_readers(
@@ -936,13 +981,13 @@ def test_a_projector_outliving_its_join_bound_is_logged(
     monkeypatch.setattr(activity, "_activity_fact_step", blocking)
     ledger.commit()
     assert entered.wait(10)
-    capsys.readouterr()
+    caplog.clear()
     try:
         start = time.monotonic()
         close()
         assert time.monotonic() - start < 5
         assert {"code": "join_timeout", "event": "activity_projector"}.items() <= (
-            _events(capsys.readouterr().err)[0].items()
+            _events(caplog)[0].items()
         )
     finally:
         release.set()
