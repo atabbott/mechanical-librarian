@@ -1432,14 +1432,15 @@ refusal, or authority.
 The history reader's background projector runs those same bounded steps off the
 request path, at startup and after commits (#1231). It holds no write, credential,
 network or root-admission authority: it uses the reader's own query-only
-connection and local admission. It takes the readiness window only without
-waiting and only while holding the reader's cache lock, so it never steps while
+connection and local admission. It waits for neither the reader's cache lock nor
+the readiness window, and steps only while holding both, so it never steps while
 permission readiness is between its fresh check and its snapshot, and readiness
 never queues behind a history request. The check is neither cached nor deferred.
 A request still finds the store current at its own snapshot or finishes the
 remaining steps itself, so it serves no pending or stale facts. Its exit is
-logged as one value-free line, an unexpected error by type only, and shutdown
-and Settings cutover stop it before its reader closes, waiting at most 30 s. A
+logged as one value-free record, an unexpected error by type only, and shutdown
+and Settings cutover stop it before its reader closes, waiting for at most the
+step in progress and never more than 30 s. A
 tampered report validated at startup refuses as before, because reuse is keyed
 by its exact bytes.
 

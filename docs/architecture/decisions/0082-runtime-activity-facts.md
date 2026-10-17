@@ -264,28 +264,29 @@ revision has moved. While candidates are pending it waits 20 ms between steps,
 until four steps in a row leave no fewer pending, after which it waits a second.
 Otherwise it looks for a changed revision once a second, and refreshes once the
 revision has been still for one look or five seconds after it first fell behind,
-so a steady run of commits costs one refresh every five seconds. A request
-waiting on the cache lock takes it between steps and finishes any remainder
-itself, exactly as before. A request therefore either finds the store current at
+so a steady run of commits costs one refresh every five seconds. It never waits
+for the cache lock: while a request holds it, the projector skips that step and
+tries again 20 ms later, and the request finishes any remainder itself, exactly
+as before. A request therefore either finds the store current at
 its own snapshot or completes the remaining steps. Pending or stale facts are
 never served, and no staleness marker exists.
 
 A busy or refused step is retried at the next look. A fallback to the canonical
 path stops the projector. An unexpected error ends the thread, and requests keep
-their own catch-up. Every exit writes one value-free structured line naming its
+their own catch-up. Every exit is logged as one value-free record naming its
 cause and, for an unexpected error, only the exception's type. The work is
 derived, held in memory, idempotent (a deterministic refresh published by
 compare-and-swap) and rebuilt from durable state, so it is exempt from persisting
 background work before it runs. Shutdown and Settings cutover stop it and join
 it before the reader's admission closes. The join waits for at most the step in
-progress and gives up after 30 s with a warning line. The successor generation's
-projector performs the full witness every new borrower performs.
+progress, never a request's catch-up, and gives up after 30 s with a warning.
+The successor generation's projector performs the full witness every new
+borrower performs.
 
 **Readiness window.** The generation's two readers share one lock. Permission
 readiness holds it from its fresh consistency check to the end of its snapshot.
-The projector takes the reader's cache lock first and then tries the window
-without waiting; when readiness holds it, the projector skips that step and
-tries again 20 ms later. So no background step runs between readiness's check
+The projector tries the reader's cache lock and then the window, waiting for
+neither; when either is held, it skips that step and tries again 20 ms later. So no background step runs between readiness's check
 and its snapshot, and readiness waits at most for the one step already in
 progress, never for a history request the projector is queued behind. The check
 is neither memoised nor deferred.
@@ -329,6 +330,8 @@ interleaved with the predecessor, two to five runs each:
 | Same, from process start | 23.3-23.8 s | 17.7-19.4 s |
 | Resident memory after restart | 331-337 MiB | 400-411 MiB |
 | Permission readiness 3 s into that read | 0.14-0.17 s | 0.14-0.17 s |
+| First Library read after restart, from login | 0.14-0.15 s | 0.24-0.44 s |
+| Same, from process start | 23.5-24.2 s | 12.5-12.7 s |
 
 The report store costs 65-77 MiB of resident memory. Holding all four kinds at
 128 Mi characters cost 194 MiB for a slower held read (8.8-9.5 s), and reports

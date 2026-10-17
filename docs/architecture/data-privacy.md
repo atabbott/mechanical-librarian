@@ -202,7 +202,7 @@ and a re-verification cursor. This private in-memory store is not
 an export or another durable ledger. The store root also keeps the metadata
 reports that schema validation and its Activity readers validated, keyed by the
 SHA-256 of their exact bytes and bounded at 48 Mi characters of report text,
-which cost about 65-70 MiB of resident memory with 2,300 works and 8,000
+which cost 65-77 MiB of resident memory with 2,300 works and 8,000
 decisions (#1231). All of it disappears with its runtime owner; canonical
 retention is unchanged.
 Browse also retains case and report documents, and facts derived from them, in

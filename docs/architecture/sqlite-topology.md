@@ -101,10 +101,10 @@ read transaction under the reader's own query-only connection and local
 admission, never the root admission. Steps are 20 ms apart while candidates are
 pending, backing off to a second when they stop shrinking. A changed revision is
 looked for once a second, and a run of commits is refreshed once it pauses or
-after five seconds. Each step also holds, without waiting for it, a lock the
-permission reader holds from its fresh consistency check to its snapshot, so no
-step runs inside that window and readiness waits for at most the step in
-progress. A writer still waits for at most one step, and a request for at most
+after five seconds. Each step holds the reader's cache lock and a lock the
+permission reader holds from its fresh consistency check to its snapshot,
+waiting for neither, so no step runs inside that window, and readiness and
+shutdown wait for at most the step in progress. A writer still waits for at most one step, and a request for at most
 the step in progress, though a step takes longer while requests share the
 interpreter with it.
 
