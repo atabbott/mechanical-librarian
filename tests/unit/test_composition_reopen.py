@@ -196,6 +196,10 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
         None if activation is None else activation.validated_documents
     )
     assert compose_cover.call_args.args[3] is reviewer_access
+    # So does it reuse validated cover currentness facts (#1237).
+    assert compose_cover.call_args.args[5] is (
+        None if activation is None else activation.cover_currentness
+    )
     assert compose_application.call_args.kwargs["reviewer_access"] is reviewer_access
     assert (
         compose_application.call_args.kwargs["cover_considerations"]

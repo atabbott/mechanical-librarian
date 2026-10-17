@@ -9,6 +9,7 @@ import json
 import sqlite3
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 from unittest.mock import Mock, patch
@@ -34,6 +35,9 @@ from mechanical_librarian.adapters.persistence.review_cases import ReviewLibrary
 from mechanical_librarian.adapters.persistence.review_preparation import _FAILURE_CODES
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.cover_packet_semantics import (
+    canonical_packet_json,
 )
 from mechanical_librarian.application.field_effects import (
     CapabilityObservation,
@@ -100,21 +104,36 @@ def test_cover_currentness_sql_binding_fails_closed_for_unknown_and_failure(
     tmp_path: Path,
 ) -> None:
     repository = open_repository(tmp_path / "application.sqlite3")
-
-    repository.bind_cover_consideration_currentness(
-        lambda _document, _replay: "unknown"
+    replay = "cover_replay_" + "1" * 64
+    document = canonical_packet_json(
+        {
+            "connection": "primary",
+            "library": "books",
+            "item": "item-1",
+            "report_id": "report-1",
+            "provider_fetching": False,
+            "manual_ready": True,
+            "replay_reference": replay,
+        }
     )
-    assert repository._connection.execute(
-        "SELECT ml_cover_consideration_current('document','replay')"
-    ).fetchone() == (0,)
 
-    def unavailable(_document: str, _replay: str) -> str:
+    def current() -> object:
+        return repository._connection.execute(
+            "SELECT ml_cover_consideration_current(?,?)", (document, replay)
+        ).fetchone()
+
+    repository.bind_cover_consideration_currentness(lambda *_identity: False)
+    assert current() == (1,)
+    repository.bind_cover_consideration_currentness(
+        cast("Callable[[str, str, str, str], bool]", lambda *_identity: "unknown")
+    )
+    assert current() == (0,)
+
+    def unavailable(*_identity: str) -> bool:
         raise RuntimeError("synthetic currentness failure")
 
     repository.bind_cover_consideration_currentness(unavailable)
-    assert repository._connection.execute(
-        "SELECT ml_cover_consideration_current('document','replay')"
-    ).fetchone() == (0,)
+    assert current() == (0,)
     repository.close()
 
 
