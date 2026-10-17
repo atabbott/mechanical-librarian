@@ -746,6 +746,15 @@ export type ActivityPermissionReadinessView = Pick<
   'capabilities' | 'configured_libraries' | 'prepared'
 > & { backup_ready: boolean | null; example: ActivityExampleView | null }
 
+/**
+ * The inputs Activity's consent section reads, and nothing else. Library's
+ * write-ready notice reads this so it never waits for Activity history (#1236).
+ */
+export type ActivityConsentView = Pick<
+  ActivityDisplayView,
+  'backup_ready' | 'capabilities' | 'configured_libraries' | 'waiting'
+>
+
 export type ActivityView = ActivityDisplayView
 
 export interface PolicyDraftDisplayView {
@@ -933,6 +942,7 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<ActivityPermissionReadinessView>
+  getActivityConsent(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ActivityConsentView>
   getActivityTransitions(
     eventId: string,
     afterSequence?: number,
@@ -1373,6 +1383,13 @@ export class ReviewApiClient implements ReviewHttp {
     return mapActivityPermissionReadiness(
       await this.read('/api/v1/activity/permission-readiness', signal, workClass),
     )
+  }
+
+  async getActivityConsent(
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ): Promise<ActivityConsentView> {
+    return mapActivityConsent(await this.read('/api/v1/activity/consent-state', signal, workClass))
   }
 
   async getActivityTransitions(
@@ -2428,6 +2445,37 @@ const activityBackupReady = (value: unknown): boolean | null => {
   return value
 }
 
+const activityWaiting = (raw: unknown): ActivityWaitingReasonsView => {
+  if (!record(raw)) throw new ApiError(502, 'invalid_activity_waiting')
+  return {
+    applying: integerValue(raw.applying, 'activity_waiting_applying'),
+    awaiting_permission: integerValue(
+      raw.awaiting_permission,
+      'activity_waiting_awaiting_permission',
+    ),
+    held_for_recovery: integerValue(raw.held_for_recovery, 'activity_waiting_held_for_recovery'),
+    retrying: integerValue(raw.retrying, 'activity_waiting_retrying'),
+    scheduled: integerValue(raw.scheduled, 'activity_waiting_scheduled'),
+  }
+}
+
+export const mapActivityConsent = (value: unknown): ActivityConsentView => {
+  if (
+    !record(value) ||
+    !exactKeys(value, ['backup_ready', 'capabilities', 'configured_libraries', 'waiting'])
+  )
+    throw new ApiError(502, 'invalid_activity_consent')
+  return {
+    backup_ready: nullValue(value.backup_ready, 'activity_backup_ready'),
+    capabilities: activityCapabilities(value.capabilities),
+    configured_libraries: activityLibraries(
+      value.configured_libraries,
+      'activity_configured_libraries',
+    ),
+    waiting: activityWaiting(value.waiting),
+  }
+}
+
 export const mapActivityPermissionReadiness = (value: unknown): ActivityPermissionReadinessView => {
   if (
     !record(value) ||
@@ -2466,21 +2514,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   const counts: Record<string, number> = {}
   for (const [key, count] of Object.entries(value.counts))
     counts[stringValue(key, 'activity_count_name')] = integerValue(count, 'activity_count')
-  const waitingReasons = value.waiting
-  if (!record(waitingReasons)) throw new ApiError(502, 'invalid_activity_waiting')
-  const waiting: ActivityWaitingReasonsView = {
-    applying: integerValue(waitingReasons.applying, 'activity_waiting_applying'),
-    awaiting_permission: integerValue(
-      waitingReasons.awaiting_permission,
-      'activity_waiting_awaiting_permission',
-    ),
-    held_for_recovery: integerValue(
-      waitingReasons.held_for_recovery,
-      'activity_waiting_held_for_recovery',
-    ),
-    retrying: integerValue(waitingReasons.retrying, 'activity_waiting_retrying'),
-    scheduled: integerValue(waitingReasons.scheduled, 'activity_waiting_scheduled'),
-  }
+  const waiting = activityWaiting(value.waiting)
   const providerRecovery = value.provider_recovery === undefined ? [] : value.provider_recovery
   if (!Array.isArray(providerRecovery)) throw new ApiError(502, 'invalid_provider_recovery')
   const recovery = providerRecovery.map((item, index) => {

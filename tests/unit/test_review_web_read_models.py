@@ -554,6 +554,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         base_url="https://review.test",
     )
     assert web.client.get("/api/v1/activity/permission-readiness").status_code == 401
+    assert web.client.get("/api/v1/activity/consent-state").status_code == 401
     login = web.login()
     page = web.client.get("/activity")
     assert page.status_code == 200
@@ -589,6 +590,28 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         application, "activity_permission_readiness", side_effect=RuntimeError
     ):
         unavailable = web.client.get("/api/v1/activity/permission-readiness")
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "unavailable"
+    # The notice's read is Activity's consent inputs and nothing else (#1236).
+    consent = web.client.get("/api/v1/activity/consent-state")
+    assert consent.status_code == 200
+    assert consent.headers["cache-control"] == "no-store, private"
+    assert consent.json() == {
+        key: history[key]
+        for key in ("backup_ready", "capabilities", "configured_libraries", "waiting")
+    }
+    for invalid in ({"backup_ready": True}, {"events": []}):
+        with (
+            patch.object(
+                application,
+                "activity_consent",
+                return_value={**consent.json(), **invalid},
+            ),
+            pytest.raises(ValidationError),
+        ):
+            web.client.get("/api/v1/activity/consent-state")
+    with patch.object(application, "activity_consent", side_effect=RuntimeError):
+        unavailable = web.client.get("/api/v1/activity/consent-state")
     assert unavailable.status_code == 503
     assert unavailable.json()["error"]["code"] == "unavailable"
     filtered = web.client.get(

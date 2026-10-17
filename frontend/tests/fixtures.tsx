@@ -8,6 +8,7 @@ import type userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 
 import type {
+  ActivityConsentView,
   ActivityDisplayView,
   ActivityView,
   AppearanceView,
@@ -112,6 +113,19 @@ export const detail: CaseDetailView = {
     },
   ],
 }
+
+/** What the narrow consent read returns for the Activity page `view` states. */
+export const consentOf = ({
+  backup_ready,
+  capabilities,
+  configured_libraries,
+  waiting,
+}: ActivityView): ActivityConsentView => ({
+  backup_ready,
+  capabilities,
+  configured_libraries,
+  waiting,
+})
 
 export const activity = (
   value: Partial<Omit<ActivityDisplayView, 'events'>> & {
@@ -377,6 +391,7 @@ export const createHttp = (): ReviewHttp => ({
       example: data.example,
     }
   }),
+  getActivityConsent: vi.fn(async () => consentOf(activity())),
   getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
   activityCommand: vi.fn(async () => undefined),
   logout: vi.fn(async () => undefined),

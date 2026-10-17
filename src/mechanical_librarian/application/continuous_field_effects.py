@@ -82,6 +82,9 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_permission_readiness_snapshot(
         self, call: Callable[[bool | None], dict[str, object]]
     ) -> dict[str, object]: ...
+    def field_effect_consent_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]: ...
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]: ...
     def grant_field_effect_consent_matrix(
         self,
@@ -1045,6 +1048,26 @@ class ContinuousGuardedApplication:
                 )
             )
 
+    def activity_consent(self) -> dict[str, object]:
+        """Read the consent inputs Activity states, without its history (#1236).
+
+        Library's write-ready notice needs only these, and none is an Activity
+        fact, so the read takes no catch-up and waits for no history step.
+        """
+        with self._activity_reader_lock:
+            return self._repository.field_effect_consent_snapshot(self._consent_state)
+
+    def _consent_state(self) -> dict[str, object]:
+        permission, waiting, _ = self._consent_projection(
+            self._repository.field_effect_activity_summary()
+        )
+        return {
+            "backup_ready": None,
+            "capabilities": permission["capabilities"],
+            "configured_libraries": permission["configured_libraries"],
+            "waiting": waiting,
+        }
+
     def activity_permission_readiness(self) -> dict[str, object]:
         with self._activity_reader_lock:
             return self._repository.field_effect_permission_readiness_snapshot(
@@ -1275,6 +1298,39 @@ class ContinuousGuardedApplication:
             or any(type(value) is not int or value < 0 for value in cleanup.values())
         ):
             raise GuardedApplicationError("activity")
+        permission, waiting, provider_recovery = self._consent_projection(data)
+        return {
+            **data,
+            **permission,
+            "backup_ready": None,
+            "waiting": waiting,
+            "example": None,
+            "last_failure": self._last_failure,
+            "ledger": {
+                "event_type": event_type,
+                "page": int(cast(int, page_projection["page"])),
+                "page_count": int(cast(int, page_projection["page_count"])),
+                "page_size": int(cast(int, page_projection["page_size"])),
+                "query": normalized_search,
+                "range_days": range_days,
+                "total": int(cast(int, page_projection["total"])),
+            },
+            "schema_version": "continuous-field-activity-v3",
+            "provider_recovery": provider_recovery,
+        }
+
+    def _consent_projection(
+        self, data: dict[str, object]
+    ) -> tuple[
+        dict[str, object],
+        dict[str, int],
+        list[dict[str, int | str | list[str] | None]],
+    ]:
+        """Project the gates Activity's consent section reads, for both reads.
+
+        Activity and the narrow consent read call this one projection, so the
+        Library notice and Activity cannot come to state different offers.
+        """
         permission, prepared_by_destination = self._permission_projection(data)
         provider_recovery = list(self._provider_recovery_snapshot())
         if len(provider_recovery) > 100 or any(
@@ -1343,35 +1399,14 @@ class ContinuousGuardedApplication:
             for item in provider_recovery
         ):
             raise GuardedApplicationError("activity")
-        return {
-            **data,
-            **permission,
-            "backup_ready": None,
-            "waiting": _waiting_reasons(
-                counts=cast("dict[str, int]", data.get("counts", {})),
-                prepared_by_destination=prepared_by_destination,
-                capabilities=cast(
-                    "list[dict[str, object]]", permission["capabilities"]
-                ),
-                suspensions=cast(
-                    "list[dict[str, object]]", data.get("suspensions", [])
-                ),
-                provider_recovery=provider_recovery,
-            ),
-            "example": None,
-            "last_failure": self._last_failure,
-            "ledger": {
-                "event_type": event_type,
-                "page": int(cast(int, page_projection["page"])),
-                "page_count": int(cast(int, page_projection["page_count"])),
-                "page_size": int(cast(int, page_projection["page_size"])),
-                "query": normalized_search,
-                "range_days": range_days,
-                "total": int(cast(int, page_projection["total"])),
-            },
-            "schema_version": "continuous-field-activity-v3",
-            "provider_recovery": provider_recovery,
-        }
+        waiting = _waiting_reasons(
+            counts=cast("dict[str, int]", data.get("counts", {})),
+            prepared_by_destination=prepared_by_destination,
+            capabilities=cast("list[dict[str, object]]", permission["capabilities"]),
+            suspensions=cast("list[dict[str, object]]", data.get("suspensions", [])),
+            provider_recovery=provider_recovery,
+        )
+        return permission, waiting, provider_recovery
 
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None

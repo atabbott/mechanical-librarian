@@ -9,6 +9,7 @@ import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture
 import { activityRoute } from '../src/router'
 import {
   activity,
+  consentOf,
   createHttp,
   openActivityAuthority,
   permissionReadiness,
@@ -2399,19 +2400,19 @@ it('skips speculative Activity data work and starts its required navigation read
     resolve: (value: ActivityView) => void
   }[] = []
   const http = createHttp()
-  http.getActivity = vi
-    .fn<ReviewHttp['getActivity']>(
-      (_search, signal, purpose) =>
-        new Promise((resolve, reject) => {
-          reads.push({ signal, purpose, resolve })
-          signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-        }),
-    )
-    .mockResolvedValueOnce(activity())
+  http.getActivity = vi.fn<ReviewHttp['getActivity']>(
+    (_search, signal, purpose) =>
+      new Promise((resolve, reject) => {
+        reads.push({ signal, purpose, resolve })
+        signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      }),
+  )
   const { router } = renderRoute('/library?lens=all', http)
   expect(await screen.findByRole('heading', { name: 'Works' })).toBeVisible()
-  await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(1))
-  expect(vi.mocked(http.getActivity).mock.calls[0]?.[2]).toBe('foreground')
+  // Library's notice reads only the consent state, in the foreground (#1236).
+  await waitFor(() => expect(http.getActivityConsent).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(http.getActivityConsent).mock.calls[0]?.[1]).toBe('foreground')
+  expect(http.getActivity).not.toHaveBeenCalled()
   await router.preloadRoute({
     to: '/activity',
     search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
@@ -2432,7 +2433,7 @@ it('skips speculative Activity data work and starts its required navigation read
     await navigation
   })
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
-  expect(http.getActivity).toHaveBeenCalledTimes(2)
+  expect(http.getActivity).toHaveBeenCalledTimes(1)
 })
 
 it.each([
@@ -2665,8 +2666,8 @@ it.each([false, true])(
     let finishHistory!: (value: ActivityView) => void
     let finishPermissions!: (value: ReturnType<typeof permissionReadiness>) => void
     let signal: AbortSignal | undefined
+    vi.mocked(http.getActivityConsent).mockResolvedValue(consentOf(history))
     vi.mocked(http.getActivity)
-      .mockResolvedValueOnce(history)
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -2682,7 +2683,7 @@ it.each([false, true])(
     })
     const { queryClient } = renderRoute('/library', http)
     await user.click(await screen.findByRole('link', { name: 'Review write permissions' }))
-    await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(1))
     expect(http.getActivityPermissionReadiness).not.toHaveBeenCalled()
     await act(async () => finishHistory(history))
     const review = await screen.findByRole('region', { name: 'Enable guarded writes' })

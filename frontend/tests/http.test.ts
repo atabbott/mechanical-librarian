@@ -10,6 +10,7 @@ import {
   ReviewApiClient,
   mapCaseDetail,
   mapActivity,
+  mapActivityConsent,
   mapActivityPermissionReadiness,
   mapAttention,
   derivePolicyDraftDisplay,
@@ -3076,4 +3077,34 @@ describe('deferred Activity permission contract', () => {
       ).toThrow(ApiError)
     },
   )
+
+  it('reads the narrow consent response as exactly what Activity carries (#1236)', async () => {
+    const { backup_ready, capabilities, configured_libraries, waiting } = currentActivity
+    const response = { backup_ready, capabilities, configured_libraries, waiting }
+    const history = mapActivity(currentActivity)
+    expect(mapActivityConsent(response)).toEqual({
+      backup_ready: history.backup_ready,
+      capabilities: history.capabilities,
+      configured_libraries: history.configured_libraries,
+      waiting: history.waiting,
+    })
+    for (const key of Object.keys(response))
+      expect(() =>
+        mapActivityConsent(Object.fromEntries(Object.entries(response).filter(([k]) => k !== key))),
+      ).toThrow(ApiError)
+    for (const invalid of [
+      { ...response, events: [] },
+      { ...response, backup_ready: true },
+      { ...response, capabilities: {} },
+      { ...response, configured_libraries: [{ connection: 'primary' }] },
+      { ...response, waiting: { ...waiting, scheduled: -1 } },
+      { ...response, waiting: { ...waiting, applying: undefined } },
+      { ...response, waiting: null },
+    ])
+      expect(() => mapActivityConsent(invalid)).toThrow(ApiError)
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(response))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    expect(await client.getActivityConsent()).toEqual(mapActivityConsent(response))
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/activity/consent-state')
+  })
 })

@@ -1074,7 +1074,7 @@ def test_real_activity_lifetime_retains_active_and_queued_reads(tmp_path, transi
         root.close()
 
 
-@pytest.mark.parametrize("read_kind", ("history", "permission"))
+@pytest.mark.parametrize("read_kind", ("history", "permission", "consent"))
 @pytest.mark.parametrize("lane_failure", (False, True))
 def test_preparation_dependencies_outlive_all_accepted_reads(
     tmp_path, monkeypatch, lane_failure, read_kind
@@ -1177,9 +1177,12 @@ def test_preparation_dependencies_outlive_all_accepted_reads(
     )
     if lane_failure:
         app._field_application = FailingGuardedLane.__new__(FailingGuardedLane)
-    callback = (
-        app.activity if read_kind == "history" else app.activity_permission_readiness
-    )
+    # Library's consent read is served by the permission reader (#1236).
+    callback = {
+        "history": app.activity,
+        "permission": app.activity_permission_readiness,
+        "consent": app.activity_consent,
+    }[read_kind]
     readers = [
         threading.Thread(target=lambda: read(callback)),
         threading.Thread(target=lambda: read(callback)),
@@ -1233,6 +1236,7 @@ def test_preparation_dependencies_outlive_all_accepted_reads(
         for late_read in (
             app.activity,
             app.activity_permission_readiness,
+            app.activity_consent,
             lambda: app.activity_transitions("event-1"),
             lambda: app.library(lens="all", search=None, limit=20, cursor=None),
         ):

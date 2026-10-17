@@ -10,7 +10,9 @@ import { readWriteConsent } from '../writeConsent'
  * Preparation finishing and writes being off are two halves of one moment: an
  * owner is told what is ready to browse and what will happen to it, in one
  * notice with one entry to the scoped permission review (#641, #639, #1011). The offer is read from the same function Activity reads, so
- * the compact route and the long one cannot come to disagree.
+ * the compact route and the long one cannot come to disagree. Its inputs come
+ * from the narrow consent read, which the server projects with the code that
+ * projects Activity's, so the notice never waits for Activity history (#1236).
  *
  * It is deliberately not a caution: nothing here has gone wrong. Work is ready
  * and a permission is available, which is a success the owner may act on.
@@ -22,11 +24,7 @@ export const WriteReadyNotice = () => {
   const query = useQuery({
     queryKey: ['activity', 'library-handoff'] as const,
     queryFn: (queryContext) =>
-      http.getActivity(
-        { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
-        queryContext.signal,
-        queryWorkClass(queryContext),
-      ),
+      http.getActivityConsent(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 4_000,
     retry: false,
     // The cadence is the degraded fallback only. While the stream is up, an

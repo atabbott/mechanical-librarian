@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { mapActivity, mapActivityConsent } from '../src/api/http'
 import { readWriteConsent } from '../src/writeConsent'
+import currentActivity from './descriptionAdviceActivityFixture.json'
 import { activity } from './fixtures'
 
 const view = (value: Partial<Parameters<typeof readWriteConsent>[0]>) => ({
@@ -148,4 +150,68 @@ it('does not offer readiness, a destination or a count from unchecked history', 
   expect(enabled.state).toBe('enabled')
   expect(enabled.blocked).toBeNull()
   expect(enabled.grants).toEqual([])
+})
+
+/**
+ * Library's notice reads the narrow consent response and Activity reads its
+ * whole page. The server sends both from one projection; this proves the
+ * browser then states one offer from them in every state either can show,
+ * including while a connection needs checking (#1236).
+ */
+describe('the Library notice and Activity state one offer', () => {
+  const queue = {
+    off: { applying: 0, awaiting_permission: 2, scheduled: 0 },
+    applying: { applying: 1, awaiting_permission: 0, scheduled: 1 },
+    enabled: { applying: 0, awaiting_permission: 0, scheduled: 2 },
+    complete: { applying: 0, awaiting_permission: 0, scheduled: 0 },
+  } as const
+  const cases = Object.keys(queue).flatMap((state) =>
+    ['allowed', 'connection_unavailable'].flatMap((capability) =>
+      [false, true].flatMap((enabling) =>
+        [false, true].map(
+          (connectionUnavailable) =>
+            [state as keyof typeof queue, capability, enabling, connectionUnavailable] as const,
+        ),
+      ),
+    ),
+  )
+  it.each(cases)(
+    '%s with a %s destination, enabling=%s, connection unavailable=%s',
+    (state, capability, enabling, connectionUnavailable) => {
+      const raw = {
+        ...currentActivity,
+        configured_libraries: [
+          {
+            connection: 'primary',
+            library: 'fiction',
+            prepared: { automatic: 1, human: 1, total: 2 },
+          },
+        ],
+        capabilities: [
+          {
+            connection: 'primary',
+            library: 'fiction',
+            state: capability,
+            destinations: [
+              {
+                consented: state !== 'off',
+                destination: 'title',
+                prepared: 2,
+                state: capability,
+              },
+            ],
+          },
+        ],
+        waiting: { ...queue[state], held_for_recovery: 0, retrying: 0 },
+      }
+      const { backup_ready, capabilities, configured_libraries, waiting } = raw
+      const options = { enabling, connectionUnavailable }
+      const notice = readWriteConsent(
+        mapActivityConsent({ backup_ready, capabilities, configured_libraries, waiting }),
+        options,
+      )
+      expect(notice).toEqual(readWriteConsent(mapActivity(raw), options))
+      expect(notice.state).toBe(enabling ? 'enabling' : state)
+    },
+  )
 })

@@ -24,6 +24,7 @@ import type {
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import {
   activity,
+  consentOf,
   createHttp,
   createLiveStream,
   detail,
@@ -8460,6 +8461,38 @@ describe('Library route', () => {
 
   it('offers the completion handoff inside Library with one action for every eligible destination', async () => {
     const user = userEvent.setup()
+    const view = activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 4, human: 6, total: 10 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'partially_allowed',
+          destinations: [
+            { consented: false, destination: 'title', prepared: 4, state: 'allowed' },
+            {
+              consented: false,
+              destination: 'cover',
+              prepared: 6,
+              state: 'insufficient_permission',
+            },
+          ],
+        },
+      ],
+      waiting: {
+        applying: 0,
+        awaiting_permission: 4,
+        held_for_recovery: 0,
+        retrying: 0,
+        scheduled: 0,
+      },
+    })
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
@@ -8484,49 +8517,15 @@ describe('Library route', () => {
           },
         ],
       })),
-      getActivity: vi.fn(async () =>
-        activity({
-          configured_libraries: [
-            {
-              connection: 'primary',
-              library: 'fiction',
-              prepared: { automatic: 4, human: 6, total: 10 },
-            },
-          ],
-          capabilities: [
-            {
-              connection: 'primary',
-              library: 'fiction',
-              state: 'partially_allowed',
-              destinations: [
-                { consented: false, destination: 'title', prepared: 4, state: 'allowed' },
-                {
-                  consented: false,
-                  destination: 'cover',
-                  prepared: 6,
-                  state: 'insufficient_permission',
-                },
-              ],
-            },
-          ],
-          waiting: {
-            applying: 0,
-            awaiting_permission: 4,
-            held_for_recovery: 0,
-            retrying: 0,
-            scheduled: 0,
-          },
-        }),
-      ),
+      getActivity: vi.fn(async () => view),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
     }
-    const ready = await http.getActivity()
-    vi.mocked(http.getActivity).mockClear()
     vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
       backup_ready: true,
-      configured_libraries: ready.configured_libraries,
-      capabilities: ready.capabilities,
-      prepared: ready.prepared,
-      example: ready.example,
+      configured_libraries: view.configured_libraries,
+      capabilities: view.capabilities,
+      prepared: view.prepared,
+      example: view.example,
     })
     renderRoute('/library?lens=all', http)
 
@@ -8535,6 +8534,8 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('heading', { name: '9 works are ready to browse. Writes are off.' }),
     ).toBeVisible()
+    // The notice reads the narrow consent read, never Activity history (#1236).
+    expect(http.getActivity).not.toHaveBeenCalled()
     // Preparation still running does not withdraw the action.
     expect(screen.getByText(/while preparation continues/u)).toBeVisible()
     // The Attention decision and status share one toolbar, toggle first, so
@@ -8570,6 +8571,75 @@ describe('Library route', () => {
         (child) => child.getAttribute('aria-label') ?? child.className,
       ),
     ).toEqual(['compact-workspace-back', 'Attention queue', selectedNotices[0]?.className])
+  })
+
+  it('refreshes the notice on an activity invalidation and polls only while the stream is degraded', async () => {
+    const off = activity({
+      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ consented: false, destination: 'title', prepared: 2, state: 'allowed' }],
+        },
+      ],
+      waiting: {
+        applying: 0,
+        awaiting_permission: 2,
+        held_for_recovery: 0,
+        retrying: 0,
+        scheduled: 0,
+      },
+    })
+    const enabled = { ...off, waiting: { ...off.waiting, awaiting_permission: 0, scheduled: 2 } }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => ({
+        schema_version: 'review-preparation-v2' as const,
+        recovery_required: false,
+        active: false,
+        actionable: false,
+        paused: false,
+        libraries: [],
+      })),
+      getActivityConsent: vi
+        .fn<ReviewHttp['getActivityConsent']>()
+        .mockResolvedValueOnce(consentOf(off))
+        .mockResolvedValue(consentOf(enabled)),
+    }
+    const updates = createLiveStream()
+    renderRoute('/library?lens=all', http, updates)
+    expect(
+      await screen.findByRole('heading', { name: '0 works are ready to browse. Writes are off.' }),
+    ).toBeVisible()
+
+    // While live, the `activity` frame is what brings the notice up to date.
+    await act(async () => {
+      updates.announce({ sequence: 1, subject: null, topic: 'activity' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    expect(
+      await screen.findByRole('heading', {
+        name: '0 works are ready to browse. Writes are enabled.',
+      }),
+    ).toBeVisible()
+    expect(http.getActivityConsent).toHaveBeenCalledTimes(2)
+    expect(http.getActivity).not.toHaveBeenCalled()
+
+    vi.useFakeTimers()
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(31_000))
+    expect(http.getActivityConsent).toHaveBeenCalledTimes(2)
+    // Degraded, the 15 s cadence is the fallback, and only then.
+    act(() => updates.setState('degraded'))
+    await act(async () => vi.advanceTimersByTimeAsync(15_100))
+    expect(http.getActivityConsent).toHaveBeenCalledTimes(3)
+    await act(async () => vi.advanceTimersByTimeAsync(15_000))
+    expect(http.getActivityConsent).toHaveBeenCalledTimes(4)
+    expect(http.getActivity).not.toHaveBeenCalled()
   })
 })
 

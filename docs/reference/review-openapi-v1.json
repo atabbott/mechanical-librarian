@@ -1903,6 +1903,40 @@
         "title": "_ActivityConsentRequest",
         "type": "object"
       },
+      "_ActivityConsentState": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_ready": {
+            "title": "Backup Ready",
+            "type": "null"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityCapability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "configured_libraries": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityLibrary"
+            },
+            "title": "Configured Libraries",
+            "type": "array"
+          },
+          "waiting": {
+            "$ref": "#/components/schemas/_ActivityWaitingReasons"
+          }
+        },
+        "required": [
+          "backup_ready",
+          "capabilities",
+          "configured_libraries",
+          "waiting"
+        ],
+        "title": "_ActivityConsentState",
+        "type": "object"
+      },
       "_ActivityDestination": {
         "additionalProperties": false,
         "properties": {
@@ -10117,6 +10151,49 @@
           }
         ],
         "summary": "Enable Guarded Activity"
+      }
+    },
+    "/api/v1/activity/consent-state": {
+      "get": {
+        "operationId": "activity_consent_state_api_v1_activity_consent_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ActivityConsentState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Activity Consent State"
       }
     },
     "/api/v1/activity/permission-readiness": {
