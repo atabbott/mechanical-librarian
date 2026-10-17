@@ -55,7 +55,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
@@ -366,7 +366,7 @@ def test_a_tampered_report_refuses_and_no_refusal_is_retained(
     assert parsed.count(document) <= 1
 
 
-def test_a_document_is_reused_only_for_its_own_bytes_and_kind(
+def test_a_report_is_reused_only_for_its_own_bytes(
     ledger: _Ledger,  # noqa: F811
 ) -> None:
     rows = ledger.root._connection.execute(
@@ -380,13 +380,6 @@ def test_a_document_is_reused_only_for_its_own_bytes_and_kind(
     assert reparsed is not known
     assert reparsed == MetadataReport.from_json(second)
     assert reparsed.to_json() == second
-    # The same bytes under another kind are that kind's to validate.
-    with pytest.raises(Exception) as refused:
-        documents.proposal(first)
-    with pytest.raises(Exception) as canonical:
-        ProposalSet.from_json(first)
-    assert type(refused.value) is type(canonical.value)
-    assert str(refused.value) == str(canonical.value)
 
 
 def test_the_document_store_keeps_its_character_bound(
@@ -421,13 +414,11 @@ def test_the_document_store_keeps_its_character_bound(
     assert narrow.report(large) is not narrow.report(large)
     assert narrow.report(small) is kept
     assert narrow._characters == len(small)
-    assert ACTIVITY_DOCUMENT_CHARACTERS == 128 * 1024 * 1024
+    assert ACTIVITY_DOCUMENT_CHARACTERS == 48 * 1024 * 1024
 
 
-def test_a_case_refuses_as_canonical_when_its_proposal_is_reused(
-    tmp_path: Path,
-) -> None:
-    """A case parses its proposal through the store and refuses exactly alike."""
+def test_a_case_hands_out_the_proposal_set_it_validated(tmp_path: Path) -> None:
+    """Activity takes a case's proposal set from the case, not a second parse."""
     root = tmp_path / "owner"
     root.mkdir(mode=0o700)
     fixture = OwnerResponsivenessFixture(root, 2, mixed=True)
@@ -438,25 +429,21 @@ def test_a_case_refuses_as_canonical_when_its_proposal_is_reused(
     finally:
         fixture.close()
         fixture.repository.close()
-    documents = ActivityDocuments()
-    case = documents.case(document)
-    assert documents.case(document) is case
-    assert case == ReviewCase.from_json(document)
-    assert documents.proposal(case.proposal_document) is documents.proposal(
-        case.proposal_document
-    )
+    with patch.object(ProposalSet, "from_json", wraps=ProposalSet.from_json) as parse:
+        case = ReviewCase.from_json(document)
+        assert case.proposal_set is case.proposal_set
+        assert case.proposals == case.proposals
+    assert parse.call_count == 1
+    assert case.proposal_set == ProposalSet.from_json(case.proposal_document)
+    assert _immutable(case.proposal_set, set())
     value = json.loads(document)
     proposal = json.loads(value["proposal_document"])
     proposal["schema_version"] = "unknown"
     value["proposal_document"] = json.dumps(proposal, sort_keys=True)
     for tampered in (json.dumps(value, sort_keys=True), document[:-1]):
         for _ in range(2):
-            with pytest.raises(Exception) as refused:
-                documents.case(tampered)
-            with pytest.raises(Exception) as canonical:
+            with pytest.raises(ReviewCaseValueError):
                 ReviewCase.from_json(tampered)
-            assert type(refused.value) is type(canonical.value)
-            assert str(refused.value) == str(canonical.value)
 
 
 def _immutable(value: object, seen: set[int]) -> bool:
@@ -1065,3 +1052,42 @@ def test_a_store_root_hands_what_it_validated_to_its_activity_readers(
         assert seen["activation"] is seen["root"]
     else:
         assert seen == {"root": None}
+
+
+def test_a_proposal_row_unlike_its_cases_bytes_is_parsed_on_its_own(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A case's proposal set stands in only for that case's exact bytes."""
+    environment = cast("_EffectEnvironment", request.getfixturevalue("effects"))
+    report, category, option, _ = _automatic_no_change_inputs("exact_title")
+    assert _automatic_decisions(environment, report, category, option, qualified=True)
+    owner = environment.repository
+    proposal_set_id, document = owner._connection.execute(
+        "SELECT proposal.proposal_set_id,proposal.document FROM automatic_decisions "
+        "decision JOIN review_cases review USING(review_case_id) "
+        "JOIN proposal_sets proposal USING(proposal_set_id) LIMIT 1"
+    ).fetchone()
+    tampered = document + " "
+    owner._connection.execute("DROP TRIGGER proposal_sets_no_update")
+    owner._connection.execute(
+        "UPDATE proposal_sets SET document=? WHERE proposal_set_id=?",
+        (tampered, proposal_set_id),
+    )
+    owner._connection.commit()
+    parsed: list[str] = []
+    parse = ProposalSet.from_json
+
+    def counted(value: str) -> ProposalSet:
+        parsed.append(value)
+        return parse(value)
+
+    monkeypatch.setattr(ProposalSet, "from_json", counted)
+    reader = open_repository(
+        environment.database_path, create=False, authority=owner.authority
+    )
+    try:
+        reader.configure_activity_page_reader(ActivityFactStore())
+        _pages(reader)
+    finally:
+        reader.close()
+    assert tampered in parsed

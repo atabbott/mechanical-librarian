@@ -5,8 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable
-from dataclasses import InitVar, dataclass, field
+from dataclasses import dataclass, field
 from typing import NoReturn, Self, cast
 
 from mechanical_librarian.domain.metadata_report import (
@@ -405,15 +404,10 @@ class ReviewCase:
     proposal_document: str
     disposition: str = "undecided"
     schema_version: str = REVIEW_CASE_SCHEMA
-    # Parses ``proposal_document``; a caller may pass one that returns what
-    # those exact bytes already validated as. Its refusals are this one's.
-    parse_proposal: InitVar[Callable[[str], ProposalSet] | None] = None
     # What ``proposal_document`` validated as, so proposals need no reparse.
     _proposal: ProposalSet = field(init=False, repr=False, compare=False)
 
-    def __post_init__(
-        self, parse_proposal: Callable[[str], ProposalSet] | None
-    ) -> None:
+    def __post_init__(self) -> None:
         if (
             _CASE_ID.fullmatch(self.review_case_id) is None
             or self.schema_version != REVIEW_CASE_SCHEMA
@@ -424,7 +418,7 @@ class ReviewCase:
         ):
             raise ReviewCaseValueError("review case is invalid")
         try:
-            proposal = (parse_proposal or ProposalSet.from_json)(self.proposal_document)
+            proposal = ProposalSet.from_json(self.proposal_document)
             target = TargetFacts.from_data(_thaw_json_object(self._target))
         except Exception as error:
             raise ReviewCaseValueError("review case proposal is invalid") from error
@@ -575,6 +569,11 @@ class ReviewCase:
         )
 
     @property
+    def proposal_set(self) -> ProposalSet:
+        """What ``proposal_document`` validated as; deeply immutable."""
+        return self._proposal
+
+    @property
     def proposals(self) -> tuple[dict[str, object], ...]:
         """Target-ordered immutable proposal projections with stable identities."""
         return _review_proposals(
@@ -597,11 +596,7 @@ class ReviewCase:
         return _canonical(self.to_data())
 
     @classmethod
-    def from_json(
-        cls,
-        serialized: str,
-        parse_proposal: Callable[[str], ProposalSet] | None = None,
-    ) -> Self:
+    def from_json(cls, serialized: str) -> Self:
         try:
             if (
                 type(serialized) is not str
@@ -623,7 +618,7 @@ class ReviewCase:
                 "schema_version",
             }:
                 raise ValueError
-            value = cls.create_from_data(raw, parse_proposal)
+            value = cls.create_from_data(raw)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewCaseValueError("review case is invalid") from error
         if value.to_json() != serialized:
@@ -631,11 +626,7 @@ class ReviewCase:
         return value
 
     @classmethod
-    def create_from_data(
-        cls,
-        raw: dict[str, object],
-        parse_proposal: Callable[[str], ProposalSet] | None = None,
-    ) -> Self:
+    def create_from_data(cls, raw: dict[str, object]) -> Self:
         if (
             raw.get("schema_version") != REVIEW_CASE_SCHEMA
             or raw.get("disposition") != "undecided"
@@ -686,7 +677,6 @@ class ReviewCase:
             results,  # type: ignore[arg-type]
             raw["relationships"],  # type: ignore[arg-type]
             raw["proposal_document"],  # type: ignore[arg-type]
-            parse_proposal=parse_proposal,
         )
 
 

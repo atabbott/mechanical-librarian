@@ -48,6 +48,7 @@ from collections.abc import Callable
 from contextlib import closing, nullcontext
 from copy import deepcopy
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from threading import Event, Lock, RLock
 from typing import Any, Literal, TypeVar, cast
@@ -427,10 +428,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # A configured reader's pending counts and readiness example, each with
         # the revision and file identity it was read at (#1223).
         self._pending_reads: dict[str, tuple[_ActivityStamp, object]] | None = None
-        # A configured reader reuses exactly validated documents (#1231).
+        # A configured reader keeps the reports it validated (#1231).
         self._reused_report: Callable[[str], MetadataReport] | None = None
         self._reused_case: Callable[[str], ReviewCase] | None = None
-        self._reused_proposal: Callable[[str], ProposalSet] | None = None
         self._reused_outcome: Callable[[str], ShadowOutcomeSet] | None = None
         # Held by readiness from its fresh check to its snapshot; a background
         # projector takes no step inside it (#1231).
@@ -1817,11 +1817,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ):
                     raise FieldEffectError("persistence")
                 try:
+                    case = (self._reused_case or ReviewCase.from_json)(case_document)
                     automatic_authority[identity] = (
-                        (self._reused_case or ReviewCase.from_json)(case_document),
-                        (self._reused_proposal or ProposalSet.from_json)(
-                            proposal_document
-                        ),
+                        case,
+                        case.proposal_set
+                        if proposal_document == case.proposal_document
+                        else ProposalSet.from_json(proposal_document),
                         (self._reused_outcome or ShadowOutcomeSet.from_json)(
                             outcome_document
                         ),
@@ -2349,14 +2350,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         ).fetchone()
                         if cover_rows is None:
                             raise FieldEffectError("authority_binding")
+                        cover_case = (self._reused_case or ReviewCase.from_json)(
+                            cover_rows[0]
+                        )
                         selected_value = _cover_automatic_decision_value(
                             self._connection,
                             projected_automatic,
-                            (self._reused_case or ReviewCase.from_json)(cover_rows[0]),
+                            cover_case,
                             reports[projected_automatic.report_id],
-                            (self._reused_proposal or ProposalSet.from_json)(
-                                cover_rows[1]
-                            ),
+                            cover_case.proposal_set
+                            if cover_rows[1] == cover_case.proposal_document
+                            else ProposalSet.from_json(cover_rows[1]),
                             expand_cover_consideration(
                                 *cover_rows[2:], parse_report=self._reused_report
                             ),
@@ -2546,11 +2550,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._pending_reads = {}
         if readiness_window is not None:
             self._readiness_window = readiness_window
-        held = ActivityDocuments() if documents is None else documents
-        self._reused_report = held.report
-        self._reused_case = held.case
-        self._reused_proposal = held.proposal
-        self._reused_outcome = held.outcome
+        self._reused_report = (
+            ActivityDocuments() if documents is None else documents
+        ).report
 
     @staticmethod
     def _retryable_activity_page_busy(error: FieldEffectError) -> bool:
@@ -2804,17 +2806,25 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, candidates: set[Candidate] | None, max_bytes: int
     ) -> dict[Candidate, ActivityFact]:
         facts: dict[Candidate, ActivityFact] = {}
-        self._field_effect_activity_page_uncached(
-            search="initialization",
-            event_type="all",
-            occurred_after=0,
-            page=1,
-            page_size=25,
-            _collect=facts,
-            _candidates=candidates,
-            _collect_max_bytes=max_bytes,
-        )
-        return facts
+        # Bounded exact-document reuse of cases and outcomes exists only while
+        # this composition or reprojection runs (#1218).
+        self._reused_case = lru_cache(maxsize=256)(ReviewCase.from_json)
+        self._reused_outcome = lru_cache(maxsize=256)(ShadowOutcomeSet.from_json)
+        try:
+            self._field_effect_activity_page_uncached(
+                search="initialization",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+                _collect=facts,
+                _candidates=candidates,
+                _collect_max_bytes=max_bytes,
+            )
+            return facts
+        finally:
+            self._reused_case = None
+            self._reused_outcome = None
 
     @local_operation
     def _activity_fact_page(

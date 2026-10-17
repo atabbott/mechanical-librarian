@@ -30,9 +30,6 @@ from mechanical_librarian.adapters.field_effect_runtime import (
     PersistedEffectDependencies,
 )
 from mechanical_librarian.adapters.persistence import schema as persistence_schema
-from mechanical_librarian.adapters.persistence.activity_documents import (
-    ActivityDocuments,
-)
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
@@ -66,7 +63,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.unit.test_cover_packets import _preview, _report, _source
@@ -242,18 +239,6 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             "SELECT document FROM review_cases WHERE review_case_id=?",
             (automatic.review_case_id,),
         ).fetchone()[0]
-        # Startup validation keeps the selection's case for Activity (#1231).
-        documents = ActivityDocuments()
-        descriptor = os.open(database, os.O_RDONLY)
-        try:
-            persistence_schema._validate_existing_read_only(
-                database, descriptor, documents
-            )
-        finally:
-            os.close(descriptor)
-        with patch.object(ReviewCase, "from_json", side_effect=AssertionError):
-            validated = documents.case(case_document)
-        assert validated == ReviewCase.from_json(case_document)
         with pytest.raises(FieldEffectError, match="authority_binding"):
             _cover_automatic_decision_value(
                 repository._connection,
@@ -415,6 +400,55 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 project.assert_called_once()
         finally:
             reader.close()
+        # Activity takes a cover case's proposal set from the case, and only for
+        # that case's exact bytes (#1231).
+        proposal_set_id, proposal_document = repository._connection.execute(
+            "SELECT proposal.proposal_set_id,proposal.document FROM review_cases "
+            "review JOIN proposal_sets proposal USING(proposal_set_id) "
+            "WHERE review.review_case_id=?",
+            (automatic.review_case_id,),
+        ).fetchone()
+        parse = ProposalSet.from_json
+        parsed: Counter[str] = Counter()
+
+        def counted(value: str) -> ProposalSet:
+            parsed[value] += 1
+            return parse(value)
+
+        for document in (proposal_document + " ", proposal_document):
+            repository._connection.execute("DROP TRIGGER proposal_sets_no_update")
+            repository._connection.execute(
+                "UPDATE proposal_sets SET document=? WHERE proposal_set_id=?",
+                (document, proposal_set_id),
+            )
+            repository._connection.execute(persistence_schema._PROPOSAL_NO_UPDATE_SQL)
+            repository._connection.commit()
+            parsed.clear()
+            fresh = open_repository(
+                database, create=False, authority=repository.authority
+            )
+            try:
+                fresh.configure_activity_page_reader(ActivityFactStore())
+                with patch.object(ProposalSet, "from_json", counted):
+                    try:
+                        result: object = fresh.field_effect_activity_page(
+                            search=None,
+                            event_type="all",
+                            occurred_after=0,
+                            page=1,
+                            page_size=25,
+                        )
+                    except Exception as error:  # noqa: BLE001
+                        result = error
+            finally:
+                fresh.close()
+            if document == proposal_document:
+                assert type(result) is dict and result["events"]
+                assert parsed[document] == 1
+            else:
+                assert type(result) is FieldEffectError
+                assert result.code == "persistence"
+                assert parsed[document]
         digest = repository._connection.execute(
             "SELECT document_digest FROM cover_considerations WHERE consideration_id=?",
             (automatic.consideration_id,),

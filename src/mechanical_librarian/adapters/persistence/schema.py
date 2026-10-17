@@ -1774,7 +1774,7 @@ def _validate_schema_contents_without_attention_facts(
     root's ``documents``, what validates is kept there by its exact bytes for
     the Activity reader (#1231).
     """
-    _validate_schema_contents_without_review_field_facts(connection, documents)
+    _validate_schema_contents_without_review_field_facts(connection)
     _validate_review_field_facts(connection)
     parse = (
         lru_cache(maxsize=1)(MetadataReport.from_json)
@@ -1790,7 +1790,7 @@ def _validate_schema_contents_without_attention_facts(
 
 
 def _validate_schema_contents_without_review_field_facts(
-    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
+    connection: sqlite3.Connection,
 ) -> None:
     if connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute(
         "PRAGMA integrity_check"
@@ -1801,7 +1801,7 @@ def _validate_schema_contents_without_review_field_facts(
     except ValueError as error:
         raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)
-    _validate_cover_selection_authorities(connection, documents)
+    _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)
     validate_preparation_presentation(connection)
     try:
@@ -1816,11 +1816,8 @@ def _validate_schema_contents_without_review_field_facts(
         _validate_provider_recovery_outbox_row(row)
 
 
-def _validate_cover_selection_authorities(
-    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
-) -> None:
+def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> None:
     """Require append-only cover authority rows to equal their canonical facts."""
-    parse_case = ReviewCase.from_json if documents is None else documents.case
     try:
         selections: dict[str, tuple[str, str, str, dict[str, object]]] = {}
         selection_decision_ids: dict[str, str] = {}
@@ -1866,7 +1863,7 @@ def _validate_cover_selection_authorities(
             ).fetchone()
             if case_row is None:
                 raise ValueError
-            case = parse_case(case_row[0])
+            case = ReviewCase.from_json(case_row[0])
             target = case.target
             expected_artifact = None
             expected_rank = None
