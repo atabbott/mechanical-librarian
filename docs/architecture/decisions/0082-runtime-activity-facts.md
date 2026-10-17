@@ -25,7 +25,8 @@ Activity events, search text, exact source witnesses and forward dependencies.
 Generation-owned, explicitly configured query-only Activity readers borrow it.
 The store is initialized before readiness; bounded exact-document parser reuse
 exists only during that construction and each later reprojection (#1218). Typed
-reports, cases, proposals and outcomes are discarded afterward. Direct and
+cases, proposals and outcomes are discarded afterward; validated reports are kept
+by their exact bytes (#1231, below). Direct and
 writable repository consumers retain the canonical projection.
 
 A new borrower streams every source witness in its own existing SQLite snapshot
@@ -243,3 +244,115 @@ database long enough to fail a commit, and preparation did not fail; the
 canonical fallback and a NUL-identity construction, stated above, remain single
 unbounded reads. Journal mode, the busy timeout, schema, startup admission, the
 ADR-0077 lane and the canonical projection are unchanged.
+
+## Amendment: background catch-up and exact document reuse (#1231)
+
+After a large history change the first Activity request still performed the
+whole bounded catch-up itself, 11-20 s at 8,000 owner decisions, and at startup
+the store was constructed before readiness. A background projector now runs the
+same bounded steps off the request path. This replaces the statements above that
+the store is initialized before readiness, that parser reuse exists only during
+one construction or reprojection, and that there is no background warmup service.
+
+**Projector.** The history reader that borrows the store starts one daemon thread
+when its generation composes it. The thread has no write authority. It uses that
+reader's own query-only connection and local admission, classified background,
+and never the root admission or the ADR-0077 lane. It runs the exact step a
+request runs, under the reader's cache lock, once at startup and then whenever
+candidates are pending, the published store version has changed or the reader's
+revision has moved. While candidates are pending it waits 20 ms between steps,
+until four steps in a row leave no fewer pending, after which it waits a second.
+Otherwise it looks for a changed revision once a second, and refreshes once the
+revision has been still for one look or five seconds after it first fell behind,
+so a steady run of commits costs one refresh every five seconds. It never waits
+for the cache lock: while a request holds it, the projector skips that step and
+tries again 20 ms later, and the request finishes any remainder itself, exactly
+as before. A request therefore either finds the store current at
+its own snapshot or completes the remaining steps. Pending or stale facts are
+never served, and no staleness marker exists.
+
+A busy or refused step is retried at the next look. A fallback to the canonical
+path stops the projector. An unexpected error ends the thread, and requests keep
+their own catch-up. Every exit is logged as one value-free record naming its
+cause and, for an unexpected error, only the exception's type. The work is
+derived, held in memory, idempotent (a deterministic refresh published by
+compare-and-swap) and rebuilt from durable state, so it is exempt from persisting
+background work before it runs. It starts only once composition has bound the
+reader's authority. Shutdown and Settings cutover stop it before the reader's
+admission closes and wait for the step in progress to finish: one bounded step,
+never a request's catch-up. A join still running after 30 s logs a warning and is
+not a cap, because closing the admission still waits for that step's lease.
+The successor generation's projector performs the full witness every new
+borrower performs.
+
+**Readiness window.** The generation's two readers share one lock. Permission
+readiness holds it from its fresh consistency check to the end of its snapshot.
+The projector tries the reader's cache lock and then a turn of the reader's
+admission, and under those two alone decides whether to step, including its
+revision probe, which can wait out SQLite's busy timeout behind a writer's
+commit. Only when a step will run does it try the window, and it holds the
+window for that step alone, whose reads re-enter the turn it already holds. It
+waits for none of the three; when any is held, it releases what it took, skips
+that step and tries again 20 ms later, and a probe refused behind a writer is
+tried again at the next poll. A turn is taken only when no operation is active
+or queued, so it never precedes queued work. So no background step runs between
+readiness's check and its snapshot, and readiness waits at most for the one step
+already in progress, never for a probe or for a history request, such as a
+transition, holding the cache lock or the admission. That step can still wait
+out SQLite's busy timeout behind a writer's commit, as readiness's own check
+can. The check is neither memoised nor deferred.
+
+**Writer and cost.** Each background step is one bounded read transaction, so a
+writer waits for at most one step, as #1225 bounds a request's steps. The
+projector spends CPU whether or not anyone reads Activity: the whole catch-up
+after a large change, which a request would otherwise run on its next read, and
+at most one refresh every five seconds while commits keep arriving.
+
+**Document reuse.** The per-call report memo is replaced by one
+`ActivityDocuments` store per store root. It holds the metadata reports that
+schema validation and both Activity readers of every generation validate, keyed
+by the SHA-256 of their exact document bytes; the text itself is not kept. A
+report is deeply immutable, so it is handed out without copying. A refusal is
+never kept, and a tampered or unreadable report refuses exactly as before. The
+store is bounded at 48 Mi characters of report text, least recently used first:
+about twice the 2,300-work library's reports (27 Mi), so a catch-up parses each
+report once. Cases and outcomes keep #1218's reuse within one projection and are
+not held across steps. A review case keeps the proposal set it validated, so
+neither its proposals nor Activity parse that proposal set again; Activity takes
+it only when the proposal row's bytes equal the case's. Browse keeps its own
+ADR-0083 cache, so a catch-up cannot evict browse's working set.
+
+**Startup.** Schema validation parsed each cover consideration's report twice:
+once to compact it and once for currentness. Activity initialization then parsed
+it a third time. Validation now parses each report once, into the root's store,
+where the first projection finds it. Activity initialization finishes after the
+server binds. Until it does, an Activity request finishes the remainder itself.
+
+Measured at 2,300 works with 8,000 owner decisions on SQLite 3.40.1 (Linux),
+interleaved with the predecessor, two to five runs each:
+
+| Measure | Before | After |
+|---|---|---|
+| First Activity read, about 1 s after the last commit | 13.6-13.8 s | 0.8-1.0 s |
+| Same, change lands before any background step | 13.3-13.7 s | 8.2-9.1 s |
+| Resident memory after those reads | 310-311 MiB | 376-388 MiB |
+| Restart until the server answers | 23.2-23.7 s | 12.0-12.3 s |
+| First Activity read after restart, from login | 0.04-0.08 s | 5.5-7.0 s |
+| Same, from process start | 23.3-23.8 s | 17.7-19.4 s |
+| Resident memory after restart | 331-337 MiB | 400-411 MiB |
+| Permission readiness 3 s into that read | 0.14-0.17 s | 0.14-0.17 s |
+| First Library read after restart, from login | 0.14-0.15 s | 0.24-0.44 s |
+| Same, from process start | 23.5-24.2 s | 12.5-12.7 s |
+
+The report store costs 65-77 MiB of resident memory. Holding all four kinds at
+128 Mi characters cost 194 MiB for a slower held read (8.8-9.5 s), and reports
+with outcomes 93-96 MiB for no faster one (8.5-9.3 s). In the held read the
+refresh's own time is 0.8 s against 0.9 s before, and no full collection runs
+during it (two, 0.2 s, before). No commit failed. After a restart the server
+answers 11 s sooner, but the first Activity read then finishes the initial
+construction itself, so it takes 5-7 s; the first page still arrives 4-6 s
+sooner than before.
+
+Witnessing, marks, the sweep, the bound, overflow, the canonical fallback, the
+third-attempt rule, journal mode, the busy timeout, schema, startup admission and
+the ADR-0077 lane are unchanged.

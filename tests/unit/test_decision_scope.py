@@ -459,12 +459,14 @@ def _projections() -> Iterator[Counter[str]]:
     import sys
 
     counted: Counter[str] = Counter()
-    original = review_case.review_proposals
+    # Every projection, from a parsed case or from its documents, ends here.
+    original = review_case._review_proposals
 
     def counting(*args: object) -> tuple[dict[str, object], ...]:
         depth = 1
         while sys._getframe(depth).f_code.co_name in {
             "proposals",
+            "review_proposals",
             "of",
             "of_browse_case",
         }:
@@ -472,10 +474,7 @@ def _projections() -> Iterator[Counter[str]]:
         counted[sys._getframe(depth).f_code.co_name] += 1
         return original(*args)  # type: ignore[arg-type]
 
-    with (
-        patch.object(review_case, "review_proposals", counting),
-        patch.object(human_decision, "review_proposals", counting),
-    ):
+    with patch.object(review_case, "_review_proposals", counting):
         yield counted
 
 

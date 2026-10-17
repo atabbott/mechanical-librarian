@@ -38,20 +38,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 import stat
 import time
 from collections import deque
 from collections.abc import Callable
-from contextlib import closing
+from contextlib import closing, nullcontext
 from copy import deepcopy
 from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
-from threading import RLock
+from threading import Event, Lock, RLock
 from typing import Any, Literal, TypeVar, cast
 
+from mechanical_librarian.adapters.persistence.activity_documents import (
+    ActivityDocuments,
+)
 from mechanical_librarian.adapters.persistence.activity_facts import (
     ActivityFact,
     ActivityFactCapacity,
@@ -81,6 +85,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.operation_admission import AdmissionClosedError
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
 )
@@ -161,6 +166,14 @@ _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 _ACTIVITY_CATCH_UP_ATTEMPTS = 3
 # Bounded steps stop once this many in a row leave no fewer candidates pending.
 _ACTIVITY_CATCH_UP_STALLS = 4
+# A background projector takes bounded steps this far apart while candidates
+# are pending, leaving a waiting request the cache lock between them, and
+# otherwise looks for a changed revision at most this often. It refreshes a
+# changed revision once it has been quiet for one look, or at the latest this
+# long after it first fell behind, so a run of commits costs one refresh (#1231).
+_ACTIVITY_PROJECTOR_GAP_SECONDS = 0.02
+_ACTIVITY_PROJECTOR_POLL_SECONDS = 1.0
+_ACTIVITY_PROJECTOR_COALESCE_SECONDS = 5.0
 # Oversized pages are still served, but the two-entry cache together retains no
 # more serialized report text than one maximum-size report document.
 _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
@@ -314,6 +327,27 @@ def _validate_activity_query(
         raise FieldEffectError("invalid_activity_query")
 
 
+def activity_projector_event(
+    code: str, *, level: str = "info", error: str | None = None
+) -> None:
+    """Log one value-free projector lifecycle event.
+
+    It carries a closed code and at most an exception type name, never a
+    message, document or path, so it needs no further redaction (#1231).
+    """
+    extra = {"event": "activity_projector", "code": code}
+    message, values = "activity projector %s", [code]
+    if error is not None:
+        extra["error"] = error
+        message, values = "activity projector %s (%s)", [code, error]
+    logging.getLogger(__name__).log(
+        logging.INFO if level == "info" else logging.WARNING,
+        message,
+        *values,
+        extra=extra,
+    )
+
+
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     """Project field-effect activity, pending work and operational signals."""
 
@@ -398,12 +432,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # A configured reader's pending counts and readiness example, each with
         # the revision and file identity it was read at (#1223).
         self._pending_reads: dict[str, tuple[_ActivityStamp, object]] | None = None
-        self._reused_report: Callable[[tuple[object, ...]], MetadataReport] | None = (
-            None
-        )
+        # A configured reader keeps the reports it validated (#1231).
+        self._reused_report: Callable[[str], MetadataReport] | None = None
         self._reused_case: Callable[[str], ReviewCase] | None = None
-        self._reused_proposal: Callable[[str], ProposalSet] | None = None
         self._reused_outcome: Callable[[str], ShadowOutcomeSet] | None = None
+        # Held by readiness from its fresh check to its snapshot; a background
+        # projector takes no step inside it (#1231).
+        self._readiness_window = Lock()
 
     @property
     def _current_cover_policy_reference(self) -> str | None:
@@ -1649,8 +1684,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
                 ):
                     raise MetadataReportError("persisted report is invalid")
-                reports[report_row[0]] = (self._reused_report or _validated_report_row)(
-                    report_row
+                reports[report_row[0]] = _validated_report_row(
+                    report_row, self._reused_report
                 )
                 report_documents[report_row[0]] = report_row[8]
         except MetadataReportError as error:
@@ -1786,11 +1821,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ):
                     raise FieldEffectError("persistence")
                 try:
+                    case = (self._reused_case or ReviewCase.from_json)(case_document)
                     automatic_authority[identity] = (
-                        (self._reused_case or ReviewCase.from_json)(case_document),
-                        (self._reused_proposal or ProposalSet.from_json)(
-                            proposal_document
-                        ),
+                        case,
+                        case.proposal_set
+                        if proposal_document == case.proposal_document
+                        else ProposalSet.from_json(proposal_document),
                         (self._reused_outcome or ShadowOutcomeSet.from_json)(
                             outcome_document
                         ),
@@ -2318,15 +2354,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         ).fetchone()
                         if cover_rows is None:
                             raise FieldEffectError("authority_binding")
+                        cover_case = (self._reused_case or ReviewCase.from_json)(
+                            cover_rows[0]
+                        )
                         selected_value = _cover_automatic_decision_value(
                             self._connection,
                             projected_automatic,
-                            (self._reused_case or ReviewCase.from_json)(cover_rows[0]),
+                            cover_case,
                             reports[projected_automatic.report_id],
-                            (self._reused_proposal or ProposalSet.from_json)(
-                                cover_rows[1]
+                            cover_case.proposal_set
+                            if cover_rows[1] == cover_case.proposal_document
+                            else ProposalSet.from_json(cover_rows[1]),
+                            expand_cover_consideration(
+                                *cover_rows[2:], parse_report=self._reused_report
                             ),
-                            expand_cover_consideration(*cover_rows[2:]),
                         )
                     else:
                         authority = automatic_authority.get(
@@ -2482,9 +2523,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
 
     def configure_activity_page_reader(
-        self, facts: ActivityFactStore | None = None
+        self,
+        facts: ActivityFactStore | None = None,
+        *,
+        readiness_window: Lock | None = None,
+        documents: ActivityDocuments | None = None,
     ) -> None:
-        """Constrain the independent reader to queries and bounded busy waits."""
+        """Constrain the independent reader to queries and bounded busy waits.
+
+        ``readiness_window`` is shared with the generation's permission reader.
+        ``documents`` may already hold what root schema validation parsed; this
+        reader keeps every report, case, proposal and outcome it validates
+        there (#1231).
+        """
 
         try:
             self._connection.execute(
@@ -2501,6 +2552,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "PRAGMA schema_version"
         ).fetchone()[0]
         self._pending_reads = {}
+        if readiness_window is not None:
+            self._readiness_window = readiness_window
+        self._reused_report = (
+            ActivityDocuments() if documents is None else documents
+        ).report
 
     @staticmethod
     def _retryable_activity_page_busy(error: FieldEffectError) -> bool:
@@ -2529,7 +2585,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, call: Callable[[bool | None], dict[str, object]]
     ) -> dict[str, object]:
         """Bind one fresh consistency check to the permission read's revision."""
-        with self._activity_page_cache_lock:
+        with self._readiness_window, self._activity_page_cache_lock:
             self._backup_ready_cache = None
             ready = self.field_effect_backup_ready(fresh=True)
             checked = self._backup_ready_cache
@@ -2541,7 +2597,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
 
             # Readiness reads no Activity facts, so no catch-up widens the
-            # window between the fresh check and this snapshot (#1225).
+            # window between the fresh check and this snapshot (#1225), and
+            # no background step runs inside it (#1231).
             return self._activity_snapshot(project)
 
     def field_effect_activity_snapshot(
@@ -2656,16 +2713,121 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 )
             )
 
+    def run_activity_fact_projector(self, stop: Event) -> None:
+        """Keep this reader's facts caught up off the request path (#1231).
+
+        It takes the bounded step a request would take, and only while the
+        cache lock, the reader's admission and the readiness window are all
+        free: it waits for none of them, so readiness, and a stop, wait at most
+        for the one step in progress. A request takes the cache lock between
+        steps and finishes any remainder itself. The work is derived, in memory,
+        idempotent and query-only, so it is rebuilt rather than persisted.
+        """
+        admission = self._admission
+        code = "stopped"
+        failure: str | None = None
+        behind_since: float | None = None
+        seen: object = None
+        least: int | None = None
+        stalls = 0
+        try:
+            with (
+                nullcontext() if admission is None else admission.classify("background")
+            ):
+                while not stop.is_set():
+                    pause = _ACTIVITY_PROJECTOR_POLL_SECONDS
+                    try:
+                        # Nothing is waited for: a request holding the cache
+                        # lock or the reader's admission finishes its own
+                        # work, so neither stop nor readiness waits it out.
+                        # The decision to step needs only those two; the
+                        # window is tried last and held for the step alone,
+                        # whose own reads re-enter the turn already held.
+                        held = self._activity_page_cache_lock.acquire(blocking=False)
+                        lease = self._operation_lease()
+                        try:
+                            if not held or not lease.try_acquire():
+                                pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
+                                head = None
+                            else:
+                                store = self._activity_facts
+                                if store is None or stop.is_set():
+                                    code = "stopped" if stop.is_set() else "released"
+                                    return
+                                head = store.snapshot()
+                                step = head is None or bool(head.pending)
+                                if head is not None and not step:
+                                    stamp = self._activity_fact_stamp
+                                    # A stamp for another version steps
+                                    # without reading the revision.
+                                    revision = (
+                                        self._activity_projection_revision()
+                                        if stamp is not None
+                                        and stamp[2] == head.version
+                                        else None
+                                    )
+                                    if stamp is not None and stamp[0] == revision:
+                                        behind_since = None
+                                    else:
+                                        # Coalesce a run of commits into one
+                                        # refresh once they pause or age.
+                                        now = time.monotonic()
+                                        if behind_since is None:
+                                            behind_since = now
+                                        step = (
+                                            revision == seen
+                                            or now - behind_since
+                                            >= _ACTIVITY_PROJECTOR_COALESCE_SECONDS
+                                        )
+                                    seen = revision
+                                if step and not self._readiness_window.acquire(
+                                    blocking=False
+                                ):
+                                    pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
+                                    head = None
+                                elif step:
+                                    try:
+                                        self._activity_fact_step()
+                                    finally:
+                                        self._readiness_window.release()
+                                    behind_since = None
+                                    head = store.snapshot()
+                        finally:
+                            lease.release()
+                            if held:
+                                self._activity_page_cache_lock.release()
+                        if head is not None and head.pending:
+                            # Steps that stop shrinking what is pending back off.
+                            if least is not None and len(head.pending) >= least:
+                                stalls += 1
+                            else:
+                                least, stalls = len(head.pending), 0
+                            if stalls < _ACTIVITY_CATCH_UP_STALLS:
+                                pause = _ACTIVITY_PROJECTOR_GAP_SECONDS
+                        elif head is not None:
+                            least, stalls = None, 0
+                    except FieldEffectError:
+                        pass
+                    stop.wait(pause)
+        except AdmissionClosedError:
+            code = "admission_closed"
+        except Exception as error:
+            # Requests still catch up themselves; only the thread ends.
+            code, failure = "unexpected", type(error).__name__
+        finally:
+            activity_projector_event(
+                code,
+                level="info" if failure is None else "warning",
+                error=failure,
+            )
+
     def _project_activity_facts(
         self, candidates: set[Candidate] | None, max_bytes: int
     ) -> dict[Candidate, ActivityFact]:
         facts: dict[Candidate, ActivityFact] = {}
-        # Bounded exact-document reuse exists only while this composition or
-        # reprojection runs (#1218). No domain object survives publication or is
-        # shared with another reader.
-        self._reused_report = lru_cache(maxsize=256)(_validated_report_row)
+        # Bounded exact-document reuse of cases and outcomes exists only while
+        # this composition or reprojection runs (#1218).
         self._reused_case = lru_cache(maxsize=256)(ReviewCase.from_json)
-        self._reused_proposal = lru_cache(maxsize=256)(ProposalSet.from_json)
         self._reused_outcome = lru_cache(maxsize=256)(ShadowOutcomeSet.from_json)
         try:
             self._field_effect_activity_page_uncached(
@@ -2680,9 +2842,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
             return facts
         finally:
-            self._reused_report = None
             self._reused_case = None
-            self._reused_proposal = None
             self._reused_outcome = None
 
     @local_operation

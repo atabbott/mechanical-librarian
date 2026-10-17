@@ -125,6 +125,33 @@ class OperationAdmission:
                 self._condition.notify_all()
                 raise
 
+    def try_acquire(self) -> bool:
+        """Take a turn only when ``acquire`` would be granted it without waiting.
+
+        Nothing is queued: with no operation active or waiting, the waiting
+        ticket ``acquire`` would add is chosen at once whatever its class, so
+        the same bookkeeping runs here, and otherwise this declines. It never
+        precedes queued work, and a closed admission still refuses.
+        """
+        if self.held:
+            self._local.depth += 1
+            return True
+        with self._condition:
+            if self._closed:
+                raise AdmissionClosedError("database admission is closed")
+            if self._active is not None or self._waiting:
+                return False
+            ticket = _Ticket(self._classification.get())
+            self._waiting.append(ticket)
+            self._choose()
+            self._waiting.remove(ticket)
+            if self._cohort and self._cohort[0] is ticket:
+                self._cohort.popleft()
+            self._active = ticket
+            self._selected = None
+            self._local.depth = 1
+            return True
+
     def release(self) -> None:
         """Release only this thread's accepted increment after commit or rollback."""
         if not self.held:

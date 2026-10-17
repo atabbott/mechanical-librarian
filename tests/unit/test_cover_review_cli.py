@@ -79,7 +79,9 @@ def test_independent_activity_reader_gets_the_bounded_busy_configuration() -> No
         )
 
     assert actual is projection
-    repository.configure_activity_page_reader.assert_called_once_with(None)
+    repository.configure_activity_page_reader.assert_called_once_with(
+        None, readiness_window=None, documents=None
+    )
     compose.assert_called_once_with(configuration, repository, None)
     close()
     repository.close.assert_called_once_with()

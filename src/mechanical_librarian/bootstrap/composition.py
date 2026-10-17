@@ -55,6 +55,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
 from mechanical_librarian.adapters.library_services.audiobookshelf_setup import (
     AudiobookshelfSetupProbe,
 )
+from mechanical_librarian.adapters.persistence.activity_documents import (
+    ActivityDocuments,
+)
 from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.batch_manifest import (
     create as create_batch_manifest,
@@ -64,6 +67,9 @@ from mechanical_librarian.adapters.persistence.batch_manifest import (
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.field_effect_activity import (
+    activity_projector_event,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
     open_shadow_preview_repository,
@@ -430,6 +436,7 @@ class _StoreRuntimeActivation:
         settings_store: Any,
         repository_authority: object,
         operation_admission: OperationAdmission,
+        activity_documents: ActivityDocuments | None = None,
     ) -> None:
         self._operation_admission = operation_admission
         self._bootstrap = bootstrap
@@ -442,6 +449,11 @@ class _StoreRuntimeActivation:
         self._lock = threading.RLock()
         self._codex_auth = _CodexAuthLeaseCoordinator()
         self.activity_facts = ActivityFactStore()
+        # What root validation and Activity parsed, kept by exact bytes so a
+        # document parses once across cutovers (#1231).
+        self.activity_documents = (
+            ActivityDocuments() if activity_documents is None else activity_documents
+        )
         # Validated browse documents outlive Settings cutovers (#1226).
         self.validated_documents = ValidatedDocumentCache()
 
@@ -779,14 +791,26 @@ def compose_field_effect_activity_projection(
     )
 
 
+# Each projector step is bounded, so a stop is seen within one step. Past this
+# the join logs a warning; closing admission still waits out that step (#1231).
+_ACTIVITY_PROJECTOR_JOIN_SECONDS = 30.0
+
+
 def open_field_effect_activity_projection(
     configuration: ApplicationConfiguration,
     database_path: Path,
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     facts: ActivityFactStore | None = None,
+    readiness_window: threading.Lock | None = None,
+    documents: ActivityDocuments | None = None,
 ) -> tuple[ContinuousGuardedApplication, Callable[[], None]]:
-    """Open a generation-owned, independently admitted Activity reader."""
+    """Open a generation-owned, independently admitted Activity reader.
+
+    A reader given ``facts`` keeps them caught up on a background thread,
+    started once composition has bound its authority and stopped before its
+    admission closes, which waits for the one step in progress (#1231).
+    """
     admission = OperationAdmission()
     try:
         repository = open_repository(
@@ -800,20 +824,34 @@ def open_field_effect_activity_projection(
         admission.close()
         raise
 
+    stop = threading.Event()
+    projector = threading.Thread(
+        target=repository.run_activity_fact_projector,
+        args=(stop,),
+        name="activity-fact-projector",
+        daemon=True,
+    )
+
     def close() -> None:
+        stop.set()
+        if projector.ident is not None:
+            projector.join(_ACTIVITY_PROJECTOR_JOIN_SECONDS)
+            if projector.is_alive():
+                activity_projector_event("join_timeout", level="warning")
         admission.close()
         repository.close()
 
     try:
-        repository.configure_activity_page_reader(facts)
-        if facts is not None:
-            repository.initialize_activity_facts()
-        return (
-            compose_field_effect_activity_projection(
-                configuration, repository, provider_recovery
-            ),
-            close,
+        repository.configure_activity_page_reader(
+            facts, readiness_window=readiness_window, documents=documents
         )
+        application = compose_field_effect_activity_projection(
+            configuration, repository, provider_recovery
+        )
+        # Steps start only once composition has bound every authority.
+        if facts is not None:
+            projector.start()
+        return application, close
     except BaseException:
         close()
         raise
@@ -825,10 +863,15 @@ def open_field_effect_activity_readers(
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     facts: ActivityFactStore | None = None,
+    documents: ActivityDocuments | None = None,
 ) -> tuple[
     ContinuousGuardedApplication, ContinuousGuardedApplication, Callable[[], None]
 ]:
     """Own both independent readers as one generation resource, including failure."""
+    # Readiness holds this from its fresh check to its snapshot, and the
+    # history reader's background steps wait outside it (#1231).
+    window = threading.Lock()
+    held = ActivityDocuments() if documents is None else documents
     with ExitStack() as activation:
         history, close_history = open_field_effect_activity_projection(
             configuration,
@@ -836,10 +879,16 @@ def open_field_effect_activity_readers(
             authority,
             provider_recovery,
             facts if facts is not None else ActivityFactStore(),
+            window,
+            held,
         )
         activation.callback(close_history)
         permissions, close_permissions = open_field_effect_activity_projection(
-            configuration, database_path, authority
+            configuration,
+            database_path,
+            authority,
+            readiness_window=window,
+            documents=held,
         )
         activation.callback(close_permissions)
         return history, permissions, activation.pop_all().close
@@ -3432,6 +3481,7 @@ def compose_store_runtime_generation(
                     repository.authority,
                     provider_recovery,
                     activation.activity_facts if activation is not None else None,
+                    activation.activity_documents if activation is not None else None,
                 )
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
@@ -3740,12 +3790,19 @@ def run_review_server(
         if authority == "store":
             assert bootstrap is not None
             operation_admission = OperationAdmission()
+            activity_documents = (
+                None
+                if first_boot_mode
+                in {FirstBootMode.INITIALIZE_SETUP, FirstBootMode.RESUME_SETUP}
+                else ActivityDocuments()
+            )
             control = open_repository(
                 database_path,
                 create=True,
                 cross_thread=True,
                 admission=operation_admission,
                 recover_stale_bindings=True,
+                activity_documents=activity_documents,
             )
             setup_session_store: SQLiteReviewSessionRepository | None = None
             try:
@@ -3773,6 +3830,7 @@ def run_review_server(
                         control.owner_settings_store(),
                         control.authority,
                         operation_admission=operation_admission,
+                        activity_documents=activity_documents,
                     )
                     runtime, _ = compose_store_runtime_generation(
                         bootstrap,

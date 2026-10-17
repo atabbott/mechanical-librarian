@@ -69,6 +69,14 @@ def review_proposals(
         proposal = ProposalSet.from_json(proposal_document)
     except ProposalValueError as error:
         raise ReviewCaseValueError("review case proposal is invalid") from error
+    return _review_proposals(proposal_set_id, proposal, results)
+
+
+def _review_proposals(
+    proposal_set_id: str,
+    proposal: ProposalSet,
+    results: tuple[dict[str, object], ...] | list[dict[str, object]],
+) -> tuple[dict[str, object], ...]:
     if proposal.proposal_set_id != proposal_set_id or tuple(
         result.to_data() for result in proposal.results
     ) != tuple(results):
@@ -396,6 +404,8 @@ class ReviewCase:
     proposal_document: str
     disposition: str = "undecided"
     schema_version: str = REVIEW_CASE_SCHEMA
+    # What ``proposal_document`` validated as, so proposals need no reparse.
+    _proposal: ProposalSet = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if (
@@ -446,6 +456,7 @@ class ReviewCase:
             "_relationships",
             _freeze_json_object(self._relationships),
         )
+        object.__setattr__(self, "_proposal", proposal)
 
     @classmethod
     def create(cls, proposal_set: ProposalSet, report: MetadataReport) -> Self:
@@ -558,10 +569,15 @@ class ReviewCase:
         )
 
     @property
+    def proposal_set(self) -> ProposalSet:
+        """What ``proposal_document`` validated as; deeply immutable."""
+        return self._proposal
+
+    @property
     def proposals(self) -> tuple[dict[str, object], ...]:
         """Target-ordered immutable proposal projections with stable identities."""
-        return review_proposals(
-            self.proposal_set_id, self.proposal_document, list(self._results)
+        return _review_proposals(
+            self.proposal_set_id, self._proposal, list(self._results)
         )
 
     def to_data(self) -> dict[str, object]:

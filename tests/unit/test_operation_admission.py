@@ -4,15 +4,21 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections import deque
 from pathlib import Path
 
 import pytest
 
-from mechanical_librarian.adapters.persistence.transactions import TransactionScope
+from mechanical_librarian.adapters.persistence.transactions import (
+    LocalOperationLease,
+    TransactionScope,
+    _SerializationLock,
+)
 from mechanical_librarian.application.operation_admission import (
     AdmissionClosedError,
     OperationAdmission,
     WorkClass,
+    _Ticket,
 )
 
 
@@ -249,3 +255,107 @@ def test_failed_rollback_revokes_connection_before_releasing_admission() -> None
     assert not scope.started and not admission.held
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         connection.execute("SELECT 1")
+
+
+@pytest.mark.parametrize("cohort_open", [False, True])
+@pytest.mark.parametrize("role", ["foreground", "background"])
+def test_a_granted_try_leaves_the_state_a_granted_acquire_leaves(
+    role: WorkClass, cohort_open: bool
+) -> None:
+    """With nothing active or waiting, trying is acquiring without the queue."""
+    states = []
+    for take in ("acquire", "try_acquire"):
+        admission = OperationAdmission()
+        admission._cohort_open = cohort_open
+        with admission.classify(role):
+            assert getattr(admission, take)() in {None, True}
+        assert admission.held
+        active = admission._active
+        assert active is not None
+        states.append(
+            (
+                active.work_class,
+                admission._cohort_open,
+                list(admission._cohort),
+                admission._selected,
+                list(admission._waiting),
+                admission._local.depth,
+            )
+        )
+        admission.release()
+        assert admission._active is None
+    assert states[0] == states[1]
+
+
+def test_a_try_never_waits_or_precedes_queued_work() -> None:
+    admission = OperationAdmission()
+    entered, release = threading.Event(), threading.Event()
+
+    def owner() -> None:
+        with admission.enter():
+            entered.set()
+            assert release.wait(5)
+
+    thread = threading.Thread(target=owner)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        with admission.classify("background"):
+            assert admission.try_acquire() is False
+        assert not admission.held and admission._waiting == deque()
+    finally:
+        release.set()
+        thread.join(5)
+    # A queued ticket, even with no turn active, keeps its place.
+    admission._waiting.append(_Ticket("foreground"))
+    assert admission.try_acquire() is False
+    admission._waiting.clear()
+    assert admission.try_acquire() is True
+    # Within a held turn a try re-enters, as acquire does.
+    assert admission.try_acquire() is True
+    assert admission._local.depth == 2
+    admission.release()
+    closed = threading.Event()
+
+    def close() -> None:
+        admission.close()
+        closed.set()
+
+    closer = threading.Thread(target=close)
+    closer.start()
+    try:
+        assert not closed.wait(0.2)
+    finally:
+        admission.release()
+        closer.join(5)
+    assert closed.is_set()
+    with pytest.raises(AdmissionClosedError):
+        admission.try_acquire()
+
+
+def test_a_lease_try_returns_admission_when_its_owner_lock_is_busy() -> None:
+    admission = OperationAdmission()
+    lock = threading.RLock()
+    entered, release = threading.Event(), threading.Event()
+
+    def owner() -> None:
+        with lock:
+            entered.set()
+            assert release.wait(5)
+
+    thread = threading.Thread(target=owner)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        lease = LocalOperationLease(admission, _SerializationLock(lock))
+        assert lease.try_acquire() is False
+        assert not admission.held and admission._active is None
+        lease.release()
+    finally:
+        release.set()
+        thread.join(5)
+    lease = LocalOperationLease(admission, _SerializationLock(lock))
+    assert lease.try_acquire() is True
+    assert admission.held and lock._is_owned()
+    lease.release()
+    assert not admission.held and admission._active is None

@@ -1387,10 +1387,11 @@ alongside raw-byte hashes, so a normal commit cannot conceal a same-ID byte chan
 Affected canonical candidates are revalidated before search, including old and new
 missing/excluded dependencies. Schema drift or inability to admit the optimized
 representation returns to canonical query-scoped validation; overflow never returns
-partial counts. Typed authority objects do not persist between requests: the
-bounded parser reuse (256 entries each for reports, cases, proposals and
-outcomes) lives only for one construction or reprojection call and is dropped
-before the store publishes (#1218). Reprojected candidates reach SQL as one bound
+partial counts. Schema validation and both Activity readers of every generation
+reuse the metadata reports they validated through one store per store root,
+keyed by the SHA-256 of the exact document bytes, bounded at 48 Mi characters of
+report text and never keeping a refusal; a report is deeply immutable, so no
+reader can change what another receives (#1231). Reprojected candidates reach SQL as one bound
 JSON parameter; source kinds are code literals. A candidate identity containing
 NUL, or a persisted outcome that fails validation during a refresh, returns reads
 to the canonical query-scoped path, which refuses only the queries selecting it.
@@ -1427,6 +1428,27 @@ read that reaches the store delays a writer's commit; the canonical fallback and
 the appended-row witness remain unbounded. Readiness runs no catch-up between its
 fresh check and its snapshot. It changes no busy timeout, journal mode, result,
 refusal, or authority.
+
+The history reader's background projector runs those same bounded steps off the
+request path, at startup and after commits (#1231). It holds no write, credential,
+network or root-admission authority: it uses the reader's own query-only
+connection and local admission. It waits for none of the reader's cache lock,
+its admission and the readiness window. It decides whether to step, including
+its revision probe, under the first two alone, and holds the window only for a
+step, so it never steps while permission readiness is between its fresh check
+and its snapshot, and readiness never queues behind a probe or a history request
+holding the cache lock or the admission. Readiness can wait for the one step in
+progress, which may itself wait out a writer's commit as readiness's own check
+can. The check is neither cached nor deferred.
+A request still finds the store current at its own snapshot or finishes the
+remaining steps itself, so it serves no pending or stale facts. Its exit is
+logged as one value-free record, an unexpected error by type only. It starts
+only after composition binds the reader's authority, and shutdown and Settings
+cutover stop it before its reader closes, waiting for the step in progress to
+finish: one bounded step, never a request's catch-up. Past 30 s that wait logs a
+warning and continues; it is not cut short under a live step. A
+tampered report validated at startup refuses as before, because reuse is keyed
+by its exact bytes.
 
 Ordinary history returns required null backup-readiness and example fields. The
 separate authenticated permission-readiness endpoint checks the existing database
