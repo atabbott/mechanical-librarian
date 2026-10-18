@@ -1961,6 +1961,10 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 page.wait_for_url(f"{origin}/login")
                 assert persisted_sessions() == []
                 assert revocations() == [(1_100,)]
+                # A theme chosen at sign-in is remembered like the workspace's,
+                # so it survives the profile restart below (#1013).
+                page.get_by_role("button", name="Dark mode").click()
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 _login(page, origin)
                 assert persisted_sessions() == [(1_100, 1_400)]
                 context.close()
@@ -1972,6 +1976,7 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 expect(
                     page.get_by_role("heading", name="Works", exact=True)
                 ).to_be_visible()
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 assert persisted_sessions() == [(1_100, 1_400)]
                 policy = page.locator('a[href="/policy?section=identity"]')
                 expect(policy).to_be_attached()

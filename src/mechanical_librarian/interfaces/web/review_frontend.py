@@ -69,7 +69,7 @@ LOGIN_JS = r"""
     toggle.setAttribute('aria-pressed', String(theme === 'dark'));
     label.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
     if (!announce) return;
-    document.cookie = `ml_theme=${theme}; Path=/; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
+    document.cookie = `ml_theme=${theme}; Path=/; Max-Age=31536000; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
     status.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} mode enabled`;
   };
   // The saved choice, otherwise the system; only an explicit toggle saves one.

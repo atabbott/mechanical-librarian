@@ -687,6 +687,10 @@ describe('Library route', () => {
     // The reconciliation reads once, in the outcomes row; the header keeps the
     // short count it always carried rather than repeating it.
     expect(screen.getByText('1 ready · 0 could not finish · 2 in progress')).toBeVisible()
+    // Each count keeps its label on narrow screens; only separators break (#1013).
+    expect(document.querySelector('.preparation-outcomes strong')?.textContent).toBe(
+      '1\u00a0ready\u00a0· 0\u00a0could\u00a0not\u00a0finish\u00a0· 2\u00a0in\u00a0progress',
+    )
     expect(document.querySelector('.preparation-detail > header > strong')?.textContent).toBe(
       '1 ready',
     )

@@ -196,8 +196,15 @@ const boundedSearchName = (name: string) => {
   return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
 }
 
+// Each count stays with its label; lines break only after a separator (#1013).
 const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) =>
-  `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish · ${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} ${recoveryRequired ? 'retained' : 'in progress'}`
+  [
+    `${String(presentation.passage.ready)} ready`,
+    `${String(presentation.passage.failed)} could not finish`,
+    `${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} ${recoveryRequired ? 'retained' : 'in progress'}`,
+  ]
+    .map((pair) => pair.replaceAll(' ', '\u00a0'))
+    .join('\u00a0· ')
 const preparationPassage = [
   ['read', 'Read from library'],
   ['searches_finished', 'Searches finished'],
