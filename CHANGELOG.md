@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library's write-ready notice appears with the first rows after a restart
+  again, about 0.1 s after login instead of about 6 s at 8,000 decisions: it
+  reads only the consent state Activity's consent section states, from the same
+  projection, and no longer waits for Activity history to catch up. What it
+  offers, and Activity, are unchanged (#1236).
+
 - The workspace, sign-in and setup now share one theme rule: a saved choice,
   otherwise the system's light or dark setting. Library puts write readiness
   and Attention in one toolbar; phones get a one-row navigation, readable small

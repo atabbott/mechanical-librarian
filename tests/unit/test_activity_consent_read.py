@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -191,3 +191,28 @@ def test_the_consent_read_takes_no_activity_history_step(
     # The same guard stops Activity's own page, so it is not vacuous.
     with pytest.raises(AssertionError, match="touched Activity history"):
         value.history.activity()
+
+
+def test_the_consent_read_is_one_snapshot(
+    readers: tuple[sqlite3.Connection, list[str], _Readers],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its summary and prepared counts are read inside one read transaction."""
+    _, _, value = readers
+    repository = cast("SQLiteMetadataReportRepository", value.permissions._repository)
+    connection = repository._connection
+    seen: list[bool] = []
+    for name in (
+        "field_effect_activity_summary",
+        "pending_field_effect_decision_counts",
+    ):
+        read = getattr(repository, name)
+
+        def observed(read: Callable[[], object] = read) -> object:
+            seen.append(connection.in_transaction)
+            return read()
+
+        monkeypatch.setattr(repository, name, observed)
+    value.permissions.activity_consent()
+    assert seen == [True, True]
+    assert not connection.in_transaction

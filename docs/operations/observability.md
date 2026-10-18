@@ -31,6 +31,10 @@ display identity. A common suspension is grouped only when its persisted reason,
 connection, and scope match; Activity reports affected destinations and an honest
 indeterminate reconciliation state rather than an invented completion estimate.
 It does not add a retry command or duplicate the human decision queue in Attention.
+Authenticated `GET /api/v1/activity/consent-state` returns only the consent
+inputs of that projection -- waiting reasons, destination capabilities,
+configured libraries and a null backup readiness -- for Library's write-ready
+notice, without reading Activity history (#1236).
 An equal automatic candidate is shown as **No change required** from its
 identifier-only immutable ledger fact; it is not pending guarded work and no
 write guard or service operation is consulted.

@@ -539,7 +539,7 @@ query-only reader connection, reader-local request gate and generation-owned
 admission. The query-only PRAGMA is verified before
 use; description-authority binding only installs passive callbacks. Classification
 propagates to root and reader without granting a permit or authority. SQLite
-remains the sole transaction owner. Accepted Activity pages, transition and permission reads count before waiting
+remains the sole transaction owner. Accepted Activity pages, transition, permission and consent reads count before waiting
 for their reader lock. Drain refuses new reads and retains all
 dependencies on timeout; a later successful drain closes both local coordinators
 and readers before recovery dependencies and the owner, never another generation's shared root coordinator. FastAPI retains only
@@ -1473,6 +1473,16 @@ after the read. A refusal and the consistency check are never reused, and the
 consent grant and every claim still read the writable store afresh (#1223).
 The browser discards known-stale permission responses; command and preclaim
 checks remain authoritative, with no TTL or cross-system atomicity claim.
+
+Library's write-ready notice reads authenticated `GET /api/v1/activity/consent-state`
+instead of an Activity page (#1236). It returns only what the consent offer
+reads: the waiting reasons, destination capabilities, configured libraries and
+the null backup readiness ordinary history reports, projected by the same code
+as Activity's. The permission reader serves it in one read snapshot that takes
+no Activity facts, no catch-up and no consistency check, so neither history nor
+the readiness window delays it; that reader now carries the provider-recovery
+snapshot Activity's waiting reasons count. It grants nothing: enabling writes
+still opens the permission review and its fresh check.
 
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,
