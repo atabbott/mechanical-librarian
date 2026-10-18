@@ -207,6 +207,8 @@ decisions (#1231). All of it disappears with its runtime owner; canonical
 retention is unchanged.
 Browse also retains case and report documents, and facts derived from them, in
 process memory across requests under ADR-0083's bound; they are never persisted.
+Cover currentness documents, with the connection, library, item and report
+names validated from them, are retained the same way, up to 16,384 (#1237).
 The application database also holds `review_attention_facts` (#1232): for each
 current package and field that asks for the owner, the package's connection
 name, library and item keys, a report identifier and the field, and for a cover its consideration

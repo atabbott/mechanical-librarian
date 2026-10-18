@@ -58,7 +58,6 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
-    cover_currentness_from_facts,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
@@ -4512,17 +4511,15 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
 
                 cover_considerations._provider_fetching = provider_fetching
                 repository.bind_cover_consideration_currentness(
-                    lambda document, replay_reference: cover_currentness_from_facts(
-                        document, replay_reference, lambda *_identity: False
-                    )
+                    lambda *_identity: False
                 )
 
             if authority_change == "replay":
                 real_facts = metadata.cover_currentness_from_facts
 
-                def observed_facts(document, replay_reference, fetching):
+                def observed_facts(document, replay_reference, fetching, facts):
                     assert (
-                        real_facts(document, replay_reference, fetching)
+                        real_facts(document, replay_reference, fetching, facts)
                         == "refresh_required"
                     )
                     calls.append(document)
@@ -4580,17 +4577,13 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                     )
 
                 repository.bind_cover_consideration_currentness(
-                    lambda document, replay_reference: cover_currentness_from_facts(
-                        document,
-                        replay_reference,
-                        lambda connection, library, item, report_id: (
-                            recovery.cover_fetching(
-                                target_connection=connection,
-                                library=library,
-                                item=item,
-                                source_report_id=report_id,
-                            )
-                        ),
+                    lambda connection, library, item, report_id: (
+                        recovery.cover_fetching(
+                            target_connection=connection,
+                            library=library,
+                            item=item,
+                            source_report_id=report_id,
+                        )
                     )
                 )
 
@@ -4801,11 +4794,11 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
                 capture_returned.set()
             return value
 
-        def observed_facts(document, replay, fetching):
+        def observed_facts(document, replay, fetching, facts):
             assert admission.held and repository.operation_lock._is_owned()
             assert repository._cover_read_observation is not None
             evaluations.append(True)
-            return real_facts(document, replay, fetching)
+            return real_facts(document, replay, fetching, facts)
 
         def read():
             try:

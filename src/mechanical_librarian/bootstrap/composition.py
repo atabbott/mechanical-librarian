@@ -71,6 +71,7 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
     activity_projector_event,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
+    cover_currentness_cache,
     open_repository,
     open_shadow_preview_repository,
 )
@@ -166,7 +167,6 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
-    cover_currentness_from_facts,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
@@ -456,6 +456,8 @@ class _StoreRuntimeActivation:
         )
         # Validated browse documents outlive Settings cutovers (#1226).
         self.validated_documents = ValidatedDocumentCache()
+        # So do validated cover currentness facts (#1237).
+        self.cover_currentness = cover_currentness_cache()
 
     @property
     def dispatcher(self) -> MutableRuntimeDispatcher:
@@ -3468,6 +3470,7 @@ def compose_store_runtime_generation(
             review,
             reviewer_access,
             provider_recovery,
+            None if activation is None else activation.cover_currentness,
         )
         try:
             if field_application is not None:
@@ -4556,6 +4559,7 @@ def _compose_cover_considerations(
     review: ReviewWebConfiguration,
     reviewer_access: ReviewerAccessOperations,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    currentness: ValidatedDocumentCache | None = None,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
 
@@ -4601,20 +4605,17 @@ def _compose_cover_considerations(
     )
     repository.bind_owner_cover_validation(service.require_owner_cover)
     repository.bind_cover_consideration_currentness(
-        lambda document, replay_reference: cover_currentness_from_facts(
-            document,
-            replay_reference,
-            lambda connection, library, item, report: (
-                False
-                if provider_recovery is None
-                else provider_recovery.cover_fetching(
-                    target_connection=connection,
-                    library=library,
-                    item=item,
-                    source_report_id=report,
-                )
-            ),
-        )
+        lambda connection, library, item, report: (
+            False
+            if provider_recovery is None
+            else provider_recovery.cover_fetching(
+                target_connection=connection,
+                library=library,
+                item=item,
+                source_report_id=report,
+            )
+        ),
+        currentness,
     )
     service.update_policy(policy)
     repository.bind_cover_read_observation(

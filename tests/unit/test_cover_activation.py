@@ -581,15 +581,8 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         repository.bind_owner_cover_validation(
             consideration_service.require_owner_cover
         )
-        from mechanical_librarian.application.cover_consideration import (
-            cover_currentness_from_facts,
-        )
 
-        repository.bind_cover_consideration_currentness(
-            lambda document, replay: cover_currentness_from_facts(
-                document, replay, lambda *_: False
-            )
-        )
+        repository.bind_cover_consideration_currentness(lambda *_: False)
         consideration = consideration_service.ensure(
             review_case_id, report.to_json(), proposal
         )
@@ -665,11 +658,7 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         repository.bind_owner_cover_validation(
             consideration_service.require_owner_cover
         )
-        repository.bind_cover_consideration_currentness(
-            lambda document, replay: cover_currentness_from_facts(
-                document, replay, lambda *_: False
-            )
-        )
+        repository.bind_cover_consideration_currentness(lambda *_: False)
         snapshot = authority.resolve(decision)
         dependencies = PersistedEffectDependencies(repository)
         consent = FakeConsentCurrentness(

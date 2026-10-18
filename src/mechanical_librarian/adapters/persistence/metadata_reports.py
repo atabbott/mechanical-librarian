@@ -104,6 +104,8 @@ from mechanical_librarian.application.catalogue import (
     CatalogueError,
 )
 from mechanical_librarian.application.cover_consideration import (
+    CoverCurrentnessFacts,
+    cover_currentness_facts,
     cover_currentness_from_facts,
 )
 from mechanical_librarian.application.metadata_policy import (
@@ -125,6 +127,7 @@ from mechanical_librarian.application.review_web import (
     BrowseFetchingChanged,
     CoverReadObservation,
     CurrentReviewCaseSnapshot,
+    DocumentReuse,
     LibraryLabels,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
@@ -188,6 +191,17 @@ if sys.platform.startswith("linux"):
     import fcntl
 else:
     fcntl = None
+
+# Validated currentness facts are tuples of strings and a bool, so a stored
+# entry is already frozen and every reader may share it (#1237).
+_COVER_CURRENTNESS_REUSE = DocumentReuse[CoverCurrentnessFacts](
+    "cover_currentness", lambda facts: facts, lambda facts: facts
+)
+
+
+def cover_currentness_cache() -> ValidatedDocumentCache:
+    """A bounded memo of validated currentness facts (ADR-0083, #1237)."""
+    return ValidatedDocumentCache(16_384, 8 * 1024 * 1024)
 
 
 class SQLiteMetadataReportRepository(ConnectionScoped):
@@ -669,25 +683,40 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._cover_considerations.require_owner_cover = require_bound
 
     def bind_cover_consideration_currentness(
-        self, predicate: Callable[[str, str], str]
+        self,
+        provider_fetching: Callable[[str, str, str, str], bool],
+        validated: ValidatedDocumentCache | None = None,
     ) -> None:
-        """Bind the repository-local live-cover predicate used by review SQL."""
+        """Bind the repository-local live-cover predicate used by review SQL.
+
+        What a currentness document's exact bytes validate as is reused from
+        ``validated``, or from a memo of this binding's own; provider fetching
+        and the replay reference are read on every call (#1237).
+        """
+        memo = cover_currentness_cache() if validated is None else validated
+
+        def facts(document: str) -> CoverCurrentnessFacts | None:
+            held = memo.reused(_COVER_CURRENTNESS_REUSE, document)
+            if held is None:
+                held = cover_currentness_facts(document)
+                if held is not None:
+                    memo.retain(_COVER_CURRENTNESS_REUSE, held, document)
+            return held
 
         def current(document: object, replay_reference: object) -> int:
             if type(document) is not str or type(replay_reference) is not str:
                 return 0
             try:
                 observation = self._cover_read_observation
-                result = (
-                    predicate(document, replay_reference)
+                result = cover_currentness_from_facts(
+                    document,
+                    replay_reference,
+                    provider_fetching
                     if observation is None
-                    else cover_currentness_from_facts(
-                        document,
-                        replay_reference,
-                        lambda connection, library, item, report: (
-                            (connection, library, item, report) in observation[1]
-                        ),
-                    )
+                    else lambda connection, library, item, report: (
+                        (connection, library, item, report) in observation[1]
+                    ),
+                    facts,
                 )
                 return {
                     "inactive": 0,

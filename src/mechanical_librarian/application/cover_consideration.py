@@ -478,18 +478,15 @@ def cover_consideration_currentness_document(
         return "null"
 
 
-def cover_currentness_from_facts(
-    document: str,
-    replay_reference: str,
-    provider_fetching: Callable[[str, str, str, str], bool],
-) -> CoverConsiderationCurrentness:
-    """Read only validated immutable facts at the collection boundary."""
-    if (
-        type(document) is not str
-        or type(replay_reference) is not str
-        or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None
-    ):
-        return "inactive"
+# What one currentness document validates as: the target and report it names,
+# whether it was derived while the provider was fetching, and the replay
+# reference it was derived under. It is a function of the document's bytes
+# alone, so it may be reused for those exact bytes (#1237).
+CoverCurrentnessFacts = tuple[tuple[str, str, str, str], bool, str]
+
+
+def cover_currentness_facts(document: str) -> CoverCurrentnessFacts | None:
+    """Validate one currentness document, or None where it grants no authority."""
     try:
         value = json.loads(document)
         if (
@@ -520,17 +517,41 @@ def cover_currentness_from_facts(
             is None
             or canonical_packet_json(value) != document
         ):
-            return "inactive"
-        fetching = provider_fetching(
-            value["connection"], value["library"], value["item"], value["report_id"]
-        )
-        if type(fetching) is not bool or fetching != value["provider_fetching"]:
-            return "inactive"
+            return None
         return (
-            "current"
-            if value["replay_reference"] == replay_reference
-            else "refresh_required"
+            (value["connection"], value["library"], value["item"], value["report_id"]),
+            value["provider_fetching"],
+            value["replay_reference"],
         )
+    except Exception:
+        return None
+
+
+def cover_currentness_from_facts(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[str, str, str, str], bool],
+    facts: Callable[[str], CoverCurrentnessFacts | None] = cover_currentness_facts,
+) -> CoverConsiderationCurrentness:
+    """Read only validated immutable facts at the collection boundary.
+
+    ``facts`` may reuse what the same bytes validated as; fetching and the
+    replay reference are read on every call.
+    """
+    if (
+        type(document) is not str
+        or type(replay_reference) is not str
+        or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None
+    ):
+        return "inactive"
+    try:
+        validated = facts(document)
+        if validated is None:
+            return "inactive"
+        fetching = provider_fetching(*validated[0])
+        if type(fetching) is not bool or fetching != validated[1]:
+            return "inactive"
+        return "current" if validated[2] == replay_reference else "refresh_required"
     except Exception:
         return "inactive"
 
