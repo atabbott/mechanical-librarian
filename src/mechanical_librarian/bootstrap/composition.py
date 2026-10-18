@@ -3810,6 +3810,7 @@ def run_review_server(
                 activity_documents=activity_documents,
             )
             setup_session_store: SQLiteReviewSessionRepository | None = None
+            activation: _StoreRuntimeActivation | None = None
             try:
                 if first_boot_mode in {
                     FirstBootMode.INITIALIZE_SETUP,
@@ -3862,7 +3863,8 @@ def run_review_server(
                     runtime.close()
                     raise
             finally:
-                activation.close()
+                if activation is not None:
+                    activation.close()
                 if setup_session_store is not None:
                     setup_session_store.close()
                 control.close()

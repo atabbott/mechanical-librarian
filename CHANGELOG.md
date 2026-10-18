@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A failure while preparing the setup or store runtime at startup now reports
+  the original error instead of an unrelated internal one, and the database
+  connections opened for startup are still closed (#1235).
+
 - Library's write-ready notice appears with the first rows after a restart
   again, about 0.1 s after login instead of about 6 s at 8,000 decisions: it
   reads only the consent state Activity's consent section states, from the same
