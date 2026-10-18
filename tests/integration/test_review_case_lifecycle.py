@@ -892,7 +892,6 @@ def test_owner_confirmed_unknown_cover_lifecycle(
     from mechanical_librarian.application.configuration import ReviewWebConfiguration
     from mechanical_librarian.application.cover_consideration import (
         CoverConsiderationService,
-        cover_currentness_from_facts,
     )
     from mechanical_librarian.application.cover_policy import CoverPolicy
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
@@ -967,11 +966,7 @@ def test_owner_confirmed_unknown_cover_lifecycle(
         repo.bind_current_cover_policy(policy.reference)
         repo.bind_current_cover_replay(service.replay_reference)
         repo.bind_owner_cover_validation(service.require_owner_cover)
-        repo.bind_cover_consideration_currentness(
-            lambda document, replay: cover_currentness_from_facts(
-                document, replay, lambda *_args: fetching[0]
-            )
-        )
+        repo.bind_cover_consideration_currentness(lambda *_args: fetching[0])
         return service
 
     covers = bind(repository)

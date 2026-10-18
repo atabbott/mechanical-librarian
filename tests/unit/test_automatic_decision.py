@@ -1334,6 +1334,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="background-catch-up-predecessor-f46",
         ),
+        pytest.param(
+            "c56da1ff45f2749da3320c2737e7831247f877e9372996d662854a56a06ae00d",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="currentness-memo-predecessor-f19a",
+        ),
+        pytest.param(
+            "25c8b224c274dbe00636c5aca80401f8234ecbef7e3ad641129e863a0fb2deb1",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="currentness-memo-predecessor-f20",
+        ),
+        pytest.param(
+            "9a5dd89d0805be26d6e52f4a6223266a1128ab987b481ed985c462ebb09b0f1e",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="currentness-memo-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
