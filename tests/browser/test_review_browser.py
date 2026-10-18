@@ -1962,9 +1962,18 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 assert persisted_sessions() == []
                 assert revocations() == [(1_100,)]
                 # A theme chosen at sign-in is remembered like the workspace's,
-                # so it survives the profile restart below (#1013).
+                # so it survives the profile restart below (#1013). Until one is
+                # saved, sign-in follows the system live; afterwards it does not.
+                html = page.locator("html")
+                page.emulate_media(color_scheme="dark")
+                expect(html).to_have_attribute("data-theme", "dark")
+                page.emulate_media(color_scheme="light")
+                expect(html).to_have_attribute("data-theme", "light")
                 page.get_by_role("button", name="Dark mode").click()
-                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+                expect(html).to_have_attribute("data-theme", "dark")
+                page.emulate_media(color_scheme="dark")
+                page.emulate_media(color_scheme="light")
+                expect(html).to_have_attribute("data-theme", "dark")
                 _login(page, origin)
                 assert persisted_sessions() == [(1_100, 1_400)]
                 context.close()

@@ -80,11 +80,13 @@ beforeEach(() => {
 })
 
 describe('shipped first-run setup script', () => {
+  // With nothing saved the root stays unmarked, so the stylesheet's system
+  // fallback follows the system live; a saved choice marks it (#1013).
   it.each([
-    ['the system preference when no theme is saved', '', true, 'dark'],
+    ['the system preference when no theme is saved', '', true, undefined],
     ['a saved dark choice over a light system', 'ml_theme=dark', false, 'dark'],
     ['a saved light choice over a dark system', 'ml_theme=light', true, 'light'],
-    ['light when the system preference is not stated', '', false, 'light'],
+    ['the system when it prefers light and nothing is saved', '', false, undefined],
   ] as const)('follows %s', (_name, cookie, dark, theme) => {
     if (cookie) document.cookie = `${cookie}; Path=/`
     vi.stubGlobal(
@@ -103,12 +105,22 @@ describe('shipped first-run setup script', () => {
     try {
       runSetup()
       expect(document.documentElement.dataset.theme).toBe(theme)
-      expect(css).toContain(':root[data-theme=dark]{color-scheme:dark;--paper:#0f1512')
-      expect(css).toContain('@media(prefers-color-scheme:dark){:root:not([data-theme]){')
     } finally {
       document.cookie = 'ml_theme=; Path=/; Max-Age=0'
       delete document.documentElement.dataset.theme
     }
+  })
+
+  it('renders an unmarked root dark under a dark system with every saved-dark token', () => {
+    const tokens = (block: string | undefined) =>
+      (block ?? '').split(';').filter((declaration) => declaration.startsWith('--'))
+    const saved = /:root\[data-theme=dark\]\{([^}]*)\}/u.exec(css)?.[1]
+    const system =
+      /@media\(prefers-color-scheme:dark\)\{:root:not\(\[data-theme\]\)\{([^}]*)\}/u.exec(css)?.[1]
+    expect(tokens(saved).length).toBeGreaterThan(0)
+    expect(tokens(system)).toEqual(tokens(saved))
+    // The unmarked root already declares both schemes, so the system picks dark.
+    expect(css).toMatch(/^:root\{color-scheme:light dark;/u)
   })
 
   it('creates first-owner access with confirmation and the issued nonce', async () => {
