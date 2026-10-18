@@ -1841,6 +1841,15 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "example",
             )
         }
+    if path == "/api/v1/activity/consent-state":
+        value = _activity(query)
+        return {
+            "backup_ready": None,
+            **{
+                key: value[key]
+                for key in ("capabilities", "configured_libraries", "waiting")
+            },
+        }
     if path == "/api/v1/activity":
         return {**_activity(query), "backup_ready": None, "example": None}
     if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):

@@ -1192,10 +1192,13 @@ class ReviewApplication:
 
     def activity_permission_readiness(self) -> dict[str, object]:
         with self._accepted_read():
-            application = self._permission_projection
-            if application is None:
-                application = self._continuous_application()
-            return application.activity_permission_readiness()
+            return self._permission_reader().activity_permission_readiness()
+
+    def activity_consent(self) -> dict[str, object]:
+        # The permission reader borrows no Activity facts, so neither the
+        # history catch-up nor a history request can delay this read (#1236).
+        with self._accepted_read():
+            return self._permission_reader().activity_consent()
 
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
@@ -1436,6 +1439,10 @@ class ReviewApplication:
             raise ReviewApplicationError("unavailable")
         self._preparation.set_paused(paused)
         return self.preparation()
+
+    def _permission_reader(self) -> ContinuousGuardedApplication:
+        application = self._permission_projection
+        return self._continuous_application() if application is None else application
 
     def _continuous_application(self) -> ContinuousGuardedApplication:
         if not isinstance(self._field_application, ContinuousGuardedApplication):

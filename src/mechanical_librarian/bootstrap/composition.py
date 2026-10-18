@@ -885,10 +885,12 @@ def open_field_effect_activity_readers(
             held,
         )
         activation.callback(close_history)
+        # The consent read states provider recovery as Activity does (#1236).
         permissions, close_permissions = open_field_effect_activity_projection(
             configuration,
             database_path,
             authority,
+            provider_recovery,
             readiness_window=window,
             documents=held,
         )

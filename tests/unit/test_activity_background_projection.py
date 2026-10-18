@@ -21,6 +21,7 @@ from collections import Counter
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock, patch
 
@@ -39,6 +40,9 @@ from mechanical_librarian.adapters.persistence.activity_facts import (
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
+)
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    SQLiteProviderRecoveryStore,
 )
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -910,6 +914,74 @@ def test_readiness_never_waits_for_a_request_holding_the_history_reader(
             time.sleep(0.2)
             start = time.monotonic()
             assert _readiness(checker) == _readiness(ledger.canonical)
+            assert time.monotonic() - start < 1.5
+            assert holder.is_alive()
+        finally:
+            release.set()
+            holder.join(10)
+    finally:
+        close()
+
+
+def test_the_consent_read_never_waits_for_the_history_reader(
+    ledger: _Ledger,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Library's notice reads the permission reader, which borrows no facts.
+
+    Before #1236 it read an Activity page, so after a restart it waited for the
+    whole catch-up a history request holds the cache lock for. Nor does it take
+    the readiness window the two readers share. It states the
+    same provider recovery Activity states, from the same store.
+    """
+    _poll(monkeypatch)
+    recovery = ({"state": "dormant", "affected_count": 2, "next_eligible_at": None},)
+    history, permissions, close = open_field_effect_activity_readers(
+        _configuration(),
+        ledger.path,
+        ledger.root.authority,
+        cast(
+            "SQLiteProviderRecoveryStore",
+            SimpleNamespace(activity_snapshot=lambda: recovery),
+        ),
+        ActivityFactStore(),
+    )
+    reader = cast("SQLiteMetadataReportRepository", history._repository)
+    try:
+        assert _settled(reader)
+        page = history.activity()
+        expected = {
+            key: page[key]
+            for key in (
+                "backup_ready",
+                "capabilities",
+                "configured_libraries",
+                "waiting",
+            )
+        }
+        held_for_recovery = cast("dict[str, int]", page["waiting"])["held_for_recovery"]
+        assert held_for_recovery == len(cast("list[object]", page["suspensions"])) + 2
+        held, release = threading.Event(), threading.Event()
+        activity = reader._field_effect_activity
+        # Readiness's window is shared by both readers; the consent read never
+        # takes it, so neither a history request nor readiness delays it.
+        borrowed = cast("SQLiteMetadataReportRepository", permissions._repository)
+        assert (
+            activity._readiness_window
+            is borrowed._field_effect_activity._readiness_window
+        )
+
+        def request() -> None:
+            with activity._activity_page_cache_lock, activity._readiness_window:
+                held.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=request)
+        holder.start()
+        try:
+            assert held.wait(10)
+            start = time.monotonic()
+            assert permissions.activity_consent() == expected
             assert time.monotonic() - start < 1.5
             assert holder.is_alive()
         finally:

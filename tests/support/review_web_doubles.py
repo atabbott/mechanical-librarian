@@ -1052,6 +1052,18 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             },
         }
 
+    def activity_consent(self):
+        history = self.activity()
+        return {
+            key: history[key]
+            for key in (
+                "backup_ready",
+                "capabilities",
+                "configured_libraries",
+                "waiting",
+            )
+        }
+
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
     ) -> dict[str, object]:

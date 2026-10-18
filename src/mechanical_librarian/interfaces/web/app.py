@@ -1133,6 +1133,13 @@ class _ActivityPermissionReadiness(_ClosedModel):
     example: _ActivityExample | None
 
 
+class _ActivityConsentState(_ClosedModel):
+    backup_ready: None
+    capabilities: list[_ActivityCapability]
+    configured_libraries: list[_ActivityLibrary]
+    waiting: _ActivityWaitingReasons
+
+
 class _ActivityResponse(_ClosedModel):
     backup_ready: None
     capabilities: list[_ActivityCapability]
@@ -3421,6 +3428,19 @@ def _register_case_and_effect_routes(
         _require_session(sessions, ml_session)
         return _ActivityPermissionReadiness.model_validate(
             field_effect_call(application.activity_permission_readiness)
+        )
+
+    @app.get(
+        "/api/v1/activity/consent-state",
+        response_model=_ActivityConsentState,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def activity_consent_state(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _ActivityConsentState:
+        _require_session(sessions, ml_session)
+        return _ActivityConsentState.model_validate(
+            field_effect_call(application.activity_consent)
         )
 
     @app.get(

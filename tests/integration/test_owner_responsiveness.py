@@ -1576,6 +1576,10 @@ def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) 
             "configured_libraries",
             "capabilities",
         }
+        # The composed application's notice read states Activity's offer (#1236).
+        keys = ("backup_ready", "capabilities", "configured_libraries", "waiting")
+        consent = fixture.application.activity_consent()
+        assert consent == {key: activity[key] for key in keys}
     finally:
         fixture.close()
 

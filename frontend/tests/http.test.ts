@@ -10,6 +10,7 @@ import {
   ReviewApiClient,
   mapCaseDetail,
   mapActivity,
+  mapActivityConsent,
   mapActivityPermissionReadiness,
   mapAttention,
   derivePolicyDraftDisplay,
@@ -3076,4 +3077,49 @@ describe('deferred Activity permission contract', () => {
       ).toThrow(ApiError)
     },
   )
+
+  it('reads the narrow consent response as exactly what Activity carries (#1236)', async () => {
+    // Distinct counts, so no reason can be dropped or swapped unseen.
+    const waiting = {
+      applying: 1,
+      awaiting_permission: 2,
+      held_for_recovery: 3,
+      retrying: 4,
+      scheduled: 5,
+    }
+    const { backup_ready, capabilities, configured_libraries } = currentActivity
+    const response = { backup_ready, capabilities, configured_libraries, waiting }
+    const history = mapActivity({ ...currentActivity, waiting })
+    expect(mapActivityConsent(response)).toEqual({
+      backup_ready: history.backup_ready,
+      capabilities: history.capabilities,
+      configured_libraries: history.configured_libraries,
+      waiting: history.waiting,
+    })
+    for (const key of Object.keys(response))
+      expect(() =>
+        mapActivityConsent(Object.fromEntries(Object.entries(response).filter(([k]) => k !== key))),
+      ).toThrow(ApiError)
+    for (const invalid of [
+      { ...response, events: [] },
+      { ...response, backup_ready: true },
+      { ...response, capabilities: {} },
+      { ...response, configured_libraries: [{ connection: 'primary' }] },
+      { ...response, waiting: { ...waiting, scheduled: -1 } },
+      { ...response, waiting: { ...waiting, applying: undefined } },
+      { ...response, waiting: null },
+    ])
+      expect(() => mapActivityConsent(invalid)).toThrow(ApiError)
+    // A waiting value that is not a record is refused as such by both reads.
+    for (const waiting of [null, [], 'scheduled'])
+      for (const read of [
+        () => mapActivity({ ...currentActivity, waiting }),
+        () => mapActivityConsent({ ...response, waiting }),
+      ])
+        expect(read).toThrow(expect.objectContaining({ code: 'invalid_activity_waiting' }))
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(response))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    expect(await client.getActivityConsent()).toEqual(mapActivityConsent(response))
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/activity/consent-state')
+  })
 })

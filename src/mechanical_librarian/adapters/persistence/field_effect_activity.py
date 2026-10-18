@@ -2608,6 +2608,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         with self._activity_page_cache_lock:
             return self._caught_up(lambda: self._activity_snapshot(call))
 
+    def field_effect_consent_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        """Run the consent read in one exact snapshot, catching up no facts.
+
+        Its inputs are canonical rows, so it neither waits for nor runs the
+        Activity catch-up, and takes no fresh consistency check (#1236).
+        """
+        with self._activity_page_cache_lock:
+            return self._activity_snapshot(call)
+
     def _activity_snapshot(
         self, call: Callable[[], dict[str, object]]
     ) -> dict[str, object]:
