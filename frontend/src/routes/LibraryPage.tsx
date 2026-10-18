@@ -3393,7 +3393,6 @@ export default function LibraryPage({
           tabIndex={-1}
           data-route-focus="true"
         >
-          <WriteReadyNotice />
           <button
             className="attention-toggle"
             type="button"
@@ -3402,20 +3401,29 @@ export default function LibraryPage({
           >
             Attention <strong>{data ? data.counts.attention : '…'}</strong>
           </button>
+          <WriteReadyNotice />
         </header>
-      ) : null}
-      {hasSelection && search.attention !== 'open' ? (
+      ) : (
         <div className="compact-workspace-controls">
-          <button className="compact-workspace-back" type="button" onClick={clearSelection}>
-            Back to works
-          </button>
-          <button type="button" aria-label="Attention queue" onClick={() => changeAttention(true)}>
-            Attention queue <strong aria-hidden="true">{data ? data.counts.attention : '…'}</strong>
-          </button>
+          {search.attention !== 'open' ? (
+            <>
+              <button className="compact-workspace-back" type="button" onClick={clearSelection}>
+                Back to works
+              </button>
+              <button
+                type="button"
+                aria-label="Attention queue"
+                onClick={() => changeAttention(true)}
+              >
+                Attention queue{' '}
+                <strong aria-hidden="true">{data ? data.counts.attention : '…'}</strong>
+              </button>
+            </>
+          ) : null}
+          <WriteReadyNotice />
         </div>
-      ) : null}
+      )}
       <PreparationNotice routeIdentity={routeIdentity} />
-      {hasSelection ? <WriteReadyNotice /> : null}
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >

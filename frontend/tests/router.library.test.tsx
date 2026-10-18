@@ -8533,13 +8533,13 @@ describe('Library route', () => {
     ).toBeVisible()
     // Preparation still running does not withdraw the action.
     expect(screen.getByText(/while preparation continues/u)).toBeVisible()
-    // Status and the Attention decision share one toolbar, notice first (#1013).
+    // The Attention decision and status share one toolbar, toggle first, so
+    // focus order matches the visual order at every width (#1013).
     const controls = document.querySelector('header[aria-label="Library controls"]')
     const notices = document.querySelectorAll('.cm-library-handoff')
-    const toggle = screen.getByRole('button', { name: /^Attention/u })
     expect(notices).toHaveLength(1)
-    expect(controls?.firstElementChild).toBe(notices[0])
-    expect(controls?.lastElementChild).toBe(toggle)
+    expect(controls?.firstElementChild).toBe(screen.getByRole('button', { name: /^Attention/u }))
+    expect(controls?.lastElementChild).toBe(notices[0])
     await user.click(screen.getByRole('link', { name: 'Review write permissions' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
@@ -8551,14 +8551,21 @@ describe('Library route', () => {
       grants: [{ library: 'fiction', destinations: ['title'] }],
     })
 
-    // Selected work keeps exactly one notice, outside the absent toolbar.
+    // Selected work keeps the same order in its own toolbar, with one notice.
     cleanup()
     renderRoute('/library?lens=all&preview=case-1', http)
     expect(
       await screen.findByRole('heading', { name: '9 works are ready to browse. Writes are off.' }),
     ).toBeVisible()
-    expect(document.querySelectorAll('.cm-library-handoff')).toHaveLength(1)
+    const selectedNotices = document.querySelectorAll('.cm-library-handoff')
+    const selectedControls = document.querySelector('.compact-workspace-controls')
+    expect(selectedNotices).toHaveLength(1)
     expect(document.querySelector('header[aria-label="Library controls"]')).toBeNull()
+    expect(
+      [...(selectedControls?.children ?? [])].map(
+        (child) => child.getAttribute('aria-label') ?? child.className,
+      ),
+    ).toEqual(['compact-workspace-back', 'Attention queue', selectedNotices[0]?.className])
   })
 })
 
