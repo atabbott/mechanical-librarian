@@ -438,7 +438,9 @@ def test_browse_with_a_warm_memo_equals_browse_without_one(
     states: dict[str, set[str]] = {"fixture": compare()}
     assert _held(memo) >= len(cases)
     with _counted_parses() as parsed:
-        for observation in observations()[1:]:
+        for observation in observations():
+            if observation is None:
+                continue
             repository.bind_cover_read_observation(repeat(observation).__next__)
             with repository.browse_observation():
                 _browse(repository)
