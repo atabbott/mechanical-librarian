@@ -108,3 +108,52 @@ matches what parsing returns, type for type. Mutants that key the pair by the
 case alone, retain a refusal as a success, share mutable objects, or drop
 eviction are each killed. The composition test holds generation wiring to the
 activation's one cache.
+
+## Amendment: cover currentness facts (#1237)
+
+`ml_cover_consideration_current` re-validated each row's currentness document on
+every call of every browse statement: about 19 ms of a 28.6 ms Library
+statement and of a 38 ms Attention population statement at 8,000 decisions on
+SQLite 3.40.1, held inside root admission. Its answer has these inputs:
+
+- **The currentness document.** What it validates as (connection, library, item,
+  report, whether it was prepared while fetching, its replay reference) is a
+  pure function of its bytes; considerations are append-only, so other content
+  arrives as other bytes. This is the only part reused.
+- **Provider fetching.** The browse observation's captured identities, or the
+  provider recovery store when no observation is installed. It changes with no
+  revision in this database, so it is read on every call.
+- **The replay reference.** A statement parameter, bound per read from the
+  observation or the generation's authority; compared on every call.
+- **Whether an observation is installed.** Read on every call.
+
+Settings, the cover policy, suspensions, decisions, the clock and the database
+revision are not inputs: the statements test those in SQL.
+
+A second `ValidatedDocumentCache` holds the validated facts by the exact
+document string: 16,384 entries and 8 MiB of key bytes, least recently used
+first. A document that does not validate, or a call that fails, is never
+retained and answers 0 as before. The store activation owns it across Settings
+cutovers, since nothing in it depends on one; every other composition holds its
+own. The browse cache's bound is unchanged.
+
+Results, ordering and refusals are unchanged. Measured on SQLite 3.40.1,
+interleaved with 96deda67 over two rounds, at 2,300 works and again after 8,000
+owner decisions:
+
+- The function's share of a statement, the statement with and without its
+  call: Library 16.9 to 7.4 ms and Attention 18.2 to 12.3 ms at 8,000
+  decisions; Library 4.1 to 1.6 ms and Attention 19.4 to 5.4 ms at 2,300 works.
+  What remains is the call itself, once per candidate row.
+- Serial p50: Library, search and the lens 27-29 to 25 ms and Attention 55-57
+  to 45 ms at 2,300 works; 54-56 to 44-46 ms and 51-53 to 41-42 ms at 8,000
+  decisions.
+- With five readers and the writer, p50 at 8,000 decisions: Library and
+  Attention 350-354 to 292-293 ms, the lens 201-225 to 176-185 ms; at 2,300
+  works the routes move within 4-15 ms. Root admission stays 98-99% occupied by
+  the writer and readers; a Library read holds it for 63 ms instead of 93 ms at
+  the p50 with 8,000 decisions, 33 ms instead of 39 ms at 2,300 works.
+- The memo held 2,299 entries, one for each current consideration, in 2.4 MiB,
+  about 1.07 KiB an entry, so about 17 MiB when full. Steady resident memory
+  moved within run-to-run noise: 350-379 MiB before and 355-377 MiB after at
+  2,300 works, 435-477 and 438-479 MiB at 8,000 decisions.

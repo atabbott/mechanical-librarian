@@ -277,6 +277,18 @@ bounded directly: measured retention was 2.4 to 3.8 times the key bytes, about
 process, is never persisted, and holds only
 documents the single owner's own library already stored. There is no second
 tenant whose data could reach another, and nothing in it is a credential.
+#1237 applies the same rule to cover currentness. What a consideration's
+currentness document validates as (its connection, library, item and report
+names, whether it was prepared while the provider was fetching, and its replay
+reference) is retained for that exact document string in a second cache of the
+same kind, bounded at 16,384 entries and 8 MiB of key bytes and evicting least
+recently used first. Provider fetching, the browse observation and the bound
+replay reference are still read on every call, so a change to any of them is
+answered at once. A document that does not validate, or a call that fails, is
+never retained and still answers 0. Measured retention is about 1.1 KiB an entry,
+2.4 MiB at 2,300 works and about 17 MiB when full. The store activation
+owns it across Settings cutovers, as it owns the browse cache; it is never
+persisted and holds no credential.
 
 A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,

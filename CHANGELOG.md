@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library, search, the attention lens and Attention spend less time on each
+  work's cover check: what each stored cover check says is read once per
+  process and reused while its bytes are unchanged, while provider and reviewer
+  state are still read on every request. At 8,000 decisions Library answers in
+  about 45 ms instead of 55 ms. Results, order and refusals are unchanged (#1237).
+
 - Activity opens in about 1 s after a large batch of new history, and a restart
   answers in about half the time (12 s instead of 23 s at 8,000 decisions):
   catch-up runs in the background and checked reports are kept, costing about
