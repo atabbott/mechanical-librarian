@@ -300,7 +300,12 @@ readiness's check and its snapshot, and readiness waits at most for the one step
 already in progress, never for a probe or for a history request, such as a
 transition, holding the cache lock or the admission. That step can still wait
 out SQLite's busy timeout behind a writer's commit, as readiness's own check
-can. The check is neither memoised nor deferred.
+can. The check is neither memoised nor deferred. Library's consent read
+(#1236) shares the permission reader's lock and cache lock with readiness, so it
+is readiness's second bounded wait: one consent read already queued, itself a
+single snapshot that can wait on the provider-recovery store and out SQLite's
+busy timeout as it begins. A consent read issued during readiness likewise waits
+for readiness's fresh check.
 
 **Writer and cost.** Each background step is one bounded read transaction, so a
 writer waits for at most one step, as #1225 bounds a request's steps. The

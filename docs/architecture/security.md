@@ -1479,10 +1479,15 @@ instead of an Activity page (#1236). It returns only what the consent offer
 reads: the waiting reasons, destination capabilities, configured libraries and
 the null backup readiness ordinary history reports, projected by the same code
 as Activity's. The permission reader serves it in one read snapshot that takes
-no Activity facts, no catch-up and no consistency check, so neither history nor
-the readiness window delays it; that reader now carries the provider-recovery
-snapshot Activity's waiting reasons count. It grants nothing: enabling writes
-still opens the permission review and its fresh check.
+no Activity facts, no catch-up, no consistency check and never the readiness
+window, so neither history nor the projector delays it. It does share that
+reader's locks with readiness, so each can wait once for the other: the consent
+read for readiness's fresh check, and readiness for one consent read in
+progress, a bounded wait ADR-0082 records. That reader now carries the
+provider-recovery snapshot Activity's waiting reasons count. The read does not
+inherit the history page's refusals, such as a failed cleanup-count check; the
+notice links into an Activity page that shows its own refusal. It grants
+nothing: enabling writes still opens the permission review and its fresh check.
 
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,

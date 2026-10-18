@@ -3110,6 +3110,13 @@ describe('deferred Activity permission contract', () => {
       { ...response, waiting: null },
     ])
       expect(() => mapActivityConsent(invalid)).toThrow(ApiError)
+    // A waiting value that is not a record is refused as such by both reads.
+    for (const waiting of [null, [], 'scheduled'])
+      for (const read of [
+        () => mapActivity({ ...currentActivity, waiting }),
+        () => mapActivityConsent({ ...response, waiting }),
+      ])
+        expect(read).toThrow(expect.objectContaining({ code: 'invalid_activity_waiting' }))
     const fetchMock = vi.fn<typeof fetch>(async () => Response.json(response))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
     expect(await client.getActivityConsent()).toEqual(mapActivityConsent(response))
