@@ -3079,9 +3079,17 @@ describe('deferred Activity permission contract', () => {
   )
 
   it('reads the narrow consent response as exactly what Activity carries (#1236)', async () => {
-    const { backup_ready, capabilities, configured_libraries, waiting } = currentActivity
+    // Distinct counts, so no reason can be dropped or swapped unseen.
+    const waiting = {
+      applying: 1,
+      awaiting_permission: 2,
+      held_for_recovery: 3,
+      retrying: 4,
+      scheduled: 5,
+    }
+    const { backup_ready, capabilities, configured_libraries } = currentActivity
     const response = { backup_ready, capabilities, configured_libraries, waiting }
-    const history = mapActivity(currentActivity)
+    const history = mapActivity({ ...currentActivity, waiting })
     expect(mapActivityConsent(response)).toEqual({
       backup_ready: history.backup_ready,
       capabilities: history.capabilities,

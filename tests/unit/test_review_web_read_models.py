@@ -555,6 +555,10 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     )
     assert web.client.get("/api/v1/activity/permission-readiness").status_code == 401
     assert web.client.get("/api/v1/activity/consent-state").status_code == 401
+    # A cookie is not a session: the read authenticates it (#1236).
+    web.client.cookies.set("ml_session", "malformed")
+    assert web.client.get("/api/v1/activity/consent-state").status_code == 401
+    web.client.cookies.clear()
     login = web.login()
     page = web.client.get("/activity")
     assert page.status_code == 200
