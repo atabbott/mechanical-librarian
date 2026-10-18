@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, nullcontext
@@ -31,7 +32,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.cover_consideration import (
-    cover_currentness_from_facts,
+    CoverConsiderationCurrentness,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
@@ -94,9 +95,68 @@ _REFUSED = (
 )
 
 
+# The oracle is the implementation as it stood before #1237, so a change to
+# the candidate's own derivation cannot also change what it is compared with.
+def _pre_1237_currentness(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[str, str, str, str], bool],
+) -> CoverConsiderationCurrentness:
+    """`cover_currentness_from_facts` at 96deda67, verbatim but for its name."""
+    if (
+        type(document) is not str
+        or type(replay_reference) is not str
+        or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None
+    ):
+        return "inactive"
+    try:
+        value = json.loads(document)
+        if (
+            type(value) is not dict
+            or set(value)
+            != {
+                "connection",
+                "library",
+                "item",
+                "report_id",
+                "provider_fetching",
+                "manual_ready",
+                "replay_reference",
+            }
+            or any(
+                type(value[key]) is not str or not value[key]
+                for key in (
+                    "connection",
+                    "library",
+                    "item",
+                    "report_id",
+                    "replay_reference",
+                )
+            )
+            or type(value["manual_ready"]) is not bool
+            or type(value["provider_fetching"]) is not bool
+            or re.fullmatch(r"cover_replay_[0-9a-f]{64}", value["replay_reference"])
+            is None
+            or canonical_packet_json(value) != document
+        ):
+            return "inactive"
+        fetching = provider_fetching(
+            value["connection"], value["library"], value["item"], value["report_id"]
+        )
+        if type(fetching) is not bool or fetching != value["provider_fetching"]:
+            return "inactive"
+        return (
+            "current"
+            if value["replay_reference"] == replay_reference
+            else "refresh_required"
+        )
+    except Exception:
+        return "inactive"
+
+
 def _uncached(document: str, replay: str, fetching: Fetching) -> int:
     """The answer the function gave before #1237, through no memo at all."""
-    return _ANSWER[cover_currentness_from_facts(document, replay, fetching)]
+    return _ANSWER[_pre_1237_currentness(document, replay, fetching)]
 
 
 def _ask(repository: SQLiteMetadataReportRepository, document: str, replay: str):
@@ -216,6 +276,38 @@ def test_a_changed_input_is_never_served_from_the_memo(tmp_path: Path) -> None:
             repository.bind_cover_consideration_currentness(lambda *_: False, memo)
             assert _ask(repository, document, _REPLAY) == 1
             assert parsed == [document, superseding]
+    finally:
+        repository.close()
+
+
+def test_absolute_answers_need_a_valid_replay_and_a_bool_fetching_answer(
+    tmp_path: Path,
+) -> None:
+    """Answers stated outright, independent of any oracle."""
+    repository = open_repository(tmp_path / "application.sqlite3")
+    answer: list[object] = [False]
+    try:
+        repository.bind_cover_consideration_currentness(
+            lambda *_identity: answer[0],  # type: ignore[arg-type]
+            cover_currentness_cache(),
+        )
+        idle, fetching = _facts("a"), _facts("b", fetching=True)
+        for _attempt in range(2):
+            assert _ask(repository, idle, _REPLAY) == 1
+            assert _ask(repository, idle, _OTHER_REPLAY) == 2
+            # A replay reference that is not one grants nothing, even where
+            # the document's own reference has the same malformed text.
+            for replay in ("replay", "cover_replay_short", "cover_replay_" + "1" * 63):
+                assert _ask(repository, idle, replay) == 0
+                assert _ask(repository, idle.replace(_REPLAY, replay), replay) == 0
+            # Only a bool from the provider counts; 0 and 1 compare equal to
+            # False and True but are not answers.
+            for value, document in ((0, idle), (1, fetching), ("unknown", idle)):
+                answer[0] = value
+                assert _ask(repository, document, _REPLAY) == 0, value
+            answer[0] = True
+            assert _ask(repository, fetching, _REPLAY) == 1
+            answer[0] = False
     finally:
         repository.close()
 

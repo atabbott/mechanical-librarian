@@ -148,11 +148,19 @@ owner decisions:
 - Serial p50: Library, search and the lens 27-29 to 25 ms and Attention 55-57
   to 45 ms at 2,300 works; 54-56 to 44-46 ms and 51-53 to 41-42 ms at 8,000
   decisions.
-- With five readers and the writer, p50 at 8,000 decisions: Library and
-  Attention 350-354 to 292-293 ms, the lens 201-225 to 176-185 ms; at 2,300
-  works the routes move within 4-15 ms. Root admission stays 98-99% occupied by
-  the writer and readers; a Library read holds it for 63 ms instead of 93 ms at
-  the p50 with 8,000 decisions, 33 ms instead of 39 ms at 2,300 works.
+- With five readers and the writer at 8,000 decisions, p50 (p95): Library
+  352-354 (537-1,029) to 292 (404-502) ms, Attention 350-354 (641-1,035) to 293
+  (470-504) ms, the lens 201-225 (258-640) to 176-185 (263-584) ms and search
+  141-198 (223-280) to 150-161 (223-306) ms.
+- With five readers and the writer at 2,300 works, p50: Library 171-174 to
+  157-167 ms, search 136-144 to 124-142 ms and Attention 175-177 to 160-168 ms;
+  the lens is flat, 104-108 against 98-113 ms. One of the candidate's two rounds
+  had a p95 tail of 358-383 ms on Library, search and Attention against
+  194-218 ms before, and 162-190 ms in its other round; the stalls spanned the
+  whole round, and the review judged them noise.
+- Root admission stays 98-99% occupied by the writer and readers; a Library
+  read holds it for 63 ms instead of 93 ms at the p50 with 8,000 decisions, and
+  33 ms instead of 39 ms at 2,300 works.
 - The memo held 2,299 entries, one for each current consideration, in 2.4 MiB,
   about 1.07 KiB an entry, so about 17 MiB when full. Steady resident memory
   moved within run-to-run noise: 350-379 MiB before and 355-377 MiB after at
