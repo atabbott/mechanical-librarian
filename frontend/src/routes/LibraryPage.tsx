@@ -196,8 +196,15 @@ const boundedSearchName = (name: string) => {
   return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
 }
 
+// Each count stays with its label; lines break only after a separator (#1013).
 const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) =>
-  `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish · ${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} ${recoveryRequired ? 'retained' : 'in progress'}`
+  [
+    `${String(presentation.passage.ready)} ready`,
+    `${String(presentation.passage.failed)} could not finish`,
+    `${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} ${recoveryRequired ? 'retained' : 'in progress'}`,
+  ]
+    .map((pair) => pair.replaceAll(' ', '\u00a0'))
+    .join('\u00a0· ')
 const preparationPassage = [
   ['read', 'Read from library'],
   ['searches_finished', 'Searches finished'],
@@ -549,7 +556,7 @@ const effectSummary = (field: ReviewField) => {
       ? {
           state: 'Choice recorded',
           detail:
-            'Activity shows the current status of this description change. Backup, currentness, validation and read-back checks remain required for an external update.',
+            "Activity shows this change's progress; safety checks run before any update is sent.",
         }
       : field.effectCapability === 'unavailable'
         ? {
@@ -564,9 +571,9 @@ const effectSummary = (field: ReviewField) => {
   }
   return field.effectCapability === 'allowed'
     ? {
-        state: 'Eligible for guarded planning',
+        state: 'Eligible for a library update',
         detail:
-          'External updates require backup, currentness, validation and read-back checks. Activity shows any prepared changes.',
+          'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
       }
     : field.effectCapability === 'unavailable'
       ? {
@@ -3401,20 +3408,29 @@ export default function LibraryPage({
           >
             Attention <strong>{data ? data.counts.attention : '…'}</strong>
           </button>
+          <WriteReadyNotice />
         </header>
-      ) : null}
-      {hasSelection && search.attention !== 'open' ? (
+      ) : (
         <div className="compact-workspace-controls">
-          <button className="compact-workspace-back" type="button" onClick={clearSelection}>
-            Back to works
-          </button>
-          <button type="button" aria-label="Attention queue" onClick={() => changeAttention(true)}>
-            Attention queue <strong aria-hidden="true">{data ? data.counts.attention : '…'}</strong>
-          </button>
+          {search.attention !== 'open' ? (
+            <>
+              <button className="compact-workspace-back" type="button" onClick={clearSelection}>
+                Back to works
+              </button>
+              <button
+                type="button"
+                aria-label="Attention queue"
+                onClick={() => changeAttention(true)}
+              >
+                Attention queue{' '}
+                <strong aria-hidden="true">{data ? data.counts.attention : '…'}</strong>
+              </button>
+            </>
+          ) : null}
+          <WriteReadyNotice />
         </div>
-      ) : null}
+      )}
       <PreparationNotice routeIdentity={routeIdentity} />
-      <WriteReadyNotice />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >

@@ -737,9 +737,27 @@ export const PreparationActivity = () => {
   )
 }
 
+// One rule with setup and sign-in: the owner's saved choice, otherwise the
+// system, followed live until a choice is saved (#1013).
+const savedTheme = () => /(?:^|; )ml_theme=(light|dark)(?:;|$)/.exec(document.cookie)?.[1]
+const systemMedia = () => {
+  const query = '(prefers-color-scheme: dark)'
+  const media = typeof window.matchMedia === 'function' ? window.matchMedia(query) : null
+  return media?.media === query ? media : null
+}
 const ThemeControl = () => {
-  const cookie = /(?:^|; )ml_theme=(light|dark)(?:;|$)/.exec(document.cookie)?.[1]
-  const [theme, setTheme] = useState(cookie === 'dark' ? 'dark' : 'light')
+  const [theme, setTheme] = useState(
+    () => savedTheme() ?? (systemMedia()?.matches ? 'dark' : 'light'),
+  )
+  useEffect(() => {
+    const media = systemMedia()
+    if (savedTheme() || typeof media?.addEventListener !== 'function') return
+    const follow = (event: MediaQueryListEvent) => {
+      if (!savedTheme()) setTheme(event.matches ? 'dark' : 'light')
+    }
+    media.addEventListener('change', follow)
+    return () => media.removeEventListener('change', follow)
+  }, [])
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.documentElement.style.colorScheme = theme

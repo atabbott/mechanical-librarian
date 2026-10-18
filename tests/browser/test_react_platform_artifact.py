@@ -626,8 +626,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert "http" not in notice.inner_text()
                 for width, expected_columns in (
                     (1440, 3),
-                    (1044, 2),
-                    (800, 1),
+                    (1025, 3),
+                    (1024, 2),
+                    (761, 2),
+                    (760, 1),
                     (390, 1),
                 ):
                     page.set_viewport_size({"width": width, "height": 844})
@@ -722,6 +724,40 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     )
                 ).to_have_count(1)
                 assert page.url.endswith(path), f"{path} restored as {page.url}"
+                if section == "unsupported":
+                    # The review-mode note wraps whole and never pushes an
+                    # option past its card's clipped edge (#1013).
+                    flag = page.get_by_role("region", name="Explicit-content flag")
+                    note = flag.locator(".cm-policy-control-heading small")
+                    expect(note).to_have_text(
+                        "Off until you choose a review mode · Automatic not supported"
+                    )
+                    options = flag.get_by_role(
+                        "group", name="Explicit-content flag review mode"
+                    ).get_by_role("button")
+                    expect(options).to_have_count(3)
+                    for width in (1440, 1024, 768, 390, 320):
+                        page.set_viewport_size({"width": width, "height": 844})
+                        assert note.evaluate(
+                            "node => node.scrollWidth <= node.clientWidth"
+                        ), f"review-mode note truncated at {width}px"
+                        _fits_its_container(
+                            page,
+                            ".cm-policy-field:has(.cm-policy-control-heading small)",
+                            width,
+                        )
+                        for option in options.all():
+                            assert option.evaluate(
+                                """node => { const box = node.getBoundingClientRect();
+                                for (let a = node.parentElement; a; a = a.parentElement) {
+                                  if (getComputedStyle(a).overflowX === 'visible') continue;
+                                  const edge = a.getBoundingClientRect();
+                                  if (box.left < edge.left - 0.5 || box.right > edge.right + 0.5)
+                                    return false;
+                                }
+                                return true; }"""
+                            ), f"{option.inner_text()} clipped at {width}px"
+                    page.set_viewport_size({"width": 390, "height": 844})
             assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
             assert page.locator("img, script:not([src])").count() == 0
             assert page.evaluate("() => window.__metadataExecuted") is None
@@ -2416,7 +2452,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator("#policy-identity")).to_be_focused()
         subtitle_policy = page.get_by_role("region", name="Subtitle", exact=True)
         expect(subtitle_policy.get_by_role("button", name="Automatic")).to_be_enabled()
-        assert "Automatic mode not supported" not in subtitle_policy.inner_text()
+        assert "Automatic not supported" not in subtitle_policy.inner_text()
         expect(
             subtitle_policy.get_by_role("combobox", name="Subtitle representation")
         ).to_have_text("Fill only when empty")

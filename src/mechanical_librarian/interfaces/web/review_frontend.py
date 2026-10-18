@@ -68,11 +68,21 @@ LOGIN_JS = r"""
     root.dataset.theme = theme;
     toggle.setAttribute('aria-pressed', String(theme === 'dark'));
     label.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
-    document.cookie = `ml_theme=${theme}; Path=/; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
-    if (announce) status.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} mode enabled`;
+    if (!announce) return;
+    document.cookie = `ml_theme=${theme}; Path=/; Max-Age=31536000; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
+    status.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} mode enabled`;
   };
-  const saved = document.cookie.split('; ').find((part) => part.startsWith('ml_theme='));
-  setTheme(saved?.split('=')[1] === 'dark' ? 'dark' : 'light', false);
+  // The saved choice, otherwise the system, followed live until a toggle saves one.
+  const savedPattern = /(?:^|; )ml_theme=(light|dark)(?:;|$)/;
+  const saved = savedPattern.exec(document.cookie)?.[1];
+  const query = '(prefers-color-scheme: dark)';
+  const media = typeof matchMedia === 'function' ? matchMedia(query) : null;
+  setTheme(saved ?? (media?.media === query && media.matches ? 'dark' : 'light'), false);
+  if (!saved && media?.media === query && typeof media.addEventListener === 'function') {
+    media.addEventListener('change', (event) => {
+      if (!savedPattern.test(document.cookie)) setTheme(event.matches ? 'dark' : 'light', false);
+    });
+  }
   toggle.addEventListener('click', () => setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark', true));
   document.querySelector('#login').addEventListener('submit', async (event) => {
     event.preventDefault();

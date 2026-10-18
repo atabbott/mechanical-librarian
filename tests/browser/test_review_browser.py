@@ -1961,6 +1961,19 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 page.wait_for_url(f"{origin}/login")
                 assert persisted_sessions() == []
                 assert revocations() == [(1_100,)]
+                # A theme chosen at sign-in is remembered like the workspace's,
+                # so it survives the profile restart below (#1013). Until one is
+                # saved, sign-in follows the system live; afterwards it does not.
+                html = page.locator("html")
+                page.emulate_media(color_scheme="dark")
+                expect(html).to_have_attribute("data-theme", "dark")
+                page.emulate_media(color_scheme="light")
+                expect(html).to_have_attribute("data-theme", "light")
+                page.get_by_role("button", name="Dark mode").click()
+                expect(html).to_have_attribute("data-theme", "dark")
+                page.emulate_media(color_scheme="dark")
+                page.emulate_media(color_scheme="light")
+                expect(html).to_have_attribute("data-theme", "dark")
                 _login(page, origin)
                 assert persisted_sessions() == [(1_100, 1_400)]
                 context.close()
@@ -1972,6 +1985,7 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 expect(
                     page.get_by_role("heading", name="Works", exact=True)
                 ).to_be_visible()
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 assert persisted_sessions() == [(1_100, 1_400)]
                 policy = page.locator('a[href="/policy?section=identity"]')
                 expect(policy).to_be_attached()
@@ -7706,6 +7720,12 @@ def test_same_name_series_owner_journey(media, destination):
                 expect(choice).to_have_attribute("aria-pressed", "true")
             elif destination == "automatic":
                 expect(choice).to_have_attribute("aria-pressed", "true")
+                if media == "ebook":
+                    expect(
+                        page.get_by_text(
+                            "Selected from Hardcover to fill an empty Series field"
+                        )
+                    ).to_be_visible()
             else:
                 expect(choice).to_have_count(0)
             page.get_by_role("link", name="Evidence", exact=True).click()

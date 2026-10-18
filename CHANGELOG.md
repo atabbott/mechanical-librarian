@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The workspace, sign-in and setup now share one theme rule: a saved choice,
+  otherwise the system's light or dark setting. Library puts write readiness
+  and Attention in one toolbar; phones get a one-row navigation, readable small
+  text and no letter-by-letter wrapping; routine update, reviewer, preference
+  and Activity copy is shorter (#1013).
+
 - Library, search, the attention lens and Attention spend less time on each
   work's cover check: what each stored cover check says is read once per
   process and reused while its bytes are unchanged, while provider and reviewer

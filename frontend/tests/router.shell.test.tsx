@@ -1,7 +1,7 @@
 import { hasBackgroundDebt } from '../src/queryWork'
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -1575,5 +1575,109 @@ describe('Application shell', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('Theme rule', () => {
+  const systemDark = () =>
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query === '(prefers-color-scheme: dark)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    )
+  afterEach(() => {
+    document.cookie = 'ml_theme=; Path=/; Max-Age=0'
+    delete document.documentElement.dataset.theme
+  })
+
+  it('follows a dark system preference when no theme is saved', async () => {
+    systemDark()
+    renderRoute('/library?lens=all')
+    const toggle = await screen.findByRole('button', { name: 'Use light mode' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.cookie).not.toContain('ml_theme=')
+    await userEvent.setup().click(toggle)
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(document.cookie).toContain('ml_theme=light')
+  })
+
+  it('keeps a saved choice over the system preference', async () => {
+    systemDark()
+    document.cookie = 'ml_theme=light; Path=/'
+    renderRoute('/library?lens=all')
+    expect(await screen.findByRole('button', { name: 'Use dark mode' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(document.documentElement.dataset.theme).toBe('light')
+  })
+
+  // A system that changes while the page is open, with listeners that work.
+  const liveSystem = () => {
+    type Listener = (event: { matches: boolean }) => void
+    const listeners = new Set<Listener>()
+    const dark = {
+      matches: false,
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: (_type: string, listener: Listener) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: Listener) => listeners.delete(listener),
+    }
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) =>
+        query === dark.media
+          ? dark
+          : {
+              matches: false,
+              media: query,
+              addEventListener: vi.fn(),
+              removeEventListener: vi.fn(),
+            },
+      ),
+    )
+    return {
+      listeners,
+      change: (matches: boolean) => {
+        act(() => {
+          dark.matches = matches
+          listeners.forEach((listener) => {
+            listener({ matches })
+          })
+        })
+      },
+    }
+  }
+
+  it('follows the system live until a choice is saved', async () => {
+    const system = liveSystem()
+    renderRoute('/library?lens=all')
+    await screen.findByRole('button', { name: 'Use dark mode' })
+    expect(document.documentElement.dataset.theme).toBe('light')
+    system.change(true)
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(screen.getByRole('button', { name: 'Use light mode' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Use light mode' }))
+    expect(document.cookie).toContain('ml_theme=light')
+    system.change(true)
+    expect(document.documentElement.dataset.theme).toBe('light')
+    cleanup()
+    expect(system.listeners.size).toBe(0)
+  })
+
+  it('leaves a saved choice alone when the system changes', async () => {
+    const system = liveSystem()
+    document.cookie = 'ml_theme=light; Path=/'
+    renderRoute('/library?lens=all')
+    await screen.findByRole('button', { name: 'Use dark mode' })
+    system.change(true)
+    expect(document.documentElement.dataset.theme).toBe('light')
   })
 })

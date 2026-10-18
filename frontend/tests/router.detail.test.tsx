@@ -90,7 +90,7 @@ describe('Library review ownership', () => {
     expect(within(section).getByText('Runtime short of provider')).toBeVisible()
     expect(
       within(section).getByText(
-        'Expected rule: The local running time is within 90 seconds of the running time the matched edition states.',
+        'The local running time is within 90 seconds of the running time the matched edition states.',
       ),
     ).toBeVisible()
     expect(

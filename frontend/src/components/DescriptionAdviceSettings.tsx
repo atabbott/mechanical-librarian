@@ -120,8 +120,8 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         {mutation.isSuccess
           ? 'Description preferences saved.'
           : changed
-            ? 'Description preferences have unsaved changes. Policy draft changes are saved separately.'
-            : 'Description preferences are saved separately from the policy draft.'}
+            ? 'Unsaved. These save with their own button, not with the policy.'
+            : 'Saved with their own button, not with the policy.'}
       </p>
       {mutation.isError || stale ? (
         <div role="alert">

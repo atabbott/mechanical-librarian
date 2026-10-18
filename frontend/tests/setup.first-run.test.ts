@@ -80,6 +80,49 @@ beforeEach(() => {
 })
 
 describe('shipped first-run setup script', () => {
+  // With nothing saved the root stays unmarked, so the stylesheet's system
+  // fallback follows the system live; a saved choice marks it (#1013).
+  it.each([
+    ['the system preference when no theme is saved', '', true, undefined],
+    ['a saved dark choice over a light system', 'ml_theme=dark', false, 'dark'],
+    ['a saved light choice over a dark system', 'ml_theme=light', true, 'light'],
+    ['the system when it prefers light and nothing is saved', '', false, undefined],
+  ] as const)('follows %s', (_name, cookie, dark, theme) => {
+    if (cookie) document.cookie = `${cookie}; Path=/`
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: dark && query === '(prefers-color-scheme: dark)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response({ claimed: true, nonce: 'n'.repeat(32), revision: 1 })),
+    )
+    try {
+      runSetup()
+      expect(document.documentElement.dataset.theme).toBe(theme)
+    } finally {
+      document.cookie = 'ml_theme=; Path=/; Max-Age=0'
+      delete document.documentElement.dataset.theme
+    }
+  })
+
+  it('renders an unmarked root dark under a dark system with every saved-dark token', () => {
+    const tokens = (block: string | undefined) =>
+      (block ?? '').split(';').filter((declaration) => declaration.startsWith('--'))
+    const saved = /:root\[data-theme=dark\]\{([^}]*)\}/u.exec(css)?.[1]
+    const system =
+      /@media\(prefers-color-scheme:dark\)\{:root:not\(\[data-theme\]\)\{([^}]*)\}/u.exec(css)?.[1]
+    expect(tokens(saved).length).toBeGreaterThan(0)
+    expect(tokens(system)).toEqual(tokens(saved))
+    // The unmarked root already declares both schemes, so the system picks dark.
+    expect(css).toMatch(/^:root\{color-scheme:light dark;/u)
+  })
+
   it('creates first-owner access with confirmation and the issued nonce', async () => {
     let claimed = false
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -1179,8 +1222,11 @@ describe('shipped first-run setup script', () => {
     runSetup()
 
     expect(await screen.findByText(/Recommended advisory cover reviewer/u)).toBeVisible()
-    expect(screen.getByText(/paid; cover observations remain advisory/u)).toBeVisible()
-    expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
+    expect(screen.getByText(/\(recommended; paid; observations remain advice\)/u)).toBeVisible()
+    expect(screen.getByText('Other OpenRouter models:')).toBeVisible()
+    expect(
+      screen.getByText(/\(free; listed by OpenRouter as capable, not yet qualified here\)/u),
+    ).toBeVisible()
     expect(
       screen.getByText(
         '20 requests/minute; 50 requests/day before $10 in lifetime purchases or 1000 after.',

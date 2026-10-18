@@ -687,6 +687,10 @@ describe('Library route', () => {
     // The reconciliation reads once, in the outcomes row; the header keeps the
     // short count it always carried rather than repeating it.
     expect(screen.getByText('1 ready · 0 could not finish · 2 in progress')).toBeVisible()
+    // Each count keeps its label on narrow screens; only separators break (#1013).
+    expect(document.querySelector('.preparation-outcomes strong')?.textContent).toBe(
+      '1\u00a0ready\u00a0· 0\u00a0could\u00a0not\u00a0finish\u00a0· 2\u00a0in\u00a0progress',
+    )
     expect(document.querySelector('.preparation-detail > header > strong')?.textContent).toBe(
       '1 ready',
     )
@@ -1750,7 +1754,7 @@ describe('Library route', () => {
       ).toBeVisible()
       expect(
         within(health).getByText(
-          'Expected rule: The local running time is within 90 seconds of the running time the matched edition states.',
+          'The local running time is within 90 seconds of the running time the matched edition states.',
         ),
       ).toBeVisible()
       expect(
@@ -2491,7 +2495,7 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('button', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
-    expect(screen.getByText('Eligible for guarded planning')).toBeVisible()
+    expect(screen.getByText('Eligible for a library update')).toBeVisible()
     const evidenceButtons = screen.getAllByRole('button', { name: /Evidence for/u })
     const currentEvidence = evidenceButtons[0]
     const proposedEvidence = evidenceButtons[1]
@@ -8533,6 +8537,13 @@ describe('Library route', () => {
     ).toBeVisible()
     // Preparation still running does not withdraw the action.
     expect(screen.getByText(/while preparation continues/u)).toBeVisible()
+    // The Attention decision and status share one toolbar, toggle first, so
+    // focus order matches the visual order at every width (#1013).
+    const controls = document.querySelector('header[aria-label="Library controls"]')
+    const notices = document.querySelectorAll('.cm-library-handoff')
+    expect(notices).toHaveLength(1)
+    expect(controls?.firstElementChild).toBe(screen.getByRole('button', { name: /^Attention/u }))
+    expect(controls?.lastElementChild).toBe(notices[0])
     await user.click(screen.getByRole('link', { name: 'Review write permissions' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
@@ -8543,6 +8554,22 @@ describe('Library route', () => {
     expect(http.activityCommand).toHaveBeenCalledWith('activity/consent', {
       grants: [{ library: 'fiction', destinations: ['title'] }],
     })
+
+    // Selected work keeps the same order in its own toolbar, with one notice.
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1', http)
+    expect(
+      await screen.findByRole('heading', { name: '9 works are ready to browse. Writes are off.' }),
+    ).toBeVisible()
+    const selectedNotices = document.querySelectorAll('.cm-library-handoff')
+    const selectedControls = document.querySelector('.compact-workspace-controls')
+    expect(selectedNotices).toHaveLength(1)
+    expect(document.querySelector('header[aria-label="Library controls"]')).toBeNull()
+    expect(
+      [...(selectedControls?.children ?? [])].map(
+        (child) => child.getAttribute('aria-label') ?? child.className,
+      ),
+    ).toEqual(['compact-workspace-back', 'Attention queue', selectedNotices[0]?.className])
   })
 })
 
@@ -9115,7 +9142,8 @@ it.each(['human', 'automatic_policy'] as const)(
         outcome: null,
         capability: 'allowed',
         heading: 'Choice recorded',
-        detail: 'Activity shows the current status of this description change.',
+        detail:
+          "Activity shows this change's progress; safety checks run before any update is sent.",
       },
       {
         current: true,
@@ -9223,8 +9251,11 @@ it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
       getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
     })
     const panel = await screen.findByLabelText('External update status')
-    expect(panel).toHaveTextContent('Eligible for guarded planning')
-    expect(panel).toHaveTextContent('Activity shows any prepared changes.')
+    expect(panel).toHaveTextContent('Eligible for a library update')
+    expect(panel).toHaveTextContent(
+      'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
+    )
+    expect(panel).not.toHaveTextContent('queues nothing')
     expect(panel).not.toHaveTextContent('Choice recorded')
     expect(panel).not.toHaveTextContent('Applied and verified')
   },

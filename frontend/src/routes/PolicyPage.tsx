@@ -1460,10 +1460,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       <div className="cm-policy-mode-control">
                         <span className="cm-policy-control-heading">
                           <strong>Review mode</strong>
-                          {destination === 'unsupported' ? (
-                            <small>Off until you choose a review mode</small>
+                          {destination === 'unsupported' || !automaticAvailable ? (
+                            <small>
+                              {[
+                                destination === 'unsupported'
+                                  ? 'Off until you choose a review mode'
+                                  : null,
+                                automaticAvailable ? null : 'Automatic not supported',
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </small>
                           ) : null}
-                          {automaticAvailable ? null : <small>Automatic mode not supported</small>}
                         </span>
                         <SegmentedControl
                           label={`${field.label} review mode`}
