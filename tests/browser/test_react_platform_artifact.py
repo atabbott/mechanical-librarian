@@ -626,8 +626,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert "http" not in notice.inner_text()
                 for width, expected_columns in (
                     (1440, 3),
-                    (1044, 2),
-                    (800, 1),
+                    (1025, 3),
+                    (1024, 2),
+                    (761, 2),
+                    (760, 1),
                     (390, 1),
                 ):
                     page.set_viewport_size({"width": width, "height": 844})
@@ -2416,7 +2418,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator("#policy-identity")).to_be_focused()
         subtitle_policy = page.get_by_role("region", name="Subtitle", exact=True)
         expect(subtitle_policy.get_by_role("button", name="Automatic")).to_be_enabled()
-        assert "Automatic mode not supported" not in subtitle_policy.inner_text()
+        assert "Automatic not supported" not in subtitle_policy.inner_text()
         expect(
             subtitle_policy.get_by_role("combobox", name="Subtitle representation")
         ).to_have_text("Fill only when empty")

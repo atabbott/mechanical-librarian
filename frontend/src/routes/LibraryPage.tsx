@@ -549,7 +549,7 @@ const effectSummary = (field: ReviewField) => {
       ? {
           state: 'Choice recorded',
           detail:
-            'Activity shows the current status of this description change. Backup, currentness, validation and read-back checks remain required for an external update.',
+            "Activity shows this change's progress; safety checks run before any update is sent.",
         }
       : field.effectCapability === 'unavailable'
         ? {
@@ -564,9 +564,9 @@ const effectSummary = (field: ReviewField) => {
   }
   return field.effectCapability === 'allowed'
     ? {
-        state: 'Eligible for guarded planning',
+        state: 'Eligible for a library update',
         detail:
-          'External updates require backup, currentness, validation and read-back checks. Activity shows any prepared changes.',
+          'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
       }
     : field.effectCapability === 'unavailable'
       ? {
@@ -3393,6 +3393,7 @@ export default function LibraryPage({
           tabIndex={-1}
           data-route-focus="true"
         >
+          <WriteReadyNotice />
           <button
             className="attention-toggle"
             type="button"
@@ -3414,7 +3415,7 @@ export default function LibraryPage({
         </div>
       ) : null}
       <PreparationNotice routeIdentity={routeIdentity} />
-      <WriteReadyNotice />
+      {hasSelection ? <WriteReadyNotice /> : null}
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >

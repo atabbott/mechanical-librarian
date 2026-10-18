@@ -80,6 +80,37 @@ beforeEach(() => {
 })
 
 describe('shipped first-run setup script', () => {
+  it.each([
+    ['the system preference when no theme is saved', '', true, 'dark'],
+    ['a saved dark choice over a light system', 'ml_theme=dark', false, 'dark'],
+    ['a saved light choice over a dark system', 'ml_theme=light', true, 'light'],
+    ['light when the system preference is not stated', '', false, 'light'],
+  ] as const)('follows %s', (_name, cookie, dark, theme) => {
+    if (cookie) document.cookie = `${cookie}; Path=/`
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: dark && query === '(prefers-color-scheme: dark)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response({ claimed: true, nonce: 'n'.repeat(32), revision: 1 })),
+    )
+    try {
+      runSetup()
+      expect(document.documentElement.dataset.theme).toBe(theme)
+      expect(css).toContain(':root[data-theme=dark]{color-scheme:dark;--paper:#0f1512')
+      expect(css).toContain('@media(prefers-color-scheme:dark){:root:not([data-theme]){')
+    } finally {
+      document.cookie = 'ml_theme=; Path=/; Max-Age=0'
+      delete document.documentElement.dataset.theme
+    }
+  })
+
   it('creates first-owner access with confirmation and the issued nonce', async () => {
     let claimed = false
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -1179,8 +1210,11 @@ describe('shipped first-run setup script', () => {
     runSetup()
 
     expect(await screen.findByText(/Recommended advisory cover reviewer/u)).toBeVisible()
-    expect(screen.getByText(/paid; cover observations remain advisory/u)).toBeVisible()
-    expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
+    expect(screen.getByText(/\(recommended; paid; observations remain advice\)/u)).toBeVisible()
+    expect(screen.getByText('Other OpenRouter models:')).toBeVisible()
+    expect(
+      screen.getByText(/\(free; listed by OpenRouter as capable, not yet qualified here\)/u),
+    ).toBeVisible()
     expect(
       screen.getByText(
         '20 requests/minute; 50 requests/day before $10 in lifetime purchases or 1000 after.',

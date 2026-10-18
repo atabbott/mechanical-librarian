@@ -180,7 +180,13 @@ function PageJump({
     </label>
   )
 }
-function ActivityTransitions({ eventId }: { eventId: string }) {
+function ActivityTransitions({
+  eventId,
+  advice,
+}: {
+  eventId: string
+  advice: 'description' | 'cover' | undefined
+}) {
   const { http } = useReviewContext()
   const [extraPages, setExtraPages] = useState<ActivityTransitionView[][]>([])
   const [hasMore, setHasMore] = useState(false)
@@ -218,11 +224,12 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
   return (
     <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
       {events.map((transition) => (
+        // One flow; the no-break space keeps each separator off a line start.
         <li key={transition.event_id}>
           <time>
-            {dateParts(transition.occurred_at).day} · {dateParts(transition.occurred_at).time}
+            {dateParts(transition.occurred_at).day}&nbsp;· {dateParts(transition.occurred_at).time}
           </time>
-          <span> · {stateLabel(transition.state)}</span>
+          &nbsp;· {stateLabel(transition.state, advice)}
         </li>
       ))}
       {moreAvailable ? (
@@ -813,6 +820,14 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               const changeId = event.change_id || event.event_id
               const expanded = expandedId === changeId
               const currentDate = dateParts(event.occurred_at)
+              const advice =
+                event.destination === 'description' && event.origin === 'adviser'
+                  ? 'description'
+                  : event.event_type !== 'policy' &&
+                      event.destination === 'cover' &&
+                      ['adviser', 'automatic_pipeline', 'owner_retry'].includes(event.origin)
+                    ? 'cover'
+                    : undefined
               const previousDate = index
                 ? dateParts(data.events[index - 1]?.occurred_at ?? null).day
                 : null
@@ -839,20 +854,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     <div className="cm-activity-change" aria-label={event.change_detail}>
                       <span aria-hidden="true">{event.change}</span>
                     </div>
-                    <b>
-                      {stateLabel(
-                        event.state,
-                        event.destination === 'description' && event.origin === 'adviser'
-                          ? 'description'
-                          : event.event_type !== 'policy' &&
-                              event.destination === 'cover' &&
-                              ['adviser', 'automatic_pipeline', 'owner_retry'].includes(
-                                event.origin,
-                              )
-                            ? 'cover'
-                            : undefined,
-                      )}
-                    </b>
+                    <b>{stateLabel(event.state, advice)}</b>
                     <button
                       aria-expanded={expanded}
                       aria-controls={`activity-evidence-${event.event_id}`}
@@ -904,7 +906,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                           ))}
                         </dl>
                         {event.transition_id ? (
-                          <ActivityTransitions key={changeId} eventId={event.transition_id} />
+                          <ActivityTransitions
+                            key={changeId}
+                            eventId={event.transition_id}
+                            advice={advice}
+                          />
                         ) : null}
                       </div>
                     ) : null}

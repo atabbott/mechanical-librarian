@@ -40,7 +40,7 @@ export function MediaHealth({
                   {observation.expected ? ` · expected ${observation.expected}` : ''}
                 </span>
               ) : null}
-              <p>Expected rule: {observation.bound}</p>
+              <p>{observation.bound}</p>
               <small>Read from {[...new Set(observation.cited.map(citation))].join(', ')}</small>
             </li>
           ))}

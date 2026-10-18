@@ -131,10 +131,12 @@ def same_name_series_report(
                 lambda request: httpx.Response(200, json=payload)
             )
         ) as client:
-            observation = (
+            # Production binds the configured adapter as authority (#1013).
+            observation = replace(
                 HardcoverMetadataProvider("hardcover", client, 65_536)
                 .observe(plan)
-                .observation
+                .observation,
+                authority="hardcover",
             )
         report = _report(fields=fields, local_claims=local, providers=(observation,))
     return MetadataReport.from_json(report.to_json())

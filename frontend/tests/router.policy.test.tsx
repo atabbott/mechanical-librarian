@@ -202,7 +202,7 @@ describe('Policy route', () => {
     const user = userEvent.setup()
     const asin = await screen.findByRole('region', { name: 'ASIN' })
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
-    expect(within(asin).queryByText('Automatic mode not supported')).toBeNull()
+    expect(within(asin).queryByText('Automatic not supported')).toBeNull()
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
       'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
     )
@@ -217,7 +217,7 @@ describe('Policy route', () => {
     // still the owner's.
     await user.click(within(asin).getByRole('combobox', { name: 'ASIN representation' }))
     await user.click(screen.getByRole('option', { name: 'Ebook manifestation' }))
-    expect(within(asin).getByText('Automatic mode not supported')).toBeVisible()
+    expect(within(asin).getByText('Automatic not supported')).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Identity How a work/ }))
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
@@ -467,7 +467,7 @@ describe('Policy route', () => {
     )
     const isbn = screen.getByRole('region', { name: 'ISBN' })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(within(isbn).getByText('Automatic mode not supported')).toBeVisible()
+    expect(within(isbn).getByText('Automatic not supported')).toBeVisible()
     await user.click(within(isbn).getByRole('button', { name: 'Ignore' }))
     expect(screen.getByRole('button', { name: /^Publication/ })).toHaveAccessibleDescription(
       '1 changed field',
@@ -482,11 +482,11 @@ describe('Policy route', () => {
     expect(tags).toHaveTextContent(
       'Tags are off by default. When enabled, use compatible source tags or review them yourself.',
     )
-    expect(within(tags).getByText('Automatic mode not supported')).toBeVisible()
+    expect(within(tags).getByText('Automatic not supported')).toBeVisible()
     expect(within(tags).getByRole('button', { name: 'Ask me' })).toBeEnabled()
     expect(within(tags).getByRole('button', { name: 'Ignore' })).toBeEnabled()
     const asin = screen.getByRole('region', { name: 'ASIN' })
-    expect(within(asin).getByText('Automatic mode not supported')).toBeVisible()
+    expect(within(asin).getByText('Automatic not supported')).toBeVisible()
     expect(within(asin).getByRole('button', { name: 'Ask me' })).toBeEnabled()
     expect(within(asin).getByRole('button', { name: 'Ignore' })).toBeEnabled()
     const description = screen.getByRole('region', { name: 'Description' })
@@ -543,7 +543,9 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     await user.click(screen.getByRole('button', { name: /Additional fields/ }))
     const explicit = screen.getByRole('region', { name: 'Explicit-content flag' })
-    expect(within(explicit).getByText('Off until you choose a review mode')).toBeVisible()
+    expect(
+      within(explicit).getByText('Off until you choose a review mode · Automatic not supported'),
+    ).toBeVisible()
     expect(
       within(explicit).getByRole('combobox', { name: 'Explicit-content flag representation' }),
     ).toBeEnabled()
@@ -1088,7 +1090,7 @@ it('saves description preferences independently next to Cover guidance and keeps
   await userEvent.setup().click(choice('Remove marketing material', 'Off'))
   expect(within(region).getByText('Changed')).toBeVisible()
   expect(within(region).getByRole('status')).toHaveTextContent(
-    'Policy draft changes are saved separately',
+    'Unsaved. These save with their own button, not with the policy.',
   )
   await userEvent
     .setup()
@@ -1170,7 +1172,9 @@ it('keeps explicit off until the owner chooses its representation and review mod
   })
   const user = userEvent.setup()
   const flag = await screen.findByRole('region', { name: 'Explicit-content flag' })
-  expect(within(flag).getByText('Off until you choose a review mode')).toBeVisible()
+  expect(
+    within(flag).getByText('Off until you choose a review mode · Automatic not supported'),
+  ).toBeVisible()
   expect(within(flag).getByRole('button', { name: 'Automatic' })).toBeDisabled()
   await user.click(
     within(flag).getByRole('combobox', { name: 'Explicit-content flag representation' }),

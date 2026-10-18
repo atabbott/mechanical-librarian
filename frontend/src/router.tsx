@@ -737,9 +737,15 @@ export const PreparationActivity = () => {
   )
 }
 
+// One rule with setup and sign-in: the owner's saved choice, otherwise the system (#1013).
+const systemDark = () => {
+  const query = '(prefers-color-scheme: dark)'
+  const media = typeof window.matchMedia === 'function' ? window.matchMedia(query) : null
+  return media?.media === query && media.matches
+}
 const ThemeControl = () => {
   const cookie = /(?:^|; )ml_theme=(light|dark)(?:;|$)/.exec(document.cookie)?.[1]
-  const [theme, setTheme] = useState(cookie === 'dark' ? 'dark' : 'light')
+  const [theme, setTheme] = useState(cookie ?? (systemDark() ? 'dark' : 'light'))
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     document.documentElement.style.colorScheme = theme

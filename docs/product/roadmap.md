@@ -208,17 +208,19 @@ across the test tree, so a double bound into a port it does not satisfy fails
 the gate; the 48 modules carrying findings are named as the burn-down backlog
 (#693).
 
-### Current 0.22.0 preparation and owner-journey checkpoint
+### 0.22.0 preparation and owner-journey checkpoint
 
 The [expanded delivery checkpoint](delivery-slices.md#delivery-checkpoint-0220-responsive-trustworthy-preparation-and-review)
-starts with responsive owner interactions (#1072) and preparation recovery
-(#1085), then addresses the named evidence/decision corrections, Library/Policy
-trust, reviewer/Settings operation and manual retained-cover choice. #1008,
-#1012 and #1068 are delivered; the remaining issue outcomes are not implied.
-#1013 owns final integrated acceptance and continues to block #984, the first
-0.23.0 Series and structure unit. #877 is curtailed diagnostic evidence;
-#1086's reviewer-free joint measurement remains outstanding and separate from
-#1060's explicitly authorized reviewer collection.
+is delivered: responsive owner interactions (#1072) and preparation recovery
+(#1085), then the named evidence/decision corrections, Library/Policy trust,
+reviewer/Settings operation and manual retained-cover choice, alongside #1008,
+#1012 and #1068. #1013 completes it with final integrated acceptance and blocks
+#984, the first 0.23.0 Series and structure unit, until it merges. #877 is
+curtailed diagnostic evidence and #1086 closed unplanned; the reviewer-free
+measurement belongs to #990 (a settling stratified sample, 0.23.0) and #1238
+(the settled full library on a continuous report-only deployment, 1.0.0),
+separate from #1060's explicitly authorized reviewer collection. 0.19.0 and
+0.21.0 closed on 2026-10-17 with that measurement exit waived.
 
 ## M0: Foundation
 

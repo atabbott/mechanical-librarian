@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The workspace, sign-in and setup now share one theme rule: a saved choice,
+  otherwise the system's light or dark setting. Library puts write readiness
+  and Attention in one toolbar; phones get a one-row navigation, readable small
+  text and no letter-by-letter wrapping; routine update, reviewer, preference
+  and Activity copy is shorter (#1013).
+
 - Activity opens in about 1 s after a large batch of new history, and a restart
   answers in about half the time (12 s instead of 23 s at 8,000 decisions):
   catch-up runs in the background and checked reports are kept, costing about

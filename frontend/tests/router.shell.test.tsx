@@ -1577,3 +1577,43 @@ describe('Application shell', () => {
     }
   })
 })
+
+describe('Theme rule', () => {
+  const systemDark = () =>
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: query === '(prefers-color-scheme: dark)',
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    )
+  afterEach(() => {
+    document.cookie = 'ml_theme=; Path=/; Max-Age=0'
+    delete document.documentElement.dataset.theme
+  })
+
+  it('follows a dark system preference when no theme is saved', async () => {
+    systemDark()
+    renderRoute('/library?lens=all')
+    const toggle = await screen.findByRole('button', { name: 'Use light mode' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.cookie).not.toContain('ml_theme=')
+    await userEvent.setup().click(toggle)
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(document.cookie).toContain('ml_theme=light')
+  })
+
+  it('keeps a saved choice over the system preference', async () => {
+    systemDark()
+    document.cookie = 'ml_theme=light; Path=/'
+    renderRoute('/library?lens=all')
+    expect(await screen.findByRole('button', { name: 'Use dark mode' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(document.documentElement.dataset.theme).toBe('light')
+  })
+})

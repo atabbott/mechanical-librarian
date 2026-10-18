@@ -7706,6 +7706,12 @@ def test_same_name_series_owner_journey(media, destination):
                 expect(choice).to_have_attribute("aria-pressed", "true")
             elif destination == "automatic":
                 expect(choice).to_have_attribute("aria-pressed", "true")
+                if media == "ebook":
+                    expect(
+                        page.get_by_text(
+                            "Selected from Hardcover to fill an empty Series field"
+                        )
+                    ).to_be_visible()
             else:
                 expect(choice).to_have_count(0)
             page.get_by_role("link", name="Evidence", exact=True).click()

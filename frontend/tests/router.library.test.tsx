@@ -1750,7 +1750,7 @@ describe('Library route', () => {
       ).toBeVisible()
       expect(
         within(health).getByText(
-          'Expected rule: The local running time is within 90 seconds of the running time the matched edition states.',
+          'The local running time is within 90 seconds of the running time the matched edition states.',
         ),
       ).toBeVisible()
       expect(
@@ -2491,7 +2491,7 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('button', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
-    expect(screen.getByText('Eligible for guarded planning')).toBeVisible()
+    expect(screen.getByText('Eligible for a library update')).toBeVisible()
     const evidenceButtons = screen.getAllByRole('button', { name: /Evidence for/u })
     const currentEvidence = evidenceButtons[0]
     const proposedEvidence = evidenceButtons[1]
@@ -8533,6 +8533,13 @@ describe('Library route', () => {
     ).toBeVisible()
     // Preparation still running does not withdraw the action.
     expect(screen.getByText(/while preparation continues/u)).toBeVisible()
+    // Status and the Attention decision share one toolbar, notice first (#1013).
+    const controls = document.querySelector('header[aria-label="Library controls"]')
+    const notices = document.querySelectorAll('.cm-library-handoff')
+    const toggle = screen.getByRole('button', { name: /^Attention/u })
+    expect(notices).toHaveLength(1)
+    expect(controls?.firstElementChild).toBe(notices[0])
+    expect(controls?.lastElementChild).toBe(toggle)
     await user.click(screen.getByRole('link', { name: 'Review write permissions' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
@@ -8543,6 +8550,15 @@ describe('Library route', () => {
     expect(http.activityCommand).toHaveBeenCalledWith('activity/consent', {
       grants: [{ library: 'fiction', destinations: ['title'] }],
     })
+
+    // Selected work keeps exactly one notice, outside the absent toolbar.
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1', http)
+    expect(
+      await screen.findByRole('heading', { name: '9 works are ready to browse. Writes are off.' }),
+    ).toBeVisible()
+    expect(document.querySelectorAll('.cm-library-handoff')).toHaveLength(1)
+    expect(document.querySelector('header[aria-label="Library controls"]')).toBeNull()
   })
 })
 
@@ -9115,7 +9131,8 @@ it.each(['human', 'automatic_policy'] as const)(
         outcome: null,
         capability: 'allowed',
         heading: 'Choice recorded',
-        detail: 'Activity shows the current status of this description change.',
+        detail:
+          "Activity shows this change's progress; safety checks run before any update is sent.",
       },
       {
         current: true,
@@ -9223,8 +9240,11 @@ it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
       getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
     })
     const panel = await screen.findByLabelText('External update status')
-    expect(panel).toHaveTextContent('Eligible for guarded planning')
-    expect(panel).toHaveTextContent('Activity shows any prepared changes.')
+    expect(panel).toHaveTextContent('Eligible for a library update')
+    expect(panel).toHaveTextContent(
+      'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
+    )
+    expect(panel).not.toHaveTextContent('queues nothing')
     expect(panel).not.toHaveTextContent('Choice recorded')
     expect(panel).not.toHaveTextContent('Applied and verified')
   },

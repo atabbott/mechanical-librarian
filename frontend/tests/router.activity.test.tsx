@@ -1119,13 +1119,51 @@ describe('Activity route', () => {
     await user.click(screen.getByRole('button', { name: 'Try again' }))
     const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
     expect(lifecycle.querySelectorAll('li')).toHaveLength(21)
-    expect(lifecycle.querySelector('li')?.textContent).toMatch(/ · Planned$/u)
+    expect(lifecycle.querySelector('li')?.textContent).toMatch(/\u00a0· Planned$/u)
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
     await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(25))
     expect(http.getActivityTransitions).toHaveBeenLastCalledWith(
       'effect_plan_' + 'a'.repeat(64),
       20,
     )
+  })
+
+  it('states each lifecycle transition in one flow with its advice kind', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [
+            {
+              event_id: 'cover-advice',
+              destination: 'cover',
+              origin: 'adviser',
+              state: 'completed',
+              transition_id: 'effect_plan_' + 'c'.repeat(64),
+            },
+          ],
+        }),
+      ),
+      getActivityTransitions: vi.fn(async () => ({
+        events: ['failed', 'completed'].map((state, index) => ({
+          event_id: `transition-${state}`,
+          occurred_at: 1786000000 + index,
+          sequence: index + 1,
+          state,
+        })),
+        has_more: false,
+      })),
+    }
+    renderRoute('/activity', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    const lines = [...lifecycle.querySelectorAll('li')].map((item) => item.textContent)
+    expect(lines).toHaveLength(2)
+    expect(lines[0]).toMatch(/^[^·\s].*\u00a0· .*\u00a0· Cover advice failed safely$/u)
+    expect(lines[1]).toMatch(/^[^·\s].*\u00a0· .*\u00a0· Cover advice completed$/u)
+    for (const line of lines) expect(line).not.toMatch(/(?:^|[ \n])·/u)
   })
 
   it('keeps an open lifecycle disclosure through a refreshed latest event', async () => {
