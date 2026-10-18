@@ -667,6 +667,67 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
     )
 
 
+class _ConstructionFailure(RuntimeError):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("mode", "failing"),
+    (
+        (FirstBootMode.INITIALIZE_SETUP, "_compose_setup_runtime_generation"),
+        (FirstBootMode.RESUME_SETUP, "_compose_setup_runtime_generation"),
+        (None, "_StoreRuntimeActivation"),
+        (None, "compose_store_runtime_generation"),
+    ),
+)
+def test_store_server_construction_failure_surfaces_and_closes_what_opened(
+    tmp_path: Path, mode: FirstBootMode | None, failing: str
+) -> None:
+    control = Mock()
+    setup_store = Mock()
+    activation = Mock()
+    bootstrap = ReviewBootstrap(
+        schema_version="review-bootstrap-v2",
+        tls_certificate_file="/synthetic/certificate",
+        tls_private_key_file="/synthetic/private-key",
+        canonical_origin="https://setup.invalid",
+    )
+    with (
+        patch.object(
+            composition, "open_review_tls_identity", return_value=nullcontext(None)
+        ),
+        patch.object(composition, "load_review_bootstrap", return_value=bootstrap),
+        patch.object(composition, "open_repository", return_value=control),
+        patch.object(
+            composition, "_open_review_session_store", return_value=setup_store
+        ),
+        patch.object(composition, "_StoreRuntimeActivation", return_value=activation),
+        patch.object(
+            composition,
+            failing,
+            side_effect=_ConstructionFailure(failing),
+        ),
+        pytest.raises(_ConstructionFailure),
+    ):
+        composition.run_review_server(
+            tmp_path / "absent-config.json",
+            tmp_path / "application.sqlite3",
+            tmp_path / "catalogue.sqlite3",
+            tmp_path / "artifacts",
+            "127.0.0.1",
+            18444,
+            first_boot_mode=mode,
+        )
+
+    control.close.assert_called_once_with()
+    if mode is None:
+        setup_store.close.assert_not_called()
+    else:
+        setup_store.close.assert_called_once_with()
+    if failing == "compose_store_runtime_generation":
+        activation.close.assert_called_once_with()
+
+
 def test_exact_schema_only_kill_boundary_restarts_setup_without_generic_recovery(
     tmp_path: Path,
 ) -> None:
