@@ -14,7 +14,11 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
     ITunesSearchMetadataProvider,
     ITunesSearchPacer,
 )
-from mechanical_librarian.application.metadata_report import observe_provider
+from mechanical_librarian.application.metadata_report import (
+    MetadataDiscoveryPlan,
+    audiobook_discovery_plan,
+    observe_provider,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceKind,
@@ -30,18 +34,28 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
+    work_query_ladder,
 )
-from tests.support.audiobook_providers import asin_plan, payload, work_plan
+from tests.support.audiobook_providers import (
+    asin_plan,
+    audio_target,
+    payload,
+    target_title_claim,
+    work_plan,
+)
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     audio_local_claims,
     manual_audiobook_observation,
 )
+from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
 def _store(value: object, status_code: int = 200, **headers: str) -> httpx.Response:
@@ -664,3 +678,99 @@ def test_itunes_narrowing_flag_does_not_change_wire_term() -> None:
 
     query = work_query_ladder("Synthetic Work: An Account", ("Example Writer",))[0]
     assert _search_term(narrowing_work_query(query)) == _search_term(query)
+
+
+# The #1245 ladder: on an audiobook plan a rung whose results work-identity
+# admission refuses no longer ends the walk.
+_SUBTITLED = "Project Hail Mary: A Novel"
+
+
+def _audiobook_work_plan(title: str = _SUBTITLED) -> MetadataDiscoveryPlan:
+    return audiobook_discovery_plan(
+        audio_target(title, ("Andy Weir",)),
+        (target_title_claim(title),),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _page(*results: dict[str, Any]) -> dict[str, Any]:
+    return {"resultCount": len(results), "results": list(results)}
+
+
+def _refused() -> dict[str, Any]:
+    """The captured third-party summary, which is not the work."""
+    return copy.deepcopy(payload("itunes_search")["results"][2])
+
+
+def _work(title: str) -> dict[str, Any]:
+    result = copy.deepcopy(payload("itunes_search")["results"][1])
+    result["collectionName"] = title
+    return result
+
+
+def _pages(
+    *pages: dict[str, Any],
+) -> tuple[list[httpx.URL], Callable[[httpx.Request], httpx.Response]]:
+    seen: list[httpx.URL] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return _store(pages[len(seen) - 1])
+
+    return seen, handle
+
+
+def _categories(observation: Any) -> tuple[tuple[FailureCategory, int], ...]:
+    return tuple((value.category, value.count) for value in observation.diagnostics)
+
+
+def test_a_refused_store_rung_continues_to_the_rung_that_admits() -> None:
+    seen, handle = _pages(_page(_refused()), _page(_work(_SUBTITLED)))
+    result = observe_provider(
+        "itunes", "itunes_search", _provider(handle), _audiobook_work_plan()
+    )
+    observation = result.observation
+
+    assert 2 == len(seen)
+    assert ProviderStatus.CANDIDATES is observation.status
+    lane = observation.lanes[0]
+    assert lane.dispatch_lineage is not None
+    assert lane.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
+    assert () == lane.exhausted_dispatch and () == lane.diagnostics
+    assert FailureCategory.WORK_IDENTITY_REFUSED not in {
+        category for category, _ in _categories(observation)
+    }
+
+
+def test_a_store_ladder_refused_on_every_rung_records_each_dispatch() -> None:
+    ladder = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(_SUBTITLED, ("Andy Weir",))
+    )
+    seen, handle = _pages(*(_page(_refused()) for _ in ladder))
+    result = observe_provider(
+        "itunes", "itunes_search", _provider(handle), _audiobook_work_plan()
+    )
+    observation = result.observation
+
+    assert len(ladder) == len(seen) <= 12
+    assert ProviderStatus.NO_MATCH is observation.status
+    lane = observation.lanes[0]
+    assert ladder == lane.exhausted_dispatch
+    assert work_ladder_diagnostics(0, len(ladder)) == lane.diagnostics
+    assert ((FailureCategory.WORK_IDENTITY_REFUSED, len(ladder)),) == _categories(
+        observation
+    )
+    assert () == result.cover_descriptors
+
+
+def test_an_ebook_plan_still_stops_at_the_first_store_rung_with_results() -> None:
+    seen, handle = _pages(_page(_refused()), _page(_work(_SUBTITLED)))
+    observation = observe_provider(
+        "itunes", "itunes_search", _provider(handle), work_plan(title=_SUBTITLED)
+    ).observation
+
+    assert 1 == len(seen)
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert () == observation.lanes[0].exhausted_dispatch
+    assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _categories(observation)

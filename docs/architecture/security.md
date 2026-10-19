@@ -102,17 +102,10 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
-The offline `schema-adopt` command carries one plan,
-`review-attention-facts-v1` (#1232). It accepts only the exact 441e571f
-application schema with valid contents, an owner-only database in delete
-journal mode, and an absent backup path beside it under another name. It holds
-an exclusive transaction, copies and verifies the backup, then only creates the
-derived attention-fact objects and derives their rows. After commit it
-re-validates the exact current schema and contents and proves every other
-table's rows unchanged; a failure there tells the owner to recover from the
-backup. It makes no network, provider, reviewer, credential, media or
-target-service request and never runs at startup. Every other earlier state is
-rejected before mutation and needs a clean rebuild.
+There is no installed schema adoption command. #1245 retired #1232's offline
+`schema-adopt` command and its one plan, because its exact predecessor cannot
+reach the current report schema. Every earlier state is rejected before
+mutation and needs a clean rebuild.
 
 The installed qualification-state bridge is a maintainer test-state boundary,
 not upgrade authority. It reads only one exact owner-only retained clone,

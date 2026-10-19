@@ -7454,6 +7454,7 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
     from mechanical_librarian.domain.cover_automatic_decision import (
         CoverAutomaticDecision,
     )
+    from tests.support.metadata_report_schemas import retained_report_as_current
 
     fixture = json.loads(
         (
@@ -7466,8 +7467,7 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
     )
     path = tmp_path / "state.sqlite"
     with closing(open_repository(path)) as source:
-        report = MetadataReport.from_json(fixture["report"])
-        assert report.to_json() == fixture["report"]
+        report = retained_report_as_current(fixture["report"])
         case_id, _ = publish_audiobook_preview(
             source,
             report,

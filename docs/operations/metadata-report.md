@@ -562,6 +562,15 @@ The work lane dispatches at most three distinct widening variants in that order:
 normalized, subtitle-stripped, then punctuation-folded. It stops immediately on
 `candidates`. A `candidate_limit_exceeded` result dispatches exactly one
 provider-specific narrowing retry and does not resume the widening ladder.
+On an audiobook plan (#1245), a rung whose every product work-identity admission
+refuses continues to the next rung within the same per-rung budget and deadline,
+and an admitted rung stops the walk. When every dispatched rung was empty or
+refused, the `no_match` lane records each rung's dispatch lineage in ladder
+order as `exhausted_dispatch`, counting empty rungs as `empty_no_match` and,
+as `work_identity_refused`, the products refused summed across its refused
+rungs, so a product refused on two rungs counts twice; replay rejects a ladder
+the target's title and authors do not produce. A terminal failure on any rung
+ends the walk with that rung's own result. Ebook lanes record no ladder.
 
 | Provider | Normalized and widening grammar | Narrowing grammar |
 | --- | --- | --- |
@@ -651,6 +660,10 @@ carries that identity diagnostic and every one of its lanes reporting
 least one such lane exists. A lane holding any of those three statuses for its
 own reason therefore keeps `malformed_over_bound_response` alongside the
 identity diagnostic.
+A lane's `work_identity_refused/provider/identity` count is lifted once to the
+observation. The status-derived `empty_no_match` is withheld only when every
+`no_match` lane exhausted its ladder without an empty rung, so a refusal is never
+reported as an empty search.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order

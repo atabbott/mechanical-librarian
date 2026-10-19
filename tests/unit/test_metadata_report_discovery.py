@@ -9,7 +9,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -72,6 +72,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidence,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderLaneCandidate,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -87,6 +89,7 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
     normalize_date_value,
     publication_date_is_voting,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
@@ -106,6 +109,7 @@ from mechanical_librarian.domain.work_identity import (
 )
 from tests.support.audiobook_providers import (
     asserted_target,
+    audio_target,
     target_asin_claim,
     target_title_claim,
 )
@@ -1110,11 +1114,139 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v49" == report.schema_version
+    assert "metadata-report-v50" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(previous))
+
+
+_REFUSED_TITLE = "Project Hail Mary: A Novel"
+_REFUSED_AUTHORS = ("Andy Weir",)
+_REFUSED_LADDER = tuple(
+    WorkDispatchLineage.from_query(query)
+    for query in work_query_ladder(_REFUSED_TITLE, _REFUSED_AUTHORS)
+)
+
+
+def _exhausted_lane(**changes: object) -> ProviderLaneObservation:
+    lane = ProviderLaneObservation(
+        "lane_" + "1" * 64,
+        ProviderQueryKind.WORK,
+        ProviderStatus.NO_MATCH,
+        (target_title_claim(_REFUSED_TITLE).reference,),
+        diagnostics=work_ladder_diagnostics(0, 3),
+        exhausted_dispatch=_REFUSED_LADDER,
+    )
+    return replace(lane, **changes)
+
+
+def _exhausted_report(
+    lane: ProviderLaneObservation,
+    *,
+    title: str = _REFUSED_TITLE,
+    audio: bool = True,
+) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", audio_target(title, _REFUSED_AUTHORS).fields
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b" if audio else "epub"),
+        local_claims=(target_title_claim(_REFUSED_TITLE),),
+        local_reasons=("target_metadata_title",),
+        providers=(
+            ProviderObservation(
+                "audible",
+                ProviderStatus.NO_MATCH,
+                lane.input_references,
+                query_kind=ProviderQueryKind.WORK,
+                authority="audible_catalog",
+                lanes=(lane,),
+                accessed_at="2023-11-14T22:13:20.000000Z",
+                diagnostics=lane.diagnostics,
+            ),
+        ),
+        audio=single_track_audio_facts() if audio else None,
+    )
+
+
+def test_an_exhausted_audiobook_ladder_round_trips_with_its_dispatches() -> None:
+    report = _exhausted_report(_exhausted_lane())
+
+    assert 2 == len(_REFUSED_LADDER)
+    assert _REFUSED_LADDER == report.providers[0].lanes[0].exhausted_dispatch
+    assert report == MetadataReport.from_json(report.to_json())
+
+
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {
+            "status": ProviderStatus.CANDIDATES,
+            "candidates": (
+                ProviderLaneCandidate("lane_candidate_" + "2" * 64, "e", "w"),
+            ),
+        },
+        {"kind": ProviderQueryKind.ISBN, "matched_family": "9780000000000"},
+        {"kind": ProviderQueryKind.ASIN},
+        {"exhausted_dispatch": (_REFUSED_LADDER[0], _REFUSED_LADDER[0])},
+        {"diagnostics": work_ladder_diagnostics(0, 1)},
+        {"diagnostics": work_ladder_diagnostics(1, 0)},
+        {"diagnostics": work_ladder_diagnostics(3, 0)},
+        {"diagnostics": work_ladder_diagnostics(2, 1)},
+    ),
+    ids=(
+        "candidates",
+        "isbn",
+        "asin",
+        "repeated_rung",
+        "fewer_products_than_refused_rungs",
+        "refused_rung_without_products",
+        "more_empty_rungs_than_dispatched",
+        "products_without_a_refused_rung",
+    ),
+)
+def test_a_lane_states_an_exhausted_ladder_only_with_consistent_counts(
+    changes: dict[str, object],
+) -> None:
+    with pytest.raises(ReportValueError, match="exhausted dispatch is invalid"):
+        _exhausted_lane(**changes)
+
+
+def test_a_refusal_is_stated_only_by_a_lane_that_walked_its_ladder() -> None:
+    with pytest.raises(ReportValueError, match="provider lane refusal is invalid"):
+        _exhausted_lane(exhausted_dispatch=())
+
+
+@pytest.mark.parametrize(
+    ("lane", "report"),
+    (
+        ({"exhausted_dispatch": tuple(reversed(_REFUSED_LADDER))}, {}),
+        ({"exhausted_dispatch": _REFUSED_LADDER[:1]}, {}),
+        (
+            {
+                "exhausted_dispatch": (
+                    _REFUSED_LADDER[0],
+                    WorkDispatchLineage.from_query(
+                        work_query_ladder(
+                            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+                        )[-1]
+                    ),
+                )
+            },
+            {},
+        ),
+        ({}, {"title": "Project Hail Mary"}),
+        ({}, {"audio": False}),
+    ),
+    ids=("out_of_order", "truncated", "out_of_ladder", "other_target", "ebook"),
+)
+def test_a_report_keeps_only_the_ladder_its_audiobook_target_produces(
+    lane: dict[str, object], report: dict[str, Any]
+) -> None:
+    with pytest.raises(ReportValueError, match="exhausted dispatch is inconsistent"):
+        _exhausted_report(_exhausted_lane(**lane), **report)
 
 
 @pytest.fixture(scope="module")

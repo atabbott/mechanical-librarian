@@ -287,6 +287,14 @@ def test_current_authority_and_predecessor_refusal_without_history(
         old_schema.setattr(
             schema, "_PROPOSAL_SETS_SQL", proposal_fixture["proposal_sets_ddl"]
         )
+        # The producer predates #1245's report discriminator.
+        old_schema.setattr(
+            schema,
+            "_REPORTS_SQL",
+            schema._REPORTS_SQL.replace(
+                "= 'metadata-report-v50'", "= 'metadata-report-v49'"
+            ),
+        )
         with closing(open_repository(old_path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes and #1232's

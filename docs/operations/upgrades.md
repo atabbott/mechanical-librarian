@@ -1,21 +1,16 @@
 # Upgrades and compatibility
 
-#1232 adds derived attention facts to the application schema. A database
-written by the exact predecessor, main 441e571f, is adopted offline rather than
-rebuilt. Stop the service, then run
-`mechanical-librarian schema-adopt review-attention-facts-v1 --database DB --backup BACKUP`,
-where `BACKUP` is an absent path in the database's private directory. It prints
-`{"plan":"review-attention-facts-v1","status":"adopted"}` on one line, or
-`{"plan":"review-attention-facts-v1","status":"already-current"}` for a database
-that already matches. "Schema adoption failed safely." leaves the database
-unchanged, but a failure after the backup copy and before commit can leave the
-backup file in place: rerun with a new, absent backup path, or remove that file
-once the database is confirmed unchanged. "Schema adoption requires backup
-recovery." means the result could not be proved: with the service still
-stopped, replace the database with the backup. The restored backup has the
-predecessor schema, so this build will not start on it: run the adoption again
-with a new, absent backup path, or run the previous build. Any other earlier
-state needs a clean rebuild. See
+#1245 advances the report to `metadata-report-v50`, which records an audiobook
+work lane's refused query ladder. **Clean rebuild required** for every
+predecessor application database; startup refuses it before mutation. The
+report CHECK cannot be reached from the exact 441e571f schema #1232's
+`review-attention-facts-v1` plan adopted, so that plan and the offline
+`schema-adopt` command are retired. No migration, adoption, conversion, import
+or downgrade is supplied; F19a/F20/F46 source bindings rotate with their
+existing permission sets.
+
+#1232 added derived attention facts to the application schema and, until #1245,
+an offline adoption from main 441e571f. See
 [ADR-0084](../architecture/decisions/0084-persisted-attention-facts.md).
 
 #1166 enables source-bound audiobook description/genre owner review without
@@ -34,7 +29,7 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v49`, `proposal-set-v8` under
+The current build uses `metadata-report-v50`, `proposal-set-v8` under
 `fixed-conservative-v33`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
 and `deterministic-shadow-decision-policy-v20`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
@@ -179,8 +174,8 @@ recognized-sidecar manifest.
 The three earlier exact-predecessor plans, including #830's owner-decision
 action predecessor, have been retired because each names a schema older than
 this build. The v13 title-policy change supplies no adoption route for them.
-The installed `schema-adopt` command carries only #1232's
-`review-attention-facts-v1` plan, described above. Retain an older database and its matching artifact
+There is no installed schema adoption command; #1245 retired #1232's plan.
+Retain an older database and its matching artifact
 directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.
 

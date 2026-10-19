@@ -8,11 +8,14 @@ database must be preserved beside.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 from typing import cast
+
+import pytest
 
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
 from mechanical_librarian.domain.metadata_report import (
@@ -27,12 +30,14 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
     canonical_json,
     default_target_fields,
+    report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
@@ -212,10 +217,32 @@ def forged_latin_work_report_json() -> tuple[str, str]:
     return report_id, canonical_json(data)
 
 
+def retained_report_as_current(document: str) -> MetadataReport:
+    """Read one retained v49 report as an ephemeral current-schema report.
+
+    The retained bytes and their digest pins stay frozen, and current code
+    refuses them. For a test whose downstream semantics are current ones this
+    relabels an in-memory copy, gives each lane the empty exhausted-dispatch
+    record v50 added (the only one a v49 producer could state), and readdresses
+    it. Nothing is migrated: the copy is never written back.
+    """
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(document)
+    data = json.loads(document)
+    assert data["schema_version"] == "metadata-report-v49"
+    data["schema_version"] = "metadata-report-v50"
+    for provider in data["providers"]:
+        for lane in provider["lanes"]:
+            lane["exhausted_dispatch"] = []
+    data.pop("report_id")
+    data["report_id"] = report_content_address(data)
+    return MetadataReport.from_json(canonical_json(data))
+
+
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v49'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v50'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -234,10 +261,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v49'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v50'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v49'", f"= '{version}'"
+            "= 'metadata-report-v50'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

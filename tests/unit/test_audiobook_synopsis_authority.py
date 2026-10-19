@@ -291,13 +291,13 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
     from pathlib import Path
 
     from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
-    from mechanical_librarian.domain.metadata_report import MetadataReport
     from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
     from mechanical_librarian.domain.rich_metadata_preview import (
         compile_rich_metadata_preview,
     )
     from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet
     from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.support.metadata_report_schemas import retained_report_as_current
 
     root = Path(__file__).parents[1] / "fixtures/audiobook-synopsis-predecessor"
     provenance = json.loads((root / "provenance.json").read_text().removesuffix("\n"))
@@ -322,7 +322,7 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
             == provenance["files"][name]
         )
     for scenario in ("useful", "marker"):
-        MetadataReport.from_json(
+        retained_report_as_current(
             (root / f"{scenario}-report.json").read_text().removesuffix("\n")
         )
         with pytest.raises(ValueError, match="proposal document is invalid"):
@@ -354,7 +354,7 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
                 decision.policy_option,
                 decision.qualification_manifest_sha256,
             )
-    report = MetadataReport.from_json(
+    report = retained_report_as_current(
         (root / "ebook-report.json").read_text().removesuffix("\n")
     )
     with pytest.raises(ValueError, match="proposal document is invalid"):
@@ -367,6 +367,7 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
     expected = json.loads((root / "ebook-preview.json").read_text().removesuffix("\n"))
     expected["proposal_set_id"] = proposal.proposal_set_id
+    expected["report_id"] = report.report_id
     assert (
         json.loads(
             json.dumps(

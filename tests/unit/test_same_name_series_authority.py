@@ -176,11 +176,9 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(media, kind):
     import hashlib
     from pathlib import Path
 
-    from mechanical_librarian.domain.metadata_report import (
-        MetadataReport,
-        canonical_json,
-    )
+    from mechanical_librarian.domain.metadata_report import canonical_json
     from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
+    from tests.support.metadata_report_schemas import retained_report_as_current
 
     root = Path(__file__).parents[1] / "fixtures/same-name-series-predecessor"
     provenance = json.loads((root / "provenance.json").read_text())
@@ -198,7 +196,7 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(media, kind):
             hashlib.sha256((root / name).read_bytes()).hexdigest()
             == provenance["sha256"][name]
         )
-    report = MetadataReport.from_json(
+    report = retained_report_as_current(
         canonical_json(json.loads((root / f"{media}-{kind}-report.json").read_text()))
     )
     assert evaluate_report(report).policy_version == "fixed-conservative-v33"

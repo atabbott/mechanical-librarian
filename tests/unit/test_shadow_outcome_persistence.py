@@ -9742,6 +9742,7 @@ def retained_rich_predecessor(tmp_path, request):
         _PRIOR_F20_QUALIFICATION_MANIFESTS,
     )
     from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
+    from tests.support.metadata_report_schemas import retained_report_as_current
 
     name = getattr(request, "param", "rich")
     frozen = json.loads(
@@ -9754,7 +9755,7 @@ def retained_rich_predecessor(tmp_path, request):
     report = (
         synthetic_audiobook_isbn_reason_report("absent")
         if name == "isbn"
-        else MetadataReport.from_json(frozen["report"])
+        else retained_report_as_current(frozen["report"])
     )
     profile = MetadataPolicyProfile.from_data(json.loads(frozen["profile"]))
     policy = ResolvedMetadataPolicy.from_data(json.loads(frozen["policy"]))

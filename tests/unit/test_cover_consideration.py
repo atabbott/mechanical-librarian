@@ -32,6 +32,7 @@ from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.audiobook_reports import asserted_asin_report
+from tests.support.metadata_report_schemas import retained_report_as_current
 from tests.unit.test_cover_packets import (
     _audiobook_cover_source,
     _audiobook_report,
@@ -1412,7 +1413,7 @@ def test_owner_can_choose_smaller_confirmed_cover_without_changing_policy(tmp_pa
     assert store.current[case_id] == before
 
 
-def test_base_produced_observation_reopens_and_current_semantics_create_one_successor(
+def test_base_produced_observation_is_refused_and_current_semantics_create_one_successor(
     case: _Case, tmp_path
 ) -> None:
     from pathlib import Path
@@ -1433,8 +1434,14 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
     )
     assert fixture["source_sha"] == "3a7d15aad11c6dc24aa52eb78a25b5d0cbf9bee8"
     raw = fixture["consideration"]
-    prior = CoverConsideration(raw).data
+    # The capture embeds a v49 report, and its packet binds that report's
+    # identity, so it cannot reopen as current; its fields are read raw. Current
+    # semantics still supersede it with one successor for the ephemeral report.
+    with pytest.raises(CoverConsiderationError):
+        _ = CoverConsideration(raw).data
+    prior = json.loads(raw)
     assert prior["reviewer_status"] == "completed"
+    report = retained_report_as_current(fixture["report"])
     packet = json.loads(prior["packet_document"])
     with pytest.raises(ValueError, match="not current"):
         _observation_rows(
@@ -1465,14 +1472,15 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
         reviewer_identity=lambda: (1, "openrouter", model, profile),
         reviewer_revision_current=lambda revision: revision == 1,
     )
-    assert service.project_historical(raw)["current"] is False
+    with pytest.raises(ValueError, match="report schema is unsupported"):
+        service.project_historical(raw)
     current = service.ensure(
-        prior["review_case_id"], fixture["report"], fixture["proposal"]
+        prior["review_case_id"], report.to_json(), fixture["proposal"]
     )
     assert current["reviewer_status"] == "completed"
     assert current["supersedes_id"] == prior["consideration_id"]
     replay = service.ensure(
-        prior["review_case_id"], fixture["report"], fixture["proposal"]
+        prior["review_case_id"], report.to_json(), fixture["proposal"]
     )
     assert replay["consideration_id"] == current["consideration_id"]
     assert len(dispatches) == 1
@@ -1480,13 +1488,11 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
         {"kind": "superseded", "occurred_at": 11},
         {"kind": "automatic_prepared", "occurred_at": 11},
     ]
-    assert CoverConsideration(raw).data == prior
 
     from mechanical_librarian.domain.proposal_set import evaluate_report
 
     database = tmp_path / "history.sqlite"
     repository = open_repository(database)
-    report = MetadataReport.from_json(fixture["report"])
     repository.publish(report, lambda: True)
     proposals = evaluate_report(report)
     repository.publish_proposal(proposals)
@@ -1510,7 +1516,7 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
         reviewer_identity=lambda: (1, "openrouter", model, profile),
         reviewer_revision_current=lambda revision: revision == 1,
     )
-    fresh = service.ensure(current_case_id, fixture["report"], cover_proposal)
+    fresh = service.ensure(current_case_id, report.to_json(), cover_proposal)
     assert fresh["supersedes_id"] is None
     document = repository.current_cover_consideration_document(current_case_id)
     assert len(dispatches) == 2
@@ -1528,7 +1534,7 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
         reviewer_identity=lambda: (1, "openrouter", model, profile),
         reviewer_revision_current=lambda revision: revision == 1,
     )
-    replay = service.ensure(current_case_id, fixture["report"], cover_proposal)
+    replay = service.ensure(current_case_id, report.to_json(), cover_proposal)
     assert replay["consideration_id"] == fresh["consideration_id"]
     assert len(dispatches) == 2
     assert repository.current_cover_consideration_document(current_case_id) == document

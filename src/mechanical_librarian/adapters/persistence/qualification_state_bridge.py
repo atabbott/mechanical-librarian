@@ -193,6 +193,7 @@ def _augment_provider(provider: dict[str, object]) -> None:
         lane["diagnostics"] = []
         lane["dispatch_lineage"] = None
         lane["transformation_lineage"] = None
+        lane["exhausted_dispatch"] = []
 
 
 def _project_source_field_results(

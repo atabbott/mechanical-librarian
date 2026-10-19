@@ -329,7 +329,7 @@ source symbols at the time of the audit.
 | `proposal_set_browse_facts` | `proposal_sets_project_browse_facts` trigger | `review_cases` Library/Attention page and count SQL through `review_sql._browse_scalar_sql` | `_validate_review_field_facts` reconstructs it |
 | `proposal_sets` | `proposal_sets.publish_proposal` | `proposal_sets.get_proposal`; admission | `_validate_proposal_row`; adoption parses canonical proposal documents |
 | `provider_recovery_outbox` | `recovery_outbox.enqueue`, `complete_provider_recovery_outbox` | no direct owner DTO; recovery runner drain | `_validate_provider_recovery_outbox_row` on open and drain |
-| `review_attention_facts` | `review_attention_refresh_apply`, reached from each input's `*_refresh_attention_*` trigger | `review_cases` Library/Attention page and count SQL, `review_projections._current_attention_count`, `field_effects._current_attention_review_case_ids` | open compares it with `review_sql._ATTENTION_FACT_SOURCE_SQL`; `schema-adopt review-attention-facts-v1` derives it |
+| `review_attention_facts` | `review_attention_refresh_apply`, reached from each input's `*_refresh_attention_*` trigger | `review_cases` Library/Attention page and count SQL, `review_projections._current_attention_count`, `field_effects._current_attention_review_case_ids` | open compares it with `review_sql._ATTENTION_FACT_SOURCE_SQL` |
 | `review_case_field_facts` | `review_cases_project_field_facts` trigger | `review_projections` and `review_cases` Library/Attention SQL | `_validate_review_field_facts` and adoption reconstruct it |
 | `review_case_transitions` | `review_cases.admit_review_case`; pipeline and policy activation | `decisions.get_review_case_history`; Activity | transition shape is checked by current-pointer reads |
 | `review_cases` | `review_cases.admit_review_case` | `review_projections`, `review_cases.get_review_case` | `ReviewCase.from_json`; adoption parses every case |
@@ -387,7 +387,7 @@ column are module-local persistence symbols.
 | `proposal_set_browse_facts` | `proposal_sets_project_browse_facts` trigger | — | `review_cases` Library/Attention | `S,F` | — |
 | `proposal_sets` | `proposal_sets.publish_proposal` | admission/policy | `proposal_sets.get_proposal` | `S,_validate_proposal_row` | `D,C` |
 | `provider_recovery_outbox` | `recovery_outbox.enqueue`, complete | recovery drain | — | `S,_validate_provider_recovery_outbox_row` | `D` |
-| `review_attention_facts` | `review_attention_refresh_apply` trigger | field-effect suspension | `review_cases` Library/Attention, `review_projections` | `S`, fact equality | `review-attention-facts-v1` |
+| `review_attention_facts` | `review_attention_refresh_apply` trigger | field-effect suspension | `review_cases` Library/Attention, `review_projections` | `S`, fact equality | — |
 | `review_case_field_facts` | `review_cases_project_field_facts` trigger | admission predicates | `review_projections` Library/Attention | `S,F` | `F` |
 | `review_case_transitions` | admission/pipeline/policy activation | current-pointer recovery | case history, `field_effect_activity` | `S`, transition shape | `D,C` |
 | `review_cases` | `review_cases.admit_review_case` | admission/currentness | `review_projections`, `get_review_case` | `S`, `ReviewCase.from_json` | `D,C` |

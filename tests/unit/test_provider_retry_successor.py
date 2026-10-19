@@ -16,6 +16,9 @@ from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ReportLimits,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    provider_result_diagnostics,
+)
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     MetadataDiscoveryLane,
@@ -78,6 +81,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     _provider_from_data,
     default_target_fields,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.provider_recovery import (
     ProviderRecoveryJob,
@@ -1115,6 +1119,60 @@ def test_retry_successor_preserves_exact_work_dispatch_without_transformation(
     recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
     assert recovered.dispatch_lineage == dispatch
     assert recovered.transformation_lineage is None
+
+
+def test_retry_successor_keeps_an_exhausted_ladder_and_counts_its_refusal_once(
+    retry: _Retry,
+) -> None:
+    plan, work, isbn, _overflow = _overflow_source(retry)
+    original = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(work, ProviderStatus.UNAVAILABLE),
+            ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
+        ),
+        authority="open_library",
+    )
+    original = replace(
+        original,
+        diagnostics=provider_result_diagnostics(
+            original, ProviderOperationalEvidence()
+        ),
+    )
+    exhausted = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(work.title or "", work.authors)
+    )
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                work,
+                ProviderStatus.NO_MATCH,
+                diagnostics=work_ladder_diagnostics(0, 3),
+                exhausted_dispatch=exhausted,
+            ),
+        ),
+        authority="open_library",
+    )
+    # The successor lifts the replacement's refusal exactly as an initial
+    # observation does, and the merge below must not lift it again.
+    replacement = replace(
+        replacement,
+        diagnostics=provider_result_diagnostics(
+            replacement, ProviderOperationalEvidence()
+        ),
+    )
+
+    merged = retry.service(None)._merged(plan, original, (work,), replacement)
+
+    recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
+    assert recovered.exhausted_dispatch == exhausted
+    assert recovered.diagnostics == work_ladder_diagnostics(0, 3)
+    assert [(value.category, value.count) for value in merged.diagnostics] == [
+        (FailureCategory.UNKNOWN, 1),
+        (FailureCategory.WORK_IDENTITY_REFUSED, 3),
+    ]
 
 
 def test_retry_successor_replays_reordered_complete_work_authors(
