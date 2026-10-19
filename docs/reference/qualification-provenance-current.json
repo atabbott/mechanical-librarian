@@ -181,7 +181,7 @@
     "docs/architecture/decisions/0079-supported-title-preservation-and-recovery.md": "cb9e793c68c151910520344fc37e8575411d8f742f0d4903e19657de20e16d60",
     "docs/architecture/decisions/README.md": "84b9d85229b7ab70307ed4f4177796a51e28bed27a7faf6b32b3a160218d5271",
     "docs/architecture/overview.md": "1e3d03d24a13b1ebdf011e107cc2514c192de54a3063d26282f4b746af176b2a",
-    "docs/architecture/security.md": "f0cf1cae7d4c3df1ac140ef110bbcb38c1753a6b423bfcdc4f2b4ac59bbd2862",
+    "docs/architecture/security.md": "ee1ca10bcf86edc33ffa2faa82ef0f2842a5c6b7d09b31db6bb5f857ef682ddd",
     "docs/architecture/sqlite-topology.md": "a69583cd49cc7276c410dee5f3d093338bb9c2cc2cc5b8fe8ae54f8d5f7dadbe",
     "docs/development/dependencies.md": "10ff2b8623fca77281391f5654905794db705d09611d951294089b41517090b0",
     "docs/development/exact-head-merging.md": "8320154d5a13fb6a26398c566c5e3bf9ef35babb6b24f0cc60b26381deebefb8",
