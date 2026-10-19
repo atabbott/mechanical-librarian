@@ -197,9 +197,12 @@ def _validate_projection_safety(text: str, label: str, *, markup: bool = False) 
         or "..\\" in text
     ):
         raise EvidenceValueError(f"{label} must not contain a production path")
-    # A tag can split a credential URL's userinfo, so markup text is also
-    # scanned with its tags rewritten; that only ever adds refusals (#1251).
-    if _credential_shaped(text) or (rooted is not text and _credential_shaped(rooted)):
+    if rooted is not text:
+        # A tag can also split a credential, a label or a non-absolute path,
+        # so the text with its tags removed must pass the whole default scan;
+        # that only ever adds refusals (#1251).
+        _validate_projection_safety(_HTML_TAG_SLASH_PATTERN.sub("", text), label)
+    if _credential_shaped(text):
         raise EvidenceValueError(f"{label} must not contain credential-shaped text")
     return text
 

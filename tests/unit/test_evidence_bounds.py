@@ -418,6 +418,14 @@ def test_incumbent_description_admits_tag_slashes_and_line_separators(
                 "</\u212a>",
                 "</p\u00a0>",
                 "a<br\u2003/>",
+                # A tag splitting a non-absolute path (R5).
+                "file:</p>//server/share",
+                "C:</p>\\Books\\secret",
+                "..</p>\\secret",
+                "x \\</p>\\server\\share",
+                "~</p>/x",
+                "/Use</b>rs/x",
+                "x </p>/ho</b>me/y",
             )
         ),
         *(
@@ -428,6 +436,12 @@ def test_incumbent_description_admits_tag_slashes_and_line_separators(
                 "https://alice:s3cr3t</p>@db.example.com/x",
                 "https://u:p</i>@h",
                 '<a href="https://user:hunter2</b>@example.com">',
+                # A tag splitting a credential label (R5).
+                "<span>api</span>_key=hunter2",
+                "<b>pass</b>word=hunter2",
+                "to</p>ken=abc",
+                "pass</b>word: hunter2",
+                "Bear</b>er abc.def.ghi",
             )
         ),
         *(
@@ -498,6 +512,12 @@ _MARKUP_FRAGMENTS = (
     "~",
     "=",
     "api_key",
+    "api",
+    "_key=x",
+    "</b>",
+    "word=x",
+    "file:",
+    "..",
 )
 
 
@@ -514,16 +534,28 @@ _MARKUP_FRAGMENTS = (
 )
 def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
     markup = _projection_outcome(text, markup=True)
-    default = _projection_outcome(text, markup=False)
-    if markup != default:
-        # A tag slash only ever lifts the absolute-path refusal, and the
-        # rewritten text only ever adds a credential refusal.
+    if markup[0] == "admitted":
+        # Whatever markup admits, the default scan admits with tags removed.
+        removed = _HTML_TAG_SLASH_PATTERN.sub("", text)
+        assert _projection_outcome(removed, markup=False) == ("admitted", removed)
+    if markup != _projection_outcome(text, markup=False):
         assert _HTML_TAG_SLASH_PATTERN.search(text) is not None
-        assert default in {
-            ("admitted", text),
-            ("EvidenceValueError", "label must not contain a production path"),
-        }
-        assert markup in {
-            ("admitted", text),
-            ("EvidenceValueError", "label must not contain credential-shaped text"),
-        }
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "Coo</b>kie: abc",
+        "pass</b>word: hunter2",
+        "file:</p>//server/share",
+        "<p>Plain synopsis.</p>",
+    ),
+)
+def test_split_text_reads_as_its_tag_free_form(text: str) -> None:
+    # The default scan does not refuse a bare cookie header, so neither does a
+    # split one; every other split shape is refused as its tag-free form is.
+    removed = _HTML_TAG_SLASH_PATTERN.sub("", text)
+    expected = _projection_outcome(removed, markup=False)
+    assert _projection_outcome(text, markup=True) == (
+        expected if expected[0] != "admitted" else ("admitted", text)
+    )
