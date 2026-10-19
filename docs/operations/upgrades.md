@@ -1,5 +1,12 @@
 # Upgrades and compatibility
 
+#1255 advances the report to `metadata-report-v51`, which records an
+audiobook's discovery titles and binds its alternative work lane. **Clean
+rebuild required** for every predecessor application database; startup refuses
+it before mutation. No migration, adoption, conversion, import or downgrade is
+supplied; F19a/F20/F46 source bindings rotate with their existing permission
+sets.
+
 #1245 advances the report to `metadata-report-v50`, which records an audiobook
 work lane's refused query ladder. **Clean rebuild required** for every
 predecessor application database; startup refuses it before mutation. The
@@ -29,7 +36,7 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v50`, `proposal-set-v8` under
+The current build uses `metadata-report-v51`, `proposal-set-v8` under
 `fixed-conservative-v33`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
 and `deterministic-shadow-decision-policy-v20`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**

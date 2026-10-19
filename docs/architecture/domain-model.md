@@ -127,6 +127,14 @@ authors, series/sequence,
 description, typed taxonomy, first publication, and cover evidence; its
 application filter removes edition claims and fails closed for competing or
 translated/adapted/abridged works.
+An audiobook plan may add one alternative work lane, titled by the first
+surviving entry of `AudioFacts.discovery_titles` and identified by that title
+and its `title_basis`, or carry it alone when the asserted title collapses to a
+recorded series name (#1255). One domain function computes the planned work
+lane payloads for both the plan and report replay. The alternative lane keeps
+only a runtime-corroborated candidate that admits against its own title; it
+grants recording authority and nothing work-only. Discovery titles are query
+text, never a local claim, field result or proposal value.
 
 Provider covers use exact-edition, related-edition, work, default, or
 truncation designation. Provenance contains only the configured provider,

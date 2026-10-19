@@ -352,6 +352,18 @@ a library-wide provider barrier.
   and a sibling listing refuses at its entry bound — 1,024 entries — instead of
   materializing an unbounded directory. Path evidence reads bare name
   components only, never a joined path.
+  The same hostile folder leaf, and a single-file item's title tag, may become
+  an audiobook discovery title (#1255). One pure parent-side grammar reads each:
+  text over 255 characters, or carrying a separator, NUL, any C0 or C1
+  control, a format character, a surrogate, a bidirectional override or a
+  noncharacter, is refused whole rather than repaired. What survives is NFC- and
+  whitespace-normalized and stripped only of trailing bracket tags (at most four
+  bounded passes, each tag at most 80 characters), a trailing year, one
+  trailing credit of one to four capitalised tokens and a leading track number,
+  through anchored, bounded expressions without nested quantifiers; it must
+  still name a letter and pass the report's projection-text check. The result
+  is query text for one Audible lane and never a claim, field value or
+  proposal.
   Embedded cover art is recorded as presence and never acquired, decoded, or
   elected.
   A multi-file item multiplies that per-file exposure, so the item carries its
@@ -808,7 +820,10 @@ associations.
 Unreferenced providers are never bound. Each of at most eight distinct
 checksum-valid ISBN-10/13 families selects one exact ISBN lane; one
 title-plus-complete-author work lane is also admitted when that complete input
-exists. More than eight ISBN families return `query_limit_exceeded` before
+exists. An audiobook plan may add one alternative work lane from its recorded
+discovery title, with the asserted authors and the target title's input
+references; it never adds a third work lane, changes the authors or queries a
+series and sequence (#1255). More than eight ISBN families return `query_limit_exceeded` before
 provider client construction and permits no subset egress. With neither an ISBN
 lane nor a complete work lane, title-only or incomplete-author input returns
 `insufficient_input` without a provider request.
@@ -1181,7 +1196,9 @@ contract differs by provider and is not provider-wide:
   becomes part of a host. It is keyless by design: no credential surface exists
   for it in the configuration schema or the client. Compression is declined, one
   observation spends at most three attempts per request, twenty-four dispatches
-  in total, the configured per-response ceiling and nine times that ceiling
+  in total -- an audiobook's alternative work lane, dispatched only after the
+  asserted lane finds nothing, shares that budget rather than adding to it --
+  the configured per-response ceiling and nine times that ceiling
   capped at 1 MiB in aggregate, under one request timeout and one observation
   deadline, behind the adapter's shared request-start pacer. `Retry-After` is
   honoured on `429` and `503`, bounded to one minute; `401`, `403` and `404` are
@@ -1229,7 +1246,10 @@ contract differs by provider and is not provider-wide:
   `https://itunes.apple.com` on the single fixed path `/search`. The query
   travels entirely in the `term` parameter beside a fixed `media=audiobook` and
   a fixed result limit, so no provider or owner value ever becomes part of a URL
-  path or a host. It is keyless by design. Compression is declined; one
+  path or a host. It is keyless by design. It is sent only an audiobook's
+  asserted work lane, never the alternative discovery-title lane (#1255): the
+  store states no running time, so the band that lane requires could retain
+  nothing. Compression is declined; one
   observation spends at most three attempts per request, twelve dispatches in
   total — one work lane walking a ladder of at most three queries — and the
   configured per-response ceiling with nine times that ceiling capped at 1 MiB

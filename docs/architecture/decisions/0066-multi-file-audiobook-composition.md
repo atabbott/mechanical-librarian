@@ -257,3 +257,9 @@ measured, and moved by a record like this one when measurement says so.
 The #1004 missing-runtime chapter fallback is restricted to a single file.
 Multi-file chapter offsets still require each track's stated duration; no
 chapter endpoint substitutes for the durations this composition requires.
+
+## Discovery titles (#1255)
+
+A multi-file item contributes its common folder leaf as a discovery title and
+never a title tag: a track's tag names a chapter, not the work. A set split
+across directories contributes neither (ADR-0063).

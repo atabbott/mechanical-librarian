@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- An audiobook Audible cannot find by its recorded title is searched again by
+  the title in its folder name or single file's title tag, and a recording found
+  that way is kept only when its running time matches. Upgrading requires a
+  clean rebuild (#1255).
+
 - Audible and iTunes audiobook searches keep trying shorter title forms when
   they find only books that fail the identity check. Those checks are counted as
   refusals, not as empty searches. The `schema-adopt` command is removed, and

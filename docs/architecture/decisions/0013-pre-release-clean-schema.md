@@ -132,3 +132,8 @@ plan and the now-empty public command are retired. This does not weaken
 ordinary absent-or-exact-current startup or create a generic conversion seam;
 every earlier application database is rejected before mutation and needs a
 clean rebuild.
+
+Issue #1255 also takes the clean-rebuild branch. `metadata-report-v51` records
+an audiobook's discovery titles and binds its alternative work lane, so a v50
+document cannot be read as current. Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.
