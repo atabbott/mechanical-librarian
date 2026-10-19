@@ -101,9 +101,12 @@ check. A structurally safe target scalar, contributor/list member, series
 component, description, or collection cardinality that exceeds its fixed field
 bound is `oversized`; invalid typed syntax is never hidden by size. Unsafe,
 private-path, credential-shaped, or otherwise invalid non-title input remains
-`malformed`. For the title specifically, a private-path, credential-shaped, or
-equivalently unsafe string rejects the target response with a redacted error
-before a report is created. A safe oversized title or a missing, null, empty,
+`malformed`. An incumbent description also admits attribute-free HTML tag
+slashes (`</p>`, `<br />`) and U+2028 line separators and keeps its exact text,
+while text whose only defect is C1 control characters stays `malformed` with its
+own reason (#1251). The report is `metadata-report-v54`. For the title
+specifically, a private-path, credential-shaped, or equivalently unsafe string
+rejects the target response with a redacted error before a report is created. A safe oversized title or a missing, null, empty,
 unloaded, or non-string title instead preserves its field-local `oversized`,
 `missing`, `null`, `empty`, `unloaded`, or `malformed` state and projects no
 usable snapshot title; report processing may continue. The selected file index
@@ -255,8 +258,7 @@ after every other origin, within the four-lane cap and in the same pass; they
 grant nothing themselves. A fed ASIN the item did not name admits only when the
 answer passes exact work-identity admission and the tight band, so never without
 a title and authors; an answer naming another work keeps only its ASIN and
-leaves no proposal. Every other lane serializes `[]`. The report is
-`metadata-report-v53`.
+leaves no proposal. Every other lane serializes `[]`.
 
 Those decisions are applied through the same guarded path an ebook's take
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).

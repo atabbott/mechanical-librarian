@@ -147,3 +147,9 @@ Issue #1257 also takes the clean-rebuild branch. `metadata-report-v53` adds
 band-first recording-lookup hints to every provider lane, so a v52 document
 cannot be read as current. Every earlier application database is rejected
 before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1251 also takes the clean-rebuild branch. `metadata-report-v54` adds no
+field, but an incumbent description holding an attribute-free HTML tag slash or
+U+2028 was `malformed` in v53 and is a `value` now, so a v53 document cannot be
+read as current. Every earlier application database is rejected before mutation
+and needs a clean rebuild; no adoption is supplied.
