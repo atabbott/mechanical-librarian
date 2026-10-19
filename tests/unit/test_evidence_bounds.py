@@ -20,6 +20,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     _HTML_TAG_SLASH_PATTERN,
     _LABELLED_PATH_PATTERN,
     _MULTIWORD_CREDENTIAL_PATTERN,
+    _TAG_SPAN_PATTERN,
     _UNC_PATH_PATTERN,
     _WINDOWS_DRIVE_ROOT_PATTERN,
     EvidenceValueError,
@@ -386,6 +387,8 @@ def test_guarded_scans_keep_each_refusal(text: str) -> None:
         "Text\u2028",
         "\u2028Text",
         "<p>One</p>\r\n\u2028<p>Two</p>",
+        "<p>Plain synopsis.</p><p>Second<br/>para.</p>",
+        "<p>Secret history of Rome.</p>",
     ),
 )
 def test_incumbent_description_admits_tag_slashes_and_line_separators(
@@ -426,6 +429,9 @@ def test_incumbent_description_admits_tag_slashes_and_line_separators(
                 "~</p>/x",
                 "/Use</b>rs/x",
                 "x </p>/ho</b>me/y",
+                # An opening tag splitting one (R6).
+                "C<b>:</b>\\Books\\x",
+                "file<i>:</i>//server/share",
             )
         ),
         *(
@@ -442,6 +448,15 @@ def test_incumbent_description_admits_tag_slashes_and_line_separators(
                 "to</p>ken=abc",
                 "pass</b>word: hunter2",
                 "Bear</b>er abc.def.ghi",
+                # An opening or attribute tag splitting one, or a leading tag
+                # hiding a start-anchored label (R6).
+                "pass<b>word</b>=hunter2",
+                "to<b>ken</b>=abc",
+                "api<i>_key</i>=x",
+                "<p>Secret: hunter2</p>",
+                "Bearer abcdefg1</p><p>More text",
+                'pass<a href="x">word</a>=hunter2',
+                "</p> secret: x",
             )
         ),
         *(
@@ -483,6 +498,10 @@ def test_shared_projection_grammar_is_unchanged(value: str) -> None:
         evidence_bounds.validate_projection_text(value, "label", 256)
 
 
+def _tag_free(text: str) -> str:
+    return _TAG_SPAN_PATTERN.sub("", text).strip(" \t\r\n")
+
+
 def _projection_outcome(text: str, *, markup: bool) -> tuple[str, str]:
     try:
         return (
@@ -518,6 +537,10 @@ _MARKUP_FRAGMENTS = (
     "word=x",
     "file:",
     "..",
+    "<b>",
+    "<i>",
+    '<a href="x">',
+    "Secret: x",
 )
 
 
@@ -535,8 +558,9 @@ _MARKUP_FRAGMENTS = (
 def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
     markup = _projection_outcome(text, markup=True)
     if markup[0] == "admitted":
-        # Whatever markup admits, the default scan admits with tags removed.
-        removed = _HTML_TAG_SLASH_PATTERN.sub("", text)
+        # Whatever markup admits, the default scan admits with every tag-like
+        # span removed and the edges stripped.
+        removed = _tag_free(text)
         assert _projection_outcome(removed, markup=False) == ("admitted", removed)
     if markup != _projection_outcome(text, markup=False):
         assert _HTML_TAG_SLASH_PATTERN.search(text) is not None
@@ -546,6 +570,7 @@ def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
     "text",
     (
         "Coo</b>kie: abc",
+        "pass<b>word</b>=hunter2",
         "pass</b>word: hunter2",
         "file:</p>//server/share",
         "<p>Plain synopsis.</p>",
@@ -554,8 +579,7 @@ def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
 def test_split_text_reads_as_its_tag_free_form(text: str) -> None:
     # The default scan does not refuse a bare cookie header, so neither does a
     # split one; every other split shape is refused as its tag-free form is.
-    removed = _HTML_TAG_SLASH_PATTERN.sub("", text)
-    expected = _projection_outcome(removed, markup=False)
+    expected = _projection_outcome(_tag_free(text), markup=False)
     assert _projection_outcome(text, markup=True) == (
         expected if expected[0] != "admitted" else ("admitted", text)
     )

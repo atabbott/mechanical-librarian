@@ -77,6 +77,9 @@ _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w/~])/(?!/)[^\s/:]+(?:/[^\s/:]+)*")
 _HTML_TAG_SLASH_PATTERN = re.compile(
     r"<(/)?([a-z][a-z0-9]*)\s*(?(1)|/)>", re.ASCII | re.IGNORECASE
 )
+# Any tag-like span, opening or with attributes: markup text must also pass the
+# default scan with every such span removed (#1251).
+_TAG_SPAN_PATTERN = re.compile(r"<[^<>]*>")
 # Windows-1252 text decoded as Latin-1 leaves these; an incumbent description
 # holding them is refused with its own reason, never repaired (#1251).
 _C1_CONTROLS = re.compile("[\x80-\x9f]")
@@ -198,10 +201,13 @@ def _validate_projection_safety(text: str, label: str, *, markup: bool = False) 
     ):
         raise EvidenceValueError(f"{label} must not contain a production path")
     if rooted is not text:
-        # A tag can also split a credential, a label or a non-absolute path,
-        # so the text with its tags removed must pass the whole default scan;
-        # that only ever adds refusals (#1251).
-        _validate_projection_safety(_HTML_TAG_SLASH_PATTERN.sub("", text), label)
+        # Any tag can also split a credential, a label or a non-absolute path,
+        # or hide a start-anchored label behind a space, so the text with every
+        # tag-like span removed and its edges stripped must pass the whole
+        # default scan; that only ever adds refusals (#1251).
+        _validate_projection_safety(
+            _TAG_SPAN_PATTERN.sub("", text).strip(" \t\r\n"), label
+        )
     if _credential_shaped(text):
         raise EvidenceValueError(f"{label} must not contain credential-shaped text")
     return text
