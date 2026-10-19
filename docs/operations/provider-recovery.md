@@ -17,6 +17,11 @@ daily reset. Missing, malformed, contradictory, or unknown rate-limit evidence
 stays the conservative generic rate-limited case and uses a strict bounded
 `Retry-After` or the 2, 4, 8, 16, then 24 hour ladder. Authentication,
 authorization, and configuration failures are dormant.
+A preparation gives each provider at most a 20-second share of the item's
+60-second window (#1248). A provider that uses up its share classifies
+`transient` exactly as before, while later providers are no longer recorded
+deadline-incomplete without ever sending a request. A retry successor still
+gives its single provider the whole 60 seconds.
 
 Google Books recognizes only the closed API reason vocabulary: burst reasons
 start a shared 100-second admission hold in the composed process. Later Google

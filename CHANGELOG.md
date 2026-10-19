@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- One slow or unavailable metadata provider now uses at most 20 seconds of an
+  item's 60-second provider window, so the providers after it and alternative
+  cover downloads still run instead of being recorded as out of time, for
+  ebooks and audiobooks (#1248).
+
 - Audiobooks are now looked up only with Audible, Audnexus, AudioSilo, Open
   Library and Hardcover. Google Books, Inventaire and iTunes no longer spend
   requests or recovery work on them. Ebooks are unchanged and no rebuild is

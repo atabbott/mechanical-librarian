@@ -857,7 +857,9 @@ eight, and an aggregate response ceiling of the smaller of nine configured
 response limits and 2 MiB. It sends the fixed
 `MechanicalLibrarian/0.19.0 (+https://github.com/atabbott/mechanical-librarian)`
 user agent and no credential. The lanes share one client, response-byte
-aggregate, and deadline; Google Books, Hardcover, Inventaire, and Open Library
+aggregate, and, in a preparation, the provider's 20-second share of the
+60-second deadline;
+Google Books, Hardcover, Inventaire, and Open Library
 use shared one-second request-start pacers across foreground and recovery work.
 
 Within one provider observation, semantically identical provider lookups are
@@ -1049,7 +1051,11 @@ This is the narrower runtime application of ADR-0013's repository-wide
 pre-release clean-schema rule; it does not limit that rule to database state.
 
 Cover acquisition reads the declared incumbent before provider dispatch inside
-the existing single aggregate window (#1156). Expired acquisition starts no
+the existing single aggregate window (#1156). Each provider observation is
+capped at a 20-second share of that window and never past it, apart from one
+in-flight transport phase overrunning slightly as the aggregate already allows, so one slow
+provider cannot starve the providers or alternative covers after it; request,
+retry, byte and pacer ceilings are unchanged (#1248). Expired acquisition starts no
 request; known terminal descriptors precede pacing and transport. EPUB directory
 entries are excluded from file identity matching only after unchanged archive
 validation. Child wall timeout and cancellation retain process/pipe cleanup.

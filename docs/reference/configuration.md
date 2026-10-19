@@ -329,7 +329,11 @@ ranking policy:
   than whole and is routinely larger than any EPUB. It bounds each audio file
   of an item, checked on the opened length before any file is digested, which
   bounds a multi-file item at that ceiling times its file count
-- `timeout_seconds` (1–60; default 30)
+- `timeout_seconds` (1–60; default 30) — in a preparation, one provider's
+  requests stop at its 20-second share of the item's 60-second window (one
+  in-flight transport phase may overrun it slightly), so values above 20 bind
+  provider requests only in recovery. Audiobookshelf reads and writes still
+  use the full value (#1248)
 
 Optional `review` configuration is required by `review-serve` and ignored by
 report-only commands. The server also requires explicit `--catalogue` and
