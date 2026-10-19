@@ -2608,6 +2608,14 @@ def _foreign(data: dict[str, object]) -> None:
     cast(list[dict[str, object]], data["providers"])[0]["authority"] = "google_books"
 
 
+def _audnexus(data: dict[str, object]) -> None:
+    cast(list[dict[str, object]], data["providers"])[0]["authority"] = "audnexus"
+
+
+def _itunes(data: dict[str, object]) -> None:
+    cast(list[dict[str, object]], data["providers"])[0]["authority"] = "itunes_search"
+
+
 def _duplicated(data: dict[str, object]) -> None:
     _hint_at(data)["asin"] = "B000000001"
 
@@ -2666,6 +2674,10 @@ def _hint_base(base: str) -> MetadataReport:
     ("base", "mutations", "message"),
     (
         ("admitted", (_foreign,), "recording lookup hint provenance is invalid"),
+        ("admitted", (_audnexus,), "recording lookup hint provenance is invalid"),
+        ("admitted", (_itunes,), "recording lookup hint provenance is invalid"),
+        ("lookup", (_audnexus,), "recording lookup hint provenance is invalid"),
+        ("lookup", (_itunes,), "recording lookup hint provenance is invalid"),
         (
             "admitted",
             (_foreign, _admitted_duplicate, _out_of_band),
@@ -2695,6 +2707,10 @@ def _hint_base(base: str) -> MetadataReport:
     ),
     ids=(
         "foreign_authority",
+        "audnexus_authority",
+        "itunes_authority",
+        "audnexus_lookup_authority",
+        "itunes_lookup_authority",
         "provenance_first",
         "rung_outside_ladder",
         "admission_outside_ladder",

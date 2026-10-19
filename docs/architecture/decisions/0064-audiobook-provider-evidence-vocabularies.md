@@ -313,13 +313,14 @@ deterministic function of the survivor pages and the local claims. Hints stay
 on an exhausted `NO_MATCH` lane and beside `CANDIDATES`, from a refused rung
 before the admitting one (after #1245) or from the admitting rung itself. A
 terminal failure drops them with the refusals before it. The alternative lane,
-ebook plans and every other provider produce none; only Audible can.
+ebook plans and every other provider produce none; only Audible can, and
+report validation and the feed refuse a hint on any other authority.
 
 The #956 feed sends hinted ASINs to Audnexus and AudioSilo in the same
 preparation pass, after every existing origin and inside the four-lane cap,
 with no second round. A hint asserts nothing: it reaches admission only as a
 fed ASIN lane. Report validation refuses, in this order, a hint whose
-provenance is not an audiobook provider's asserted lane on an audio plan, a rung
+provenance is not an Audible asserted lane on an audio plan, a rung
 outside that lane's ladder or after its admitting rung, an ASIN a retained
 candidate holds, a runtime outside the tight band, and more than 2 hints on
 one provider observation. A retry that admits a hinted product on another lane

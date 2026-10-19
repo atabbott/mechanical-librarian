@@ -3956,9 +3956,10 @@ class MetadataReport:
                 if not lane.recording_lookup_hints:
                     continue
                 payload = planned.get(lane.identity)
+                # Only Audible produces hints; any other authority's is forged.
                 if (
                     self.audio is None
-                    or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                    or provider.authority != "audible_catalog"
                     or payload is None
                     or payload.title_basis is not None
                 ):

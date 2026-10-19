@@ -984,7 +984,7 @@ def audiobook_asin_feed_plan(
     # Band-first hints (#1257) come last, so a refused product's ASIN never
     # displaces a stronger origin inside the cap.
     for observation in observations:
-        if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
+        if observation.authority != "audible_catalog":
             continue
         for lane in observation.lanes:
             for hint in lane.recording_lookup_hints:
@@ -1033,6 +1033,10 @@ def provider_observation(
     }
     if len(access_times) > 1:
         raise MetadataReportError("provider lane access times disagree")
+    if authority != "audible_catalog" and any(
+        result.recording_lookup_hints for result in results
+    ):
+        raise MetadataReportError("provider lane result is invalid")
     accessed_at = next(iter(access_times), None)
     candidates_by_identity: dict[str, ProviderCandidate] = {}
     conflict = False

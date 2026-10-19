@@ -1403,6 +1403,35 @@ def test_band_first_hints_feed_last_inside_the_cap_and_only_once() -> None:
     )
 
 
+@pytest.mark.parametrize("authority", ("audnexus", "itunes_search"))
+def test_only_an_audible_observation_carries_or_feeds_a_hint(authority: str) -> None:
+    """Only Audible produces hints, so no other authority's is built or fed."""
+    hinted = recording_lookup_hint_report(hint_asins=("B000000011",))
+    plan = audiobook_discovery_plan(
+        audio_target(), hinted.local_claims, audio=hinted.audio
+    )
+    (observation,) = hinted.providers
+    (recorded,) = observation.lanes
+    asserted = next(lane for lane in plan.lanes if lane.identity == recorded.identity)
+
+    forged = replace(observation, authority=authority)
+    assert audiobook_asin_feed_plan(audio_target(), plan, (forged,)) is None
+    with pytest.raises(MetadataReportError, match="provider lane result is invalid"):
+        provider_observation(
+            observation.provider,
+            (
+                ProviderLaneResult(
+                    asserted,
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=recorded.diagnostics,
+                    exhausted_dispatch=recorded.exhausted_dispatch,
+                    recording_lookup_hints=recorded.recording_lookup_hints,
+                ),
+            ),
+            authority=authority,
+        )
+
+
 def test_an_ebook_ladder_keeps_no_recording_lookup_hint() -> None:
     """A refused tight-runtime product on an ebook plan is no hint (#1257)."""
     local = _audio_local_claims()
