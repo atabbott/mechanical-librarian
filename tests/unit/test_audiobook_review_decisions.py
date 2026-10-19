@@ -316,17 +316,18 @@ def test_recording_support_is_recomputed_through_packet_reopen(duration, support
 
 
 @pytest.mark.parametrize(
-    "state, role, supported",
+    "state, role, local_asin, supported",
     (
-        (FieldState.MALFORMED, "narrator", False),
-        (FieldState.VALID, "translator", False),
-        (FieldState.VALID, "narrator", True),
+        (FieldState.MALFORMED, "narrator", None, False),
+        (FieldState.VALID, "translator", "B08G9PRS1K", False),
+        (FieldState.VALID, "translator", None, False),
+        (FieldState.VALID, "narrator", None, True),
     ),
 )
 def test_incomplete_or_mixed_narrator_credits_cannot_gain_packet_authority(
-    state, role, supported
+    state, role, local_asin, supported
 ):
-    base = asserted_asin_report(provider_duration="58200.000")
+    base = asserted_asin_report(provider_duration="58200.000", local_asin=local_asin)
     observation = asin_lane_observation(base.local_claims)
     candidate = observation.candidates[0]
     extra = ProviderClaim.create(
@@ -366,13 +367,17 @@ def test_incomplete_or_mixed_narrator_credits_cannot_gain_packet_authority(
     case = ReviewCase.create(proposal, report)
     packet = ShadowReviewPacket.create(case, proposal, report)
     reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
-    if state is FieldState.MALFORMED:
+    if state is FieldState.MALFORMED or (role == "translator" and local_asin is None):
+        # A translator credit fails exact work admission, so on a fed lane the
+        # answer keeps only its ASIN and nothing reaches the packet (#1257).
         result = next(
             value
             for value in proposal.results
             if value.destination is TargetDestination.NARRATORS
         )
-        assert result.reasons == ("no_supported_evidence",)
+        assert state is not FieldState.MALFORMED or result.reasons == (
+            "no_supported_evidence",
+        )
         assert not any(
             value["destination"] == "narrators" for value in reopened.proposals
         )

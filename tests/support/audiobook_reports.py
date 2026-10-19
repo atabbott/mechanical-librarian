@@ -115,10 +115,11 @@ def audiobook_candidate(
     provider: str = "catalogue",
     chapters: ProviderChapterStructure | None = None,
     series: tuple[str, str] | None = None,
+    title: str = "Project Hail Mary",
 ) -> ProviderCandidate:
     """One candidate shaped exactly as the audiobook adapters build it."""
     specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
-        (ClaimKind.TITLE, "Project Hail Mary", ClaimScope.WORK, None),
+        (ClaimKind.TITLE, title, ClaimScope.WORK, None),
         (ClaimKind.CREATOR, "Andy Weir", ClaimScope.WORK, "author"),
         (ClaimKind.ASIN, asin, ClaimScope.EDITION, None),
         (ClaimKind.DURATION, duration, ClaimScope.EDITION, None),

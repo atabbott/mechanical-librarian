@@ -920,14 +920,17 @@ def test_feed_lane_identities_never_collide_across_origins() -> None:
     ),
     ids=("corroborated", "uncorroborated"),
 )
+@pytest.mark.parametrize("titled", (True, False), ids=("titled", "untitled"))
 def test_an_asin_lane_without_a_local_asin_is_corroboration_gated(
-    provider_duration: str, expected: set[ClaimKind]
+    provider_duration: str, expected: set[ClaimKind], titled: bool
 ) -> None:
     """A fed lane never settles identity; the runtime band still decides.
 
     The lane names a product, but nothing on the recording said so, so an
     answer to it is treated exactly as an answer to a search is: only the
-    candidate the band admits keeps its edition scope.
+    candidate the band admits keeps its edition scope. Without a title and
+    authors to admit against, no answer passes exact work admission, so each
+    keeps only its identifier (#1257).
     """
     local_claims = _feed_claims()
     qualified = qualify_provider_observation(
@@ -939,11 +942,16 @@ def test_an_asin_lane_without_a_local_asin_is_corroboration_gated(
             ProviderQueryKind.ASIN,
             "audnexus",
         ),
-        MetadataLookup(ProviderQueryKind.ASIN, local_claims),
+        MetadataLookup(
+            ProviderQueryKind.ASIN,
+            local_claims,
+            work_title="Project Hail Mary" if titled else None,
+            work_authors=("Andy Weir",) if titled else (),
+        ),
     )
 
     assert ProviderStatus.CANDIDATES is qualified.status
-    assert expected | {ClaimKind.CONTRIBUTOR} == {
+    assert (expected | {ClaimKind.CONTRIBUTOR} if titled else {ClaimKind.ASIN}) == {
         claim.kind for claim in qualified.candidates[0].claims
     }
 
@@ -3876,3 +3884,47 @@ def test_only_an_asserted_no_match_permits_the_alternative_lane(
             (_audiobook_candidate(_audio_local_claims()),),
         ),
     )
+
+
+@pytest.mark.parametrize("duration", ("58200.000", "51000.000"))
+def test_a_fed_asin_naming_another_work_keeps_only_its_identifier(
+    duration: str,
+) -> None:
+    """Exact work admission gates a fed lane before any runtime can (#1257).
+
+    A candidate the item's title and authors refuse keeps no runtime for
+    stated-runtime admission, no work statement for a proposal and no
+    media-health comparison, whatever its runtime; the admitted title still
+    keeps its edition scope.
+    """
+    local_claims = _feed_claims()
+    right = _audiobook_candidate(local_claims, duration=duration)
+    wrong = _audiobook_candidate(
+        local_claims,
+        identity="audnexus-book-B000000011",
+        asin="B000000011",
+        duration=duration,
+        title="Wrong Title",
+    )
+    qualified = qualify_provider_observation(
+        ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (right, wrong),
+            ProviderQueryKind.ASIN,
+            "audnexus",
+        ),
+        MetadataLookup(
+            ProviderQueryKind.ASIN,
+            local_claims,
+            work_title="Project Hail Mary",
+            work_authors=("Andy Weir",),
+        ),
+    )
+
+    kept, refused = qualified.candidates
+    assert ClaimKind.DURATION in {claim.kind for claim in kept.claims}
+    assert {ClaimKind.ASIN} == {claim.kind for claim in refused.claims}
+    assert () == refused.evidence
+    assert refused.runtime_short_of_local is False

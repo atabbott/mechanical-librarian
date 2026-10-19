@@ -1676,12 +1676,10 @@ def _identifier_lane_candidates(
             for candidate in observation.candidates
         )
     # A requested identifier and equal duration are not evidence of the work.
-    runtime_candidates = tuple(
-        c
+    work_admitted = {
+        c.identity
         for c in observation.candidates
-        if recording_variant_conflict(c, lookup.local_claims, lookup.work_title or "")
-        is None
-        and lookup.work_title is not None
+        if lookup.work_title is not None
         and lookup.work_authors
         and provider_candidate_exact_work_identity_admission(
             c,
@@ -1689,28 +1687,53 @@ def _identifier_lane_candidates(
             lookup.work_authors,
             audiobook=lookup.audio is not None,
         ).admitted
+    }
+    runtime_candidates = tuple(
+        c
+        for c in observation.candidates
+        if recording_variant_conflict(c, lookup.local_claims, lookup.work_title or "")
+        is None
+        and c.identity in work_admitted
     )
     corroborated = runtime_corroborated_candidate(
         runtime_candidates, lookup.local_claims
     )
     admitted = None if corroborated is None else corroborated[0].identity
-    return tuple(
-        _shaped_with_runtime_comparison(
+    # A candidate without exact work admission keeps only its identifier
+    # (#1257), with or without a title to admit against: its runtime would reach
+    # stated-runtime admission downstream, and its work statements and
+    # media-health comparison would describe another work. The chapter route
+    # already requires exact admission and is untouched.
+    shaped: list[ProviderCandidate] = []
+    for candidate in observation.candidates:
+        chapter = _chapter_candidate_support(
             candidate,
-            candidate.identity == admitted
-            or _chapter_candidate_support(
-                candidate,
-                lookup.audio,
-                lookup.local_claims,
-                lookup.work_title,
-                lookup.work_authors,
-                lookup.requested_asin,
-            ),
+            lookup.audio,
             lookup.local_claims,
-            recording_hints=True,
+            lookup.work_title,
+            lookup.work_authors,
+            lookup.requested_asin,
         )
-        for candidate in observation.candidates
-    )
+        if candidate.identity not in work_admitted and not chapter:
+            shaped.append(
+                replace(
+                    candidate,
+                    claims=tuple(
+                        c for c in candidate.claims if c.kind is ClaimKind.ASIN
+                    ),
+                    evidence=(),
+                )
+            )
+            continue
+        shaped.append(
+            _shaped_with_runtime_comparison(
+                candidate,
+                candidate.identity == admitted or chapter,
+                lookup.local_claims,
+                recording_hints=True,
+            )
+        )
+    return tuple(shaped)
 
 
 def qualify_provider_observation(

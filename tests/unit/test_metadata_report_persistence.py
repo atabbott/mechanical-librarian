@@ -2001,7 +2001,12 @@ def _current_audio_report(
         providers=(
             qualify_provider_observation(
                 asin_lane_observation(claims, duration="72000.000"),
-                MetadataLookup(ProviderQueryKind.ASIN, claims),
+                MetadataLookup(
+                    ProviderQueryKind.ASIN,
+                    claims,
+                    work_title="Project Hail Mary",
+                    work_authors=("Andy Weir",),
+                ),
             ),
         ),
         audio=_replace(

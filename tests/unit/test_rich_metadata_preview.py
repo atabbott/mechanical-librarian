@@ -156,7 +156,7 @@ def test_regional_synopsis_uses_stable_source_record_without_ranking_text(
         ("unsafe", "<script>bad()</script>", "description_quality_floor_not_met"),
         ("malformed", {}, "description_quality_floor_not_met"),
         ("cutoff", "A journey...", "description_quality_floor_not_met"),
-        ("wrong_work", None, "target_work_applicability_unproved"),
+        ("wrong_work", None, "no_candidate"),
     ],
 )
 def test_regional_synopsis_preserves_source_safety_and_work_refusals(
@@ -188,7 +188,9 @@ def test_regional_synopsis_preserves_source_safety_and_work_refusals(
         reason,
         None,
     )
-    assert _description_result(proposal).alternatives
+    # A fed answer naming another work keeps only its ASIN (#1257), so it
+    # offers no description at all rather than an unproved one.
+    assert bool(_description_result(proposal).alternatives) is (shape != "wrong_work")
 
 
 def test_regional_synopsis_refuses_competing_texts_within_one_source_record(
