@@ -587,7 +587,7 @@
     "tests/integration/test_continuous_review_scale.py": "a3700a28f38289a898ea75b9693efd304974ba6a41dcc1ad3ee9ce80ff757e23",
     "tests/integration/test_database_crash_recovery.py": "285eb4cb629482f192426f61b11f306c352f53a8b40fbdea9d2b1452041619f0",
     "tests/integration/test_owner_responsiveness.py": "b042de2a5a4ee195ca5790a303125fe096ede1c4545de955294804afa7928282",
-    "tests/integration/test_preparation_claim_recovery.py": "ce27e9806845a895a1bd8c4a2485734dc0a884783b4fbac29a62d6f44a00b124",
+    "tests/integration/test_preparation_claim_recovery.py": "1f41657f81f007badcdfe05cf4d0f499e0361e5721323f0bd58f4e41d301d182",
     "tests/integration/test_review_case_lifecycle.py": "33ed0e0d54a6f031a2cd4c7786db9ecc628f53cc6b7c8d39fa90e2903638b116",
     "tests/slow/test_owner_browser_responsiveness.py": "3544b63a4f5e5ed8a3e9c6a564e31eeac7eaa76f7e88e7e288e0254dd9499d93",
     "tests/slow/test_owner_responsiveness.py": "8d70427f0068d2af663c2f0b080426453c0e1b34e675e3e447b2f922dbdc1583",
