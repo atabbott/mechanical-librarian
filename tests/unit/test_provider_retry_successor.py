@@ -28,6 +28,7 @@ from mechanical_librarian.application.failure_diagnostics import (
 )
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
+    CurrentnessError,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     ProviderBinding,
@@ -52,6 +53,7 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
+    classify_provider_recovery_failure,
     provider_recovery_jobs,
 )
 from mechanical_librarian.application.provider_retry_successor import (
@@ -1888,6 +1890,74 @@ def test_an_audio_source_rebuilds_its_asin_plan_and_redispatches() -> None:
         value.status for value in successor.providers[0].lanes
     )
     assert report.report_id != successor.report_id
+
+
+def test_an_excluded_audiobook_retry_closes_stale_before_any_egress() -> None:
+    """A job queued before the dispatch set (#1247) closes alone, as stale.
+
+    The source is a retained audiobook report with an unavailable Google Books
+    lane, which preparation no longer produces. Its retry is refused once the
+    source is read: no resolver, target, inspector or factory is reached, and
+    the stale classification closes only that job with no failure evidence,
+    so no ebook retry for the same scope waits on it.
+    """
+    snapshot, claims, plan = _fed_audio_source(asserted=False)
+    (lane,) = plan.lanes
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", snapshot.fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("target_metadata_title",),
+        providers=(
+            provider_observation(
+                "books",
+                (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+                authority="google_books",
+            ),
+        ),
+        audio=_RETAINED_AUDIO,
+    )
+
+    class _SourceOnly(_Repository):
+        def current_optional(self, *_args):
+            pytest.fail("the current report was read")
+
+        def current_review_package(self, *_args):
+            pytest.fail("the current package was read")
+
+    class _Unreachable:
+        def read(self, *_args: object) -> object:
+            pytest.fail("the target was read")
+
+        def unchanged(self, *_args: object) -> bool:
+            pytest.fail("the media was inspected")
+
+    def resolver(*_args: object) -> ConfiguredProviderRetry:
+        pytest.fail("the provider was resolved")
+
+    repository = _SourceOnly(report)
+    service = GenerateProviderRetrySuccessor(
+        target=cast("Any", _Unreachable()),
+        inspector=cast("Any", _Unreachable()),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        audio_inspector=cast("Any", _Unreachable()),
+        provider_resolver=resolver,
+        mount=MediaMountConfiguration("audiobooks", "/container", "/service", True),
+        limits=ReportLimits(),
+        after_publication=lambda *_args: None,
+    )
+
+    with pytest.raises(CurrentnessError) as raised:
+        service.run(
+            report.report_id,
+            (lane.identity,),
+            provider_name="books",
+            adapter="google_books",
+            generation=2,
+        )
+
+    assert ("stale", None) == classify_provider_recovery_failure(raised.value)
+    assert {report.report_id} == set(repository.values)
 
 
 def _fed_audio_source(

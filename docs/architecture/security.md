@@ -817,7 +817,16 @@ one reviewer request.
 Disabled providers cause no client construction or egress. Disabling also
 removes their library associations; enabling them again does not recreate those
 associations.
-Unreferenced providers are never bound. Each of at most eight distinct
+Unreferenced providers are never bound. An audiobook plan is dispatched only to
+referenced providers in `AUDIOBOOK_DISPATCH_ADAPTERS` (the Audible catalog,
+Audnexus, AudioSilo, Hardcover and Open Library; ADR-0061 clause 9, #1247):
+Google Books, Inventaire and iTunes Search are never constructed, contacted,
+recorded or retried for an audiobook, an audiobook report gives them no failure
+evidence even where a retry successor carried an older observation forward, a
+binding with no authority is never dispatched, and a recovery job already
+queued for one of them closes as stale before any resolver, target read or
+factory call. Ebook dispatch is unchanged.
+Each of at most eight distinct
 checksum-valid ISBN-10/13 families selects one exact ISBN lane; one
 title-plus-complete-author work lane is also admitted when that complete input
 exists. An audiobook plan may add one alternative work lane from its recorded
@@ -1254,10 +1263,10 @@ contract differs by provider and is not provider-wide:
   `https://itunes.apple.com` on the single fixed path `/search`. The query
   travels entirely in the `term` parameter beside a fixed `media=audiobook` and
   a fixed result limit, so no provider or owner value ever becomes part of a URL
-  path or a host. It is keyless by design. It is sent only an audiobook's
-  asserted work lane, never the alternative discovery-title lane (#1255): the
-  store states no running time, so the band that lane requires could retain
-  nothing. Compression is declined; one
+  path or a host. It is keyless by design. It is not dispatched for audiobooks
+  (#1254); its egress arises only from ebook work lanes, where a library
+  connects it, and its adapter still never sends an alternative discovery-title
+  lane. Compression is declined; one
   observation spends at most three attempts per request, twelve dispatches in
   total — one work lane walking a ladder of at most three queries — and the
   configured per-response ceiling with nine times that ceiling capped at 1 MiB

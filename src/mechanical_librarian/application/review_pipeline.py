@@ -1175,7 +1175,8 @@ class ReviewPreparationPipeline:
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
                 # The report already contains one bounded terminal observation
-                # for every configured provider lane. Proposal admission, not a
+                # for every dispatched provider lane (an audiobook dispatches
+                # only its dispatch set, #1247). Proposal admission, not a
                 # sibling technical status, decides whether the complete report
                 # can form a coherent package.
                 self._providers(repository, action.report_id)

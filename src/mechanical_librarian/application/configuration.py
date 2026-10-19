@@ -42,6 +42,13 @@ AUDIOBOOK_PROVIDER_ADAPTERS = frozenset(
 # AudioSilo restate Audible's CDN asset, so enabling covers on them would buy a
 # second copy of one image rather than a second opinion about it.
 AUDIOBOOK_COVER_PROVIDER_ADAPTERS = frozenset({"audible_catalog", "itunes_search"})
+# ADR-0061 clause 9 (#1247, #1254): the only adapters an audiobook is ever
+# dispatched to. A library's connections narrow this set and never widen it, so
+# Google Books, Inventaire and iTunes stay admitted for configuration and ebooks
+# but receive no audiobook request, observation or recovery work.
+AUDIOBOOK_DISPATCH_ADAPTERS = frozenset(
+    {"audible_catalog", "audnexus", "audiosilo", "hardcover", "open_library"}
+)
 
 
 class ConfigurationError(ValueError):
@@ -431,6 +438,7 @@ class ApplicationConfiguration:
 
 
 __all__ = [
+    "AUDIOBOOK_DISPATCH_ADAPTERS",
     "AUDIOBOOK_PROVIDER_ADAPTERS",
     "EBOOK_PROVIDER_ADAPTERS",
     "ApplicationConfiguration",

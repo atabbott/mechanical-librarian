@@ -1207,12 +1207,19 @@ def test_google_remaining_burst_is_committed_without_renewal(
             repository, report.report_id
         )
     repository.close()
-    assert store.snapshot()[0].next_eligible_at == 100
-    store.close()
-    reopened = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
-    assert reopened.snapshot()[0].next_eligible_at == 100
-    assert reopened.snapshot()[0].state == "waiting"
-    reopened.close()
+    if audio:
+        # Google Books is outside the audiobook dispatch set (#1247), so a
+        # retained audiobook observation of it is no health evidence: the
+        # library-wide row that would hold its ebook recovery is never written.
+        assert () == store.snapshot()
+        store.close()
+    else:
+        assert store.snapshot()[0].next_eligible_at == 100
+        store.close()
+        reopened = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+        assert reopened.snapshot()[0].next_eligible_at == 100
+        assert reopened.snapshot()[0].state == "waiting"
+        reopened.close()
     assert len(dispatched) == 1
     assert pacer.remaining_burst() == 82
     now[0] = 100

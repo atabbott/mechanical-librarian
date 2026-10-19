@@ -1783,7 +1783,7 @@ def _report_detail(
 
     An audiobook now dispatches providers, so this view carries the same two
     provider surfaces the ebook detail does: the source ledger, which says what
-    every configured provider was asked and how it ended, and the claims the
+    every dispatched provider was asked and how it ended, and the claims the
     admitted candidates actually stated. Without them an owner reading a
     read-only audiobook would see the local evidence and have no way to tell a
     provider that matched from one that was never reachable.
@@ -1862,7 +1862,7 @@ def _report_detail(
         "media_health": _media_health(recorded),
         "recording_identity_basis": recording_identity_basis(recorded),
         "audiobook_review_scope": audiobook_review_scope(recorded),
-        # What every configured provider was asked, and how each ended.
+        # What every dispatched provider was asked, and how each ended.
         "provider_sources": _provider_outcomes(provider_lane_facts(recorded)),
         # What the admitted candidates stated, under the same ceiling and the
         # same truncation flag the local evidence above uses.

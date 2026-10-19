@@ -181,9 +181,11 @@ chapters, and whether the file carries embedded cover art — each attributed to
 the surface it was read from: an embedded tag, a sidecar document beside the
 file, or the exported file and folder names. Chapters are a bounded structured
 section rather than claims, and the embedded cover is a presence fact that
-grants no cover authority. Every configured audiobook provider is contacted
-while the report is built, and its observations are retained beside the local
-evidence. Discovery runs in two phases within that one preparation. The first
+grants no cover authority. Every connected provider in the audiobook dispatch
+set (the Audible catalog, Audnexus, AudioSilo, Hardcover and Open Library) is
+contacted while the report is built, and its observations are retained beside
+the local evidence; Google Books, Inventaire and iTunes Search never are
+(#1247, #1254). Discovery runs in two phases within that one preparation. The first
 is the item's own plan: one product lane per ASIN its tags, sidecars, or path
 carry, or a title-and-author search when it carries none. The second feeds the
 per-ASIN providers the ASINs no local surface named — those the runtime
@@ -203,11 +205,12 @@ assertion obtains evidence and never settles identity, under
 [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md). In
 the field results the asserted ASIN reads as `valid` on the `target_metadata`
 source, which continues to read `unsupported` for every field that surface does
-not carry. The two authorities that state a cover asset of their own — the
-Audible catalog and iTunes Search — have their covers acquired through the same
-bounded cover pipeline an ebook's use, each behind its own `cover_enabled`
-switch, and the retained cover evidence records where two independent
-authorities picture the same art. Its covers stay evidence only, so no cover consideration is prepared
+not carry. Only the Audible catalog's cover is acquired by default: it is the
+one dispatched authority that states a cover asset of its own, and it goes
+through the same bounded cover pipeline an ebook's use, behind its own
+`cover_enabled` switch. iTunes Search also states one but is not dispatched for
+audiobooks (#1254), so the retained cover evidence has no second authority to
+record agreement with. Its covers stay evidence only, so no cover consideration is prepared
 for one and no cover it carries is elected. What follows the report depends on
 what the report says. The runtime corroboration gate is a tight band of 90
 whole seconds, measured and owned by the corroboration rules
@@ -601,8 +604,9 @@ alternative work lane from the first surviving entry; its identity payload adds
 name, the plan carries the alternative lane alone, and so it does when the
 asserted title has no query rung at all, such as a bare `Part II`. Only Audible
 dispatches it, and only after the asserted lane ends `no_match`; any other
-asserted status suppresses it. Every other adapter, iTunes included, suppresses
-it on every plan.
+asserted status suppresses it. Audnexus, AudioSilo, Hardcover and Open Library
+suppress it on every plan; Google Books, Inventaire and iTunes Search are not
+dispatched for audiobooks at all.
 On the alternative lane, admission replays against the alternative title
 on the audiobook ladder; a rung admitted but not runtime-corroborated counts as
 refused, and a `candidates` lane keeps exactly one corroborated candidate with
@@ -956,3 +960,6 @@ iTunes Search retains its complete-result bound: five rows with one supported
 match and distinct distractors can admit that match; six distinct candidates or
 an oversized raw result list overflow. Over-limit lists are rejected before
 member projection. No cap increase, truncation or effective narrowing is claimed.
+Narrowing was measured and rejected (#1254), and iTunes Search left audiobook
+dispatch, so this bound now applies only to ebook work lanes where a library
+connects it.

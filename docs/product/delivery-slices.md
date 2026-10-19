@@ -289,13 +289,13 @@ and ladder continuation; #1246 the pre-ADR discovery measurement; #1256
 overflow narrowing; #1247 audiobook dispatch set; #1248 per-provider deadline
 share; #1249 attention clause; #1250 inspector bounds and quality floor; #1251
 projection validator; #1252 decision coherence; #1254 iTunes query
-measurement; #1258 dispatch classification; #1259 the closing replay and band
+measurement, which removed iTunes from audiobook dispatch; #1258 dispatch classification; #1259 the closing replay and band
 calibration. #990 measures the 0.22.2 targets on the first run after the clean
 rebuild.
 
 No release, tag, deployment, production-library operation, new provider or
-credential, transcription (#24), ebook-provider audio dispatch beyond the six
-named audiobook providers (#962), series+sequence query (#1262), or
+credential, transcription (#24), audiobook dispatch beyond the five-provider
+audiobook dispatch set (#962, #1247), series+sequence query (#1262), or
 cover-question suppression is included.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
