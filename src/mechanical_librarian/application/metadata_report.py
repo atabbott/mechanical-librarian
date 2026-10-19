@@ -2584,7 +2584,7 @@ class GenerateMetadataReport:
         deadline: float,
         bindings: tuple[ProviderBinding, ...] | None = None,
     ) -> tuple[tuple[ProviderObservation, ...], tuple[ProviderCoverDescriptor, ...]]:
-        """Dispatch one discovery plan across every configured provider binding.
+        """Dispatch one discovery plan across the configured provider bindings.
 
         Both media branches run this one loop, so an audiobook observation is
         bounded, classified, and diagnosed exactly as an ebook one is. What the

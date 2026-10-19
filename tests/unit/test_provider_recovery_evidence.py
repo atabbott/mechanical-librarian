@@ -688,6 +688,64 @@ def test_unconfigured_adapter_is_a_configuration_failure() -> None:
     assert [] == observer.calls
 
 
+_DISPATCH_SET_ADAPTERS = {
+    "books": "google_books",
+    "enrichment": "audnexus",
+    "inventaire": "inventaire",
+    "store": "itunes_search",
+}
+
+
+@pytest.mark.parametrize(
+    "audio,recorded",
+    (
+        (None, ("books", "enrichment", "inventaire", "store")),
+        (object(), ("enrichment",)),
+    ),
+    ids=("ebook", "audiobook"),
+)
+def test_an_audiobook_report_records_health_only_for_the_dispatch_set(
+    audio: object, recorded: tuple[str, ...]
+) -> None:
+    """A carried-forward excluded observation is no health evidence (#1247).
+
+    A retry successor copies its siblings forward, so an audiobook successor
+    over a report published before the dispatch set can still hold a failing
+    Google Books, Inventaire or iTunes observation. Recording it would reset
+    that provider's library-wide health and delay its ebook recovery.
+    """
+    observer = _Observer()
+    record_provider_recovery_observations(
+        observer,
+        _report(*_dispatch_set_observations(), audio=audio),
+        adapters=_DISPATCH_SET_ADAPTERS,
+        scope="books",
+        generation=4,
+        now=7,
+    )
+
+    assert recorded == tuple(call[0] for call in observer.calls)
+
+
+def test_an_unconfigured_provider_on_an_audiobook_still_records_nothing() -> None:
+    observer = _Observer()
+    with pytest.raises(ReviewPipelineError) as raised:
+        record_provider_recovery_observations(
+            observer,
+            _report(
+                _observation("unknown", ProviderStatus.RATE_LIMITED),
+                *_dispatch_set_observations(),
+                audio=object(),
+            ),
+            adapters=_DISPATCH_SET_ADAPTERS,
+            scope="books",
+            generation=4,
+            now=7,
+        )
+    assert "configuration" == raised.value.code
+    assert [] == observer.calls
+
+
 def test_only_retryable_lanes_become_canonically_ordered_work() -> None:
     jobs = provider_recovery_jobs(
         _report(

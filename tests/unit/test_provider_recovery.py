@@ -3639,7 +3639,8 @@ def test_mixed_lane_health_preserves_provider_connection_identity() -> None:
                     status=ProviderStatus.DISABLED,
                     lanes=(),
                 ),
-            )
+            ),
+            audio=None,
         )
         _record_provider_recovery_observations(
             store,

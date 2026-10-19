@@ -240,7 +240,7 @@ class GenerateProviderRetrySuccessor:
             source = self._source(repository, source_report_id)
             # A job queued before ADR-0061 clause 9 can name an adapter that is
             # no longer dispatched for audiobooks. It closes as stale -- that
-            # job alone, with no provider health change -- before any resolver,
+            # job alone, recording no failure evidence -- before any resolver,
             # target read or factory call could spend egress on it.
             if _is_audio(source) and adapter not in AUDIOBOOK_DISPATCH_ADAPTERS:
                 raise CurrentnessError("provider is not dispatched for audiobooks")

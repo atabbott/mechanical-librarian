@@ -1898,8 +1898,8 @@ def test_an_excluded_audiobook_retry_closes_stale_before_any_egress() -> None:
     The source is a retained audiobook report with an unavailable Google Books
     lane, which preparation no longer produces. Its retry is refused once the
     source is read: no resolver, target, inspector or factory is reached, and
-    the stale classification closes only that job, leaving provider health and
-    every ebook retry for the same scope untouched.
+    the stale classification closes only that job with no failure evidence,
+    so no ebook retry for the same scope waits on it.
     """
     snapshot, claims, plan = _fed_audio_source(asserted=False)
     (lane,) = plan.lanes

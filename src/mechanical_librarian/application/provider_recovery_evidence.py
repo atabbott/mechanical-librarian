@@ -279,7 +279,15 @@ def record_provider_recovery_observations(
     now: int,
     google_burst_remaining: Callable[[], int | None] | None = None,
 ) -> None:
-    """Persist only terminal F22 provider classifications; never retry them."""
+    """Persist only terminal F22 provider classifications; never retry them.
+
+    A retry successor carries its siblings' observations forward, so an
+    audiobook report can still hold one for an adapter outside
+    `AUDIOBOOK_DISPATCH_ADAPTERS`. That observation is no evidence about the
+    provider's current health and records nothing, after an unconfigured
+    provider is refused as it always was (#1247).
+    """
+    audio = report.audio is not None
     for observation in report.providers:
         decision = provider_recovery_decision(
             observation, now=now, google_burst_remaining=google_burst_remaining
@@ -289,6 +297,8 @@ def record_provider_recovery_observations(
             adapter = adapters.get(observation.provider)
             if adapter is None:
                 raise ReviewPipelineError("configuration")
+            if audio and adapter not in AUDIOBOOK_DISPATCH_ADAPTERS:
+                continue
             store.observe_failure(
                 connection=observation.provider,
                 adapter=adapter,
