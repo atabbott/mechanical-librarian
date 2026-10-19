@@ -271,8 +271,9 @@ than five survivors is `candidate_limit_exceeded`, no survivor is `no_match`
 ordinary admission. A page of five or fewer is not narrowed. The asserted and
 alternative lanes share this path; the band grants no authority, so survivors
 still need work-identity admission and recording identity still needs the tight
-band. Items with no composed runtime, ebook-shaped plans, ASIN lookups and
-iTunes are unchanged.
+band. Items with no composed runtime, ebook-shaped plans and Audible ASIN
+lookups send unchanged requests, but the fixed 1 MiB Audible aggregate below
+applies to them too; iTunes is unchanged.
 
 The figures behind the page size, from #1246's wider-page row (19 overflow
 items, 25 results): products in the 600 s band: 0 items over 5, 13 with 1–5, 6
@@ -288,3 +289,52 @@ fixed 1 MiB ceiling for every configured bound. Survivors persist as ordinary
 candidates with no new field, but a v51 overflow or empty rung meant the
 unnarrowed page, so the report advances to `metadata-report-v52`. **Clean
 rebuild required** under ADR-0013.
+
+## Band-first recording-lookup hints (#1257)
+
+The #1004 lookup collection is unchanged: it is collected only on failed
+`NO_MATCH` sets, only for products that individually match the title and the
+full author set exactly, and report validation replays it. It never sees a
+product refused on title, which is the population #1246 measured: 62 tail
+items with a tight-band product on some all-refused rung, 37 on the earliest
+refused rung of the asserted ladder, at most 2 per item, and 0 refused beside
+an admitted product. The issue's "up to 19" ceiling measured a different
+population, the overflow pages, and is not this bound.
+
+An Audible `WORK` rung of the asserted ladder on an audio plan now records a
+refused product as a recording-lookup hint when its stated runtime is inside
+the 90-second tight band of the item's composed runtime, it states one valid
+canonical ASIN, and no retained candidate or #1004 lookup candidate already
+holds that ASIN. Each hint records the ASIN, the stated runtime in seconds, the
+basis `runtime_within_tight_band` and the rung's dispatch lineage. Each
+Audible provider keeps at most 2 on its one asserted lane, the earliest rungs
+first and sorted by ASIN, so they are a
+deterministic function of the survivor pages and the local claims. Hints stay
+on an exhausted `NO_MATCH` lane and beside `CANDIDATES`, from a refused rung
+before the admitting one (after #1245) or from the admitting rung itself. A
+terminal failure drops them with the refusals before it. The alternative lane,
+ebook plans and every other provider produce none; only Audible can.
+
+The #956 feed sends hinted ASINs to Audnexus and AudioSilo in the same
+preparation pass, after every existing origin and inside the four-lane cap,
+with no second round. A hint asserts nothing: it reaches admission only as a
+fed ASIN lane. Report validation refuses, in this order, a hint whose
+provenance is not an audiobook provider's asserted lane on an audio plan, a rung
+outside that lane's ladder or after its admitting rung, an ASIN a retained
+candidate holds, a runtime outside the tight band, and more than 2 hints on
+one provider observation. A retry that admits a hinted product on another lane
+drops that hint from the unselected lane, as preparation would have.
+
+A fed ASIN lane the item's own surfaces did not name (a target assertion, a
+promotion, a #1004 lookup candidate or a hint) admits a recording only with
+both the tight band and exact work-identity admission of that candidate
+against the item's title and authors; with no title or authors to admit
+against, none admits. A candidate that fails exact admission
+now keeps only its ASIN claims, with no evidence and no media-health
+comparison. Before this, its stated runtime let report-level stated-runtime
+admission read it as recording identity, and its work statements reached
+the proposal set beside an admitted product. This applies to every fed
+origin. An embedded, sidecar or path ASIN is unchanged.
+
+Hints advance the report to `metadata-report-v53`. **Clean rebuild
+required** under ADR-0013.

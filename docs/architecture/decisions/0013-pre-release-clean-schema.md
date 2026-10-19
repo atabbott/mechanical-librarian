@@ -142,3 +142,8 @@ Issue #1256 also takes the clean-rebuild branch. `metadata-report-v52` adds no
 field, but a v51 Audible overflow or empty rung meant the unnarrowed page, so a
 v51 document cannot be read as current. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1257 also takes the clean-rebuild branch. `metadata-report-v53` adds
+band-first recording-lookup hints to every provider lane, so a v52 document
+cannot be read as current. Every earlier application database is rejected
+before mutation and needs a clean rebuild; no adoption is supplied.
