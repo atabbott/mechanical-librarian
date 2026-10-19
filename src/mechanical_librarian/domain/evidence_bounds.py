@@ -72,6 +72,14 @@ _LABELLED_PATH_PATTERN = re.compile(
     r"(?i)\b(?:path|file|location|source)\s*[:=]\s*(?:~[/\\]|[/\\]|[a-z]:[/\\])"
 )
 _ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w/~])/(?!/)[^\s/:]+(?:/[^\s/:]+)*")
+# An attribute-free closing or self-closing tag (`</p>`, `<br />`): its slash
+# is markup, not a path root, in an incumbent description only (#1251).
+_HTML_TAG_SLASH_PATTERN = re.compile(
+    r"<(/)?([a-z][a-z0-9]*)\s*(?(1)|/)>", re.ASCII | re.IGNORECASE
+)
+# Windows-1252 text decoded as Latin-1 leaves these; an incumbent description
+# holding them is refused with its own reason, never repaired (#1251).
+_C1_CONTROLS = re.compile("[\x80-\x9f]")
 _WINDOWS_DRIVE_ROOT_PATTERN = re.compile(r"(?i)(?<![a-z0-9_])[a-z]:[/\\]")
 _UNC_PATH_PATTERN = re.compile(r"(?<![\w\\])\\\\[^\\\s]+\\[^\\\s]+")
 _COOKIE_HEADER_PATTERN = re.compile(r"(?i)\b(?:cookie|set-cookie)\s*:")
@@ -134,22 +142,40 @@ def validate_incumbent_description(value: object, label: str, maximum: int) -> s
         or len(value.encode("utf-8", errors="surrogatepass")) > maximum * 4
     ):
         raise EvidenceValueError(f"{label} exceeds its size limit")
-    controls = value.replace("\r\n", "\n").strip(" \t\n")
+    # CRLF folds before U+2028 does, so `\r\u2028` still exposes a lone CR;
+    # ASCII text holds neither U+2028 nor C1 and keeps #1202's scan (#1251).
+    controls = value.replace("\r\n", "\n")
+    mojibake = False
+    if not controls.isascii():
+        controls = controls.replace("\u2028", "\n")
+        mojibake = _C1_CONTROLS.search(controls) is not None
+        if mojibake:
+            controls = _C1_CONTROLS.sub(REPLACEMENT_CHARACTER, controls)
+    controls = controls.strip(" \t\n")
     if controls != controls.strip() or _FORBIDDEN_CODEPOINTS.search(
         controls.replace("\n", " ")
     ):
         raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
-    _validate_projection_safety(value.strip(" \t\r\n"), label)
+    if mojibake:
+        raise EvidenceValueError(f"{label} contains C1 control text")
+    _validate_projection_safety(
+        value.replace("\u2028", "\n").strip(" \t\r\n"), label, markup=True
+    )
     return value
 
 
-def _validate_projection_safety(text: str, label: str) -> str:
+def _validate_projection_safety(text: str, label: str, *, markup: bool = False) -> str:
     lowered = text.casefold()
     # Each pattern below can match only text holding the literal its guard
     # names, and no other codepoint matches that literal under the pattern's
     # flags, so a guard decides nothing and only skips a scan that would fail
     # (#1202).
     assignment = ":" in text or "=" in text
+    # Only the absolute-path rule can read a tag slash as a root, so only it
+    # sees the tags rewritten; every other rule reads the original (#1251).
+    rooted = (
+        _HTML_TAG_SLASH_PATTERN.sub(r"<\2>", text) if markup and "<" in text else text
+    )
     if (
         text.startswith("\\")
         or (
@@ -162,7 +188,7 @@ def _validate_projection_safety(text: str, label: str) -> str:
         or ("://" in text and _FILESYSTEM_URI_PATTERN.search(text))
         or ("~" in text and _HOME_PATH_PATTERN.search(text))
         or (assignment and _LABELLED_PATH_PATTERN.search(text))
-        or ("/" in text and _ABSOLUTE_PATH_PATTERN.search(text))
+        or ("/" in rooted and _ABSOLUTE_PATH_PATTERN.search(rooted))
         or (":" in text and _WINDOWS_DRIVE_ROOT_PATTERN.search(text))
         or ("\\\\" in text and _UNC_PATH_PATTERN.search(text))
         or "/users/" in lowered

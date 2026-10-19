@@ -57,6 +57,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     select_isbn_representation,
 )
 from tests.support.audiobook_reports import synthetic_audiobook_product_lookup_report
+from tests.support.audiobook_synopsis import synopsis_report
 from tests.support.description_advice import _description_candidate
 from tests.support.proposal_evidence import (
     _claim,
@@ -553,6 +554,36 @@ def _target_work_preview(report: MetadataReport):
         field: next(value for value in preview.fields if value.field == field)
         for field in ("description_fill", "series", "genres", "tags")
     }
+
+
+@pytest.mark.parametrize(
+    ("incumbent", "outcome", "reason"),
+    (
+        (
+            "<p>A librarian follows a lost expedition.</p>",
+            "abstain",
+            "target_state_unusable",
+        ),
+        (
+            "A librarian follows a lost expedition.\u2028The archive holds a secret.",
+            "no_op",
+            "target_preserved",
+        ),
+    ),
+    ids=("markup", "line_separator"),
+)
+def test_admitted_markup_incumbent_keeps_no_automatic_authority(
+    incumbent: str, outcome: str, reason: str
+) -> None:
+    # Tag-bearing incumbents read as values (#1251) and are still never plain
+    # synopses; one with U+2028 is an ordinary plain synopsis.
+    field = _target_work_preview(synopsis_report(incumbent))[1]["description_fill"]
+    assert (field.target_state, field.outcome, field.reason) == (
+        "value",
+        outcome,
+        reason,
+    )
+    assert field.current_value == incumbent
 
 
 def _description_result(proposal: ProposalSet) -> ProposalResult:

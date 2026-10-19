@@ -5,6 +5,7 @@ import pytest
 from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
+    TargetFacts,
     TargetFieldState,
 )
 from tests.support.audiobookshelf_targets import target_snapshot
@@ -18,6 +19,10 @@ from tests.support.audiobookshelf_targets import target_snapshot
         " \tCafé description.\t ",
         "\r\n\tText\t\r\n",
         "\n \tText\t \n",
+        "Text\u2028",
+        "<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>",
+        "First paragraph.\u2028Second paragraph.",
+        'See <a href="https://example.com/page">x</a>',
     ),
 )
 def test_incumbent_description_retains_exact_text(value: str) -> None:
@@ -29,6 +34,8 @@ def test_incumbent_description_retains_exact_text(value: str) -> None:
     )
     assert field.state is TargetFieldState.VALUE
     assert field.value == value
+    facts = TargetFacts("primary", "ebooks", "item-1", snapshot.fields)
+    assert TargetFacts.from_data(facts.to_data()) == facts
 
 
 def test_incumbent_description_comparison_is_not_source_identity() -> None:
@@ -42,6 +49,14 @@ def test_incumbent_description_comparison_is_not_source_identity() -> None:
     )
 
 
+def test_incumbent_line_separator_and_markup_compare_as_text() -> None:
+    # U+2028 is whitespace to the comparison; markup is never rendered (#1251).
+    assert values_match(
+        TargetDestination.DESCRIPTION, "First\u2028paragraph.", "First paragraph."
+    )
+    assert not values_match(TargetDestination.DESCRIPTION, "<p>X</p>", "X")
+
+
 @pytest.mark.parametrize(
     "value",
     (
@@ -51,11 +66,15 @@ def test_incumbent_description_comparison_is_not_source_identity() -> None:
         "Text\x00",
         "Text\x85",
         "Text\u202e",
-        "Text\u2028",
+        "Text\u2029",
+        "It\x92s",
         "Text\ufdd0",
         "Text\uffff",
         "Text /home/private/book",
         "Text api_key=synthetic",
+        "<p>Read /srv/media/b.m4b</p>",
+        "</p>/srv/media",
+        "&lt;/p&gt;",
         " \t\\private\t ",
         " \tsecret: synthetic\t ",
         "\u00a0",

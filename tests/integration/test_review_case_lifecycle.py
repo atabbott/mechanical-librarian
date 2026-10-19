@@ -377,9 +377,18 @@ def test_description_advice_uses_real_persisted_admission_and_guarded_installed_
     "effect", ("verified", "formatting_drift", "wrong_readback", "keep_current")
 )
 @pytest.mark.parametrize("media_kind", ("ebook", "audiobook"))
-@pytest.mark.parametrize("newline", ("\n", "\r\n"), ids=("lf", "crlf"))
+@pytest.mark.parametrize(
+    "current",
+    (
+        " \tFirst paragraph.\n\nSecond paragraph.\t ",
+        " \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",
+        " \t<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>\t ",
+        " \tFirst paragraph.\u2028Second paragraph.\t ",
+    ),
+    ids=("lf", "crlf", "markup", "line_separator"),
+)
 def test_multiline_incumbent_description_persists_and_applies(
-    tmp_path, effect, media_kind, newline
+    tmp_path, effect, media_kind, current
 ):
     """Real intake, current SQL/review replay and guarded owner choice for both media."""
     import httpx
@@ -399,9 +408,8 @@ def test_multiline_incumbent_description_persists_and_applies(
         consensus_local_title,
     )
 
-    root = tmp_path / f"{media_kind}-{len(newline)}"
+    root = tmp_path / media_kind
     root.mkdir(mode=0o700)
-    current = f" \tFirst paragraph.{newline}{newline}Second paragraph.\t "
     desired = "A different description from local metadata."
     metadata: dict[str, object] = {"title": "Current title", "description": current}
     media: dict[str, object] = {"metadata": metadata}
@@ -570,8 +578,8 @@ def test_multiline_incumbent_description_persists_and_applies(
     if effect == "formatting_drift":
         drifted = (
             current.replace("\r\n", "\n")
-            if newline == "\r\n"
-            else current.replace("\n", "\r\n")
+            if "\r\n" in current
+            else current.replace("\n", "\r\n").replace("\u2028", "\n")
         )
         target.drift(operation.plan, drifted)
     elif effect == "wrong_readback":

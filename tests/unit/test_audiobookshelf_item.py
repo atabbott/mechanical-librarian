@@ -1244,6 +1244,8 @@ def test_declared_cover_locations_share_exact_reader_contract(location, value, s
     (
         "First paragraph.\n\nSecond paragraph.",
         " \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",
+        "<p>First paragraph.</p><p>Second<br />paragraph.</p>",
+        "First paragraph.\u2028Second paragraph.",
     ),
 )
 def test_audiobook_incumbent_description_retains_paragraphs(description: str) -> None:
@@ -1261,3 +1263,32 @@ def test_audiobook_incumbent_description_retains_paragraphs(description: str) ->
     assert snapshot.media_kind == "audiobook"
     assert field.state is TargetFieldState.VALUE
     assert field.value == description
+    facts = TargetFacts("primary", "audiobooks", "item-1", snapshot.fields)
+    assert TargetFacts.from_data(facts.to_data()) == facts
+
+
+@pytest.mark.parametrize(
+    "description",
+    (
+        "<p>Read /srv/media/book.m4b</p>",
+        "It\x92s a synopsis.",
+        "Text\u2029",
+        "</p> api_key=synthetic",
+    ),
+)
+def test_audiobook_incumbent_description_still_refuses_unsafe_text(
+    description: str,
+) -> None:
+    snapshot = _audiobook_snapshot(
+        {
+            "metadata": {"title": "Recorded title", "description": description},
+            "audioFiles": [_audio_file("book.m4b")],
+        }
+    )
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert snapshot.media_kind == "audiobook"
+    assert (field.state, field.value) == (TargetFieldState.MALFORMED, None)
