@@ -3131,7 +3131,9 @@ def work_discovery_lane_payloads(
         surviving[0].title, normalized_authors, references, surviving[0].basis
     )
     first = work_query_ladder(normalized_title, normalized_authors, audiobook=True)[:1]
-    collapsed = any(
+    # A title with no query rung (a bare position such as "Part II") cannot
+    # be asked at all, so it collapses exactly as a series-equal one does.
+    collapsed = not first or any(
         query.rung is WorkDispatchRung.NORMALIZED
         and _closed_title_equal(query.title, name)
         for query in first

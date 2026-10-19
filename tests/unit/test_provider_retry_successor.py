@@ -8,10 +8,17 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers import hardcover_metadata
+from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+    AudibleCatalogMetadataProvider,
+)
+from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+    ITunesSearchMetadataProvider,
+)
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ReportLimits,
@@ -36,6 +43,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_asin_feed_plan,
     audiobook_discovery_plan,
     metadata_discovery_plan,
+    observe_provider,
     provider_discovery_lane_order,
     provider_observation,
 )
@@ -2453,3 +2461,76 @@ def test_a_failed_alternative_lane_is_retried_beside_its_asserted_sibling(
         (asserted.identity, ProviderStatus.NO_MATCH),
         (alternative.identity, ProviderStatus.NO_MATCH),
     } == {(lane.identity, lane.status) for lane in merged.lanes}
+
+
+class _FaultingProvider:
+    """A provider whose dispatch raises before any lane is sent."""
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        raise RuntimeError("synthetic dispatch fault")
+
+
+@pytest.mark.parametrize("adapter", ("audible_catalog", "itunes_search"))
+def test_a_faulted_dispatch_records_no_alternative_and_its_retry_succeeds(
+    retry: _Retry, adapter: str
+) -> None:
+    """A lane the adapter never sent is not recorded, so no retry replays it."""
+    plan, asserted, alternative = _alternative_lanes()
+
+    initial = observe_provider(adapter, adapter, _FaultingProvider(), plan)
+
+    assert [(asserted.identity, ProviderStatus.UNAVAILABLE)] == [
+        (lane.identity, lane.status) for lane in initial.observation.lanes
+    ]
+    assert alternative.identity not in {
+        lane.identity for lane in initial.observation.lanes
+    }
+
+    def empty(_request: httpx.Request) -> httpx.Response:
+        if adapter == "audible_catalog":
+            return httpx.Response(200, json={"total_results": 0, "products": []})
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/javascript; charset=utf-8"},
+            json={"resultCount": 0, "results": []},
+        )
+
+    def client() -> AudibleCatalogMetadataProvider | ITunesSearchMetadataProvider:
+        bounds = httpx.Client(transport=httpx.MockTransport(empty))
+        if adapter == "audible_catalog":
+            return AudibleCatalogMetadataProvider(
+                adapter,
+                bounds,
+                262_144,
+                5.0,
+                marketplaces=("us",),
+                clock=lambda: 0.0,
+                wall_clock=lambda: 1_700_000_000.0,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            )
+        return ITunesSearchMetadataProvider(
+            adapter,
+            bounds,
+            262_144,
+            5.0,
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding(adapter, True, client, adapter), adapter, 2
+    )
+    service = retry.service(configured)
+    selected = service._selected(plan, initial.observation, (asserted.identity,))
+    observation, _delay, _evidence = service._observe(
+        configured, plan, selected, deadline=1_700_000_100.0
+    )
+
+    assert [(asserted.identity, ProviderStatus.NO_MATCH)] == [
+        (lane.identity, lane.status) for lane in observation.lanes
+    ]

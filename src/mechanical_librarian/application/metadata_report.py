@@ -1496,7 +1496,10 @@ def observe_provider(
                 ProviderLaneResult(
                     lane, ProviderStatus.UNAVAILABLE, accessed_at=accessed_at
                 )
+                # An alternative work lane is recorded only once sent, so a
+                # retry never replays one the adapter would suppress (#1255).
                 for lane in plan.lanes
+                if lane.title_basis is None
             ),
             authority=authority,
         )
@@ -2470,6 +2473,7 @@ class GenerateMetadataReport:
                         lane.matched_family,
                     )
                     for lane in plan.lanes
+                    if lane.title_basis is None
                 )
                 observations.append(
                     ProviderObservation(

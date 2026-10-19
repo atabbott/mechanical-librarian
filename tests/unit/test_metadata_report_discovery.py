@@ -3475,6 +3475,59 @@ def test_a_title_equal_to_a_recorded_series_collapses_to_the_alternative() -> No
     ]
 
 
+@pytest.mark.parametrize("title", ("Part II", "Book 3", "Volume 1"))
+def test_a_title_with_no_query_rung_collapses_to_the_alternative(title: str) -> None:
+    target = _audio_target(title, ("Ada Author",))
+    claims = (_target_title_claim(title),)
+    plan = audiobook_discovery_plan(target, claims, audio=_discovery_audio(_LEAF))
+
+    assert () == work_query_ladder(title, ("Ada Author",), audiobook=True)
+    assert [("path_leaf", "The Real Title")] == [
+        (lane.title_basis, lane.title) for lane in plan.lanes
+    ]
+    assert app.alternative_work_lane_permitted(plan, None)
+
+
+def test_a_report_replays_the_collapse_of_a_title_with_no_query_rung() -> None:
+    fields = _audio_target("Part II", ("Ada Author",)).fields
+    claims = (_target_title_claim("Part II"),)
+    (asserted,) = work_discovery_lane_payloads(fields, claims)
+    (alternative,) = work_discovery_lane_payloads(fields, claims, (_LEAF,))
+    assert "path_leaf" == alternative.title_basis
+
+    def report(identity: str) -> MetadataReport:
+        lane = ProviderLaneObservation(
+            identity,
+            ProviderQueryKind.WORK,
+            ProviderStatus.UNAVAILABLE,
+            asserted.input_references,
+        )
+        return MetadataReport.create(
+            target=TargetFacts("primary", "audio", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+            local_claims=claims,
+            local_reasons=("target_metadata_title",),
+            providers=(
+                ProviderObservation(
+                    "audible",
+                    ProviderStatus.UNAVAILABLE,
+                    lane.input_references,
+                    query_kind=ProviderQueryKind.WORK,
+                    authority="audible_catalog",
+                    lanes=(lane,),
+                ),
+            ),
+            audio=_discovery_audio(_LEAF),
+        )
+
+    replayed = report(alternative.identity)
+    assert replayed == MetadataReport.from_json(replayed.to_json())
+    # The asserted lane is no longer planned, so a report claiming it is
+    # refused rather than replayed.
+    with pytest.raises(ReportValueError, match="provider work lane is unknown"):
+        report(asserted.identity)
+
+
 def test_discovery_titles_repeating_a_query_already_made_do_not_survive() -> None:
     fields = _series_target("Asserted Title", "Series Name").fields
     titles = (
