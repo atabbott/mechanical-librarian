@@ -303,6 +303,14 @@ class MetadataLookup:
             raise MetadataReportError("provider lookup is invalid")
 
 
+# Each dispatched provider may spend at most this much of a preparation's
+# 60-second aggregate (#1248). At the default 30-second request timeout one
+# unresponsive endpoint outlasts the whole window and starves every provider
+# after it; at 20 seconds a stalled first attempt leaves no room for a retry,
+# so the provider ends inside its share and two slow providers still leave the
+# next a full share. It matches the cover attempt window and stays independent
+# of how many providers are configured.
+_PROVIDER_DEADLINE_SHARE_SECONDS = 20.0
 MAX_ISBN_DISCOVERY_LANES = 8
 MAX_PROVIDER_DISCOVERY_QUERIES = 9
 # An audiobook carries far fewer identifier surfaces than an EPUB does, and
@@ -2587,7 +2595,11 @@ class GenerateMetadataReport:
         """Dispatch one discovery plan across the configured provider bindings.
 
         Both media branches run this one loop, so an audiobook observation is
-        bounded, classified, and diagnosed exactly as an ebook one is. What the
+        bounded, classified, and diagnosed exactly as an ebook one is. Each
+        dispatched binding is bounded by its own share of `deadline`: at most
+        `_PROVIDER_DEADLINE_SHARE_SECONDS` from its dispatch and never past the
+        aggregate, so one slow provider cannot spend the window the bindings
+        after it and the alternative cover fetches need (#1248). What the
         branches differ in is the plan they hand it -- ISBN and work lanes, or
         ASIN and work lanes. Both hand the descriptors it returns to the same
         cover observer.
@@ -2678,6 +2690,7 @@ class GenerateMetadataReport:
                 failure = MetadataReportError("provider construction failed")
                 _release_repository(repository, failure)
                 raise failure from error
+            share = min(deadline, time.monotonic() + _PROVIDER_DEADLINE_SHARE_SECONDS)
             try:
                 with self._timing.measure("provider_search", "provider"):
                     result = observe_provider(
@@ -2685,7 +2698,7 @@ class GenerateMetadataReport:
                         binding.authority,
                         provider,
                         plan,
-                        deadline=deadline,
+                        deadline=share,
                     )
             except Exception as error:
                 _release_repository(repository, error)
@@ -2785,10 +2798,13 @@ class GenerateMetadataReport:
         its own (#1254), and its `cover_enabled` flag is consulted inside that
         observer.
 
-        The aggregate cover window is the ebook path's own 60 seconds. There is
-        no measured reason for an audiobook's cover acquisition to be bounded
-        differently from an ebook's -- the bytes come from the same kind of CDN
-        over the same transport -- so it is deliberately the same number.
+        Both media branches open one 60-second monotonic aggregate per
+        preparation. The incumbent cover read, every provider observation (each
+        capped at a 20-second share of what remains), the ASIN feed pass and the
+        alternative cover fetches all draw on it; each cover fetch attempt also
+        has its own 20-second attempt window. There is no measured reason for
+        an audiobook to be bounded differently from an ebook, so it is
+        deliberately the same window.
 
         Dispatch is two phases rather than one. Phase one is the plan above,
         run over every dispatched binding. Phase two runs the ASIN feed -- the ASINs the
