@@ -125,3 +125,10 @@ three indexes to the exact 441e571f schema, derives every fact from existing
 rows through the same code that creates them for absent state, and proves every
 other table's rows unchanged. It runs only through the offline `schema-adopt`
 command, never at startup.
+
+Issue #1245 takes the clean-rebuild branch. Its `metadata-report-v50` report
+CHECK cannot be reached from the exact 441e571f schema #1232 adopts, so that
+plan and the now-empty public command are retired. This does not weaken
+ordinary absent-or-exact-current startup or create a generic conversion seam;
+every earlier application database is rejected before mutation and needs a
+clean rebuild.

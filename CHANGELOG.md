@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Audible and iTunes audiobook searches keep trying shorter title forms when
+  they find only books that fail the identity check. Those checks are counted as
+  refusals, not as empty searches. The `schema-adopt` command is removed, and
+  upgrading requires a clean rebuild (#1245).
+
 - A failure while preparing the setup or store runtime at startup now reports
   the original error instead of an unrelated internal one, and the database
   connections opened for startup are still closed (#1235).

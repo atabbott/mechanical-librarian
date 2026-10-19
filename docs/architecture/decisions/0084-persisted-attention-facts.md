@@ -66,7 +66,8 @@ reduced to the stored part.
   a private backup beside the database, creates the objects and derives every
   fact in one exclusive transaction, and then re-validates the result and
   proves every other table's rows unchanged. Ordinary startup still accepts
-  only absent or exact-current state.
+  only absent or exact-current state. #1245's report schema change retired the
+  plan and the command; under ADR-0013 earlier state needs a clean rebuild.
 
 ## Consequences
 
