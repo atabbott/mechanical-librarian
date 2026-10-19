@@ -379,8 +379,9 @@ mutation. No migration, adoption or relabelling is supplied.
 
 Report `metadata-report-v54` adds no field. An incumbent description holding an
 attribute-free HTML tag slash (`</p>`, `<br />`) or U+2028 is now its exact
-`value`; text whose only defect is C1 control characters stays `malformed` with
-its own reason. A v53 field meant the narrower grammar, so the exact SQLite
-discriminator requires a **clean rebuild** under ADR-0013. Prior v53 reports and
-stores are refused before mutation. No migration, adoption or relabelling is
-supplied. `review-case-v2` and shadow-review packet envelopes are unchanged.
+`value`; text whose only defect is C1 control characters is refused with its
+own validator reason and still reads `malformed` in the report and UI. A v53
+field meant the narrower grammar, so the exact SQLite discriminator requires a
+**clean rebuild** under ADR-0013. Prior v53 reports and stores are refused
+before mutation. No migration, adoption or relabelling is supplied.
+`review-case-v2` and shadow-review packet envelopes are unchanged.

@@ -102,14 +102,16 @@ component, description, or collection cardinality that exceeds its fixed field
 bound is `oversized`; invalid typed syntax is never hidden by size. Unsafe,
 private-path, credential-shaped, or otherwise invalid non-title input remains
 `malformed`. An incumbent description also admits attribute-free HTML tag
-slashes (`</p>`, `<br />`) and U+2028 line separators and keeps its exact text,
-while text whose only defect is C1 control characters stays `malformed` with its
-own reason (#1251). The report is `metadata-report-v54`. For the title
-specifically, a private-path, credential-shaped, or equivalently unsafe string
-rejects the target response with a redacted error before a report is created. A safe oversized title or a missing, null, empty,
-unloaded, or non-string title instead preserves its field-local `oversized`,
-`missing`, `null`, `empty`, `unloaded`, or `malformed` state and projects no
-usable snapshot title; report processing may continue. The selected file index
+slashes (`</p>`, `<br />`) and U+2028 line separators and keeps its exact text.
+Text whose only defect is C1 control characters is refused by the validator with
+its own reason, but the report and UI still show that field only as `malformed`
+(#1251). The report is `metadata-report-v54`. For the title specifically, a
+private-path, credential-shaped, or equivalently unsafe string rejects the
+target response with a redacted error before a report is created. A safe
+oversized title or a missing, null, empty, unloaded, or non-string title instead
+preserves its field-local `oversized`, `missing`, `null`, `empty`, `unloaded`,
+or `malformed` state and projects no usable snapshot title; report processing
+may continue. The selected file index
 resolves once to an opaque identity derived by the Audiobookshelf adapter.
 Final currentness locates that identity again, so a harmless file-list reorder
 does not change the target.

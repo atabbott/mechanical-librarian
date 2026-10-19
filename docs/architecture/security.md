@@ -1798,22 +1798,26 @@ unchanged. The report/SQL successor requires a clean rebuild, never migration.
 Report v54 widens this field-only grammar by two shapes (#1251). An
 attribute-free closing or self-closing HTML tag (`</p>`, `<br />`) is markup:
 only the absolute-path rule reads the text with each such tag rewritten to its
-slash-free form, and every other path rule and the credential scan read the
-original, so `</p>/srv/media`, `<a href="/x">`, `<img src="/x" />` and
-`&lt;/p&gt;` stay refused. U+2028 is a line separator: the codepoint scan reads
-it as LF after CRLF folds, so `\r ` still exposes a lone CR. Admission order
-is exact type and non-blank text, original bounds, forbidden codepoints and edge
-whitespace (C1 masked), then C1, production paths and credentials. Text whose
-only defect is C1 (U+0080–U+009F, usually Windows-1252 decoded as Latin-1) is
-refused as `contains C1 control text`; it is never repaired, because a guessed
-decoding would show a value the library does not hold. C1 beside another
-forbidden codepoint keeps the generic refusal. The stored value, fingerprints and
-field-value versions stay the original string. Tag-bearing incumbents compare as
-literal text and stay `target_state_unusable` for automatic synopsis authority.
-U+2029, NEL, entity-escaped tags and tags with attributes stay refused.
-Discovery titles, provider and local claims and every other projection keep the
-shared grammar and `_FORBIDDEN_CODEPOINTS` unchanged. Shadow-review packets may
-now carry literal markup or U+2028 in incumbent text, as JSON data only.
+slash-free form, and every other path rule reads the original, so
+`</p>/srv/media`, `<a href="/x">`, `<img src="/x" />` and `&lt;/p&gt;` stay
+refused. The credential scan reads both the original and the rewritten text, so
+a credential URL split by a tag (`https://u:p</i>@h`) stays refused. Only ASCII
+tag names and ASCII spacing form a tag. U+2028 is a line separator: the
+codepoint scan reads it as LF after CRLF folds, so `\r\u2028` still exposes a
+lone CR. Admission order is exact type and non-blank text, original bounds,
+forbidden codepoints and edge whitespace (C1 masked), then C1, production paths
+and credentials. Text whose only defect is C1 (U+0080–U+009F, usually
+Windows-1252 decoded as Latin-1) is refused as `contains C1 control text` (the
+adapter keeps only the field's `malformed` state, as for every other refusal);
+it is never repaired, because a guessed decoding would show a value the library
+does not hold. C1 beside another forbidden codepoint keeps the generic refusal.
+The stored value, fingerprints and field-value versions stay the original
+string. Tag-bearing incumbents compare as literal text and stay
+`target_state_unusable` for automatic synopsis authority. U+2029, NEL,
+entity-escaped tags and tags with attributes stay refused. Discovery titles,
+provider and local claims and every other projection keep the shared grammar and
+`_FORBIDDEN_CODEPOINTS` unchanged. Shadow-review packets may now carry literal
+markup or U+2028 in incumbent text, as JSON data only.
 
 ## Author evidence authority
 

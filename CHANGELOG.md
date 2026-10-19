@@ -5,8 +5,9 @@
 - Library descriptions containing HTML closing tags such as `</p>` or Unicode
   line separators are now read and compared instead of being marked malformed,
   for ebooks and audiobooks. Real paths, credentials and controls are still
-  refused, and Windows-1252 garbling is refused with its own reason. Upgrading
-  requires a clean rebuild (#1251).
+  refused. Windows-1252 garbling is refused with its own internal reason but
+  still shows as malformed in reports and the UI. Upgrading requires a clean
+  rebuild (#1251).
 
 - One slow or unavailable metadata provider now uses at most 20 seconds of an
   item's 60-second provider window, so the providers after it and alternative
