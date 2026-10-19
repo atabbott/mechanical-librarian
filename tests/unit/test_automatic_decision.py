@@ -1454,6 +1454,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="audiobook-dispatch-set-predecessor-f46",
         ),
+        pytest.param(
+            "0345126ad4bea8470e85754c4f0781af298c6ee8953be9f962c26651645ae67e",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="provider-share-predecessor-f19a",
+        ),
+        pytest.param(
+            "4ee741213b2e0d8152dbe6ace50c4c176d7c8da6a2f4674778f67c5624a8c63e",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="provider-share-predecessor-f20",
+        ),
+        pytest.param(
+            "63f86e6f8cf6ea2410f90b2d81eaaf47f7691cd4aea01ea3bbfd4f56b5e694c5",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="provider-share-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
