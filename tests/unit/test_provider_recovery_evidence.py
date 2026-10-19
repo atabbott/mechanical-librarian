@@ -124,12 +124,13 @@ _CONFIGURATION = ApplicationConfiguration(
 )
 
 
-def _report(*observations: object) -> MetadataReport:
+def _report(*observations: object, audio: object = None) -> MetadataReport:
     value = SimpleNamespace(
         report_id="report-1",
         target=SimpleNamespace(connection="primary", library="books", item="item-1"),
         file=SimpleNamespace(identity="file-1"),
         providers=observations,
+        audio=audio,
     )
     return cast("MetadataReport", value)
 
@@ -743,6 +744,81 @@ def test_unconfigured_provider_is_a_configuration_failure() -> None:
             ),
             package=(None, "report-1", None, None, "report_only"),
             configuration=_CONFIGURATION,
+            scope="books",
+        )
+    assert "configuration" == raised.value.code
+
+
+_AUDIO_DISPATCH_CONFIGURATION = replace(
+    _CONFIGURATION,
+    libraries=(
+        replace(
+            _CONFIGURATION.libraries[0],
+            provider_connections=("books", "enrichment", "inventaire", "store"),
+        ),
+    ),
+    providers=(
+        ProviderConnectionConfiguration("books", True, False, None, "google_books"),
+        ProviderConnectionConfiguration("enrichment", True, False, None, "audnexus"),
+        ProviderConnectionConfiguration("inventaire", True, False, None, "inventaire"),
+        ProviderConnectionConfiguration("store", True, False, None, "itunes_search"),
+    ),
+)
+
+
+def _dispatch_set_observations() -> tuple[object, ...]:
+    return tuple(
+        _observation(name, ProviderStatus.UNAVAILABLE, _lane("lane", status))
+        for name, status in (
+            ("books", ProviderStatus.RATE_LIMITED),
+            ("enrichment", ProviderStatus.UNAVAILABLE),
+            ("inventaire", ProviderStatus.UNAVAILABLE),
+            ("store", ProviderStatus.INCOMPLETE),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "audio,adapters",
+    (
+        (None, ("google_books", "audnexus", "inventaire", "itunes_search")),
+        (object(), ("audnexus",)),
+    ),
+    ids=("ebook", "audiobook"),
+)
+def test_an_audiobook_report_enrolls_only_the_dispatch_set(
+    audio: object, adapters: tuple[str, ...]
+) -> None:
+    """A retained audiobook observation outside the set is never retried (#1247).
+
+    Such an observation comes from a report published before the set, or one a
+    successor carried forward from it. The same observations on an ebook report
+    still enroll every provider.
+    """
+    jobs = provider_recovery_jobs(
+        _report(*_dispatch_set_observations(), audio=audio),
+        package=(None, "report-1", None, None, "report_only"),
+        configuration=_AUDIO_DISPATCH_CONFIGURATION,
+        scope="books",
+    )
+
+    assert adapters == tuple(job.adapter for job in jobs)
+
+
+def test_an_unconfigured_provider_on_an_audiobook_is_still_refused_first() -> None:
+    with pytest.raises(ReviewPipelineError) as raised:
+        provider_recovery_jobs(
+            _report(
+                *_dispatch_set_observations(),
+                _observation(
+                    "unknown",
+                    ProviderStatus.UNAVAILABLE,
+                    _lane("lane", ProviderStatus.UNAVAILABLE),
+                ),
+                audio=object(),
+            ),
+            package=(None, "report-1", None, None, "report_only"),
+            configuration=_AUDIO_DISPATCH_CONFIGURATION,
             scope="books",
         )
     assert "configuration" == raised.value.code

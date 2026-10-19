@@ -300,7 +300,7 @@ class ITunesSearchMetadataProvider:
             )
         # Only the asserted work lane: an audiobook's alternative title is
         # never sent to the store, whose twelve-attempt budget it would share
-        # (#1255; a second iTunes lane is #1254's question).
+        # (#1255; #1254 removed iTunes from audiobook dispatch).
         lanes = tuple(
             lane
             for lane in plan.lanes

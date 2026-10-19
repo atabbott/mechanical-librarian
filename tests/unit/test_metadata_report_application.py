@@ -30,8 +30,11 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.configuration import (
+    AUDIOBOOK_DISPATCH_ADAPTERS,
+    ApplicationConfiguration,
     LibraryConfiguration,
     MediaMountConfiguration,
+    ProviderConnectionConfiguration,
     ReportLimits,
     TargetConnectionConfiguration,
 )
@@ -62,6 +65,9 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.operations import StageTimer, StageTiming
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    provider_recovery_jobs,
 )
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
@@ -2537,7 +2543,11 @@ def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
         inspector=FakeInspector(InspectionResult("c" * 64, ())),
         audio_inspector=FakeAudioInspector(audio_result()),
         repository_factory=lambda: cast(ReportRepository, repository),
-        providers=(ProviderBinding("catalogue", True, Provider),),
+        # The configuration's default adapter: an audiobook dispatches only
+        # to an authority in its dispatch set (#1247).
+        providers=(
+            ProviderBinding("catalogue", True, Provider, authority="hardcover"),
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -2618,3 +2628,239 @@ def test_early_cover_failure_releases_repository_preserving_original(media, fail
     assert raised.value is failure
     assert repository.closed and not repository.values
     assert any("close failed" in note for note in failure.__notes__)
+
+
+# #1247 and #1254: an audiobook dispatches only to the connected providers in
+# `AUDIOBOOK_DISPATCH_ADAPTERS`; an ebook dispatches exactly as it did. Each
+# binding is named for its adapter, so a name is also its authority.
+_EVERY_ADAPTER = (
+    "audible_catalog",
+    "audiosilo",
+    "audnexus",
+    "google_books",
+    "hardcover",
+    "inventaire",
+    "itunes_search",
+    "open_library",
+)
+_EXCLUDED_ON_AUDIOBOOKS = ("google_books", "inventaire", "itunes_search")
+
+
+class _UnavailableProvider:
+    """Answer every asserted lane as unavailable, so each one is retryable."""
+
+    def __init__(self, name: str, observed: list[str]) -> None:
+        self._name = name
+        self._observed = observed
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        self._observed.append(self._name)
+        return ProviderResult(
+            provider_observation(
+                self._name,
+                tuple(
+                    ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                    for lane in plan.lanes
+                    if lane.title_basis is None
+                ),
+                authority=self._name,
+            )
+        )
+
+
+class _ItemTarget:
+    """A library target serving one snapshot per item, as often as it is read."""
+
+    def __init__(self, snapshots: dict[str, TargetSnapshot]) -> None:
+        self._snapshots = snapshots
+
+    def read(self, item: str) -> TargetSnapshot:
+        return self._snapshots[item]
+
+
+def _dispatch_binding(
+    name: str, constructed: list[str], observed: list[str]
+) -> ProviderBinding:
+    def factory() -> _UnavailableProvider:
+        constructed.append(name)
+        return _UnavailableProvider(name, observed)
+
+    return ProviderBinding(name, True, factory, authority=name)
+
+
+def _never_built(name: str, *, enabled: bool = True) -> ProviderBinding:
+    def factory() -> _UnavailableProvider:
+        pytest.fail(f"{name} was built")
+
+    return ProviderBinding(name, enabled, factory, authority=name)
+
+
+def _mixed_service(
+    bindings: tuple[ProviderBinding, ...],
+    *,
+    audio: FakeAudioInspector | None = None,
+) -> GenerateMetadataReport:
+    epub = TargetFile("b" * 64, "book.epub", "epub")
+    snapshot = _fed_snapshot(TargetFile("a" * 64, "book.m4b", "m4b"))
+    return GenerateMetadataReport(
+        target=_ItemTarget(
+            {
+                "audiobook": snapshot,
+                "ebook": replace(snapshot, media_kind="ebook", files=(epub,)),
+            }
+        ),
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=lambda: cast(ReportRepository, FakeReportRepository()),
+        providers=bindings,
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "mixed",
+            "primary",
+            "library-id",
+            "book",
+            "media",
+            tuple(sorted(binding.name for binding in bindings)),
+        ),
+        mount=MediaMountConfiguration("media", "/media", "/library", True),
+        limits=ReportLimits(),
+        audio_inspector=audio or _fed_inspector(),
+    )
+
+
+def _mixed_configuration() -> ApplicationConfiguration:
+    return ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "mixed", "primary", "library-id", "book", "media", _EVERY_ADAPTER
+            ),
+        ),
+        (MediaMountConfiguration("media", "/media", "/library", True),),
+        tuple(
+            ProviderConnectionConfiguration(
+                name,
+                True,
+                False,
+                None,
+                name,
+                "owner@example.invalid" if name == "open_library" else None,
+                ("uk",) if name == "audible_catalog" else (),
+            )
+            for name in _EVERY_ADAPTER
+        ),
+    )
+
+
+def test_a_mixed_library_dispatches_audiobooks_only_to_the_dispatch_set() -> None:
+    """The audiobook reaches five providers; the ebook still reaches all eight."""
+    constructed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
+    observed: dict[str, list[str]] = {"audiobook": [], "ebook": []}
+    reports: dict[str, MetadataReport] = {}
+    for item in ("audiobook", "ebook"):
+        bindings = tuple(
+            _dispatch_binding(name, constructed[item], observed[item])
+            for name in _EVERY_ADAPTER
+        )
+        reports[item] = MetadataReport.from_json(_mixed_service(bindings).run(item, 0))
+
+    dispatched = [
+        name for name in _EVERY_ADAPTER if name in AUDIOBOOK_DISPATCH_ADAPTERS
+    ]
+    assert dispatched == constructed["audiobook"] == observed["audiobook"]
+    assert dispatched == [value.provider for value in reports["audiobook"].providers]
+    assert reports["audiobook"].audio is not None
+    # Ebook dispatch is unchanged: every connected binding, in binding order.
+    assert list(_EVERY_ADAPTER) == constructed["ebook"] == observed["ebook"]
+    assert list(_EVERY_ADAPTER) == [
+        value.provider for value in reports["ebook"].providers
+    ]
+    assert reports["ebook"].audio is None
+
+    configuration = _mixed_configuration()
+    jobs = {
+        item: provider_recovery_jobs(
+            report,
+            package=(None, report.report_id, None, None, "report_only"),
+            configuration=configuration,
+            scope="mixed",
+        )
+        for item, report in reports.items()
+    }
+    assert dispatched == [job.adapter for job in jobs["audiobook"]]
+    assert list(_EVERY_ADAPTER) == [job.adapter for job in jobs["ebook"]]
+
+
+@pytest.mark.parametrize(
+    "connected,dispatched",
+    (
+        (("audible_catalog", "google_books"), ("audible_catalog",)),
+        (_EXCLUDED_ON_AUDIOBOOKS, ()),
+    ),
+)
+def test_an_audiobooks_connections_narrow_the_dispatch_set_and_never_widen_it(
+    connected: tuple[str, ...], dispatched: tuple[str, ...]
+) -> None:
+    observed: list[str] = []
+    bindings = tuple(
+        _never_built(name)
+        if name in _EXCLUDED_ON_AUDIOBOOKS
+        else _dispatch_binding(name, [], observed)
+        for name in connected
+    )
+
+    report = MetadataReport.from_json(_mixed_service(bindings).run("audiobook", 0))
+
+    assert list(dispatched) == observed
+    assert dispatched == tuple(value.provider for value in report.providers)
+
+
+def test_an_audiobook_binding_without_an_authority_is_never_dispatched() -> None:
+    """No authority names no adapter in the set, so the binding fails closed."""
+    binding = replace(_never_built("catalogue"), authority=None)
+
+    report = MetadataReport.from_json(_mixed_service((binding,)).run("audiobook", 0))
+
+    assert () == report.providers
+
+
+def test_a_disabled_excluded_binding_records_nothing_on_an_audiobook() -> None:
+    """Only an in-set binding states DISABLED; an excluded one states nothing."""
+    bindings = tuple(
+        _never_built(name, enabled=False)
+        for name in ("google_books", "hardcover", "itunes_search")
+    )
+
+    report = MetadataReport.from_json(_mixed_service(bindings).run("audiobook", 0))
+
+    assert [("hardcover", ProviderStatus.DISABLED)] == [
+        (value.provider, value.status) for value in report.providers
+    ]
+
+
+def test_an_overflowing_audiobook_plan_limits_only_the_dispatch_set() -> None:
+    """An excluded binding states no QUERY_LIMIT_EXCEEDED either."""
+    bindings = tuple(_never_built(name) for name in _EVERY_ADAPTER)
+    overflowing = _fed_inspector(
+        *(
+            (ClaimKind.ASIN, f"B00000000{index}", "embedded_tag", None)
+            for index in range(1, 6)
+        )
+    )
+
+    report = MetadataReport.from_json(
+        _mixed_service(bindings, audio=overflowing).run("audiobook", 0)
+    )
+
+    assert [
+        (name, ProviderStatus.QUERY_LIMIT_EXCEEDED)
+        for name in _EVERY_ADAPTER
+        if name in AUDIOBOOK_DISPATCH_ADAPTERS
+    ] == [(value.provider, value.status) for value in report.providers]

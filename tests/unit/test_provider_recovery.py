@@ -3400,6 +3400,7 @@ def test_terminal_authentication_and_authorization_lanes_create_exact_jobs(
                     lanes=(SimpleNamespace(identity="isbn-lane", status=status),),
                 ),
             ),
+            audio=None,
         )
         jobs = _provider_recovery_jobs(
             report,

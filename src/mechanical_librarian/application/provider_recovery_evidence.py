@@ -13,6 +13,7 @@ import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, Callable, Protocol
 
+from mechanical_librarian.application.configuration import AUDIOBOOK_DISPATCH_ADAPTERS
 from mechanical_librarian.application.metadata_report import (
     PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     CredentialError,
@@ -307,8 +308,16 @@ def provider_recovery_jobs(
     configuration: ApplicationConfiguration,
     scope: str,
 ) -> tuple[ProviderRecoveryJob, ...]:
-    """Create bounded retry work only from a published terminal package."""
+    """Create bounded retry work only from a published terminal package.
+
+    An audiobook report enrolls no adapter outside `AUDIOBOOK_DISPATCH_ADAPTERS`
+    (ADR-0061 clause 9). A retained report published before that set, or one a
+    successor carried forward from it, can still hold such an observation, and
+    retrying it would spend egress dispatch never sends. An unconfigured
+    provider is refused first, as it always was.
+    """
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
+    audio = report.audio is not None
     if proposal is not None and proposal.proposal_set_id != package[0]:
         raise ReviewPipelineError("projection")
     jobs = []
@@ -325,6 +334,8 @@ def provider_recovery_jobs(
         adapter = adapters.get(observation.provider)
         if adapter is None:
             raise ReviewPipelineError("configuration")
+        if audio and adapter not in AUDIOBOOK_DISPATCH_ADAPTERS:
+            continue
         reason, rank = provider_budget_dispatch_reason(report, proposal, observation)
         jobs.append(
             ProviderRecoveryJob(

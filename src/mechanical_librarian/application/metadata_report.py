@@ -11,6 +11,7 @@ from typing import Never, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
+    AUDIOBOOK_DISPATCH_ADAPTERS,
     LibraryConfiguration,
     MediaMountConfiguration,
     ReportLimits,
@@ -2595,6 +2596,12 @@ class GenerateMetadataReport:
         which is how the audiobook path runs its ASIN feed over exactly the
         providers that had nothing to answer in phase one. The loop itself is
         unchanged, so a fed observation is bounded and diagnosed identically.
+
+        An audiobook plan dispatches only to bindings whose authority is in
+        `AUDIOBOOK_DISPATCH_ADAPTERS` (ADR-0061 clause 9). Any other binding is
+        skipped before its enabled and overflow checks, so it is never built,
+        sent a request, or recorded, and neither the configured connections nor
+        `bindings` can widen the set. An ebook plan is not filtered here.
         """
         observations: list[ProviderObservation] = []
         descriptors: list[ProviderCoverDescriptor] = []
@@ -2603,6 +2610,11 @@ class GenerateMetadataReport:
         # reason. Both are released and re-raised through the same statements.
         failure: MetadataReportError
         for binding in self._providers if bindings is None else bindings:
+            if (
+                plan.audio is not None
+                and binding.authority not in AUDIOBOOK_DISPATCH_ADAPTERS
+            ):
+                continue
             if not binding.enabled:
                 disabled_lanes = tuple(
                     ProviderLaneObservation(
@@ -2768,9 +2780,10 @@ class GenerateMetadataReport:
         An audiobook's identifier is an ASIN, so the plan is built by
         ``audiobook_discovery_plan`` rather than the ISBN one, and it runs
         through the same provider loop an ebook does. Its cover descriptors run
-        through the same bounded cover observer as well: two of the four
-        admitted authorities state a cover asset of their own, and each one's
-        `cover_enabled` flag is consulted inside that observer.
+        through the same bounded cover observer as well: the Audible catalog is
+        the one dispatched authority that states an audiobook cover asset of
+        its own (#1254), and its `cover_enabled` flag is consulted inside that
+        observer.
 
         The aggregate cover window is the ebook path's own 60 seconds. There is
         no measured reason for an audiobook's cover acquisition to be bounded
@@ -2778,7 +2791,7 @@ class GenerateMetadataReport:
         over the same transport -- so it is deliberately the same number.
 
         Dispatch is two phases rather than one. Phase one is the plan above,
-        run over every binding. Phase two runs the ASIN feed -- the ASINs the
+        run over every dispatched binding. Phase two runs the ASIN feed -- the ASINs the
         first phase promoted and the one the target asserts -- over exactly the
         bindings whose phase-one observation answered no lane at all, which is
         what a per-ASIN provider records when a plan names no product for it.
