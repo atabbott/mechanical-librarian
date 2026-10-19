@@ -1806,9 +1806,12 @@ stripped, once with plain spans (`<[^<>]*>`) and once with quote-aware spans
 that keep a quoted `>` inside its tag; each alone misses either a quoted `>` or
 an unbalanced quote. So `</p>/srv/media`, `<a href="/x">`, `<img src="/x" />`
 and `&lt;/p&gt;` stay refused, and so does a credential, label or non-absolute
-path any tag splits or a leading tag hides (`https://u:p</i>@h`,
+path any well-formed tag splits or a leading tag hides (`https://u:p</i>@h`,
 `pass<b>word</b>=x`, `C<b>:</b>\Books`, `<p>Secret: x</p>`). Whatever this
 admits, the default scan admits with every tag-like span removed, both ways.
+Deliberately malformed, nested, unterminated or entity-encoded markup built to
+hide a path or credential is an accepted risk and out of scope: base admits such
+forms too, and this boundary guards against accidental leakage, not obfuscation.
 Only ASCII tag names and ASCII spacing form a tag. U+2028 is a line separator:
 the codepoint scan reads it as LF after CRLF folds, so `\r\u2028` still exposes
 a lone CR. Admission order is exact type and non-blank text, original bounds,
