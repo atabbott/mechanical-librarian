@@ -1266,6 +1266,7 @@ def test_a_refused_rung_continues_to_the_rung_that_admits() -> None:
     assert ProviderStatus.CANDIDATES is observation.status
     lane = observation.lanes[0]
     assert lane.dispatch_lineage == _ladder(_SUBTITLED, ("Andy Weir",))[1]
+    assert lane.dispatch_lineage is not None
     assert lane.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
     assert () == lane.exhausted_dispatch
     assert () == lane.diagnostics
@@ -1279,9 +1280,11 @@ def test_a_refused_rung_continues_to_the_rung_that_admits() -> None:
         and {
             descriptor.provenance.edition_identity
             for descriptor in result.cover_descriptors
+            if descriptor.provenance is not None
         }
         <= retained
     )
+    assert all(descriptor.provenance for descriptor in result.cover_descriptors)
 
 
 @pytest.mark.parametrize(
@@ -1345,7 +1348,8 @@ def test_an_admitted_first_rung_sends_exactly_one_request() -> None:
 
     assert 1 == len(seen)
     assert ProviderStatus.CANDIDATES is observation.status
-    assert observation.lanes[0].dispatch_lineage.rung is WorkDispatchRung.NORMALIZED
+    dispatch = observation.lanes[0].dispatch_lineage
+    assert dispatch is not None and dispatch.rung is WorkDispatchRung.NORMALIZED
     assert (1, 0) == (
         observation.request_accounting.initial_dispatches,
         observation.request_accounting.retry_dispatches,

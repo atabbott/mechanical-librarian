@@ -631,7 +631,7 @@
     "tests/unit/shadow_packet_fixtures.py": "8ee51ad8464b2ca50412a2b3c8c1ec69f9287270c627db1e66980d5e60b41f19",
     "tests/unit/test_activity_end_to_end.py": "1d9a7960ed5b887844649e2bbedc8e538eb2912bc2dd049a66fd8fe76090851d",
     "tests/unit/test_activity_records.py": "64f4a5282ed81b587d4fc7dd8aa679e536a2bb3a4a84b6f9f3956f599e22f57f",
-    "tests/unit/test_audible_catalog_provider.py": "673c12e9a6a4ceae304017d8be6cb5d74fcb8183154dff72ae936e5dc7502f62",
+    "tests/unit/test_audible_catalog_provider.py": "4bae1627db9ba78e5c1fbabce27f844f4d29547de5f814c378f5ad6376c67320",
     "tests/unit/test_audio_local.py": "98dfef28960439fa35070ae8219f07b13b585ffbfe0e7d7dbe42b5f5bcdfc531",
     "tests/unit/test_audiobook_corroboration.py": "d101663e652d8b270a2535523011dcc14f335f47f30ed75aadd6ab72acf4cd74",
     "tests/unit/test_audiobook_provider_evidence.py": "697c2ef525509eac07701724d6d6c2b8d4e3fecdb8a8070cb8ceb9e34d92061c",
