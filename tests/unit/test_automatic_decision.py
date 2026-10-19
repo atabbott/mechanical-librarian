@@ -1439,6 +1439,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="recording-lookup-hints-predecessor-f46",
         ),
+        pytest.param(
+            "c5bffe0ae40efa8f0a2ad4a9ebd492a60a7b7626facc8c1f47048dacecda112c",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="audiobook-dispatch-set-predecessor-f19a",
+        ),
+        pytest.param(
+            "0cf091d5b7e0ebfdcb602661efc9b68eef5e52ae51c542219505de7e37c60890",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="audiobook-dispatch-set-predecessor-f20",
+        ),
+        pytest.param(
+            "7bfe7a5e4cbf014d7eb1b3db687bac09eb8da9c78bef03689ad16364ca93119a",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="audiobook-dispatch-set-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
