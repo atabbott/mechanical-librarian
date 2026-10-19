@@ -145,6 +145,13 @@ qualification.
   compares is computed in the isolated decode child beside the preview. This
   grants acquisition and evidence only; no cover election semantics change and
   an audiobook still has no write authority.
+- Since #1254 iTunes Search is not in the audiobook dispatch set
+  ([ADR-0061](0061-audiobook-provider-posture.md), clause 9), so the default set
+  acquires one audiobook cover authority, the Audible catalog. With no second
+  authority the cover-hash reasons (`cover_identity._cover_corroboration_reasons`)
+  no longer fire. They are evidence only: the identity outcome and
+  `material_audiobook_cover_reference` do not read them, so no decision changes,
+  and no other audiobook cover authority is admitted in its place.
 
 ## Alternatives considered
 

@@ -60,7 +60,8 @@ provider. Audiobook evidence remains read-side only.
    carries no narrator or duration fields). AudiobookDB is not admitted in
    this release; it becomes a candidate community tier only after maintainer
    contact establishes an integration key under its published integration
-   terms, which also require crediting AudiobookDB.
+   terms, which also require crediting AudiobookDB. iTunes Search stays
+   admitted but is not dispatched for audiobooks (amended below, #1254).
 3. **Pure-API v1.** No provider dataset is bundled with or downloaded by the
    application in this release. The AudioSilo identity-core artifact is a
    deferred tier with exactly three activation triggers: anonymous catalog
@@ -105,7 +106,8 @@ provider. Audiobook evidence remains read-side only.
    Neither adapter enters the recording-authority registry. Audiobook original
    publication means a linked work's first publication, retaining year, month
    or day precision; recording and edition release dates do not vote. This
-   adds no provider, credential mode or network destination.
+   adds no provider, credential mode or network destination. The audiobook
+   dispatch set is amended below (#1247).
 
 ## Consequences
 
@@ -170,3 +172,40 @@ fingerprint lookup.
   collapse, or a supported offline-deployment requirement.
 - The stability record and the coverage measurement are attached to #925 as
   its evidence comments.
+
+## Audiobook dispatch set (#1247, #1254)
+
+Audiobook preparation dispatches only to the connected providers named in
+`AUDIOBOOK_DISPATCH_ADAPTERS` (`application/configuration.py`): the Audible
+catalog, Audnexus, AudioSilo, Hardcover and Open Library. A library's
+`provider_connections` narrow this set and can never widen it, and a binding
+with no authority is not dispatched. Google Books, Inventaire and iTunes Search
+are excluded on audiobooks: they get no client construction, request,
+observation, cover fetch, recovery job or retry, and an audiobook report gives
+them no failure evidence, even an older observation a retry successor carried
+forward. A recovery job already queued for one of them closes as `stale`,
+which closes that job alone and records no failure evidence; a recovery row
+whose remaining members all close as stale can still end through the runner's
+existing success path. Ebook dispatch is unchanged, and so are `config-v9`,
+the configuration schema and `metadata-report-v53`, so no clean rebuild is
+needed; a v53 report that holds an excluded observation stays valid.
+
+**Clause 2 (#1254).** iTunes Search remains an admitted, configurable adapter,
+but it leaves the default audiobook dispatch set, saving 181 dispatches over
+#1086's retained items. #1254's measurement: 177 narrowed requests produced 0
+new admissions; the 2 selected alternatives iTunes backed today were both also
+backed by other providers, and under narrowing both overflow, leaving 0. #1246's
+measurement: 234 requests, all to Audible, with iTunes at 0 while held for
+#1254, and every alternative-title admission depended on Audible's alternative
+lane. Where a library connects iTunes, it still searches ebook work lanes,
+because ebook dispatch does not change.
+
+**Clause 9 (#1247).** The set is the five named above. Open Library and
+Hardcover stay, so F46a's and F54's work facts keep their sources (#962).
+Google Books and Inventaire leave: across #1086's retained audiobooks they
+took 843 dispatches (31.6%), backed only 2 selected alternatives (both series,
+from Inventaire) and no description or genre alternative, resolved none of the
+297 unresolved choices, and left 189 recovery jobs queued; Inventaire was
+unavailable on 80 of 238 items. Excluding all three also removes the
+second audiobook cover authority; [ADR-0064](0064-audiobook-provider-evidence-vocabularies.md)
+records that consequence.

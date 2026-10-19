@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Audiobooks are now looked up only with Audible, Audnexus, AudioSilo, Open
+  Library and Hardcover. Google Books, Inventaire and iTunes no longer spend
+  requests or recovery work on them. Ebooks are unchanged and no rebuild is
+  needed (#1247, #1254).
+
 - An audiobook Audible refuses on title but whose running time matches the
   recording's is now looked up by its ASIN on Audnexus and AudioSilo, and kept
   only when that answer names the same book. A looked-up answer naming another

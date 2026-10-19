@@ -64,6 +64,17 @@ One stale member is retired without retiring current siblings. A restart after
 an exact successor package cutover resumes from its persisted lineage, so the
 completed canary is not sent to the provider again.
 
+An audiobook enrolls recovery and records provider failure evidence only for
+adapters in its dispatch set, the Audible catalog, Audnexus, AudioSilo,
+Hardcover and Open Library (#1247), even when a successor carried an older
+Google Books, Inventaire or iTunes Search observation forward, so those three
+get no request and no failure evidence from audiobooks. A job for one of them
+queued before the set closes as `stale` as soon as its source report is read:
+no current-report read, resolver, target read or factory call follows, only
+that job closes, and it records no failure evidence. A recovery row whose
+remaining members all close as stale can still end through the runner's
+existing success path.
+
 If inline delivery fails after a package cutover claimed the next preparation
 action, that successor is returned to the existing bounded preparation state
 machine with the typed `persistence` failure. If that settlement cannot commit,
@@ -129,6 +140,8 @@ six rows and admits at most five distinct candidates; it neither truncates an
 overflow nor repeats the same request as a supposed narrower query. Its narrowing
 flag does not change the wire term. The ordinary query ladder removes information
 and advances only after no-match, so it is not an overflow remedy (#1082).
+iTunes Search no longer runs for audiobooks (#1254), so this applies only to
+ebook work lanes where a library connects it.
 
 
 ## Settlement diagnostics

@@ -257,10 +257,12 @@ values. Four read ebook metadata:
 
 - `inventaire` is keyless and forbids both credential fields. It is preselected
   during first-run setup, uses a fixed Inventaire host, and may retrieve covers.
+  It is not dispatched for audiobooks.
 
 - `google_books` forbids `contact_email` and cover retrieval. When enabled,
   `secret_file` is optional: `null` uses credential-free access and an absolute
-  path supplies a Google Books API key through the controller only.
+  path supplies a Google Books API key through the controller only. It is not
+  dispatched for audiobooks.
 - `hardcover` forbids `contact_email`; when enabled it requires an absolute
   private `secret_file`.
 - `open_library` always forbids a secret; when enabled it requires a bounded
@@ -279,7 +281,9 @@ even as an optional upgrade. What each one reaches on the network is stated in
   other adapter, and not the disabled form of this one, accepts the key.
 - `audnexus` is per-ASIN enrichment, including chapters.
 - `audiosilo` is community corroboration and degraded mode.
-- `itunes_search` corroborates only, and may retrieve covers.
+- `itunes_search` corroborates only, and may retrieve covers. It is not
+  dispatched for audiobooks (#1254); where a library connects it, it still
+  searches ebook work lanes.
 
 `cover_enabled` defaults to `true` on an enabled `inventaire`,
 `audible_catalog`, or `itunes_search`; `audnexus` and `audiosilo` restate
@@ -287,7 +291,11 @@ Audible's cover and must leave it `false`.
 
 A disabled provider must set both adapter-specific authority fields to `null`.
 Adding or enabling a provider does nothing until a library explicitly
-references it. The same named provider connection may be referenced by several
+references it. An audiobook is dispatched only to the referenced providers in
+the audiobook dispatch set, `audible_catalog`, `audnexus`, `audiosilo`,
+`hardcover` and `open_library` ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)
+clause 9, #1247): a library's references narrow that set and never widen it.
+An ebook is dispatched to every referenced provider. The same named provider connection may be referenced by several
 libraries. `contact_email` is used only to identify Open Library HTTP requests;
 it is excluded from reports, report IDs, manifests, fingerprints, logs, errors,
 and persisted application artifacts. Changing it does not supersede reports or
