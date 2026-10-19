@@ -23,6 +23,7 @@ from mechanical_librarian.domain.work_identity import (
     admit_provider_work_identity,
     apply_work_title_transformation,
     closed_creator_display_possibility,
+    discovery_title_candidate,
     narrowing_work_query,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
@@ -1221,3 +1222,166 @@ def test_persisted_dispatch_lineage_round_trips_and_non_null_transform_rejects()
                 },
             }
         )
+
+
+_AUDIOBOOK_FAMILIES = (
+    WorkTitleTransformationFamily.LEADING_SEQUENCE_TOKEN,
+    WorkTitleTransformationFamily.RIGHT_HAND_SEGMENT,
+)
+
+
+def test_audiobook_families_are_query_only_normalized_rows_in_place() -> None:
+    families = tuple(rule.family for rule in WORK_TITLE_TRANSFORMATION_RULES)
+    start = families.index(WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX)
+
+    assert families[start + 1 : start + 4] == (
+        *_AUDIOBOOK_FAMILIES,
+        WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
+    )
+    assert [
+        (rule.query_enabled, rule.admission_enabled, rule.rung)
+        for rule in WORK_TITLE_TRANSFORMATION_RULES
+        if rule.audiobook_only
+    ] == [(True, False, WorkDispatchRung.NORMALIZED)] * 2
+    assert {
+        rule.family for rule in WORK_TITLE_TRANSFORMATION_RULES if rule.audiobook_only
+    } == set(_AUDIOBOOK_FAMILIES)
+
+
+@pytest.mark.parametrize(
+    ("title", "family", "expected"),
+    (
+        ("Book 2: Plain Work", "leading_sequence_token", "Plain Work"),
+        ("03 - Plain Work", "leading_sequence_token", "Plain Work"),
+        ("Vol. 3 - Plain Work", "leading_sequence_token", "Plain Work"),
+        ("No. 4) Plain Work", "leading_sequence_token", "Plain Work"),
+        ("#12. Plain Work", "leading_sequence_token", "Plain Work"),
+        ("1.5 \u2013 Plain Work", "leading_sequence_token", "Plain Work"),
+        ("Series Name - Plain Work", "right_hand_segment", "Plain Work"),
+        ("Series Name \u2013 Plain Work", "right_hand_segment", "Plain Work"),
+        ("Series Name \u2014 Plain Work", "right_hand_segment", "Plain Work"),
+    ),
+)
+def test_audiobook_families_rewrite_only_the_audiobook_first_rung(
+    title: str, family: str, expected: str
+) -> None:
+    rule = WorkTitleTransformationFamily(family)
+    audiobook = work_query_ladder(title, ("Ada Example",), audiobook=True)
+
+    assert apply_work_title_transformation(rule, title, ()) == expected
+    assert (expected, (rule,)) == (audiobook[0].title, audiobook[0].transformations)
+    assert WorkDispatchRung.NORMALIZED is audiobook[0].rung
+    assert all(
+        not set(_AUDIOBOOK_FAMILIES) & set(query.transformations)
+        for query in work_query_ladder(title, ("Ada Example",))
+    )
+    assert not replay_provider_work_identity_admission(
+        local_title=title,
+        local_authors=("Ada Example",),
+        provider_title=expected,
+        provider_authors=("Ada Example",),
+        provider_work_identity="work-1",
+        dispatch_lineage=WorkDispatchLineage.from_query(audiobook[0]),
+        audiobook=True,
+    ).admitted
+
+
+@pytest.mark.parametrize(
+    "title",
+    (
+        # Shapes of numeric titles a leading-sequence token must leave alone.
+        "1999",
+        "2001: A Plain Odyssey",
+        "3:10 to Plainville",
+        "12 Rules for Plain Work",
+        "11/22/63",
+        "Plain-22",
+        "1776",
+        "100 Years of Plain Work",
+        # Right-hand segments that are not a second title.
+        "Alpha - Beta - Gamma",
+        "Plain Work - Book 3",
+        "Plain Work - Part II",
+        "Plain Work - The Saga",
+        "Plain Work - Unabridged Edition",
+        "Plain - 22",
+        "22 - 7",
+        "Plain-Work",
+    ),
+)
+def test_audiobook_families_leave_other_titles_unchanged(title: str) -> None:
+    for family in _AUDIOBOOK_FAMILIES:
+        assert apply_work_title_transformation(family, title, ()) == title
+    assert all(
+        not set(_AUDIOBOOK_FAMILIES) & set(query.transformations)
+        for query in work_query_ladder(title, ("Ada Example",), audiobook=True)
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    (
+        ("03 - Plain Work (2019) [B0XXXXXXX] - Narrator Name", "Plain Work"),
+        (
+            "Series Name 03 - Plain Work (2019) [B0XXXXXXX] - Narrator Name",
+            "Series Name 03 - Plain Work",
+        ),
+        ("Plain Work [Unabridged] [MP3] [64k] [retail]", "Plain Work"),
+        ("Plain   Work  Two", "Plain Work Two"),
+        ("Cafe\u0301 Work", "Caf\u00e9 Work"),
+        ("Plain Work - J. R. Example", "Plain Work"),
+        ("Plain Work - A. Example", "Plain Work - A. Example"),
+        ("Plain Work - Ada Example - Bob Example", "Plain Work - Ada Example"),
+        ("Plain Work - The Saga", "Plain Work - The Saga"),
+        ("Plain Work - Book Two", "Plain Work - Book Two"),
+        ("Plain Work - lowercase name", "Plain Work - lowercase name"),
+        (
+            "Plain Work - One Two Three Four Five",
+            "Plain Work - One Two Three Four Five",
+        ),
+        ("1 - 2 - Plain Work", "2 - Plain Work"),
+    ),
+)
+def test_discovery_title_candidate_strips_bounded_decorations(
+    text: str, expected: str
+) -> None:
+    assert discovery_title_candidate(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "",
+        "   ",
+        "../Plain Work",
+        "Plain/Work",
+        "Plain\\Work",
+        "Plain\x00Work",
+        "Plain\x07Work",
+        "Plain\tWork",
+        "Plain\x85Work",
+        "Plain\u202eWork",
+        "Plain\u200bWork",
+        "Plain\ufdd0Work",
+        "Plain\ud800Work",
+        "x" * 256,
+        "[only a tag]",
+        "(2019)",
+        "12",
+        "03 - (2019) [tag]",
+    ),
+)
+def test_discovery_title_candidate_refuses_hostile_or_empty_text(text: str) -> None:
+    assert discovery_title_candidate(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    ("[a]" * 85, "Plain Work" + " [tag]" * 40, "- " * 127, "(2019) " * 36),
+)
+def test_discovery_title_candidate_is_bounded_on_adversarial_shapes(
+    text: str,
+) -> None:
+    value = discovery_title_candidate(text)
+
+    assert value is None or (len(value) <= 280 and value == " ".join(value.split()))

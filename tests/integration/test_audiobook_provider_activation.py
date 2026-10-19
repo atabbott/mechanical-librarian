@@ -501,7 +501,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v50" == published.schema_version
+        assert "metadata-report-v51" == published.schema_version
         # Three authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -1535,3 +1535,282 @@ def test_recording_collision_cannot_add_owner_choices(
             ).fetchone() == (0,)
     finally:
         repository.close()
+
+
+# #1255: the second title source, over the real Audible and iTunes adapters and
+# the real audio inspector. Every name here is synthetic.
+_SERIES = "Series Name"
+_LEAF_FOLDER = "03 - The Real Title (2019) [B0XXXXXXX] - Narrator Name"
+_CONTRACT_FOLDER = "Series Name 03 - The Real Title (2019) [B0XXXXXXX] - Narrator Name"
+
+
+def _alternative_flow(
+    root: Path,
+    folder: str,
+    *,
+    title: str = _SERIES,
+    runtime_minutes: int = 970,
+    asserted_answers: bool = False,
+) -> tuple[MetadataReport, tuple[object, ...], list[str], list[str]]:
+    """Publish one single-file audiobook whose folder leaf names its title."""
+    import copy
+
+    import httpx
+
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+        ITunesSearchMetadataProvider,
+    )
+    from mechanical_librarian.domain.audio_inspection import (
+        AudioEvidenceSurface,
+        AudioInspection,
+        AudioInspectionFact,
+        AudioInspectionField,
+        AudioInspectionOutcome,
+    )
+    from mechanical_librarian.domain.metadata_report import TargetSeries
+    from tests.support.audiobook_providers import payload
+
+    relative = f"{folder}/book.m4b"
+    mount = root / "media"
+    (mount / folder).mkdir(parents=True)
+    (mount / relative).write_bytes(b"synthetic recording")
+
+    def child(_descriptor, source, _limits, **_arguments) -> AudioInspection:
+        return AudioInspection(
+            AudioInspectionOutcome.SUCCESS,
+            source,
+            (
+                AudioInspectionFact(
+                    AudioInspectionField.DURATION,
+                    source,
+                    _LOCAL_DURATION,
+                    _LOCAL_DURATION,
+                    _LOCAL_DURATION,
+                    AudioEvidenceSurface.CONTAINER_FORMAT,
+                ),
+            ),
+        )
+
+    target_file = TargetFile(_FILE_IDENTITY, relative, "m4b")
+    with patch.object(composition, "run_audio_inspector_child", child):
+        inspected = composition._IsolatedAudioInspector().inspect(
+            MediaMountConfiguration("audiobooks", str(mount), "/library", True),
+            (target_file,),
+            268435456,
+        )
+    replaced = {
+        TargetDestination.AUTHORS: TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",)
+        ),
+        TargetDestination.SERIES: TargetField(
+            TargetDestination.SERIES,
+            TargetFieldState.VALUE,
+            (TargetSeries(_SERIES, "3"),),
+        ),
+    }
+    snapshot = TargetSnapshot(
+        "audiobook",
+        title,
+        (target_file,),
+        fields=tuple(
+            replaced.get(field.destination, field)
+            for field in default_target_fields(title)
+        ),
+    )
+
+    def product(name: str) -> dict[str, object]:
+        value = copy.deepcopy(payload("audible_search")["products"][0])
+        value["title"] = name
+        value["runtime_length_min"] = runtime_minutes
+        return value
+
+    audible_titles: list[str] = []
+
+    def audible(request: httpx.Request) -> httpx.Response:
+        asked = request.url.params["title"]
+        audible_titles.append(asked)
+        products = [product(asked)] if asked != title or asserted_answers else []
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"total_results": len(products), "products": products},
+        )
+
+    store_terms: list[str] = []
+
+    def store(request: httpx.Request) -> httpx.Response:
+        store_terms.append(request.url.params["term"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/javascript; charset=utf-8"},
+            json={"resultCount": 0, "results": []},
+        )
+
+    def client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(handler))
+
+    bounds = {
+        "clock": lambda: 0.0,
+        "wall_clock": lambda: 1700000000.0,
+        "sleep": lambda _: None,
+        "jitter": lambda: 0.0,
+    }
+    calls: list[tuple[str, ProviderQueryKind]] = []
+    providers: dict[str, MetadataProvider | Callable[[], MetadataProvider]] = {
+        "audible_catalog": lambda: AudibleCatalogMetadataProvider(
+            "audible", client(audible), 262144, 5.0, marketplaces=("uk",), **bounds
+        ),
+        "itunes_search": lambda: ITunesSearchMetadataProvider(
+            "store", client(store), 262144, 5.0, **bounds
+        ),
+        "audnexus": _FakeAudiobookProvider(
+            "enrichment", "audnexus", calls, status=ProviderStatus.NO_MATCH
+        ),
+        "audiosilo": _FakeAudiobookProvider(
+            "silo", "audiosilo", calls, status=ProviderStatus.NO_MATCH
+        ),
+    }
+    with (
+        patch(__name__ + "._audio_result", return_value=inspected),
+        patch(__name__ + "._CONTENT_DIGEST", inspected.content_digest),
+        patch(__name__ + "._snapshot", return_value=snapshot),
+    ):
+        serialized, repository = _run(root, providers)
+    try:
+        work = repository._connection.execute(
+            "SELECT stage,state,outcome FROM review_preparation_work"
+        ).fetchone()
+    finally:
+        repository.close()
+    return MetadataReport.from_json(serialized), work, audible_titles, store_terms
+
+
+def _audible(report: MetadataReport):
+    return next(value for value in report.providers if value.provider == "audible")
+
+
+def test_a_folder_leaf_title_reaches_an_admitted_recording(tmp_path: Path) -> None:
+    from mechanical_librarian.domain.proposal_set import (
+        AudiobookReviewScope,
+        audiobook_review_scope,
+        provider_candidate_represents_target_recording,
+    )
+
+    report, work, audible_titles, store_terms = _alternative_flow(
+        tmp_path, _LEAF_FOLDER
+    )
+
+    # The asserted title is the recorded series name, so only the leaf is asked.
+    assert report.audio is not None
+    assert [("path_leaf", "The Real Title")] == [
+        (value.basis, value.title) for value in report.audio.discovery_titles
+    ]
+    assert ["The Real Title"] == audible_titles
+    assert [] == store_terms
+    audible = _audible(report)
+    assert ProviderStatus.CANDIDATES is audible.status
+    (candidate,) = audible.candidates
+    assert provider_candidate_represents_target_recording(report, audible, candidate)
+    assert AudiobookReviewScope.RECORDING is audiobook_review_scope(report)
+    assert ("proposal", "queued", None) == work
+
+
+def test_the_same_candidate_outside_the_band_is_refused_and_proposes_nothing(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.domain.failure_diagnostics import FailureCategory
+
+    report, work, audible_titles, _terms = _alternative_flow(
+        tmp_path, _LEAF_FOLDER, runtime_minutes=900
+    )
+    audible = _audible(report)
+
+    assert ["The Real Title"] == audible_titles
+    assert ProviderStatus.NO_MATCH is audible.status
+    assert () == audible.candidates
+    assert FailureCategory.WORK_IDENTITY_REFUSED in {
+        value.category for value in audible.diagnostics
+    }
+    assert ("complete", "complete", "evidence_only") == work
+
+
+def test_an_asserted_title_that_answers_never_asks_the_alternative(
+    tmp_path: Path,
+) -> None:
+    report, _work, audible_titles, store_terms = _alternative_flow(
+        tmp_path, _LEAF_FOLDER, title="Asserted Title", asserted_answers=True
+    )
+
+    assert ["Asserted Title"] == audible_titles
+    assert ["Asserted Title Andy Weir"] == store_terms
+    assert 1 == len(_audible(report).lanes)
+    assert ProviderStatus.CANDIDATES is _audible(report).status
+
+
+@pytest.mark.parametrize(
+    "folder",
+    (
+        "\u202eSeries Name 03 - The Real Title",
+        "The Real\u200bTitle",
+        "The Real Title\u0007",
+        "(2019) [tag]",
+    ),
+)
+def test_a_hostile_folder_name_becomes_no_query_text(
+    tmp_path: Path, folder: str
+) -> None:
+    report, _work, audible_titles, store_terms = _alternative_flow(
+        tmp_path, folder, title="Asserted Title"
+    )
+
+    assert report.audio is not None and () == report.audio.discovery_titles
+    assert ["Asserted Title"] == audible_titles
+    assert not any("Real" in value for value in (*audible_titles, *store_terms))
+
+
+def test_the_contract_folder_shape_asks_its_right_hand_title_but_cannot_admit_it(
+    tmp_path: Path,
+) -> None:
+    """Pinned: the series-prefixed leaf keeps its prefix as the lane's title.
+
+    The audiobook ladder asks "The Real Title", but admission is unchanged and
+    replays against the lane's own title, which still carries the series
+    prefix, so the product is refused and nothing is proposed.
+    """
+    report, work, audible_titles, _terms = _alternative_flow(tmp_path, _CONTRACT_FOLDER)
+
+    assert report.audio is not None
+    assert ["Series Name 03 - The Real Title"] == [
+        value.title for value in report.audio.discovery_titles
+    ]
+    assert ["The Real Title"] == audible_titles
+    assert ProviderStatus.NO_MATCH is _audible(report).status
+    assert ("complete", "complete", "evidence_only") == work
+
+
+def test_an_ebook_plan_carries_no_alternative_and_no_audiobook_family() -> None:
+    from mechanical_librarian.application.metadata_report import (
+        metadata_discovery_plan,
+    )
+    from mechanical_librarian.domain.work_identity import (
+        WorkTitleTransformationFamily,
+        work_query_ladder,
+    )
+
+    title = "Series Name - The Real Title"
+    target = TargetSnapshot("ebook", title, (), fields=_target_fields())
+
+    assert all(
+        lane.title_basis is None for lane in metadata_discovery_plan(target, ()).lanes
+    )
+    assert not {
+        WorkTitleTransformationFamily.LEADING_SEQUENCE_TOKEN,
+        WorkTitleTransformationFamily.RIGHT_HAND_SEGMENT,
+    } & {
+        family
+        for query in work_query_ladder(title, ("Andy Weir",))
+        for family in query.transformations
+    }

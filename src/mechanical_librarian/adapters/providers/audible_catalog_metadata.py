@@ -46,8 +46,10 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ProviderResult,
     QualifiedLaneObservation,
+    alternative_work_lane_permitted,
     merge_provider_cover_descriptors,
     observe_work_ladder,
+    provider_discovery_lane_order,
     provider_observation,
     qualify_provider_observation,
 )
@@ -136,8 +138,9 @@ _MAX_VALUES = 8
 # Nine of the larger of those is the aggregate a whole observation may spend.
 _MAX_AGGREGATE_RESPONSE_BYTES = 1_048_576
 _MAX_ATTEMPTS_PER_QUERY = 3
-# Four ASIN lanes walking a marketplace order, or one work lane walking its
-# query ladder, plus retries, all inside one observation.
+# Four ASIN lanes walking a marketplace order, or the asserted work lane and an
+# audiobook's alternative one walking their nine queries between them, plus
+# retries, all inside one observation.
 _MAX_ATTEMPTS_PER_OBSERVATION = 24
 _SEARCH_TOP_LEVEL = frozenset(
     {"product_filters", "products", "response_groups", "total_results"}
@@ -306,7 +309,27 @@ class AudibleCatalogMetadataProvider:
         results: list[ProviderLaneResult] = []
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         with provider_client_lifetime(self._client):
-            for lane in plan.lanes:
+            for lane in provider_discovery_lane_order(plan):
+                if lane.title_basis is not None and not alternative_work_lane_permitted(
+                    plan,
+                    next(
+                        (
+                            result
+                            for result in results
+                            if result.lane.kind is ProviderQueryKind.WORK
+                            and result.lane.title_basis is None
+                        ),
+                        None,
+                    ),
+                ):
+                    ledger.suppress(
+                        kind=lane.kind.value,
+                        matched_family=lane.matched_family,
+                        title=lane.title,
+                        authors=lane.authors,
+                        projection=_RESPONSE_GROUPS,
+                    )
+                    continue
                 self._cover_descriptors = ()
                 lookup = _lane_lookup(lane, plan)
                 qualified = self._resolve(ledger, lane, lookup, deadline=deadline)
@@ -443,7 +466,9 @@ class AudibleCatalogMetadataProvider:
         if (
             lookup.title is None
             or not lookup.authors
-            or not work_query_ladder(lookup.title, lookup.authors)
+            or not work_query_ladder(
+                lookup.title, lookup.authors, audiobook=lookup.audio is not None
+            )
         ):
             return QualifiedLaneObservation(
                 self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
@@ -716,6 +741,7 @@ def _lane_lookup(
         work_title=plan.work_title,
         work_authors=plan.work_authors,
         requested_asin=lane.canonical_asin,
+        title_basis=lane.title_basis,
     )
 
 

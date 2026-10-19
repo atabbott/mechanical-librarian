@@ -36,6 +36,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_asin_feed_plan,
     audiobook_discovery_plan,
     metadata_discovery_plan,
+    provider_discovery_lane_order,
     provider_observation,
 )
 from mechanical_librarian.application.provider_evidence import (
@@ -93,7 +94,11 @@ from mechanical_librarian.domain.work_identity import (
     admit_provider_work_identity,
     work_query_ladder,
 )
-from tests.support.audiobook_providers import target_asin_claim, target_title_claim
+from tests.support.audiobook_providers import (
+    alternative_work_plan,
+    target_asin_claim,
+    target_title_claim,
+)
 from tests.support.metadata_report_schemas import synthetic_latin_work_report
 
 
@@ -2345,3 +2350,106 @@ def test_real_publication_failure_retains_accounting_without_success_or_new_repo
         == retry.report.report_id
     )
     repository.close()
+
+
+def _alternative_lanes() -> tuple[
+    MetadataDiscoveryPlan, MetadataDiscoveryLane, MetadataDiscoveryLane
+]:
+    plan = alternative_work_plan()
+    asserted, alternative = provider_discovery_lane_order(plan)
+    return plan, asserted, alternative
+
+
+def test_a_suppressed_alternative_lane_is_planned_but_never_retried(
+    retry: _Retry,
+) -> None:
+    plan, asserted, alternative = _alternative_lanes()
+    original = provider_observation(
+        "audible",
+        (ProviderLaneResult(asserted, ProviderStatus.UNAVAILABLE),),
+        authority="audible_catalog",
+    )
+    service = retry.service(None)
+
+    assert (asserted,) == service._selected(plan, original, (asserted.identity,))
+    with pytest.raises(ProviderRetrySuccessorError, match="lane is invalid"):
+        service._selected(plan, original, (alternative.identity,))
+    # Only an alternative lane may be planned and unobserved.
+    with pytest.raises(ProviderRetrySuccessorError, match="source is invalid"):
+        service._selected(
+            plan,
+            provider_observation(
+                "audible",
+                (ProviderLaneResult(alternative, ProviderStatus.UNAVAILABLE),),
+                authority="audible_catalog",
+            ),
+            (alternative.identity,),
+        )
+
+
+def test_a_retried_asserted_no_match_dispatches_no_new_alternative(
+    retry: _Retry,
+) -> None:
+    """A stated limitation: the successor merges over the lanes it observed.
+
+    The asserted lane turning NO_MATCH inside a retry would have permitted the
+    alternative, but the successor dispatches only the selected lanes and
+    merges over the observed ones, so the alternative stays absent.
+    """
+    plan, asserted, _alternative = _alternative_lanes()
+    original = provider_observation(
+        "audible",
+        (ProviderLaneResult(asserted, ProviderStatus.UNAVAILABLE),),
+        authority="audible_catalog",
+    )
+    replacement = provider_observation(
+        "audible",
+        (
+            ProviderLaneResult(
+                asserted,
+                ProviderStatus.NO_MATCH,
+                diagnostics=work_ladder_diagnostics(1, 0),
+                exhausted_dispatch=tuple(
+                    WorkDispatchLineage.from_query(query)
+                    for query in work_query_ladder(
+                        asserted.title or "", asserted.authors, audiobook=True
+                    )
+                ),
+            ),
+        ),
+        authority="audible_catalog",
+    )
+
+    merged = retry.service(None)._merged(plan, original, (asserted,), replacement)
+
+    assert [(asserted.identity, ProviderStatus.NO_MATCH)] == [
+        (lane.identity, lane.status) for lane in merged.lanes
+    ]
+
+
+def test_a_failed_alternative_lane_is_retried_beside_its_asserted_sibling(
+    retry: _Retry,
+) -> None:
+    plan, asserted, alternative = _alternative_lanes()
+    original = provider_observation(
+        "audible",
+        (
+            ProviderLaneResult(asserted, ProviderStatus.NO_MATCH),
+            ProviderLaneResult(alternative, ProviderStatus.UNAVAILABLE),
+        ),
+        authority="audible_catalog",
+    )
+    replacement = provider_observation(
+        "audible",
+        (ProviderLaneResult(alternative, ProviderStatus.NO_MATCH),),
+        authority="audible_catalog",
+    )
+    service = retry.service(None)
+
+    selected = service._selected(plan, original, (alternative.identity,))
+    merged = service._merged(plan, original, selected, replacement)
+
+    assert {
+        (asserted.identity, ProviderStatus.NO_MATCH),
+        (alternative.identity, ProviderStatus.NO_MATCH),
+    } == {(lane.identity, lane.status) for lane in merged.lanes}

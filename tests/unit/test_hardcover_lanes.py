@@ -48,6 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     isbn_family,
 )
+from tests.support.audiobook_providers import alternative_work_plan
 from tests.support.hardcover_evidence import (
     hardcover_envelope,
     isbn_claim,
@@ -1323,3 +1324,35 @@ def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
         assert expected and expected != seen[0]
     assert caught.value.__cause__ is cause
     assert caught.value.snapshot.evidence.accessed_at == "2023-11-14T22:13:20.000000Z"
+
+
+def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
+    """Only Audible asks an alternative title; this adapter suppresses it."""
+    plan = alternative_work_plan()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope([], []),
+        )
+
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(plan)
+        .observation
+    )
+
+    assert requests
+    assert not any(
+        "Real" in str(request.url) or b"Real" in request.content for request in requests
+    )
+    assert [None] == [
+        next(lane for lane in plan.lanes if lane.identity == value.identity).title_basis
+        for value in observation.lanes
+    ]
+    assert len(requests) == observation.request_accounting.logical_requests

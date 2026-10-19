@@ -55,6 +55,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchRung,
     WorkTitleTransformationFamily,
 )
+from tests.support.audiobook_providers import alternative_work_plan
 
 
 def _isbn(value: str = "9780306406157") -> LocalClaim:
@@ -2010,3 +2011,35 @@ def test_shared_google_burst_stops_later_lanes_and_work_until_expiry() -> None:
     assert resumed.observation.status is ProviderStatus.NO_MATCH
     assert resumed.observation.request_accounting.initial_dispatches == 2
     assert len(requests) == 3
+
+
+def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
+    """Only Audible asks an alternative title; this adapter suppresses it."""
+    plan = alternative_work_plan()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"totalItems": 0},
+        )
+
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(plan)
+        .observation
+    )
+
+    assert requests
+    assert not any(
+        "Real" in str(request.url) or b"Real" in request.content for request in requests
+    )
+    assert [None] == [
+        next(lane for lane in plan.lanes if lane.identity == value.identity).title_basis
+        for value in observation.lanes
+    ]
+    assert len(requests) == observation.request_accounting.logical_requests
