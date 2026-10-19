@@ -37,6 +37,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.metadata_report import (
+    AudioDiscoveryTitle,
     FileFacts,
     MetadataReport,
     TargetFacts,
@@ -1951,7 +1952,7 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
 
 def _current_audio_report(
     cited_candidate: str = "audible-product-B08G9PRS1K",
-    discovery_titles: tuple[object, ...] = (),
+    discovery_titles: tuple[AudioDiscoveryTitle, ...] = (),
 ) -> MetadataReport:
     """One current audiobook report exercising retained audio provenance.
 
@@ -2529,10 +2530,7 @@ def test_validated_report_row_preserves_complete_validation_and_error_precedence
 
 def test_discovery_titles_survive_publication_and_reopen(tmp_path: Path) -> None:
     """The v51 audio record is read back exactly, and a v50 document is not."""
-    from mechanical_librarian.domain.metadata_report import (
-        AudioDiscoveryTitle,
-        ReportValueError,
-    )
+    from mechanical_librarian.domain.metadata_report import ReportValueError
 
     titles = (
         AudioDiscoveryTitle("path_leaf", "The Real Title"),

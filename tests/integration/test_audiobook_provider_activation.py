@@ -1652,19 +1652,28 @@ def _alternative_flow(
     def client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(handler))
 
-    bounds = {
-        "clock": lambda: 0.0,
-        "wall_clock": lambda: 1700000000.0,
-        "sleep": lambda _: None,
-        "jitter": lambda: 0.0,
-    }
     calls: list[tuple[str, ProviderQueryKind]] = []
     providers: dict[str, MetadataProvider | Callable[[], MetadataProvider]] = {
         "audible_catalog": lambda: AudibleCatalogMetadataProvider(
-            "audible", client(audible), 262144, 5.0, marketplaces=("uk",), **bounds
+            "audible",
+            client(audible),
+            262144,
+            5.0,
+            marketplaces=("uk",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1700000000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
         ),
         "itunes_search": lambda: ITunesSearchMetadataProvider(
-            "store", client(store), 262144, 5.0, **bounds
+            "store",
+            client(store),
+            262144,
+            5.0,
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1700000000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
         ),
         "audnexus": _FakeAudiobookProvider(
             "enrichment", "audnexus", calls, status=ProviderStatus.NO_MATCH
