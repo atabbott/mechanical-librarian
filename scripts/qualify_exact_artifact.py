@@ -672,7 +672,7 @@ def _runtime_help_is_closed(value: str) -> bool:
     commands = re.findall(r"^    ([a-z][a-z0-9-]*)(?= {2,}|\r?$)", value, re.MULTILINE)
     expected = (
         "review-serve,policy-preview,cover-review,review-activity,provider-recovery,"
-        "qualification-state-bridge,schema-adopt"
+        "qualification-state-bridge"
     )
     return choices == [expected, expected] and commands == [
         "review-serve",
@@ -681,7 +681,6 @@ def _runtime_help_is_closed(value: str) -> bool:
         "review-activity",
         "provider-recovery",
         "qualification-state-bridge",
-        "schema-adopt",
     ]
 
 
