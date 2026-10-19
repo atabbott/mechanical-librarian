@@ -1962,3 +1962,244 @@ def test_a_narrowed_empty_asserted_lane_permits_the_alternative() -> None:
     assert _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
     report = _alternative_report(observation)
     assert report == MetadataReport.from_json(report.to_json())
+
+
+# #1257: a refused product inside the tight band keeps its ASIN as a
+# lookup-only hint on the asserted lane.
+_HINTED = "Synthetic Journey: A Novel"
+_HINT_LADDER = tuple(
+    WorkDispatchLineage.from_query(query)
+    for query in work_query_ladder(_HINTED, _NARROWED_AUTHORS, audiobook=True)
+)
+
+
+def _hint_plan() -> m.MetadataDiscoveryPlan:
+    return m.audiobook_discovery_plan(
+        audio_target(_HINTED, _NARROWED_AUTHORS),
+        (target_title_claim(_HINTED), local_runtime_claim(_NARROWED_RUNTIME)),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _titled(index: int, minutes: int, title: str = "Other Work") -> dict[str, Any]:
+    return {**_product(index, minutes), "title": title}
+
+
+def _page(*products: dict[str, Any]) -> dict[str, Any]:
+    return {"total_results": len(products), "products": list(products)}
+
+
+def _hint_report(observation: Any) -> MetadataReport:
+    target = audio_target(_HINTED, _NARROWED_AUTHORS)
+    return MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "item-1", target.fields),
+        file=d.FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(
+            target_title_claim(_HINTED),
+            local_runtime_claim(_NARROWED_RUNTIME),
+        ),
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _hint(index: int, minutes: int, rung: int) -> d.RecordingLookupHint:
+    return d.RecordingLookupHint(f"B0{index:08d}", minutes * 60, _HINT_LADDER[rung])
+
+
+def test_a_refused_tight_product_on_an_exhausted_ladder_becomes_a_hint() -> None:
+    seen, handle = _pages(
+        # A tight product and one far outside the band, both refused on title.
+        _page(_titled(1, 1_001), _titled(2, 900)),
+        _page(),
+    )
+    observation = _observed(handle, _hint_plan()).observation
+    (lane,) = observation.lanes
+
+    assert 2 == len(seen) == len(_HINT_LADDER)
+    assert ProviderStatus.NO_MATCH is lane.status
+    assert _HINT_LADDER == lane.exhausted_dispatch
+    assert (_hint(1, 1_001, 0),) == lane.recording_lookup_hints
+    assert () == observation.recording_lookup_candidates
+    report = _hint_report(observation)
+    assert report == MetadataReport.from_json(report.to_json())
+    assert [
+        {
+            "asin": "B000000001",
+            "basis": "runtime_within_tight_band",
+            "rung": _HINT_LADDER[0].to_data(),
+            "runtime_seconds": 60_060,
+        }
+    ] == json.loads(report.to_json())["providers"][0]["lanes"][0][
+        "recording_lookup_hints"
+    ]
+
+
+def test_a_refused_tight_product_beside_a_later_admission_is_kept() -> None:
+    _, handle = _pages(
+        _page(_titled(1, 999)),
+        _page(_titled(2, 1_000, _HINTED)),
+    )
+    observation = _observed(handle, _hint_plan()).observation
+    (lane,) = observation.lanes
+
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert _HINT_LADDER[1] == lane.dispatch_lineage
+    assert (_hint(1, 999, 0),) == lane.recording_lookup_hints
+    assert {"audible-product-B000000002"} == {
+        value.identity for value in observation.candidates
+    }
+    _hint_report(observation)
+
+
+def test_a_refused_tight_product_beside_one_admitted_on_its_rung_is_kept() -> None:
+    _, handle = _pages(_page(_titled(2, 1_000, _HINTED), _titled(1, 1_001)))
+    observation = _observed(handle, _hint_plan()).observation
+    (lane,) = observation.lanes
+
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert _HINT_LADDER[0] == lane.dispatch_lineage
+    assert (_hint(1, 1_001, 0),) == lane.recording_lookup_hints
+    assert {"audible-product-B000000002"} == {
+        value.identity for value in observation.candidates
+    }
+    _hint_report(observation)
+
+
+def test_a_hint_from_a_rung_after_the_admitting_one_is_refused() -> None:
+    import hashlib
+
+    _, handle = _pages(_page(_titled(2, 1_000, _HINTED), _titled(1, 1_001)))
+    report = _hint_report(_observed(handle, _hint_plan()).observation)
+    data = json.loads(report.to_json())
+    lane = data["providers"][0]["lanes"][0]
+    lane["recording_lookup_hints"][0]["rung"] = _HINT_LADDER[1].to_data()
+    data.pop("report_id")
+    data["report_id"] = (
+        "report_" + hashlib.sha256(d.canonical_json(data).encode()).hexdigest()
+    )
+
+    with pytest.raises(ReportValueError, match="hint rung is inconsistent"):
+        MetadataReport.from_json(d.canonical_json(data))
+
+
+def test_hints_are_bounded_earliest_rung_first_without_repeats() -> None:
+    _, handle = _pages(
+        _page(_titled(5, 1_000), _titled(3, 1_000)),
+        # Rung two repeats a hint and refuses one more tight product, whose
+        # lower ASIN does not displace the earlier rung's.
+        _page(_titled(3, 1_000), _titled(1, 1_000)),
+    )
+    observation = _observed(handle, _hint_plan()).observation
+    (lane,) = observation.lanes
+
+    assert ProviderStatus.NO_MATCH is lane.status
+    assert d.work_ladder_diagnostics(0, 4) == lane.diagnostics
+    assert (_hint(3, 1_000, 0), _hint(5, 1_000, 0)) == lane.recording_lookup_hints
+    _hint_report(observation)
+
+
+def _series_decorated(index: int) -> dict[str, Any]:
+    """A product only the series-suffix transformation admits, never exactly."""
+    return {
+        **_titled(index, 1_000, _HINTED + ": Example Cycle, Book 2"),
+        "series": [{"title": "Example Cycle", "sequence": "2"}],
+    }
+
+
+def test_a_product_admitted_on_a_later_rung_is_not_also_a_hint() -> None:
+    _, handle = _pages(
+        # Two works admitted on rung one refuse its set, and neither is exact.
+        _page(_series_decorated(4), _series_decorated(6)),
+        _page(_series_decorated(4)),
+    )
+    observation = _observed(handle, _hint_plan()).observation
+    (lane,) = observation.lanes
+
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert {"audible-product-B000000004"} == {
+        value.identity for value in observation.candidates
+    }
+    assert (_hint(6, 1_000, 0),) == lane.recording_lookup_hints
+    _hint_report(observation)
+
+
+def test_a_terminal_rung_after_a_tight_refusal_keeps_no_hint() -> None:
+    seen: list[httpx.URL] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return (
+            _json(_page(_titled(1, 1_000)))
+            if len(seen) == 1
+            else httpx.Response(200, text="<html></html>")
+        )
+
+    observation = _observed(handle, _hint_plan()).observation
+
+    assert 2 == len(seen)
+    assert ProviderStatus.MALFORMED is observation.status
+    assert () == observation.lanes[0].recording_lookup_hints
+
+
+def test_the_alternative_lane_keeps_no_hint() -> None:
+    plan = _alternative_plan()
+    _, handle = _pages(_search_page(), _page(_titled(1, 970)))
+    observation = _observed(handle, plan).observation
+    lanes = _by_basis(observation, plan)
+
+    assert ProviderStatus.NO_MATCH is lanes["path_leaf"].status
+    assert lanes["path_leaf"].exhausted_dispatch
+    assert () == lanes["path_leaf"].recording_lookup_hints
+    assert () == lanes[None].recording_lookup_hints
+    _alternative_report(observation)
+
+
+def test_an_alternative_admission_is_not_also_the_asserted_lanes_hint() -> None:
+    """The asserted ladder refuses what the alternative title then admits."""
+    plan = _alternative_plan()
+    _, handle = _pages(_work_page(_ALTERNATIVE), _work_page(_ALTERNATIVE))
+    observation = _observed(handle, plan).observation
+    lanes = _by_basis(observation, plan)
+
+    assert ProviderStatus.NO_MATCH is lanes[None].status
+    assert ProviderStatus.CANDIDATES is lanes["path_leaf"].status
+    assert () == lanes[None].recording_lookup_hints
+    report = _alternative_report(observation)
+    assert report == MetadataReport.from_json(report.to_json())
+
+
+def test_a_lane_result_states_hints_only_where_the_lane_can() -> None:
+    plan = _hint_plan()
+    (lane,) = plan.lanes
+    hint = _hint(1, 1_000, 0)
+    valid = m.ProviderLaneResult(
+        lane,
+        ProviderStatus.NO_MATCH,
+        diagnostics=d.work_ladder_diagnostics(1, 1),
+        exhausted_dispatch=_HINT_LADDER,
+        recording_lookup_hints=(hint,),
+    )
+    alternative = _alternative_plan().lanes
+    for changes in (
+        {"recording_lookup_hints": [hint]},
+        {"recording_lookup_hints": (hint, hint)},
+        {"recording_lookup_hints": (_hint(2, 1_000, 0), hint)},
+        {
+            "recording_lookup_hints": (
+                _hint(1, 1_000, 0),
+                _hint(2, 1_000, 0),
+                _hint(3, 1_000, 0),
+            )
+        },
+        {"recording_lookup_hints": ("B000000001",)},
+        {"exhausted_dispatch": ()},
+        {"status": ProviderStatus.UNAVAILABLE, "exhausted_dispatch": ()},
+        {
+            "lane": next(value for value in alternative if value.title_basis),
+        },
+    ):
+        with pytest.raises(m.MetadataReportError):
+            replace(valid, **changes)
+    assert valid.recording_lookup_hints == (hint,)

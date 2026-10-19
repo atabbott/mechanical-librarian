@@ -129,6 +129,7 @@ from tests.support.audiobook_reports import (
 from tests.support.audiobook_reports import (
     qualified_audiobook as _qualified_audiobook,
 )
+from tests.support.audiobook_reports import recording_lookup_hint_report
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
@@ -1118,7 +1119,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v52" == report.schema_version
+    assert "metadata-report-v53" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -1257,6 +1258,179 @@ def test_a_report_keeps_only_the_ladder_its_audiobook_target_produces(
 ) -> None:
     with pytest.raises(ReportValueError, match="exhausted dispatch is inconsistent"):
         _exhausted_report(_exhausted_lane(**lane), **report)
+
+
+_HINT = dom.RecordingLookupHint("B000000011", 58_200, _REFUSED_LADDER[0])
+
+
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {"recording_lookup_hints": [_HINT]},
+        {"recording_lookup_hints": ("B000000011",)},
+        {
+            "recording_lookup_hints": tuple(
+                dom.RecordingLookupHint(f"B00000001{index}", 58_200, _HINT.rung)
+                for index in range(3)
+            )
+        },
+        {"recording_lookup_hints": (_HINT, _HINT)},
+        {"recording_lookup_hints": (replace(_HINT, asin="B000000012"), _HINT)},
+        {
+            "kind": ProviderQueryKind.ASIN,
+            "exhausted_dispatch": (),
+            "diagnostics": (),
+        },
+        {"exhausted_dispatch": (), "diagnostics": ()},
+        {"exhausted_dispatch": _REFUSED_LADDER[1:]},
+        {"diagnostics": work_ladder_diagnostics(len(_REFUSED_LADDER), 0)},
+        {
+            "status": ProviderStatus.CANDIDATES,
+            "candidates": (
+                ProviderLaneCandidate("lane_candidate_" + "2" * 64, "e", "w"),
+            ),
+            "exhausted_dispatch": (),
+            "diagnostics": (),
+        },
+        {
+            "status": ProviderStatus.UNAVAILABLE,
+            "exhausted_dispatch": (),
+            "diagnostics": (),
+        },
+    ),
+    ids=(
+        "list",
+        "not_a_hint",
+        "over_bound",
+        "duplicated",
+        "unsorted",
+        "not_work",
+        "no_match_without_exhaustion",
+        "rung_outside_exhaustion",
+        "no_refusal",
+        "candidates_without_lineage",
+        "other_status",
+    ),
+)
+def test_a_lane_states_recording_lookup_hints_only_where_it_can(
+    changes: dict[str, object],
+) -> None:
+    with pytest.raises(
+        ReportValueError, match="provider lane recording lookup hints are invalid"
+    ):
+        _exhausted_lane(**{"recording_lookup_hints": (_HINT,), **changes})
+
+
+def test_a_recording_lookup_hint_is_closed_and_canonical() -> None:
+    for arguments in (
+        ("b000000011", 58_200, _HINT.rung),
+        (None, 58_200, _HINT.rung),
+        ("B000000011", 0, _HINT.rung),
+        ("B000000011", True, _HINT.rung),
+        ("B000000011", 604_801, _HINT.rung),
+        ("B000000011", 58_200, _HINT.rung.to_data()),
+    ):
+        with pytest.raises(ReportValueError, match="recording lookup hint is invalid"):
+            dom.RecordingLookupHint(*arguments)
+    assert 604_800 == replace(_HINT, runtime_seconds=604_800).runtime_seconds
+    report = recording_lookup_hint_report()
+    assert report == MetadataReport.from_json(report.to_json())
+    hint = json.loads(report.to_json())["providers"][0]["lanes"][0][
+        "recording_lookup_hints"
+    ][0]
+    for key, value in (("basis", "runtime_within_loose_band"), ("extra", 1)):
+        changed = json.loads(report.to_json())
+        changed["providers"][0]["lanes"][0]["recording_lookup_hints"][0] = {
+            **hint,
+            key: value,
+        }
+        with pytest.raises(ReportValueError):
+            MetadataReport.from_json(json.dumps(changed))
+
+
+def test_band_first_hints_feed_last_inside_the_cap_and_only_once() -> None:
+    """Hints follow every stronger origin and never displace one (#1257)."""
+    exact = ("B000000001", "B000000002", "B000000003")
+    report = recording_lookup_hint_report(
+        lookup_asins=exact, hint_asins=("B000000011", "B000000012")
+    )
+    plan = audiobook_discovery_plan(
+        audio_target(), report.local_claims, audio=report.audio
+    )
+    (observation,) = report.providers
+    (lane,) = observation.lanes
+
+    feed = audiobook_asin_feed_plan(audio_target(), plan, (observation,))
+
+    assert feed is not None
+    assert MAX_ASIN_DISCOVERY_LANES == len(feed.lanes)
+    # The fourth lane goes to the earlier hint; the later one is crowded out.
+    assert {*exact, "B000000011"} == {value.canonical_asin for value in feed.lanes}
+    assert all(value.input_references == lane.input_references for value in feed.lanes)
+    # One pass: the fed plan is never fed again.
+    assert audiobook_asin_feed_plan(audio_target(), feed, (observation,)) is None
+    hinted = recording_lookup_hint_report(hint_asins=("B000000011", "B000000012"))
+    only = audiobook_asin_feed_plan(audio_target(), plan, hinted.providers)
+    assert only is not None
+    assert {"B000000011", "B000000012"} == {
+        value.canonical_asin for value in only.lanes
+    }
+    # A hint the target also asserts is one lane naming both origins.
+    asserted = asserted_target("B000000012")
+    asserted_plan = audiobook_discovery_plan(
+        asserted, (*report.local_claims, target_asin_claim("B000000012"))
+    )
+    both = audiobook_asin_feed_plan(asserted, asserted_plan, hinted.providers)
+    assert both is not None
+    assert {"B000000011", "B000000012"} == {
+        value.canonical_asin for value in both.lanes
+    }
+    assert {
+        target_asin_claim("B000000012").reference,
+        *lane.input_references,
+    } == set(
+        next(
+            value for value in both.lanes if value.canonical_asin == "B000000012"
+        ).input_references
+    )
+
+
+def test_an_ebook_ladder_keeps_no_recording_lookup_hint() -> None:
+    """A refused tight-runtime product on an ebook plan is no hint (#1257)."""
+    local = _audio_local_claims()
+    product = _audiobook_candidate(local, identity="product-1", asin="B000000011")
+
+    def observe(query: Any) -> ProviderObservation:
+        return ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (product,),
+            ProviderQueryKind.WORK,
+            "audible_catalog",
+            dispatch_lineage=WorkDispatchLineage.from_query(query),
+        )
+
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK, local, "Other Title", ("Andy Weir",)
+    )
+    ebook = app.observe_work_ladder(lookup, observe)
+    audio = app.observe_work_ladder(
+        replace(lookup, audio=recording_lookup_hint_report().audio), observe
+    )
+
+    assert ProviderStatus.NO_MATCH is ebook.observation.status
+    assert () == ebook.recording_lookup_hints
+    assert ("B000000011",) == tuple(
+        value.asin for value in audio.recording_lookup_hints
+    )
+    lane = ProviderLaneObservation(
+        "lane_" + "1" * 64,
+        ProviderQueryKind.WORK,
+        ProviderStatus.NO_MATCH,
+        ("local_" + "2" * 64,),
+    )
+    assert [] == lane.to_data()["recording_lookup_hints"]
 
 
 @pytest.fixture(scope="module")

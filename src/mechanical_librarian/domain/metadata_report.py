@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping, Self, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     MAX_AUDIO_TRACKS,
+    MAX_DURATION_MILLISECONDS,
     MAX_OBSERVED_CHARACTERS,
     AudioChapter,
     AudioChapterComposition,
@@ -64,6 +65,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
+from mechanical_librarian.domain.validation import bounded_integer, literal
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -83,12 +85,16 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v52"
+REPORT_SCHEMA = "metadata-report-v53"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
+# Band-first recording-lookup hints an item keeps (#1257). #1246 found at most 2
+# refused tight-band products per item on the retained snapshot.
+MAX_RECORDING_LOOKUP_HINTS = 2
+_RECORDING_LOOKUP_HINT_BASIS = "runtime_within_tight_band"
 MAX_PROVIDER_EVIDENCE = 128
 # One provider chapter vector holds at most the chapter count the local
 # inspector itself admits (ADR-0063), so neither side of a comparison can be
@@ -2278,6 +2284,41 @@ class ProviderLaneCandidate:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordingLookupHint:
+    """One refused product's ASIN, kept only so it can be looked up (#1257).
+
+    A WORK rung returned the product inside the tight runtime band, and
+    work-identity admission refused it. The hint asserts nothing about the
+    work or the recording: it records the ASIN, the runtime the product stated
+    and the rung that returned it, and the identifier feed asks the per-ASIN
+    lanes about it, where admission is unchanged.
+    """
+
+    asin: str
+    runtime_seconds: int
+    rung: WorkDispatchLineage
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.asin) is not str
+            or canonical_asin(self.asin) != self.asin
+            or not bounded_integer(1, MAX_DURATION_MILLISECONDS // 1000)(
+                self.runtime_seconds
+            )
+            or type(self.rung) is not WorkDispatchLineage
+        ):
+            raise ReportValueError("recording lookup hint is invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "asin": self.asin,
+            "basis": _RECORDING_LOOKUP_HINT_BASIS,
+            "rung": self.rung.to_data(),
+            "runtime_seconds": self.runtime_seconds,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderLaneObservation:
     identity: str
     kind: ProviderQueryKind
@@ -2289,6 +2330,7 @@ class ProviderLaneObservation:
     dispatch_lineage: WorkDispatchLineage | None = None
     transformation_lineage: WorkTitleTransformationLineage | None = None
     exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
+    recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -2372,6 +2414,7 @@ class ProviderLaneObservation:
                 for value in self.diagnostics
             ):
                 raise ReportValueError("provider lane refusal is invalid")
+            self._validate_recording_lookup_hints()
             return
         # Every dispatched rung was either empty or returned products that
         # work-identity admission refused, and the lane states how many of
@@ -2406,6 +2449,45 @@ class ProviderLaneObservation:
             != work_ladder_diagnostics(empty_rungs, refused_products)
         ):
             raise ReportValueError("provider lane exhausted dispatch is invalid")
+        self._validate_recording_lookup_hints()
+
+    def _validate_recording_lookup_hints(self) -> None:
+        """Keep hints on the two lanes that can state them (#1257).
+
+        A walked-out WORK lane states them from its refused rungs, and an
+        admitted one from its own rung or an earlier one.
+        """
+        hints = self.recording_lookup_hints
+        if type(hints) is not tuple or (
+            hints
+            and (
+                any(type(value) is not RecordingLookupHint for value in hints)
+                or len(hints) > MAX_RECORDING_LOOKUP_HINTS
+                or tuple(value.asin for value in hints)
+                != tuple(sorted({value.asin for value in hints}))
+                or self.kind is not ProviderQueryKind.WORK
+                or (
+                    self.status is ProviderStatus.NO_MATCH
+                    and (
+                        not self.exhausted_dispatch
+                        or any(
+                            value.rung not in self.exhausted_dispatch for value in hints
+                        )
+                        or not any(
+                            value.category is FailureCategory.WORK_IDENTITY_REFUSED
+                            for value in self.diagnostics
+                        )
+                    )
+                )
+                or (
+                    self.status is ProviderStatus.CANDIDATES
+                    and self.dispatch_lineage is None
+                )
+                or self.status
+                not in {ProviderStatus.NO_MATCH, ProviderStatus.CANDIDATES}
+            )
+        ):
+            raise ReportValueError("provider lane recording lookup hints are invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -2428,6 +2510,9 @@ class ProviderLaneObservation:
             ),
             "exhausted_dispatch": [
                 value.to_data() for value in self.exhausted_dispatch
+            ],
+            "recording_lookup_hints": [
+                value.to_data() for value in self.recording_lookup_hints
             ],
         }
 
@@ -3864,6 +3949,72 @@ class MetadataReport:
                     raise ReportValueError(
                         "provider exhausted dispatch is inconsistent"
                     )
+            # A recording-lookup hint (#1257) replays from the asserted lane's
+            # own ladder and the item's own runtime, and never names a product
+            # the observation already retains.
+            for lane in provider.lanes:
+                if not lane.recording_lookup_hints:
+                    continue
+                payload = planned.get(lane.identity)
+                if (
+                    self.audio is None
+                    or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                    or payload is None
+                    or payload.title_basis is not None
+                ):
+                    raise ReportValueError(
+                        "recording lookup hint provenance is invalid"
+                    )
+                ladder = tuple(
+                    WorkDispatchLineage.from_query(query)
+                    for query in work_query_ladder(
+                        payload.title, payload.authors, audiobook=True
+                    )
+                )
+                if any(
+                    hint.rung not in ladder for hint in lane.recording_lookup_hints
+                ) or (
+                    lane.status is ProviderStatus.CANDIDATES
+                    and (
+                        lane.dispatch_lineage not in ladder
+                        or any(
+                            ladder.index(hint.rung)
+                            > ladder.index(lane.dispatch_lineage)
+                            for hint in lane.recording_lookup_hints
+                        )
+                    )
+                ):
+                    raise ReportValueError("recording lookup hint rung is inconsistent")
+                held = candidate_asins(
+                    (*provider.candidates, *provider.recording_lookup_candidates)
+                )
+                if any(hint.asin in held for hint in lane.recording_lookup_hints):
+                    raise ReportValueError(
+                        "recording lookup hint duplicates a retained product"
+                    )
+                # Imported here: the corroboration module imports this one, and
+                # it alone owns the tight band (ADR-0064).
+                from mechanical_librarian.domain.audiobook_corroboration import (
+                    CorroborationOutcome,
+                    local_claim_runtime_seconds,
+                    runtime_agreement,
+                )
+
+                local = local_claim_runtime_seconds(self.local_claims)
+                if local is None or any(
+                    runtime_agreement(local, hint.runtime_seconds).outcome
+                    is not CorroborationOutcome.CORROBORATED
+                    for hint in lane.recording_lookup_hints
+                ):
+                    raise ReportValueError(
+                        "recording lookup hint is outside the tight band"
+                    )
+            # One asserted lane per provider, so the bound is per observation.
+            if (
+                sum(len(lane.recording_lookup_hints) for lane in provider.lanes)
+                > MAX_RECORDING_LOOKUP_HINTS
+            ):
+                raise ReportValueError("recording lookup hints exceed their bound")
         if (
             type(self.field_results) is not tuple
             or any(type(value) is not FieldResult for value in self.field_results)
@@ -4560,6 +4711,18 @@ def canonical_asin(value: str | None) -> str | None:
         return None
     upper = value.strip().upper()
     return upper if _CANONICAL_ASIN.fullmatch(upper) is not None else None
+
+
+def candidate_asins(candidates: tuple[ProviderCandidate, ...]) -> frozenset[str]:
+    """Return the canonical ASINs these candidates' valid ASIN claims state."""
+    return frozenset(
+        value
+        for candidate in candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.ASIN
+        and claim.state is FieldState.VALID
+        and (value := canonical_asin(claim.value)) is not None
+    )
 
 
 def _provider_reference_data(
@@ -6071,6 +6234,7 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
             "kind",
             "matched_family",
             "dispatch_lineage",
+            "recording_lookup_hints",
             "status",
             "transformation_lineage",
         },
@@ -6105,6 +6269,21 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
             work_dispatch_lineage_from_data(value)
             for value in _list(item["exhausted_dispatch"])
         ),
+        tuple(
+            _recording_lookup_hint_from_data(value)
+            for value in _list(item["recording_lookup_hints"])
+        ),
+    )
+
+
+def _recording_lookup_hint_from_data(value: object) -> RecordingLookupHint:
+    item = _object(value, {"asin", "basis", "rung", "runtime_seconds"})
+    if not literal(_RECORDING_LOOKUP_HINT_BASIS)(item["basis"]):
+        raise ReportValueError("recording lookup hint is invalid")
+    return RecordingLookupHint(
+        item["asin"],
+        item["runtime_seconds"],
+        work_dispatch_lineage_from_data(item["rung"]),
     )
 
 
@@ -6429,6 +6608,7 @@ __all__ = [
     "FileFacts",
     "LocalClaim",
     "MAX_CANDIDATES",
+    "MAX_RECORDING_LOOKUP_HINTS",
     "IdentifierEvidence",
     "IdentifierEvidenceBasis",
     "IdentifierRelation",
@@ -6454,6 +6634,8 @@ __all__ = [
     "ProviderLaneCandidate",
     "ProviderLaneObservation",
     "ProviderObservation",
+    "RecordingLookupHint",
+    "candidate_asins",
     "provider_candidate_exact_work_identity_admission",
     "provider_candidate_work_identity_admission",
     "provider_candidate_set_exact_work_identity_admission",

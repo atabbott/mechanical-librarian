@@ -2466,6 +2466,195 @@ def test_a_failed_alternative_lane_is_retried_beside_its_asserted_sibling(
     } == {(lane.identity, lane.status) for lane in merged.lanes}
 
 
+def test_an_unselected_lane_keeps_its_recording_lookup_hints(
+    retry: _Retry,
+) -> None:
+    """Retrying the alternative never rewrites the asserted lane's hints (#1257)."""
+    from mechanical_librarian.domain.metadata_report import RecordingLookupHint
+
+    plan, asserted, alternative = _alternative_lanes()
+    ladder = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(
+            asserted.title or "", asserted.authors, audiobook=True
+        )
+    )
+    hints = (RecordingLookupHint("B000000011", 58_200, ladder[0]),)
+    original = provider_observation(
+        "audible",
+        (
+            ProviderLaneResult(
+                asserted,
+                ProviderStatus.NO_MATCH,
+                diagnostics=work_ladder_diagnostics(0, len(ladder)),
+                exhausted_dispatch=ladder,
+                recording_lookup_hints=hints,
+            ),
+            ProviderLaneResult(alternative, ProviderStatus.UNAVAILABLE),
+        ),
+        authority="audible_catalog",
+    )
+    replacement = provider_observation(
+        "audible",
+        (ProviderLaneResult(alternative, ProviderStatus.NO_MATCH),),
+        authority="audible_catalog",
+    )
+    service = retry.service(None)
+
+    selected = service._selected(plan, original, (alternative.identity,))
+    merged = service._merged(plan, original, selected, replacement)
+
+    recovered = next(
+        lane for lane in merged.lanes if lane.identity == asserted.identity
+    )
+    assert hints == recovered.recording_lookup_hints
+    assert ladder == recovered.exhausted_dispatch
+
+
+def test_a_retry_admitting_a_siblings_hinted_product_still_merges(
+    retry: _Retry,
+) -> None:
+    """The alternative's retry may admit what the asserted lane hinted (#1257).
+
+    The merged observation then retains that ASIN, so the unselected lane's
+    hint is dropped as the original preparation would have dropped it, and the
+    successor is a valid report rather than a changed sibling.
+    """
+    from mechanical_librarian.domain.metadata_report import RecordingLookupHint
+    from tests.support.audiobook_providers import local_runtime_claim
+
+    target = audio_target("Asserted Title", ("Ada Author",))
+    claims = (target_title_claim("Asserted Title"), local_runtime_claim("58244.201"))
+    audio = replace(
+        single_track_audio_facts(),
+        discovery_titles=(AudioDiscoveryTitle("path_leaf", "The Real Title"),),
+    )
+    plan = audiobook_discovery_plan(target, claims, audio=audio)
+    asserted, alternative = provider_discovery_lane_order(plan)
+    ladder = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(
+            asserted.title or "", asserted.authors, audiobook=True
+        )
+    )
+    original = provider_observation(
+        "audible",
+        (
+            ProviderLaneResult(
+                asserted,
+                ProviderStatus.NO_MATCH,
+                diagnostics=work_ladder_diagnostics(0, len(ladder)),
+                exhausted_dispatch=ladder,
+                recording_lookup_hints=(
+                    RecordingLookupHint("B000000011", 58_200, ladder[0]),
+                ),
+            ),
+            ProviderLaneResult(alternative, ProviderStatus.UNAVAILABLE),
+        ),
+        authority="audible_catalog",
+    )
+
+    def found(_request: httpx.Request) -> httpx.Response:
+        product = {
+            "asin": "B000000011",
+            "title": "The Real Title",
+            "authors": [{"name": "Ada Author"}],
+            "runtime_length_min": 970,
+        }
+        return httpx.Response(200, json={"total_results": 1, "products": [product]})
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding(
+            "audible",
+            True,
+            lambda: AudibleCatalogMetadataProvider(
+                "audible",
+                httpx.Client(transport=httpx.MockTransport(found)),
+                262_144,
+                5.0,
+                marketplaces=("us",),
+                clock=lambda: 0.0,
+                wall_clock=lambda: 1_700_000_000.0,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            ),
+            "audible_catalog",
+        ),
+        "audible_catalog",
+        2,
+    )
+    service = retry.service(configured)
+    selected = service._selected(plan, original, (alternative.identity,))
+    replacement, _delay, _evidence = service._observe(
+        configured, plan, selected, deadline=1_700_000_100.0
+    )
+    merged = service._merged(plan, original, selected, replacement)
+
+    assert ["audible-product-B000000011"] == [c.identity for c in merged.candidates]
+    assert all(not lane.recording_lookup_hints for lane in merged.lanes)
+    successor = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", target.fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("target_metadata_title",),
+        providers=(merged,),
+        audio=audio,
+    )
+    assert successor == MetadataReport.from_json(successor.to_json())
+
+
+def test_a_hint_feed_retry_rebuilds_the_identical_asin_lanes() -> None:
+    """Retry rebuilds the feed from the persisted hints alone (#1257)."""
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    source = recording_lookup_hint_report(hint_asins=("B000000011", "B000000012"))
+    snapshot = replace(
+        audio_target(), files=(TargetFile(source.file.identity, "book.m4b", "m4b"),)
+    )
+    plan = audiobook_discovery_plan(snapshot, source.local_claims, audio=source.audio)
+    feed = audiobook_asin_feed_plan(snapshot, plan, source.providers)
+    assert feed is not None
+    assert {"B000000011", "B000000012"} == {lane.canonical_asin for lane in feed.lanes}
+    original = provider_observation(
+        "enrichment",
+        tuple(
+            ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE) for lane in feed.lanes
+        ),
+        authority="audnexus",
+    )
+    report = MetadataReport.create(
+        target=source.target,
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=(*source.providers, original),
+        audio=source.audio,
+    )
+    replacement = provider_observation(
+        "enrichment",
+        tuple(ProviderLaneResult(lane, ProviderStatus.NO_MATCH) for lane in feed.lanes),
+        authority="audnexus",
+    )
+    provider = _Provider(replacement)
+    successor = MetadataReport.from_json(
+        _fed_successor(snapshot, report, provider).run(
+            report.report_id,
+            tuple(lane.identity for lane in feed.lanes),
+            provider_name="enrichment",
+            adapter="audnexus",
+            generation=2,
+        )
+    )
+    assert provider.plans == [feed]
+    audible = next(
+        value for value in successor.providers if value.provider == "audible"
+    )
+    assert (
+        audible.lanes[0].recording_lookup_hints
+        == source.providers[0].lanes[0].recording_lookup_hints
+    )
+
+
 class _FaultingProvider:
     """A provider whose dispatch raises before any lane is sent."""
 

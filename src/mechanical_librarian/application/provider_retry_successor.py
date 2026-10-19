@@ -61,6 +61,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderStatus,
     ReportValueError,
+    candidate_asins,
 )
 from mechanical_librarian.domain.provider_recovery import (
     MAX_RECOVERY_DELAY,
@@ -675,6 +676,7 @@ class GenerateProviderRetrySuccessor:
                 observation.dispatch_lineage,
                 observation.transformation_lineage,
                 exhausted_dispatch=observation.exhausted_dispatch,
+                recording_lookup_hints=observation.recording_lookup_hints,
             )
 
         # Merge over the observed lanes only: retrying an asserted lane that
@@ -708,10 +710,22 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError(
                 "provider retry overflow cannot be retained"
             )
-        # A retry must never rewrite an unselected lane's persisted evidence.
+        # A retry must never rewrite an unselected lane's persisted evidence,
+        # except a recording-lookup hint (#1257) whose product it now retains.
         merged_lanes = {lane.identity: lane.to_data() for lane in merged.lanes}
+        held = candidate_asins(
+            (*merged.candidates, *merged.recording_lookup_candidates)
+        )
         if any(
-            merged_lanes[identity] != lane.to_data()
+            merged_lanes[identity]
+            != replace(
+                lane,
+                recording_lookup_hints=tuple(
+                    hint
+                    for hint in lane.recording_lookup_hints
+                    if hint.asin not in held
+                ),
+            ).to_data()
             for identity, lane in old_lanes.items()
             if identity not in selected_ids
         ):

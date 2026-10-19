@@ -223,19 +223,21 @@ def retained_report_as_current(document: str) -> MetadataReport:
     The retained bytes and their digest pins stay frozen, and current code
     refuses them. For a test whose downstream semantics are current ones this
     relabels an in-memory copy, gives each lane the empty exhausted-dispatch
-    record v50 added and any audio section the empty discovery-title record
-    v51 added (the only ones a v49 producer could state), and readdresses it.
-    v52 changed what an Audible overflow or empty rung means and added no
-    field. Nothing is migrated: the copy is never written back.
+    record v50 added, the empty recording-lookup-hint record v53 added, and
+    any audio section the empty discovery-title record v51 added (the only
+    ones a v49 producer could state), and readdresses it. v52 changed what an
+    Audible overflow or empty rung means and added no field. Nothing is
+    migrated: the copy is never written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v52"
+    data["schema_version"] = "metadata-report-v53"
     for provider in data["providers"]:
         for lane in provider["lanes"]:
             lane["exhausted_dispatch"] = []
+            lane["recording_lookup_hints"] = []
     if data.get("audio") is not None:
         data["audio"]["discovery_titles"] = []
     data.pop("report_id")
@@ -246,7 +248,7 @@ def retained_report_as_current(document: str) -> MetadataReport:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v52'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v53'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -265,10 +267,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v52'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v53'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v52'", f"= '{version}'"
+            "= 'metadata-report-v53'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

@@ -40,13 +40,16 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    RecordingLookupHint,
     TargetDestination,
+    candidate_asins,
     canonical_asin,
     discovery_lane_identity,
     duration_milliseconds,
     provider_candidate_exact_work_identity_admission,
     recording_variant_conflict,
 )
+from mechanical_librarian.domain.work_identity import WorkDispatchLineage
 
 # Ninety whole seconds. A provider states a runtime in whole minutes, so two
 # sources that agree exactly still differ by up to half a minute of rounding on
@@ -286,6 +289,55 @@ def loose_band_survivors(
         if runtime_agreement(local, candidate_runtime_seconds(candidate)).outcome
         is not CorroborationOutcome.CONTRADICTED
     )
+
+
+def recording_lookup_hints(
+    products: tuple[ProviderCandidate, ...],
+    retained: tuple[ProviderCandidate, ...],
+    local_claims: tuple[LocalClaim, ...],
+    rung: WorkDispatchLineage,
+) -> tuple[RecordingLookupHint, ...]:
+    """Keep one rung's tight-band products that admission did not keep (#1257).
+
+    `products` is the rung's page after any #1256 narrowing, and `retained` is
+    what qualification kept from it: admitted candidates and #1004's exact
+    lookup candidates. A product becomes a hint only when it is not one of
+    those, names exactly one valid canonical ASIN that none of them claims,
+    and states a runtime inside the tight band of this recording's. The band
+    is the only judgement made here, so a hint is lookup-only evidence: the
+    per-ASIN lanes it feeds still apply exact work-identity admission.
+
+    An item with no single local running time keeps none. Hints are ordered by
+    ASIN, one per ASIN, and the per-item bound is the caller's.
+    """
+    if (
+        type(products) is not tuple
+        or type(retained) is not tuple
+        or any(type(value) is not ProviderCandidate for value in (*products, *retained))
+        or type(rung) is not WorkDispatchLineage
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    local = local_claim_runtime_seconds(local_claims)
+    if local is None:
+        return ()
+    kept = {value.identity for value in retained}
+    held = candidate_asins(retained)
+    hints: dict[str, RecordingLookupHint] = {}
+    for product in products:
+        asin = _unambiguous_candidate_asin(product)
+        stated = candidate_runtime_seconds(product)
+        if (
+            product.identity in kept
+            or asin is None
+            or asin in held
+            # A sub-second statement rounds to no runtime a hint can carry.
+            or not stated
+            or runtime_agreement(local, stated).outcome
+            is not CorroborationOutcome.CORROBORATED
+        ):
+            continue
+        hints.setdefault(asin, RecordingLookupHint(asin, stated, rung))
+    return tuple(hints[asin] for asin in sorted(hints))
 
 
 def runtime_short_of_stated(
@@ -797,6 +849,7 @@ __all__ = [
     "local_claim_runtime_seconds",
     "local_runtime_seconds",
     "loose_band_survivors",
+    "recording_lookup_hints",
     "runtime_agreement",
     "runtime_corroborated_candidate",
     "runtime_short_of_stated",

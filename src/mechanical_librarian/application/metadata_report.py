@@ -36,6 +36,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     _chapter_candidate_support,
     _local_identifier_asins,
     candidate_recording_runtime_veto,
+    recording_lookup_hints,
     runtime_corroborated_candidate,
     runtime_short_of_stated,
 )
@@ -64,6 +65,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
+    MAX_RECORDING_LOOKUP_HINTS,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -83,6 +85,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderStatus,
     PublicationDateRelation,
+    RecordingLookupHint,
     ReportValueError,
     TargetDestination,
     TargetFacts,
@@ -90,6 +93,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     WorkIdentityContradiction,
     audio_set_identity,
+    candidate_asins,
     canonical_asin,
     complete_creator_identity_bindings,
     default_target_fields,
@@ -458,6 +462,7 @@ class ProviderLaneResult:
 
     recording_lookup_candidates: tuple[ProviderCandidate, ...] = ()
     exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
+    recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -535,6 +540,33 @@ class ProviderLaneResult:
                     self.lane.kind is not ProviderQueryKind.WORK
                     or self.status is not ProviderStatus.NO_MATCH
                     or self.dispatch_lineage is not None
+                )
+            )
+            or type(self.recording_lookup_hints) is not tuple
+            or (
+                self.recording_lookup_hints
+                and (
+                    self.lane.kind is not ProviderQueryKind.WORK
+                    or self.lane.title_basis is not None
+                    or len(self.recording_lookup_hints) > MAX_RECORDING_LOOKUP_HINTS
+                    or any(
+                        type(value) is not RecordingLookupHint
+                        for value in self.recording_lookup_hints
+                    )
+                    or tuple(value.asin for value in self.recording_lookup_hints)
+                    != tuple(
+                        sorted({value.asin for value in self.recording_lookup_hints})
+                    )
+                    or not (
+                        (
+                            self.status is ProviderStatus.NO_MATCH
+                            and self.exhausted_dispatch
+                        )
+                        or (
+                            self.status is ProviderStatus.CANDIDATES
+                            and self.dispatch_lineage is not None
+                        )
+                    )
                 )
             )
         ):
@@ -949,6 +981,16 @@ def audiobook_asin_feed_plan(
                                 | set(lane.input_references)
                             )
                         )
+    # Band-first hints (#1257) come last, so a refused product's ASIN never
+    # displaces a stronger origin inside the cap.
+    for observation in observations:
+        if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
+            continue
+        for lane in observation.lanes:
+            for hint in lane.recording_lookup_hints:
+                ordered[hint.asin] = tuple(
+                    sorted(set(ordered.get(hint.asin, ())) | set(lane.input_references))
+                )
     room = MAX_ASIN_DISCOVERY_LANES - sum(
         lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes
     )
@@ -1054,6 +1096,18 @@ def provider_observation(
                 diagnostics, (_IDENTITY_CONFLICT_DIAGNOSTIC,)
             )
 
+    # A hint never names a product the observation retains, which another lane
+    # can: an alternative title may admit what the asserted ladder refused.
+    retained_asins = candidate_asins(
+        (
+            *candidates_by_identity.values(),
+            *(
+                candidate
+                for result in results
+                for candidate in result.recording_lookup_candidates
+            ),
+        )
+    )
     lanes: list[ProviderLaneObservation] = []
     for result in results:
         lane_candidates = tuple(
@@ -1086,6 +1140,11 @@ def provider_observation(
                 result.dispatch_lineage,
                 result.transformation_lineage,
                 result.exhausted_dispatch,
+                tuple(
+                    hint
+                    for hint in result.recording_lookup_hints
+                    if hint.asin not in retained_asins
+                ),
             )
         )
 
@@ -1856,6 +1915,7 @@ class QualifiedLaneObservation:
     observation: ProviderObservation
     exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
     diagnostics: tuple[FailureDiagnostic, ...] = ()
+    recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
 
 
 def observe_work_ladder(
@@ -1874,17 +1934,39 @@ def observe_work_ladder(
     empty-rung and refused-product counts, and keeps the recording hints of the
     earliest refused rung that had any. An ebook plan still stops at the first
     rung that returned products.
+
+    The asserted lane of an audiobook plan also keeps band-first lookup hints
+    (#1257): the products each rung returned inside the tight runtime band that
+    qualification did not keep. They survive an exhausted ladder and an
+    admitted rung, never a terminal failure, and at most
+    `MAX_RECORDING_LOOKUP_HINTS` are kept, earliest rung first.
     """
     exhausted: list[WorkDispatchLineage] = []
     empty_rungs = 0
     refused_products = 0
     hints: tuple[ProviderCandidate, ...] = ()
+    tight: list[RecordingLookupHint] = []
     observation: ProviderObservation | None = None
     for query in work_query_ladder(
         lookup.title or "", lookup.authors, audiobook=lookup.audio is not None
     ):
         physical = observe_rung(query)
         observation = qualify_provider_observation(physical, lookup)
+        if (
+            lookup.audio is not None
+            and lookup.title_basis is None
+            and physical.status is ProviderStatus.CANDIDATES
+            and observation.status
+            in {ProviderStatus.NO_MATCH, ProviderStatus.CANDIDATES}
+        ):
+            tight.extend(
+                recording_lookup_hints(
+                    physical.candidates,
+                    (*observation.candidates, *observation.recording_lookup_candidates),
+                    lookup.local_claims,
+                    WorkDispatchLineage.from_query(query),
+                )
+            )
         if physical.status is ProviderStatus.NO_MATCH:
             empty_rungs += 1
         elif (
@@ -1894,6 +1976,11 @@ def observe_work_ladder(
         ):
             refused_products += len(physical.candidates)
             hints = hints or observation.recording_lookup_candidates
+        elif observation.status is ProviderStatus.CANDIDATES:
+            return QualifiedLaneObservation(
+                observation,
+                recording_lookup_hints=_bounded_lookup_hints(tight, observation),
+            )
         else:
             return QualifiedLaneObservation(observation)
         exhausted.append(WorkDispatchLineage.from_query(query))
@@ -1901,11 +1988,31 @@ def observe_work_ladder(
         raise MetadataReportError("work query ladder is empty")
     if lookup.audio is None:
         return QualifiedLaneObservation(observation)
+    observation = replace(observation, recording_lookup_candidates=hints)
     return QualifiedLaneObservation(
-        replace(observation, recording_lookup_candidates=hints),
+        observation,
         tuple(exhausted),
         work_ladder_diagnostics(empty_rungs, refused_products),
+        _bounded_lookup_hints(tight, observation),
     )
+
+
+def _bounded_lookup_hints(
+    tight: list[RecordingLookupHint], final: ProviderObservation
+) -> tuple[RecordingLookupHint, ...]:
+    """Keep the earliest hints whose ASIN the lane's final result does not hold.
+
+    A product refused on one rung and admitted on a later one is the final
+    result's candidate rather than a hint.
+    """
+    held = candidate_asins((*final.candidates, *final.recording_lookup_candidates))
+    kept: dict[str, RecordingLookupHint] = {}
+    for hint in tight:
+        if len(kept) == MAX_RECORDING_LOOKUP_HINTS:
+            break
+        if hint.asin not in held:
+            kept.setdefault(hint.asin, hint)
+    return tuple(kept[asin] for asin in sorted(kept))
 
 
 def _shaped_with_runtime_comparison(

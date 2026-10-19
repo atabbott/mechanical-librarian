@@ -54,6 +54,7 @@ __all__ = [
     "audiobook_candidate",
     "manual_audiobook_observation",
     "qualified_audiobook",
+    "recording_lookup_hint_report",
     "retained_recorded_only_decision",
 ]
 
@@ -576,6 +577,77 @@ def recording_lookup_report(
                     ),
                 ),
                 authority="audnexus",
+            ),
+        ),
+        audio=single_track_audio_facts(),
+    )
+
+
+def recording_lookup_hint_report(
+    *,
+    hint_asins: tuple[str, ...] = ("B000000011",),
+    lookup_asins: tuple[str, ...] = (),
+    provider: str = "audible",
+    authority: str = "audible_catalog",
+) -> MetadataReport:
+    """An asserted Audible lane that walked its ladder and kept hints (#1257).
+
+    Every rung refused its products. `lookup_asins` are #1004's exact lookup
+    candidates, and `hint_asins` the band-first hints the first rung kept from
+    products inside the tight band of the item's runtime.
+    """
+    from mechanical_librarian.application.metadata_report import (
+        ProviderLaneResult,
+        provider_observation,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        RecordingLookupHint,
+        work_ladder_diagnostics,
+    )
+    from tests.support.audiobook_providers import work_plan
+
+    plan = work_plan(*audio_local_claims())
+    local = plan.local_claims
+    ladder = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(
+            "Project Hail Mary", ("Andy Weir",), audiobook=True
+        )
+    )
+    diagnostics = work_ladder_diagnostics(
+        0, max(len(ladder), len(hint_asins) + len(lookup_asins))
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=local,
+        local_reasons=("embedded_tag_duration",),
+        providers=(
+            provider_observation(
+                provider,
+                (
+                    ProviderLaneResult(
+                        plan.lanes[0],
+                        ProviderStatus.NO_MATCH,
+                        diagnostics=diagnostics,
+                        recording_lookup_candidates=tuple(
+                            audiobook_candidate(
+                                local,
+                                provider=provider,
+                                identity=f"recording-{asin}",
+                                asin=asin,
+                            )
+                            for asin in lookup_asins
+                        ),
+                        exhausted_dispatch=ladder,
+                        recording_lookup_hints=tuple(
+                            RecordingLookupHint(asin, 58_200, ladder[0])
+                            for asin in hint_asins
+                        ),
+                    ),
+                ),
+                authority=authority,
+                diagnostics=diagnostics,
             ),
         ),
         audio=single_track_audio_facts(),

@@ -30,6 +30,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -52,8 +53,34 @@ def _v26_document(
     missing_work_lineage: bool = False,
     artifact_bearing_cover: bool = False,
     nonartifact_cover: bool = False,
+    work_lane: bool = False,
 ) -> str:
-    data = synthetic_report().to_data()
+    report = synthetic_report()
+    if work_lane:
+        # A disabled binding states its planned lane, which the bridge must
+        # give every lane field v26 predates.
+        report = MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.DISABLED,
+                    query_kind=ProviderQueryKind.WORK,
+                    lanes=(
+                        ProviderLaneObservation(
+                            "lane_" + "1" * 64,
+                            ProviderQueryKind.WORK,
+                            ProviderStatus.DISABLED,
+                            (report.local_claims[0].reference,),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    data = report.to_data()
     data.pop("audio")
     data["schema_version"] = "metadata-report-v26"
     data["comparison_version"] = "closed-title-creator-publication-v4"
@@ -91,6 +118,8 @@ def _v26_document(
                 lane.pop("diagnostics")
                 lane.pop("dispatch_lineage")
                 lane.pop("transformation_lineage")
+                lane.pop("exhausted_dispatch")
+                lane.pop("recording_lookup_hints")
     for provider in providers:
         provider.pop("recording_lookup_candidates")
     data["providers"] = providers
@@ -246,7 +275,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v52"
+    assert report.schema_version == "metadata-report-v53"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     for table in (
@@ -1288,7 +1317,30 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         report = MetadataReport.from_json(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
-    assert report.schema_version == "metadata-report-v52"
+    assert report.schema_version == "metadata-report-v53"
+
+
+def test_a_bridged_lane_gains_every_lane_field_its_source_predates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, backup, output = _paths(tmp_path)
+    _create_source(source, document=_v26_document(work_lane=True))
+    _accept_synthetic_source_and_target(monkeypatch, source)
+
+    bridge.bridge_qualification_state(
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
+    )
+
+    connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
+    try:
+        report = MetadataReport.from_json(
+            connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
+        )
+    finally:
+        connection.close()
+    (lane,) = report.providers[0].lanes
+    assert () == lane.exhausted_dispatch
+    assert () == lane.recording_lookup_hints
 
 
 def test_unpatched_bridge_refuses_before_any_filesystem_mutation(
