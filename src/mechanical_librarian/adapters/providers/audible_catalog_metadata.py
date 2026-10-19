@@ -56,6 +56,10 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
+from mechanical_librarian.domain.audiobook_corroboration import (
+    local_claim_runtime_seconds,
+    loose_band_survivors,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -133,9 +137,22 @@ _RESPONSE_GROUPS = (
 )
 _MAX_RESULTS = 5
 _MAX_RETURNED_RESULTS = _MAX_RESULTS + 1
+# An audiobook search whose item has a composed runtime asks for one wider page
+# and drops the products the loose runtime band contradicts before the bound
+# above applies (#1256). Twenty-five is the page #1246 measured: no item ever
+# left more than five products in the band at any cut from six to twenty-five.
+_NARROWED_SEARCH_RESULTS = 25
+# That page's own per-response bound, fixed whatever `provider_response_bytes`
+# is configured to. It is the configuration field's own maximum, so the parser
+# never sees a body larger than an operator could already admit, and it is 1.85
+# times the largest measured page (142 KB) and 1.5 times twenty-five products
+# of about 7 KB. A larger body is `oversized`, never a truncated parse.
+_NARROWED_SEARCH_MAXIMUM_BYTES = 262_144
 _MAX_VALUES = 8
-# One product record is around 7 KB and one search page of six is around 40 KB.
-# Nine of the larger of those is the aggregate a whole observation may spend.
+# One product record is around 7 KB and one narrowed search page is up to about
+# 142 KB measured. Six such pages, the most WORK searches one observation sends,
+# is about 852 KB, so the aggregate a whole observation may spend is this one
+# fixed ceiling for every configured per-response bound.
 _MAX_AGGREGATE_RESPONSE_BYTES = 1_048_576
 _MAX_ATTEMPTS_PER_QUERY = 3
 # Four ASIN lanes walking a marketplace order, or the asserted work lane and an
@@ -184,7 +201,11 @@ class AudibleCatalogMetadataProvider:
             timeout_seconds,
             attempts_per_request=_MAX_ATTEMPTS_PER_QUERY,
             attempts_per_observation=_MAX_ATTEMPTS_PER_OBSERVATION,
-            aggregate_multiple=9,
+            # A multiple this large always reaches the ceiling, so the aggregate
+            # is the fixed 1 MiB however small the configured bound is: the
+            # narrowed search reads its pages under its own bound (#1256), and a
+            # recovery that ended `incomplete` would re-spend the same bytes.
+            aggregate_multiple=_MAX_AGGREGATE_RESPONSE_BYTES,
             aggregate_ceiling_bytes=_MAX_AGGREGATE_RESPONSE_BYTES,
         )
         if (
@@ -489,18 +510,27 @@ class AudibleCatalogMetadataProvider:
         # repeating it across marketplaces would spend the observation's whole
         # dispatch budget to return the same catalogue.
         marketplace = self._marketplaces[0]
+        # Runtime narrowing (#1256) needs an audiobook plan whose item states
+        # one composed runtime. Every other search keeps today's page and
+        # bound, byte for byte on the wire.
+        narrowed = (
+            lookup.audio is not None
+            and local_claim_runtime_seconds(lookup.local_claims) is not None
+        )
+        page = _NARROWED_SEARCH_RESULTS if narrowed else _MAX_RETURNED_RESULTS
         try:
             payload = self._request(
                 AUDIBLE_CATALOG_URLS[marketplace],
                 {
                     "author": " ".join(query.authors),
-                    "num_results": str(_MAX_RETURNED_RESULTS),
+                    "num_results": str(page),
                     "response_groups": _RESPONSE_GROUPS,
                     "title": query.title,
                 },
                 deadline=deadline,
                 query_retry=query.rung is not WorkDispatchRung.NORMALIZED
                 or query.candidate_limit_narrowing_retry,
+                maximum_bytes=_NARROWED_SEARCH_MAXIMUM_BYTES if narrowed else None,
             )
             candidates = _candidates(
                 self._name,
@@ -508,6 +538,7 @@ class AudibleCatalogMetadataProvider:
                 lookup.local_claims,
                 marketplace=marketplace,
                 schema_rejections=self._reject_schema_members,
+                limit=page,
             )
             self._cover_descriptors = _cover_descriptors(
                 self._name,
@@ -526,6 +557,11 @@ class AudibleCatalogMetadataProvider:
             RecursionError,
         ):
             return self._result(lookup, ProviderStatus.MALFORMED)
+        if narrowed and len(candidates) > _MAX_RESULTS:
+            # The whole page parsed first, so a malformed or duplicated product
+            # out of band still failed it above. The gate guarantees a local
+            # runtime, so the band always answers here.
+            candidates = loose_band_survivors(candidates, lookup.local_claims) or ()
         if len(candidates) > _MAX_RESULTS:
             return self._result(lookup, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         if not candidates:
@@ -588,6 +624,7 @@ class AudibleCatalogMetadataProvider:
         *,
         deadline: float | None,
         query_retry: bool = False,
+        maximum_bytes: int | None = None,
     ) -> dict[str, Any]:
         return self._session.request_json(
             url,
@@ -599,6 +636,7 @@ class AudibleCatalogMetadataProvider:
             deadline=deadline,
             query_retry=query_retry,
             classify=_classify,
+            maximum_bytes=maximum_bytes,
         )
 
 
@@ -608,9 +646,9 @@ def _retained_cover_descriptors(
 ) -> tuple[ProviderCoverDescriptor, ...]:
     """Keep only the covers of the candidates this lane's report retains.
 
-    A work search states up to five products but the work-identity admission
-    retains one, so acquiring the other four would spend the cover budget on
-    candidates no reader will ever see.
+    A work search states up to twenty-five products but the work-identity
+    admission retains few of them, so acquiring the rest would spend the cover
+    budget on candidates no reader will ever see.
     """
     if observation.status is not ProviderStatus.CANDIDATES:
         return ()
@@ -788,10 +826,16 @@ def _candidates(
     *,
     marketplace: str,
     schema_rejections: Callable[[int], None],
+    limit: int,
 ) -> tuple[ProviderCandidate, ...]:
+    """Project one whole search page, refusing it before projection if longer.
+
+    `limit` is the page size this search asked for, so a provider that answers
+    with more products than requested is `malformed` rather than truncated.
+    """
     schema_rejections(len(set(payload) - _SEARCH_TOP_LEVEL))
     products = payload.get("products", [])
-    if type(products) is not list or len(products) > _MAX_RETURNED_RESULTS:
+    if type(products) is not list or len(products) > limit:
         raise ValueError("provider candidate list is malformed")
     admitted = [
         _candidate(

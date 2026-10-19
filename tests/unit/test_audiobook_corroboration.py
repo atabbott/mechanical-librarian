@@ -23,6 +23,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     cover_hash_agreement,
     local_chapter_durations_seconds,
     local_runtime_seconds,
+    loose_band_survivors,
     runtime_agreement,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -34,6 +35,7 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
     ProviderChapterStructure,
     ProviderClaim,
     TargetFacts,
@@ -170,6 +172,76 @@ def test_the_runtime_gate_owns_its_band_independently_of_the_report_comparison()
     assert 1 == len(links)
     assert Comparison.AGREEMENT == links[0].outcome
     assert ComparisonMethod.DURATION_BAND_AGREEMENT == links[0].method
+
+
+def _runtime_claim(seconds: str) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.DURATION,
+        observed=seconds,
+        canonical=seconds,
+        excerpt=seconds,
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+    )
+
+
+def _stating(identity: str, seconds: str | None) -> ProviderCandidate:
+    claims = (
+        ()
+        if seconds is None
+        else (
+            ProviderClaim.create(
+                provider="audible",
+                candidate=identity,
+                kind=ClaimKind.DURATION,
+                value=seconds,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="not_applicable",
+            ),
+        )
+    )
+    return ProviderCandidate(identity, identity, claims)
+
+
+def test_loose_band_narrowing_drops_only_what_the_band_contradicts() -> None:
+    """The #1256 narrowing keeps each edge of the loose band it names.
+
+    Tight, loose and runtime-less candidates all survive in input order; only
+    a stated runtime more than the loose band away is dropped.
+    """
+    local = (_runtime_claim("36000.000"),)
+    edge = 36_000 + RUNTIME_BAND_LOOSE_SECONDS
+    candidates = (
+        _stating("a-tight", "36000.000"),
+        _stating("b-loose-edge", f"{edge}.000"),
+        _stating("c-past-edge", f"{edge + 1}.000"),
+        _stating("d-stated-nothing", None),
+        _stating("e-far-short", f"{36_000 - RUNTIME_BAND_LOOSE_SECONDS - 60}.000"),
+        _stating("f-loose-short", f"{36_000 - RUNTIME_BAND_LOOSE_SECONDS}.000"),
+    )
+
+    survivors = loose_band_survivors(candidates, local)
+
+    assert survivors is not None
+    assert ("a-tight", "b-loose-edge", "d-stated-nothing", "f-loose-short") == tuple(
+        value.identity for value in survivors
+    )
+    assert () == loose_band_survivors((), local)
+
+
+def test_loose_band_narrowing_needs_one_local_runtime() -> None:
+    """No single local running time leaves nothing to narrow against."""
+    candidates = (_stating("a", "36000.000"),)
+    assert loose_band_survivors(candidates, ()) is None
+    disagreeing = (_runtime_claim("36000.000"), _runtime_claim("35000.000"))
+    assert loose_band_survivors(candidates, disagreeing) is None
+    with pytest.raises(CorroborationValueError):
+        loose_band_survivors([candidates[0]], ())  # type: ignore[arg-type]
+    with pytest.raises(CorroborationValueError):
+        loose_band_survivors(("a",), ())  # type: ignore[arg-type]
 
 
 def test_a_chapter_vector_aligns_within_tolerance_and_diverges_beyond_it() -> None:

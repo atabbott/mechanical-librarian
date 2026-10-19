@@ -185,8 +185,18 @@ class BoundedProviderSession:
         deadline: float | None,
         query_retry: bool = False,
         classify: ProviderResponseClassifier,
+        maximum_bytes: int | None = None,
     ) -> dict[str, Any]:
-        """Return one decoded JSON object within the observation's bounds."""
+        """Return one decoded JSON object within the observation's bounds.
+
+        `maximum_bytes` replaces the configured per-response bound for this one
+        request only. It never lifts the observation's aggregate budget, which
+        still caps every body it reads.
+        """
+        if maximum_bytes is not None and (
+            type(maximum_bytes) is not int or maximum_bytes < 1
+        ):
+            raise ValueError("provider bounds are invalid")
         for retry_index in range(self._bounds.attempts_per_request):
             started = self._clocks.clock()
             attempts_before_dispatch = self.attempt_count
@@ -199,6 +209,7 @@ class BoundedProviderSession:
                     deadline=deadline,
                     is_retry=query_retry or retry_index > 0,
                     classify=classify,
+                    maximum_bytes=maximum_bytes,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self.attempt_count != attempts_before_dispatch:
@@ -285,6 +296,7 @@ class BoundedProviderSession:
         deadline: float | None,
         is_retry: bool,
         classify: ProviderResponseClassifier,
+        maximum_bytes: int | None,
     ) -> dict[str, Any]:
         if self.remaining_response_bytes <= 0:
             raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
@@ -318,7 +330,10 @@ class BoundedProviderSession:
                     raise ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
                     response,
-                    min(self._bounds.maximum_bytes, self.remaining_response_bytes),
+                    min(
+                        maximum_bytes or self._bounds.maximum_bytes,
+                        self.remaining_response_bytes,
+                    ),
                     deadline=deadline,
                     clock=self._clocks.clock,
                     consume=self._consume_response_bytes,

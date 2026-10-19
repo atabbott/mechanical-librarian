@@ -296,6 +296,78 @@ def test_response_bytes_are_charged_once_and_oversize_closes_the_budget() -> Non
     ]
 
 
+def _sized(size: int) -> Callable[[httpx.Request], httpx.Response]:
+    body = b'{"value":"' + b"x" * (size - 12) + b'"}'
+    assert size == len(body)
+    return lambda _: httpx.Response(
+        200, headers={"content-type": "application/json"}, content=body
+    )
+
+
+def test_a_per_request_bound_replaces_the_configured_one_for_that_request() -> None:
+    """The #1256 override widens or narrows one body and nothing else."""
+    wider = _session(_sized(2_048), bounds=_bounds(1_024))
+    assert {"value": "x" * 2_036} == wider.request_json(
+        _URL,
+        headers=_HEADERS,
+        deadline=None,
+        classify=_unclassified,
+        maximum_bytes=4_096,
+    )
+    assert 9_216 - 2_048 == wider.remaining_response_bytes
+    # The configured bound still governs a request that names none.
+    with pytest.raises(ProviderFailure) as configured:
+        _request(wider)
+    assert ProviderStatus.OVERSIZED == configured.value.status
+
+    narrower = _session(_sized(600), bounds=_bounds(1_024))
+    with pytest.raises(ProviderFailure) as failure:
+        narrower.request_json(
+            _URL,
+            headers=_HEADERS,
+            deadline=None,
+            classify=_unclassified,
+            maximum_bytes=512,
+        )
+    assert ProviderStatus.OVERSIZED == failure.value.status
+    assert 0 == narrower.remaining_response_bytes
+
+
+def test_a_per_request_bound_never_lifts_the_aggregate_budget() -> None:
+    session = _session(_sized(10_000), bounds=_bounds(1_024))
+    assert 9_216 == session.remaining_response_bytes
+    with pytest.raises(ProviderFailure) as failure:
+        session.request_json(
+            _URL,
+            headers=_HEADERS,
+            deadline=None,
+            classify=_unclassified,
+            maximum_bytes=262_144,
+        )
+    assert ProviderStatus.OVERSIZED == failure.value.status
+    assert 0 == session.remaining_response_bytes
+
+
+@pytest.mark.parametrize(
+    "maximum_bytes",
+    (0, -1, True, "4096", 4_096.0),
+    ids=("zero", "negative", "boolean", "textual", "float"),
+)
+def test_a_per_request_bound_outside_its_shape_is_refused_before_dispatch(
+    maximum_bytes: object,
+) -> None:
+    session = _session(lambda _: pytest.fail("an invalid bound must not dispatch"))
+    with pytest.raises(ValueError, match="bounds"):
+        session.request_json(
+            _URL,
+            headers=_HEADERS,
+            deadline=None,
+            classify=_unclassified,
+            maximum_bytes=maximum_bytes,  # type: ignore[arg-type]
+        )
+    assert 0 == session.attempt_count
+
+
 def test_pacing_refusal_and_unfitting_backoff_stay_inside_the_deadline() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         pytest.fail("a paced-out dispatch must not reach the transport")
