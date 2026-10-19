@@ -310,7 +310,10 @@ Optional `limits` fields are fixed bounded resource limits, not behavior or
 ranking policy:
 
 - `target_response_bytes` (1,024–4,194,304; default 1,048,576)
-- `provider_response_bytes` (1,024–262,144; default 65,536)
+- `provider_response_bytes` (1,024–262,144; default 65,536) — except that an
+  Audible audiobook search whose item states a composed runtime reads its one
+  25-result page under the fixed 262,144-byte maximum whatever value is set,
+  and Audible's aggregate is a fixed 1 MiB (#1256)
 - `source_archive_bytes` (1,024–268,435,456; default 268,435,456) — the EPUB
   archive ceiling, and only that
 - `audio_source_bytes` (1,024–17,179,869,184; default 8,589,934,592) — the

@@ -139,3 +139,8 @@ eligibility; no new persistence or coordination contract is added. The callback
 is not part of configuration identity. iTunes overflow remains terminal because
 its narrowing flag leaves the request term identical; widening or truncating its
 candidate bound would change the evidence contract and is not adopted.
+
+Audible later widens its fetched search page, not its retained bound (#1256):
+an audiobook search with a composed runtime reads one 25-product page and
+narrows it by the loose runtime band before the unchanged five-candidate bound
+applies. ADR-0064 records that evidence contract. iTunes is unchanged.
