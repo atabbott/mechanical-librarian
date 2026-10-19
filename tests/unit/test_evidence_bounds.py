@@ -556,14 +556,17 @@ _MARKUP_FRAGMENTS = (
     ).map("".join)
 )
 def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
+    # The incumbent validator strips edges before this scan.
+    text = text.strip(" \t\r\n")
     markup = _projection_outcome(text, markup=True)
-    if markup[0] == "admitted":
+    if _HTML_TAG_SLASH_PATTERN.search(text) is None:
+        # Without a tag slash the scan is the default one, as on base.
+        assert markup == _projection_outcome(text, markup=False)
+    elif markup[0] == "admitted":
         # Whatever markup admits, the default scan admits with every tag-like
         # span removed and the edges stripped.
         removed = _tag_free(text)
         assert _projection_outcome(removed, markup=False) == ("admitted", removed)
-    if markup != _projection_outcome(text, markup=False):
-        assert _HTML_TAG_SLASH_PATTERN.search(text) is not None
 
 
 @pytest.mark.parametrize(
