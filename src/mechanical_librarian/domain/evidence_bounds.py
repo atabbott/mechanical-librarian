@@ -172,7 +172,7 @@ def _validate_projection_safety(text: str, label: str, *, markup: bool = False) 
     # (#1202).
     assignment = ":" in text or "=" in text
     # Only the absolute-path rule can read a tag slash as a root, so only it
-    # sees the tags rewritten; every other rule reads the original (#1251).
+    # sees the tags rewritten; every other path rule reads the original (#1251).
     rooted = (
         _HTML_TAG_SLASH_PATTERN.sub(r"<\2>", text) if markup and "<" in text else text
     )
@@ -197,7 +197,9 @@ def _validate_projection_safety(text: str, label: str, *, markup: bool = False) 
         or "..\\" in text
     ):
         raise EvidenceValueError(f"{label} must not contain a production path")
-    if _credential_shaped(text):
+    # A tag can split a credential URL's userinfo, so markup text is also
+    # scanned with its tags rewritten; that only ever adds refusals (#1251).
+    if _credential_shaped(text) or (rooted is not text and _credential_shaped(rooted)):
         raise EvidenceValueError(f"{label} must not contain credential-shaped text")
     return text
 

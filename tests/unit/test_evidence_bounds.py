@@ -382,7 +382,6 @@ def test_guarded_scans_keep_each_refusal(text: str) -> None:
         "<br/>x",
         '<a href="https://example.com/page">x</a>',
         "https://example.com/x</a>",
-        "https://user:pa<br/>ss@host",
         "Line one\u2028Line two",
         "Text\u2028",
         "\u2028Text",
@@ -414,9 +413,23 @@ def test_incumbent_description_admits_tag_slashes_and_line_separators(
                 "<p>\\\\server\\share\\x</p>",
                 "\u2028\\srv",
                 "</p>/home/x",
+                # Only an ASCII tag name and ASCII spacing make a tag (re.ASCII).
+                "</\u017f>",
+                "</\u212a>",
+                "</p\u00a0>",
+                "a<br\u2003/>",
             )
         ),
-        ("</p> api_key=synthetic", "label must not contain credential-shaped text"),
+        *(
+            (value, "label must not contain credential-shaped text")
+            for value in (
+                "</p> api_key=synthetic",
+                "https://user:pa<br/>ss@host",
+                "https://alice:s3cr3t</p>@db.example.com/x",
+                "https://u:p</i>@h",
+                '<a href="https://user:hunter2</b>@example.com">',
+            )
+        ),
         *(
             (value, "label contains forbidden control or Unicode text")
             for value in (
@@ -500,13 +513,17 @@ _MARKUP_FRAGMENTS = (
     ).map("".join)
 )
 def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
-    if _HTML_TAG_SLASH_PATTERN.search(text) is None:
-        assert _projection_outcome(text, markup=True) == _projection_outcome(
-            text, markup=False
-        )
-    elif _projection_outcome(text, markup=True)[0] == "admitted":
-        # A tag slash only ever lifts the absolute-path refusal.
-        assert _projection_outcome(text, markup=False) in {
+    markup = _projection_outcome(text, markup=True)
+    default = _projection_outcome(text, markup=False)
+    if markup != default:
+        # A tag slash only ever lifts the absolute-path refusal, and the
+        # rewritten text only ever adds a credential refusal.
+        assert _HTML_TAG_SLASH_PATTERN.search(text) is not None
+        assert default in {
             ("admitted", text),
             ("EvidenceValueError", "label must not contain a production path"),
+        }
+        assert markup in {
+            ("admitted", text),
+            ("EvidenceValueError", "label must not contain credential-shaped text"),
         }
