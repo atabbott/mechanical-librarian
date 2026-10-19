@@ -85,7 +85,7 @@ granting a release, tag, deployment, or production operation.
 
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
-| F22 Complete per-work publication | #597 | After every provider lane reaches a terminal outcome, one work publishes its complete bounded result; sibling failure stays inspectable without hiding coherent evidence. | In delivery as a one-issue activation slice; independent focused prerequisite #418 is complete. |
+| F22 Complete per-work publication | #597 | After every provider lane reaches a terminal outcome, one work publishes its complete bounded result; sibling failure stays inspectable without hiding coherent evidence. | Delivered as a one-issue activation slice; independent focused prerequisite #418 is complete. |
 | F23 Qualified advisory cover review | #600 | Standard preparation automatically performs one bounded, qualified advisory cover review for the work. | Candidate complete: advice remains exact-current and owner-only; unavailable review retains manual comparison. |
 | F24 Provider/configuration-scoped canary recovery | #408 | One durable provider- and configuration-scoped canary recovers safely within its bounded scope. | Activation candidate: the supervisor and owner CLI share exact canary/member claims; successful members complete #630's proposal, admission, projection, and atomic package cutover without rerunning healthy providers. |
 
@@ -181,8 +181,8 @@ posture of [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.
 
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
-| F43 Local audiobook evidence | #749 | Each single-audio-file item of a mounted audiobook library produces a closed local evidence set — ASIN, narrator, series and sequence, duration, embedded chapters, performance type, language, description, embedded-cover presence — with per-surface provenance, projected read-only to the owner. | In delivery. |
-| F43 Audiobook provider evidence | #749 | The same item is compared against four keyless providers — Audible, Audnexus, AudioSilo, iTunes — configurable from Settings and the first-run wizard. An ASIN is adopted only where a second authority corroborates the recording's own running time, chapter structure, or perceptual cover hash; nothing corroborated leaves the item at `evidence_only`. Read-only throughout. | In delivery. |
+| F43 Local audiobook evidence | #749 | Each single-audio-file item of a mounted audiobook library produces a closed local evidence set — ASIN, narrator, series and sequence, duration, embedded chapters, performance type, language, description, embedded-cover presence — with per-surface provenance, projected read-only to the owner. | Delivered. |
+| F43 Audiobook provider evidence | #749 | The same item is compared against four keyless providers — Audible, Audnexus, AudioSilo, iTunes — configurable from Settings and the first-run wizard. An ASIN is adopted only where a second authority corroborates the recording's own running time, chapter structure, or perceptual cover hash; nothing corroborated leaves the item at `evidence_only`. Read-only throughout. | Delivered. |
 
 ## Delivery checkpoint 0.21.0: audiobook decisions
 
@@ -267,6 +267,37 @@ envelope applies. Effects use isolated synthetic targets. A static empty view,
 health-route latency or green CI alone cannot satisfy this exit. No later-ticket
 completion, release, deployment or provider/reviewer spend is implied.
 
+## Delivery checkpoint 0.22.2: audiobook discovery and admission
+
+This checkpoint makes audiobook discovery reach the recordings the catalogue
+already holds. It is shaped from the verified analysis of the #1086 retained
+snapshot: 122 of 238 audiobooks ended with no retained recording candidate, at
+least a third of Audible's no-match results were products the work-identity
+admission refused, and most of the rest came from a defective query title whose
+clean form is in the item's path.
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F55 Recording-lookup hints | #1257 | A product inside the tight runtime band that work-identity admission refused is tested by the per-ASIN lanes as a lookup hint, without asserting identity. | Blocked by #1245 and #1246; ADR-0064 amendment. |
+| F56 Second audiobook title source | #1255 | Two query-only ladder families, the path leaf and the single-file title tag give a no-match item a second WORK query without asserting identity. | Blocked by #1246; ADR-0018, ADR-0063/0066 and ADR-0064 amendments. |
+| F57 Band-corroborated admission | #1260 | Lineage-decorated titles, a band-first set rule and an initials fold admit a recording only when the tight runtime band corroborates it. | Blocked by #1259; amends ADR-0067's one-production consequence first, per the owner's decision of 2026-10-19. |
+| F58 Work-level series and title review | #1253 | The F54 work-only route offers owner choices for series, series sequence and title from witnessed work evidence. | Ready; ADR-0069 amendment. |
+
+Focused work outside the slice sequence uses `Delivery slice: Not applicable`:
+#1244 records this checkpoint and is its first unit; #1245 refusal diagnostic
+and ladder continuation; #1246 the pre-ADR discovery measurement; #1256
+overflow narrowing; #1247 audiobook dispatch set; #1248 per-provider deadline
+share; #1249 attention clause; #1250 inspector bounds and quality floor; #1251
+projection validator; #1252 decision coherence; #1254 iTunes query
+measurement; #1258 dispatch classification; #1259 the closing replay and band
+calibration. #990 measures the 0.22.2 targets on the first run after the clean
+rebuild.
+
+No release, tag, deployment, production-library operation, new provider or
+credential, transcription (#24), ebook-provider audio dispatch beyond the six
+named audiobook providers (#962), series+sequence query (#1262), or
+cover-question suppression is included.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
@@ -331,7 +362,7 @@ The current deferred product outcomes are:
 - opening-audio evidence #24; its former #104–#110 decomposition is closed
   superseded history;
 - one outcome per further metadata provider: LibraryThing #211, Project
-  Gutenberg #212, LibriVox #213, and Audible #214;
+  Gutenberg #212, and LibriVox #213;
   the old F09c/F09d/F09e trackers #205, #206, and #208 are closed superseded;
 - bulk browser review and extended qualification #195 after the first public
   release;
