@@ -11,7 +11,7 @@ from typing import Final, Mapping
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    "9482b2215db4b1c728d364c7b025ba5e0e337e313b02a13d134560534b3de86b"
+    "15b413ccb3e1eaddbd339874673249b129130c415cbe84ca34e04530951238e4"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle",
