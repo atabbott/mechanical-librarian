@@ -8301,6 +8301,12 @@ def test_fetching_transition_browse_and_manual_recovery(
     from mechanical_librarian.adapters.persistence.provider_recovery import (
         SQLiteProviderRecoveryStore,
     )
+    from mechanical_librarian.application.live_updates import (
+        RESYNC,
+        LiveUpdate,
+        LiveUpdateChannel,
+        LiveUpdateSubscription,
+    )
     from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
     from mechanical_librarian.interfaces.web import app as web_app
     from tests.support.owner_responsiveness import running_owner_fixture
@@ -8312,6 +8318,40 @@ def test_fetching_transition_browse_and_manual_recovery(
         "ReactAssetLoader",
         lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
     )
+    # Every new stream starts with a resync, and a resync refetches Library and
+    # attention 120 ms later. When the 503 settles first, that refetch succeeds
+    # and replaces the error before the assertion can see it (#1214). The
+    # harness holds each connection's first resync until the manual recovery is
+    # proven, then delivers it, so the stream contract is still exercised but
+    # never decides which read the owner's control answers.
+    held: list[tuple[LiveUpdateChannel, LiveUpdateSubscription, int]] = []
+    connected = 0
+    holding = True
+    subscribe = LiveUpdateChannel.subscribe
+
+    def holding_subscribe(
+        channel: LiveUpdateChannel, last_sequence: int | None = None
+    ) -> LiveUpdateSubscription:
+        nonlocal connected
+        subscription = subscribe(channel, last_sequence)
+        connected += 1
+        with channel.lock:
+            sequence = subscription._pending.pop((RESYNC, None), None)
+            if sequence is not None:
+                if holding:
+                    held.append((channel, subscription, sequence))
+                else:
+                    subscription._pending[RESYNC, None] = sequence
+        return subscription
+
+    def release_resyncs() -> None:
+        nonlocal holding
+        holding = False
+        for channel, subscription, sequence in held:
+            with channel.lock:
+                subscription.offer(LiveUpdate(sequence, RESYNC))
+
+    monkeypatch.setattr(LiveUpdateChannel, "subscribe", holding_subscribe)
     with running_owner_fixture(tmp_path, 10) as (fixture, origin):
         actor = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
         try:
@@ -8386,6 +8426,7 @@ def test_fetching_transition_browse_and_manual_recovery(
                         initial.value.finished()
                         assert initial.value.status == 200
                     armed = True
+                    streams = connected
                     route = "/library?attention=open" if attention else "/library"
                     with page.expect_response(
                         lambda response: (
@@ -8396,6 +8437,12 @@ def test_fetching_transition_browse_and_manual_recovery(
                         page.goto(origin + route)
                     assert pending.value.status == (200 if transitions == 1 else 503)
                     assert reads == 2
+                    # Look only once the armed page's stream is connected, which
+                    # is the ordering that used to refetch the error away.
+                    deadline = time.monotonic() + 5
+                    while connected <= streams:
+                        assert time.monotonic() < deadline, "no stream connected"
+                        page.wait_for_timeout(20)
                     if transitions == 2:
                         surface = page.get_by_label(
                             "Attention queue" if attention else "Works", exact=True
@@ -8426,6 +8473,7 @@ def test_fetching_transition_browse_and_manual_recovery(
                         ).get_by_role("button", name="Try again", exact=True)
                         if works_retry.count():
                             works_retry.click()
+                    release_resyncs()
                     expect(
                         page.get_by_role("heading", name="Works", exact=True)
                     ).to_be_visible()

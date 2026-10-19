@@ -1198,9 +1198,17 @@ contract differs by provider and is not provider-wide:
   observation spends at most three attempts per request, twenty-four dispatches
   in total -- an audiobook's alternative work lane, dispatched only after the
   asserted lane finds nothing, shares that budget rather than adding to it --
-  the configured per-response ceiling and nine times that ceiling
-  capped at 1 MiB in aggregate, under one request timeout and one observation
-  deadline, behind the adapter's shared request-start pacer. `Retry-After` is
+  the configured per-response ceiling and a fixed 1 MiB in aggregate for every
+  configured ceiling, under one request timeout and one observation deadline,
+  behind the adapter's shared request-start pacer. An audiobook `WORK` search
+  whose item states one composed runtime asks for a 25-result page instead of
+  six and reads it under a fixed 262,144-byte per-response bound, the schema
+  maximum of `provider_response_bytes`, whatever value is configured (#1256).
+  A larger body is `oversized` and zeroes the aggregate; it is never truncated
+  or parsed. The whole page is parsed before anything is dropped: more than 25
+  products, a missing canonical ASIN or a duplicated identity fails it as
+  malformed, and only then are products outside the 600-second loose runtime
+  band removed before the five-candidate bound applies. `Retry-After` is
   honoured on `429` and `503`, bounded to one minute; `401`, `403` and `404` are
   typed as authentication, authorization and no-match, and any other status is
   terminally unavailable rather than a no-match. Responses must be

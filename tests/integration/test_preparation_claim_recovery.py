@@ -1677,7 +1677,7 @@ def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
 
     path = tmp_path / "application.sqlite3"
     admission = OperationAdmission()
-    pipeline = _pipeline(root, path, blocked_settlement=True, admission=admission)
+    pipeline = _pipeline(root, path, admission=admission)
     pipeline._observation_repository_factory = lambda: open_repository(
         path, authority=root.authority, cross_thread=True
     )
@@ -1695,11 +1695,23 @@ def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
                 read_started.append(True)
                 reader.execute("BEGIN")
                 reader.execute("SELECT * FROM review_preparation_work").fetchall()
+            blocked = reader.in_transaction
+        # Only a claim the long read blocks waits 1 ms instead of the production
+        # busy timeout, so it contends at once. A claim made after the read
+        # ends, and the work it runs, keep the production timeout: a 1 ms one
+        # there fails an ordinary commit behind any brief transaction on
+        # another connection, such as the other lane's claim.
+        connection = repository._connection
+        (timeout,) = connection.execute("PRAGMA busy_timeout").fetchone()
+        if blocked:
+            connection.execute("PRAGMA busy_timeout=1")
         try:
             return original_claim(repository, claimed_at)
         except ReviewPipelineClaimContention:
             contentions.release()
             raise
+        finally:
+            connection.execute(f"PRAGMA busy_timeout={timeout}")
 
     monkeypatch.setattr(
         SQLiteMetadataReportRepository, "claim_review_pipeline_action", claim
@@ -1716,9 +1728,10 @@ def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
         assert pipeline.owned_claims == ()
         assert _admission_free(admission)
         with reading:
+            # Nothing advanced while the read held its snapshot.
+            assert _preparation_rows(root) == before
             reader.rollback()
             released = True
-        assert _preparation_rows(root) == before
         deadline = time.monotonic() + 10
         while _preparation_rows(root) == before:
             assert time.monotonic() < deadline, "preparation did not resume"

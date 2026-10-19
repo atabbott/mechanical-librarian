@@ -257,6 +257,37 @@ def runtime_corroborated_candidate(
     return candidate, signal.reasons
 
 
+def loose_band_survivors(
+    candidates: tuple[ProviderCandidate, ...],
+    local_claims: tuple[LocalClaim, ...],
+) -> tuple[ProviderCandidate, ...] | None:
+    """Keep the candidates the loose runtime band does not contradict (#1256).
+
+    This is the narrowing an overflowing audiobook search page takes before the
+    candidate bound applies, so it removes only what the band positively rules
+    out: a candidate whose stated runtime is more than the loose band from this
+    recording's. A tight-band, loose-band or runtime-less candidate survives,
+    because an absence is not a contradiction and a near-miss is still the
+    work. Survivors keep their input order.
+
+    An item with no single local running time has nothing to narrow against, so
+    it returns ``None`` rather than a set the band never judged.
+    """
+    if type(candidates) is not tuple or any(
+        type(value) is not ProviderCandidate for value in candidates
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    local = local_claim_runtime_seconds(local_claims)
+    if local is None:
+        return None
+    return tuple(
+        candidate
+        for candidate in candidates
+        if runtime_agreement(local, candidate_runtime_seconds(candidate)).outcome
+        is not CorroborationOutcome.CONTRADICTED
+    )
+
+
 def runtime_short_of_stated(
     candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
 ) -> bool:
@@ -765,6 +796,7 @@ __all__ = [
     "local_chapter_durations_seconds",
     "local_claim_runtime_seconds",
     "local_runtime_seconds",
+    "loose_band_survivors",
     "runtime_agreement",
     "runtime_corroborated_candidate",
     "runtime_short_of_stated",

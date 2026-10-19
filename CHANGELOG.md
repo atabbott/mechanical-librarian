@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- An Audible audiobook search that finds many products now sets aside those
+  whose running time is more than ten minutes from the recording's, so a popular
+  title no longer ends the search as too many matches. Upgrading requires a
+  clean rebuild (#1256).
+
 - An audiobook Audible cannot find by its recorded title is searched again by
   the title in its folder name or single file's title tag, and a recording found
   that way is kept only when its running time matches. Upgrading requires a

@@ -602,6 +602,19 @@ replay, and an exhausted ladder that does not. A retry successor merges over
 the lanes it observed and never dispatches an alternative the original
 observation suppressed.
 
+An Audible audiobook search whose item states one composed runtime (#1256), on
+the asserted or the alternative lane, asks for 25 results instead of six under
+a fixed 262,144-byte response bound; a larger body is `oversized`. The whole
+page is parsed first, so an over-long page, a missing ASIN or a duplicated
+identity is still `malformed`. A page of more than five products then keeps
+only those whose stated runtime is within the 600-second loose band of the
+item's, or that state none, and `candidate_limit_exceeded` now means more than
+five such products rather than a popular title. A page the band empties is an
+`empty_no_match` rung, so `empty_no_match` also counts a rung with no in-band
+product, and the ladder walks on. Survivors are ordinary candidates; the report
+records no dropped count. Other items, ebook plans and ASIN lookups are
+unchanged. The report is `metadata-report-v52`.
+
 | Provider | Normalized and widening grammar | Narrowing grammar |
 | --- | --- | --- |
 | Google Books | quoted `intitle` plus one quoted `inauthor` per author | quoted `intitle` plus one joined, quoted `inauthor` phrase |

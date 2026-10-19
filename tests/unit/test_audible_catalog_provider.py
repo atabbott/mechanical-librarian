@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Callable
 
 import httpx
@@ -1664,3 +1665,300 @@ def test_a_report_replays_its_alternative_lane_in_precedence_order() -> None:
     for provider, audio, message in cases:
         with pytest.raises(ReportValueError, match=message):
             _alternative_report(provider, audio=audio)
+
+
+# The #1256 narrowing: an audiobook search whose item states one composed
+# runtime asks for a 25-product page and drops what the loose band contradicts
+# before the five-candidate bound applies.
+_NARROWED = "Synthetic Journey"
+_NARROWED_AUTHORS = ("Example Author",)
+# One thousand minutes, so a stated 990 sits on the loose band's edge.
+_NARROWED_RUNTIME = "60000.000"
+
+
+def _narrowing_plan(runtime: str | None = _NARROWED_RUNTIME) -> m.MetadataDiscoveryPlan:
+    return m.audiobook_discovery_plan(
+        audio_target(_NARROWED, _NARROWED_AUTHORS),
+        (target_title_claim(_NARROWED),)
+        + (() if runtime is None else (local_runtime_claim(runtime),)),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _product(index: int, minutes: int | None) -> dict[str, Any]:
+    product: dict[str, Any] = {
+        "asin": f"B0{index:08d}",
+        "title": _NARROWED,
+        "authors": [{"name": "Example Author"}],
+    }
+    if minutes is not None:
+        product["runtime_length_min"] = minutes
+    return product
+
+
+def _narrowed_page(*minutes: int | None) -> dict[str, Any]:
+    return {
+        "total_results": len(minutes),
+        "products": [_product(index, value) for index, value in enumerate(minutes)],
+    }
+
+
+def _identities(*indices: int) -> set[str]:
+    return {f"audible-product-B0{index:08d}" for index in indices}
+
+
+def _narrowed_report(observation: Any) -> MetadataReport:
+    target = audio_target(_NARROWED, _NARROWED_AUTHORS)
+    return MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "item-1", target.fields),
+        file=d.FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(
+            target_title_claim(_NARROWED),
+            local_runtime_claim(_NARROWED_RUNTIME),
+        ),
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=single_track_audio_facts(),
+    )
+
+
+def test_an_overflowing_page_narrows_to_its_three_in_band_products(
+    tmp_path: Path,
+) -> None:
+    seen, handle = _recorder(default=_json(_narrowed_page(*[1_000] * 3, *[500] * 16)))
+    observation = _observed(handle, _narrowing_plan()).observation
+
+    assert [("25", _NARROWED)] == [
+        (url.params["num_results"], url.params["title"]) for url in seen
+    ]
+    # Three products of one work is a refused rung: its count and its hints are
+    # the three survivors, never the sixteen the band dropped.
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert d.work_ladder_diagnostics(0, 3) == observation.lanes[0].diagnostics
+    assert _identities(0, 1, 2) == {
+        candidate.identity for candidate in observation.recording_lookup_candidates
+    }
+    report = _narrowed_report(observation)
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+
+    path = tmp_path / "application.sqlite3"
+    repository = open_repository(path)
+    try:
+        repository.publish(report, lambda: True)
+    finally:
+        repository.close()
+    repository = open_repository(path, create=False)
+    try:
+        stored = repository.get(report.report_id)
+    finally:
+        repository.close()
+    assert MetadataReport.from_json(stored) == report
+    # A v51 store's lanes meant the unnarrowed page, so v52 refuses them.
+    previous = json.loads(report.to_json())
+    previous["schema_version"] = "metadata-report-v51"
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(json.dumps(previous))
+
+
+def test_more_than_five_in_band_products_still_overflow() -> None:
+    seen, handle = _recorder(default=_json(_narrowed_page(*[1_000] * 7, *[500] * 12)))
+    observation = _observed(handle, _narrowing_plan()).observation
+
+    assert 1 == len(seen)
+    assert ProviderStatus.CANDIDATE_LIMIT_EXCEEDED is observation.status
+    assert () == observation.candidates
+    assert () == observation.recording_lookup_candidates
+    report = _narrowed_report(observation)
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+def test_the_loose_band_edge_is_kept_and_one_minute_past_it_is_dropped() -> None:
+    # 990 minutes is 600 s short of the item; 989 is 660 s short.
+    _seen, handle = _recorder(default=_json(_narrowed_page(990, 989, *[500] * 4)))
+    observation = _observed(handle, _narrowing_plan()).observation
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert _identities(0) == {value.identity for value in observation.candidates}
+    report = _narrowed_report(observation)
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+def test_products_that_state_no_runtime_survive_and_count_toward_the_bound() -> None:
+    _seen, overflow = _recorder(default=_json(_narrowed_page(*[None] * 6, *[500] * 10)))
+    assert (
+        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        is _observed(overflow, _narrowing_plan()).observation.status
+    )
+
+    _seen, single = _recorder(default=_json(_narrowed_page(None, *[500] * 5)))
+    observation = _observed(single, _narrowing_plan()).observation
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert _identities(0) == {value.identity for value in observation.candidates}
+
+
+def test_a_page_of_five_or_fewer_is_not_narrowed() -> None:
+    _seen, handle = _recorder(default=_json(_narrowed_page(*[500] * 5)))
+    observation = _observed(handle, _narrowing_plan()).observation
+
+    # Narrowing would have emptied the rung; unnarrowed, all five are refused.
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert d.work_ladder_diagnostics(0, 5) == observation.lanes[0].diagnostics
+
+
+def test_a_page_the_band_empties_is_an_empty_rung() -> None:
+    _seen, handle = _recorder(default=_json(_narrowed_page(*[500] * 6)))
+    observation = _observed(handle, _narrowing_plan()).observation
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert d.work_ladder_diagnostics(1, 0) == observation.lanes[0].diagnostics
+    assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _diagnostics(observation)
+
+
+def _duplicated_out_of_band() -> dict[str, Any]:
+    page = _narrowed_page(*[1_000] * 2, *[500] * 5)
+    page["products"][-1]["asin"] = page["products"][-2]["asin"]
+    return page
+
+
+def _anonymous_out_of_band() -> dict[str, Any]:
+    page = _narrowed_page(*[1_000] * 2, *[500] * 5)
+    del page["products"][-1]["asin"]
+    return page
+
+
+@pytest.mark.parametrize(
+    "page",
+    (
+        _narrowed_page(*[1_000] * 2, *[500] * 24),
+        _duplicated_out_of_band(),
+        _anonymous_out_of_band(),
+    ),
+    ids=("over_page_size", "duplicate_out_of_band", "anonymous_out_of_band"),
+)
+def test_a_page_the_parser_refuses_fails_whole_before_narrowing(
+    page: dict[str, Any],
+) -> None:
+    _seen, handle = _recorder(default=_json(page))
+    observation = _observed(handle, _narrowing_plan()).observation
+
+    assert ProviderStatus.MALFORMED is observation.status
+    assert () == observation.candidates
+
+
+def _captured_products(count: int) -> bytes:
+    product = payload("audible_search")["products"][0]
+    return json.dumps(
+        {
+            "total_results": count,
+            "products": [
+                {**copy.deepcopy(product), "asin": f"B0{index:08d}"}
+                for index in range(count)
+            ],
+        }
+    ).encode()
+
+
+def _body(
+    content: bytes,
+) -> tuple[list[httpx.URL], Callable[[httpx.Request], httpx.Response]]:
+    return _recorder(
+        default=httpx.Response(
+            200, headers={"content-type": "application/json"}, content=content
+        )
+    )
+
+
+def test_the_narrowed_page_reads_under_its_own_bound_whatever_is_configured() -> None:
+    body = _captured_products(19)
+    assert 65_536 < len(body) < 262_144
+
+    _seen, handle = _body(body)
+    narrowed = _provider(handle, maximum_bytes=65_536)
+    observation = m.observe_provider(
+        "audible", "audible_catalog", narrowed, _narrowing_plan()
+    ).observation
+    # Every captured product states 970 minutes, outside the band of 1,000.
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert 1_048_576 - len(body) == narrowed._remaining_response_bytes
+
+    seen, handle = _body(body)
+    unnarrowed = _provider(handle, maximum_bytes=65_536)
+    observation = m.observe_provider(
+        "audible", "audible_catalog", unnarrowed, _narrowing_plan(runtime=None)
+    ).observation
+    assert ProviderStatus.OVERSIZED is observation.status
+    assert ["6"] == [url.params["num_results"] for url in seen]
+    assert 0 == unnarrowed._remaining_response_bytes
+
+
+def test_a_narrowed_body_over_its_bound_fails_bounded_rather_than_truncated() -> None:
+    body = _captured_products(41)
+    assert len(body) > 262_144
+    seen, handle = _body(body)
+    provider = _provider(handle, maximum_bytes=262_144)
+    observation = m.observe_provider(
+        "audible", "audible_catalog", provider, _narrowing_plan()
+    ).observation
+
+    assert ProviderStatus.OVERSIZED is observation.status
+    assert 1 == len(seen)
+    assert 0 == provider._remaining_response_bytes
+    assert () == observation.candidates
+
+
+def test_the_aggregate_is_one_fixed_mebibyte_for_every_configured_bound() -> None:
+    for maximum_bytes in (1_024, 65_536, 262_144):
+        provider = _provider(_recorder()[1], maximum_bytes=maximum_bytes)
+        assert 1_048_576 == provider._remaining_response_bytes
+        provider._client.close()
+
+
+def test_an_ebook_shaped_plan_with_a_runtime_still_asks_for_six() -> None:
+    seen, handle = _recorder(default=_json(_narrowed_page(*[1_000] * 6)))
+    observation = _observed(handle, work_plan(local_runtime_claim())).observation
+
+    assert {"6"} == {url.params["num_results"] for url in seen}
+    assert ProviderStatus.CANDIDATE_LIMIT_EXCEEDED is observation.status
+
+
+def test_a_narrowed_empty_asserted_lane_permits_the_alternative() -> None:
+    plan = _alternative_plan()
+    seen: list[httpx.URL] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        if request.url.params["title"] == _ALTERNATIVE:
+            return _json(_work_page(_ALTERNATIVE))
+        # Six products of the asserted title, every one far outside the band.
+        return _json(
+            {
+                "total_results": 6,
+                "products": [
+                    {
+                        **_search_page(0)["products"][0],
+                        "asin": f"B0{index:08d}",
+                        "runtime_length_min": 500,
+                    }
+                    for index in range(6)
+                ],
+            }
+        )
+
+    observation = _observed(handle, plan).observation
+    lanes = _by_basis(observation, plan)
+
+    assert {"25"} == {url.params["num_results"] for url in seen}
+    assert _ALTERNATIVE == seen[-1].params["title"]
+    asserted = lanes[None]
+    assert ProviderStatus.NO_MATCH is asserted.status
+    assert asserted.exhausted_dispatch
+    assert asserted.diagnostics == d.work_ladder_diagnostics(
+        len(asserted.exhausted_dispatch), 0
+    )
+    assert ProviderStatus.CANDIDATES is lanes["path_leaf"].status
+    (candidate,) = observation.candidates
+    assert _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
+    report = _alternative_report(observation)
+    assert report == MetadataReport.from_json(report.to_json())

@@ -254,3 +254,37 @@ migration; prior reports and report databases refuse unchanged under ADR-0013.
 The audio child and owner detail API remain v4. Historical qualification
 sources and measurements remain immutable; current source bindings advance
 separately and do not upgrade historical completeness provenance.
+
+## Runtime-narrowed Audible overflow (#1256)
+
+An Audible `WORK` search on an audiobook plan whose item states one composed
+runtime (`local_claim_runtime_seconds`, so a chapter-endpoint coverage figure
+never triggers it) asks for one 25-product page instead of six. The adapter
+parses the whole page first: more than 25 products, a missing canonical ASIN or
+a duplicated identity still fails it as `malformed`, out-of-band products
+included. Only then, and only when more than five products parsed, does
+`loose_band_survivors` keep every product whose stated runtime the 600-second
+loose band does not contradict. Tight-band, loose-band and runtime-less
+products all survive and count toward the unchanged five-candidate bound. More
+than five survivors is `candidate_limit_exceeded`, no survivor is `no_match`
+(an `empty_no_match` rung the ladder walks past), and one to five go through
+ordinary admission. A page of five or fewer is not narrowed. The asserted and
+alternative lanes share this path; the band grants no authority, so survivors
+still need work-identity admission and recording identity still needs the tight
+band. Items with no composed runtime, ebook-shaped plans, ASIN lookups and
+iTunes are unchanged.
+
+The figures behind the page size, from #1246's wider-page row (19 overflow
+items, 25 results): products in the 600 s band: 0 items over 5, 13 with 1–5, 6
+with 0, at most 2 per item; 11 items with a tight product, 2 admit on the
+asserted title; never over 5 at any cut 6–25; largest page 142 KB, about 5.1 KB
+per product.
+
+The narrowed search reads its one 25-product page under a fixed 262,144-byte
+per-response bound, whatever `provider_response_bytes` is configured to; a
+larger body is `oversized` and is never truncated or parsed. Six such pages
+would not fit nine times the default ceiling, so Audible's aggregate is the
+fixed 1 MiB ceiling for every configured bound. Survivors persist as ordinary
+candidates with no new field, but a v51 overflow or empty rung meant the
+unnarrowed page, so the report advances to `metadata-report-v52`. **Clean
+rebuild required** under ADR-0013.
