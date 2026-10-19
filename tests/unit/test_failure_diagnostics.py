@@ -17,10 +17,17 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.metadata_report import (
+    _PROVIDER_DIAGNOSTIC_STAGES,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    work_ladder_diagnostics,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    WorkDispatchRung,
+    WorkTitleTransformationFamily,
 )
 
 
@@ -142,6 +149,7 @@ def test_category_vocabulary_is_exact_and_closed() -> None:
         "timeout",
         "transport",
         "unknown",
+        "work_identity_refused",
     } == {value.value for value in FailureCategory}
 
 
@@ -443,4 +451,140 @@ def test_provider_signals_have_exact_production_mappings(signal: str) -> None:
         diagnostic.category,
         diagnostic.component,
         diagnostic.stage,
+    )
+
+
+def test_work_identity_refusal_is_a_closed_identity_stage_provider_category() -> None:
+    assert "work_identity_refused" == FailureCategory.WORK_IDENTITY_REFUSED.value
+    assert (
+        FailureStage.IDENTITY
+        is _PROVIDER_DIAGNOSTIC_STAGES[FailureCategory.WORK_IDENTITY_REFUSED]
+    )
+    assert (
+        FailureStage.RESPONSE
+        is _PROVIDER_DIAGNOSTIC_STAGES[FailureCategory.EMPTY_NO_MATCH]
+    )
+    assert (
+        FailureDiagnostic(
+            FailureCategory.WORK_IDENTITY_REFUSED,
+            FailureComponent.PROVIDER,
+            FailureStage.IDENTITY,
+            retryable=False,
+            count=4,
+        ),
+    ) == work_ladder_diagnostics(0, 4)
+
+
+_LADDER = (
+    WorkDispatchLineage(WorkDispatchRung.NORMALIZED),
+    WorkDispatchLineage(
+        WorkDispatchRung.SUBTITLE_STRIPPED,
+        (WorkTitleTransformationFamily.SUBTITLE_SEGMENT,),
+    ),
+)
+
+
+def _no_match_observation(
+    empty_rungs: int, refused_products: int, *, exhausted: bool = True
+) -> ProviderObservation:
+    lane = ProviderLaneObservation(
+        "lane_" + "d" * 64,
+        ProviderQueryKind.WORK,
+        ProviderStatus.NO_MATCH,
+        (_LOCAL_REFERENCE,),
+        None,
+        (),
+        work_ladder_diagnostics(empty_rungs, refused_products) if exhausted else (),
+        exhausted_dispatch=_LADDER if exhausted else (),
+    )
+    return ProviderObservation(
+        "audible",
+        ProviderStatus.NO_MATCH,
+        (_LOCAL_REFERENCE,),
+        (),
+        ProviderQueryKind.WORK,
+        "audible_catalog",
+        (lane,),
+    )
+
+
+@pytest.mark.parametrize(
+    ("observation", "expected"),
+    (
+        pytest.param(
+            _no_match_observation(0, 3),
+            ((FailureCategory.WORK_IDENTITY_REFUSED, FailureStage.IDENTITY, 3),),
+            id="wholly_refused",
+        ),
+        pytest.param(
+            _no_match_observation(1, 2),
+            (
+                (FailureCategory.EMPTY_NO_MATCH, FailureStage.RESPONSE, 1),
+                (FailureCategory.WORK_IDENTITY_REFUSED, FailureStage.IDENTITY, 2),
+            ),
+            id="refused_and_empty",
+        ),
+        pytest.param(
+            _no_match_observation(2, 0),
+            ((FailureCategory.EMPTY_NO_MATCH, FailureStage.RESPONSE, 1),),
+            id="empty_ladder",
+        ),
+        pytest.param(
+            _no_match_observation(0, 0, exhausted=False),
+            ((FailureCategory.EMPTY_NO_MATCH, FailureStage.RESPONSE, 1),),
+            id="unwalked_no_match",
+        ),
+    ),
+)
+def test_refused_products_are_lifted_once_and_never_called_empty(
+    observation: ProviderObservation,
+    expected: tuple[tuple[FailureCategory, FailureStage, int], ...],
+) -> None:
+    """Only a wholly refused no-match loses the status-derived empty aggregate."""
+    observed = provider_result_diagnostics(observation, ProviderOperationalEvidence())
+    assert expected == tuple(
+        (value.category, value.stage, value.count) for value in observed
+    )
+    assert all(value.retryable is False for value in observed)
+
+
+def test_a_refusal_never_suppresses_an_independent_no_match_lane() -> None:
+    refused = _no_match_observation(0, 3).lanes[0]
+    unwalked = ProviderLaneObservation(
+        "lane_" + "e" * 64,
+        ProviderQueryKind.ISBN,
+        ProviderStatus.NO_MATCH,
+        (_LOCAL_REFERENCE,),
+        "9780000000002",
+    )
+    observed = provider_result_diagnostics(
+        ProviderObservation(
+            "audible",
+            ProviderStatus.NO_MATCH,
+            (_LOCAL_REFERENCE,),
+            (),
+            ProviderQueryKind.DISCOVERY,
+            "audible_catalog",
+            (refused, unwalked),
+        ),
+        ProviderOperationalEvidence(),
+    )
+    assert (
+        FailureCategory.EMPTY_NO_MATCH,
+        FailureCategory.WORK_IDENTITY_REFUSED,
+    ) == tuple(value.category for value in observed)
+
+
+def test_status_derived_empty_no_match_is_suppressed_only_on_request() -> None:
+    assert () == provider_attempt_diagnostics(
+        (), status="no_match", work_identity_refused_only=True
+    )
+    assert (FailureCategory.EMPTY_NO_MATCH,) == tuple(
+        value.category for value in provider_attempt_diagnostics((), status="no_match")
+    )
+    assert (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,) == tuple(
+        value.category
+        for value in provider_attempt_diagnostics(
+            (), status="malformed", work_identity_refused_only=True
+        )
     )

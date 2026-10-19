@@ -103,9 +103,11 @@ from mechanical_librarian.domain.metadata_report import (
     provider_lane_candidate_reference,
     recording_variant_conflict,
     validate_provider_access_time,
+    work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
+    WorkQuery,
     WorkTitleTransformationLineage,
     replay_provider_work_identity_admission,
     work_query_ladder,
@@ -427,6 +429,7 @@ class ProviderLaneResult:
     transformation_lineage: WorkTitleTransformationLineage | None = None
 
     recording_lookup_candidates: tuple[ProviderCandidate, ...] = ()
+    exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -491,6 +494,19 @@ class ProviderLaneResult:
                     is not EditionEnrichmentOverflow
                     or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
                     or self.candidates
+                )
+            )
+            or type(self.exhausted_dispatch) is not tuple
+            or any(
+                type(value) is not WorkDispatchLineage
+                for value in self.exhausted_dispatch
+            )
+            or (
+                self.exhausted_dispatch
+                and (
+                    self.lane.kind is not ProviderQueryKind.WORK
+                    or self.status is not ProviderStatus.NO_MATCH
+                    or self.dispatch_lineage is not None
                 )
             )
         ):
@@ -1038,6 +1054,7 @@ def provider_observation(
                 result.diagnostics,
                 result.dispatch_lineage,
                 result.transformation_lineage,
+                result.exhausted_dispatch,
             )
         )
 
@@ -1758,6 +1775,68 @@ def qualify_provider_observation(
         request_accounting=observation.request_accounting,
         dispatch_lineage=observation.dispatch_lineage,
         transformation_lineage=set_admission.transformation,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class QualifiedLaneObservation:
+    """One lane's qualified observation and the ladder facts its result records.
+
+    `exhausted_dispatch` and `diagnostics` belong to the lane result only. The
+    provider aggregate lifts the refused-product count from its lanes once, in
+    `provider_result_diagnostics`, so an adapter never restates it.
+    """
+
+    observation: ProviderObservation
+    exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
+    diagnostics: tuple[FailureDiagnostic, ...] = ()
+
+
+def observe_work_ladder(
+    lookup: MetadataLookup,
+    observe_rung: Callable[[WorkQuery], ProviderObservation],
+) -> QualifiedLaneObservation:
+    """Walk one WORK lane's query ladder, qualifying each rung as it returns.
+
+    A rung with an admitted product ends the walk. So does any terminal
+    failure, which returns that rung's own qualified result: a failure is never
+    reclassified as a no-match, so the refusals before it are dropped with it.
+    On an audiobook plan a rung that is empty, or whose products work-identity
+    admission refuses, continues to the next rung, inside the dispatch budget
+    the plan already reserved for the whole ladder. When every rung was refused
+    or empty, the lane records each rung's lineage in ladder order with the
+    empty-rung and refused-product counts, and keeps the recording hints of the
+    earliest refused rung that had any. An ebook plan still stops at the first
+    rung that returned products.
+    """
+    exhausted: list[WorkDispatchLineage] = []
+    empty_rungs = 0
+    refused_products = 0
+    hints: tuple[ProviderCandidate, ...] = ()
+    observation: ProviderObservation | None = None
+    for query in work_query_ladder(lookup.title or "", lookup.authors):
+        physical = observe_rung(query)
+        observation = qualify_provider_observation(physical, lookup)
+        if physical.status is ProviderStatus.NO_MATCH:
+            empty_rungs += 1
+        elif (
+            lookup.audio is not None
+            and physical.status is ProviderStatus.CANDIDATES
+            and observation.status is ProviderStatus.NO_MATCH
+        ):
+            refused_products += len(physical.candidates)
+            hints = hints or observation.recording_lookup_candidates
+        else:
+            return QualifiedLaneObservation(observation)
+        exhausted.append(WorkDispatchLineage.from_query(query))
+    if observation is None:
+        raise MetadataReportError("work query ladder is empty")
+    if lookup.audio is None:
+        return QualifiedLaneObservation(observation)
+    return QualifiedLaneObservation(
+        replace(observation, recording_lookup_candidates=hints),
+        tuple(exhausted),
+        work_ladder_diagnostics(empty_rungs, refused_products),
     )
 
 
@@ -2818,6 +2897,7 @@ __all__ = [
     "ProviderObservationCancelled",
     "ProviderObservationInterrupted",
     "ProviderLaneResult",
+    "QualifiedLaneObservation",
     "ReportRepository",
     "ReportNotFoundError",
     "TargetFile",
@@ -2833,6 +2913,7 @@ __all__ = [
     "merge_provider_diagnostics",
     "metadata_discovery_plan",
     "metadata_lookup",
+    "observe_work_ladder",
     "promoted_asins",
     "provider_isbn_applicability",
     "provider_observation",

@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AudibleCatalogMetadataProvider,
     AudibleCatalogPacer,
 )
+from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
 from mechanical_librarian.application import metadata_report as m
 from mechanical_librarian.application.metadata_report import ProviderObservationFailure
 from mechanical_librarian.domain import metadata_report as d
@@ -25,6 +26,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
 )
+from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
     ClaimKind,
@@ -43,8 +45,10 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
+    work_query_ladder,
 )
 from tests.support.audiobook_providers import (
     asin_plan,
@@ -61,6 +65,7 @@ from tests.support.audiobook_reports import (
     asserted_asin_report,
     manual_audiobook_observation,
 )
+from tests.support.metadata_report_doubles import single_track_audio_facts
 
 _ASIN = "B08G9PRS1K"
 
@@ -1166,3 +1171,248 @@ def test_actual_asin_producer_binds_supported_name_language_conflict(
         )
         is not conflict
     )
+
+
+# The #1245 ladder: on an audiobook plan a rung whose products work-identity
+# admission refuses no longer ends the walk.
+_SUBTITLED = "Project Hail Mary: A Novel"
+_FOLDED = "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes"
+_FOLDED_AUTHORS = ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",)
+
+
+def _audiobook_work_plan(
+    title: str = _SUBTITLED, authors: tuple[str, ...] = ("Andy Weir",)
+) -> m.MetadataDiscoveryPlan:
+    return m.audiobook_discovery_plan(
+        audio_target(title, authors),
+        (target_title_claim(title),),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _search_page(*indices: int) -> dict[str, Any]:
+    """A search page of captured products: 0 is the work, 1 another one."""
+    products = payload("audible_search")["products"]
+    return {
+        "total_results": len(indices),
+        "products": [copy.deepcopy(products[index]) for index in indices],
+    }
+
+
+def _work_page(title: str) -> dict[str, Any]:
+    """One page whose only product is the work, under the stated title."""
+    page = _search_page(0)
+    page["products"][0]["title"] = title
+    return page
+
+
+def _ladder(title: str, authors: tuple[str, ...]) -> tuple[Any, ...]:
+    return tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(title, authors)
+    )
+
+
+def _pages(
+    *pages: dict[str, Any],
+) -> tuple[list[httpx.URL], Callable[[httpx.Request], httpx.Response]]:
+    seen: list[httpx.URL] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return _json(pages[len(seen) - 1])
+
+    return seen, handle
+
+
+def _observed(
+    handle: Callable[[httpx.Request], httpx.Response],
+    plan: m.MetadataDiscoveryPlan,
+    **arguments: Any,
+) -> m.ProviderResult:
+    provider = _provider(handle)
+    try:
+        return m.observe_provider(
+            "audible", "audible_catalog", provider, plan, **arguments
+        )
+    finally:
+        provider._client.close()
+
+
+def _diagnostics(observation: Any) -> tuple[tuple[Any, int], ...]:
+    return tuple((value.category, value.count) for value in observation.diagnostics)
+
+
+def _ladder_report(observation: Any, title: str, authors: tuple[str, ...]):
+    target = audio_target(title, authors)
+    return MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "item-1", target.fields),
+        file=d.FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(target_title_claim(title),),
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=single_track_audio_facts(),
+    )
+
+
+def test_a_refused_rung_continues_to_the_rung_that_admits() -> None:
+    seen, handle = _pages(_search_page(1), _work_page(_SUBTITLED))
+    result = _observed(handle, _audiobook_work_plan())
+    observation = result.observation
+
+    assert ["Project Hail Mary: A Novel", "Project Hail Mary"] == [
+        url.params["title"] for url in seen
+    ]
+    assert ProviderStatus.CANDIDATES is observation.status
+    lane = observation.lanes[0]
+    assert lane.dispatch_lineage == _ladder(_SUBTITLED, ("Andy Weir",))[1]
+    assert lane.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
+    assert () == lane.exhausted_dispatch
+    assert () == lane.diagnostics
+    # An admitted walk drops the earlier rung's refusal with the rest of it.
+    assert FailureCategory.WORK_IDENTITY_REFUSED not in {
+        category for category, _ in _diagnostics(observation)
+    }
+    retained = {candidate.identity for candidate in observation.candidates}
+    assert (
+        retained
+        and {
+            descriptor.provenance.edition_identity
+            for descriptor in result.cover_descriptors
+        }
+        <= retained
+    )
+
+
+@pytest.mark.parametrize(
+    ("title", "authors"),
+    ((_SUBTITLED, ("Andy Weir",)), (_FOLDED, _FOLDED_AUTHORS)),
+)
+def test_a_ladder_refused_on_every_rung_records_each_dispatch(
+    title: str, authors: tuple[str, ...]
+) -> None:
+    ladder = _ladder(title, authors)
+    seen, handle = _pages(*(_search_page(1, 2) for _ in ladder))
+    result = _observed(handle, _audiobook_work_plan(title, authors))
+    observation = result.observation
+
+    # Every rung is dispatched once, inside the reserved per-rung budget.
+    assert len(ladder) == len(seen) <= 24
+    assert ProviderStatus.NO_MATCH is observation.status
+    lane = observation.lanes[0]
+    assert ladder == lane.exhausted_dispatch
+    assert lane.dispatch_lineage is None and lane.transformation_lineage is None
+    assert d.work_ladder_diagnostics(0, 2 * len(ladder)) == lane.diagnostics
+    assert ((FailureCategory.WORK_IDENTITY_REFUSED, 2 * len(ladder)),) == (
+        _diagnostics(observation)
+    )
+    assert () == result.cover_descriptors
+    report = _ladder_report(observation, title, authors)
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+def test_empty_and_refused_rungs_are_counted_apart() -> None:
+    seen, handle = _pages(_search_page(), _search_page(1))
+    observation = _observed(handle, _audiobook_work_plan()).observation
+
+    assert 2 == len(seen)
+    lane = observation.lanes[0]
+    assert _ladder(_SUBTITLED, ("Andy Weir",)) == lane.exhausted_dispatch
+    assert d.work_ladder_diagnostics(1, 1) == lane.diagnostics
+    assert (
+        (FailureCategory.EMPTY_NO_MATCH, 1),
+        (FailureCategory.WORK_IDENTITY_REFUSED, 1),
+    ) == _diagnostics(observation)
+
+
+def test_an_empty_ladder_records_its_dispatches_and_stays_an_empty_no_match() -> None:
+    ladder = _ladder(_FOLDED, _FOLDED_AUTHORS)
+    seen, handle = _pages(*(_search_page() for _ in ladder))
+    observation = _observed(
+        handle, _audiobook_work_plan(_FOLDED, _FOLDED_AUTHORS)
+    ).observation
+
+    assert len(ladder) == len(seen)
+    lane = observation.lanes[0]
+    assert ladder == lane.exhausted_dispatch
+    assert d.work_ladder_diagnostics(len(ladder), 0) == lane.diagnostics
+    assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _diagnostics(observation)
+
+
+def test_an_admitted_first_rung_sends_exactly_one_request() -> None:
+    seen, handle = _pages(_work_page(_SUBTITLED))
+    observation = _observed(handle, _audiobook_work_plan()).observation
+
+    assert 1 == len(seen)
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert observation.lanes[0].dispatch_lineage.rung is WorkDispatchRung.NORMALIZED
+    assert (1, 0) == (
+        observation.request_accounting.initial_dispatches,
+        observation.request_accounting.retry_dispatches,
+    )
+
+
+def test_a_deadline_after_a_refused_rung_ends_incomplete_without_its_refusal() -> None:
+    seen, handle = _pages(_search_page(1), _work_page(_SUBTITLED))
+    # The shared pacer cannot start the second rung before the deadline.
+    pacer = ProviderRequestPacer(3.0, clock=lambda: 0.0, sleep=lambda value: None)
+    provider = AudibleCatalogMetadataProvider(
+        "audible",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        262_144,
+        5.0,
+        pacer=pacer,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_700_000_000.0,
+        sleep=lambda value: None,
+        jitter=lambda: 0.0,
+    )
+    try:
+        observation = m.observe_provider(
+            "audible",
+            "audible_catalog",
+            provider,
+            _audiobook_work_plan(),
+            deadline=2.0,
+        ).observation
+    finally:
+        provider._client.close()
+
+    assert 1 == len(seen)
+    assert ProviderStatus.INCOMPLETE is observation.status
+    lane = observation.lanes[0]
+    assert () == lane.exhausted_dispatch and () == lane.diagnostics
+    categories = {category for category, _ in _diagnostics(observation)}
+    assert FailureCategory.TIMEOUT in categories
+    assert FailureCategory.WORK_IDENTITY_REFUSED not in categories
+
+
+def test_a_terminal_rung_after_a_refusal_keeps_its_own_failure() -> None:
+    seen: list[httpx.URL] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return (
+            _json(_search_page(1))
+            if len(seen) == 1
+            else httpx.Response(200, text="<html></html>")
+        )
+
+    observation = _observed(handle, _audiobook_work_plan()).observation
+
+    assert 2 == len(seen)
+    assert ProviderStatus.MALFORMED is observation.status
+    assert () == observation.lanes[0].exhausted_dispatch
+    assert FailureCategory.WORK_IDENTITY_REFUSED not in {
+        category for category, _ in _diagnostics(observation)
+    }
+
+
+def test_an_ebook_plan_still_stops_at_the_first_rung_that_returned_products() -> None:
+    seen, handle = _pages(_search_page(1), _work_page(_SUBTITLED))
+    observation = _observed(handle, work_plan(title=_SUBTITLED)).observation
+
+    assert 1 == len(seen)
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert () == observation.lanes[0].exhausted_dispatch
+    assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _diagnostics(observation)

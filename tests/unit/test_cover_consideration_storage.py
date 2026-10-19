@@ -149,8 +149,18 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     assert fixture["source_sha"] == "3b11eefebd70ecf7d26015cc9e3f6ff78e95521c"
     database = tmp_path / "predecessor.sqlite"
     connection = sqlite3.connect(database)
-    with patch.object(
-        schema, "_COVER_CONSIDERATIONS_SQL", fixture["cover_considerations_sql"]
+    # The producer also predates #1245's report discriminator.
+    with (
+        patch.object(
+            schema, "_COVER_CONSIDERATIONS_SQL", fixture["cover_considerations_sql"]
+        ),
+        patch.object(
+            schema,
+            "_REPORTS_SQL",
+            schema._REPORTS_SQL.replace(
+                "= 'metadata-report-v50'", "= 'metadata-report-v49'"
+            ),
+        ),
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's

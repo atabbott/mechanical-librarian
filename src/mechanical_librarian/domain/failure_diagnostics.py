@@ -30,6 +30,7 @@ class FailureCategory(str, Enum):
     MALFORMED_OUTPUT = "malformed_output"
     CITATION_MEMBERSHIP = "citation_membership"
     IDENTITY = "identity"
+    WORK_IDENTITY_REFUSED = "work_identity_refused"
     CURRENTNESS = "currentness"
     PERSISTENCE = "persistence"
     UNKNOWN = "unknown"

@@ -78,7 +78,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v49"
+REPORT_SCHEMA = "metadata-report-v50"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2233,6 +2233,7 @@ class ProviderLaneObservation:
     diagnostics: tuple[FailureDiagnostic, ...] = ()
     dispatch_lineage: WorkDispatchLineage | None = None
     transformation_lineage: WorkTitleTransformationLineage | None = None
+    exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -2304,6 +2305,52 @@ class ProviderLaneObservation:
             )
         ):
             raise ReportValueError("provider lane candidates are invalid")
+        if type(self.exhausted_dispatch) is not tuple or any(
+            type(value) is not WorkDispatchLineage for value in self.exhausted_dispatch
+        ):
+            raise ReportValueError("provider lane exhausted dispatch is invalid")
+        if not self.exhausted_dispatch:
+            # Admission refusal is a ladder fact, so only a lane that walked
+            # its whole ladder can state it.
+            if any(
+                value.category is FailureCategory.WORK_IDENTITY_REFUSED
+                for value in self.diagnostics
+            ):
+                raise ReportValueError("provider lane refusal is invalid")
+            return
+        # Every dispatched rung was either empty or returned products that
+        # work-identity admission refused, and the lane states how many of
+        # each: empty rungs, and refused products rather than refused rungs.
+        empty_rungs = next(
+            (
+                value.count
+                for value in self.diagnostics
+                if value.category is FailureCategory.EMPTY_NO_MATCH
+            ),
+            0,
+        )
+        refused_products = next(
+            (
+                value.count
+                for value in self.diagnostics
+                if value.category is FailureCategory.WORK_IDENTITY_REFUSED
+            ),
+            0,
+        )
+        refused_rungs = len(self.exhausted_dispatch) - empty_rungs
+        if (
+            self.kind is not ProviderQueryKind.WORK
+            or self.status is not ProviderStatus.NO_MATCH
+            or self.dispatch_lineage is not None
+            or self.transformation_lineage is not None
+            or len(set(self.exhausted_dispatch)) != len(self.exhausted_dispatch)
+            or refused_rungs < 0
+            or (refused_rungs > 0) != (refused_products > 0)
+            or refused_products < refused_rungs
+            or self.diagnostics
+            != work_ladder_diagnostics(empty_rungs, refused_products)
+        ):
+            raise ReportValueError("provider lane exhausted dispatch is invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -2324,7 +2371,36 @@ class ProviderLaneObservation:
                 if self.transformation_lineage is None
                 else self.transformation_lineage.to_data()
             ),
+            "exhausted_dispatch": [
+                value.to_data() for value in self.exhausted_dispatch
+            ],
         }
+
+
+def work_ladder_diagnostics(
+    empty_rungs: int, refused_products: int
+) -> tuple[FailureDiagnostic, ...]:
+    """State one exhausted WORK ladder's empty rungs and refused products."""
+    return tuple(
+        value
+        for value in (
+            FailureDiagnostic(
+                FailureCategory.EMPTY_NO_MATCH,
+                FailureComponent.PROVIDER,
+                FailureStage.RESPONSE,
+                retryable=False,
+                count=empty_rungs,
+            ),
+            FailureDiagnostic(
+                FailureCategory.WORK_IDENTITY_REFUSED,
+                FailureComponent.PROVIDER,
+                FailureStage.IDENTITY,
+                retryable=False,
+                count=refused_products,
+            ),
+        )
+        if value.count
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2368,6 +2444,7 @@ _PROVIDER_DIAGNOSTIC_STAGES = {
     FailureCategory.TIMEOUT: FailureStage.REQUEST,
     FailureCategory.TRANSPORT: FailureStage.REQUEST,
     FailureCategory.UNKNOWN: FailureStage.RESPONSE,
+    FailureCategory.WORK_IDENTITY_REFUSED: FailureStage.IDENTITY,
 }
 
 
@@ -3435,6 +3512,31 @@ class MetadataReport:
                 )
             ):
                 raise ReportValueError("recording lookup work identity is inconsistent")
+            exhausted = tuple(
+                lane.exhausted_dispatch
+                for lane in provider.lanes
+                if lane.exhausted_dispatch
+            )
+            # An exhausted lane walked its target's whole audiobook ladder, in
+            # ladder order, so its lineages replay from the target alone.
+            if exhausted and (
+                not is_audio
+                or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                or target_title is None
+                or not target_authors
+                or any(
+                    value
+                    != tuple(
+                        WorkDispatchLineage.from_query(query)
+                        for query in work_query_ladder(
+                            normalize_title(target_title),
+                            tuple(normalize_title(author) for author in target_authors),
+                        )
+                    )
+                    for value in exhausted
+                )
+            ):
+                raise ReportValueError("provider exhausted dispatch is inconsistent")
             witness = provider.edition_enrichment_overflow
             if witness is not None:
                 work_lanes = tuple(
@@ -5707,6 +5809,7 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
         {
             "candidates",
             "diagnostics",
+            "exhausted_dispatch",
             "identity",
             "input_references",
             "kind",
@@ -5741,6 +5844,10 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
             else work_title_transformation_lineage_from_data(
                 item["transformation_lineage"]
             )
+        ),
+        tuple(
+            work_dispatch_lineage_from_data(value)
+            for value in _list(item["exhausted_dispatch"])
         ),
     )
 
@@ -6123,6 +6230,7 @@ __all__ = [
     "provider_lane_candidate_reference",
     "stable_reference",
     "validate_observed_title",
+    "work_ladder_diagnostics",
 ]
 
 

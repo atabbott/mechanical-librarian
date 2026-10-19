@@ -27,6 +27,7 @@ def provider_attempt_diagnostics(
     status: str | None = None,
     incomplete_causes: object = (),
     identity_conflict_only: bool = False,
+    work_identity_refused_only: bool = False,
 ) -> tuple[FailureDiagnostic, ...]:
     """Discard attempt payload details and return deterministic bounded aggregates."""
 
@@ -183,6 +184,11 @@ def provider_attempt_diagnostics(
             # diagnostic.
             status == "malformed" and identity_conflict_only
         )
+        and not (
+            # Products that work-identity admission refused on every rung are
+            # stated by the lanes as refusals, not as an empty response.
+            status == "no_match" and work_identity_refused_only
+        )
         and not any(category is required[0] for category, _, _ in counts)
     ):
         counts[required] = 1
@@ -316,18 +322,50 @@ def _identity_conflict_is_the_only_over_bound_reason(
     )
 
 
+def _work_identity_refusal_is_the_only_no_match_reason(
+    observation: ProviderObservation,
+) -> bool:
+    """Report whether every no-match lane had all its products refused."""
+    no_match = tuple(
+        lane for lane in observation.lanes if lane.status is ProviderStatus.NO_MATCH
+    )
+    return bool(no_match) and all(
+        lane.exhausted_dispatch
+        and not any(
+            value.category is FailureCategory.EMPTY_NO_MATCH
+            for value in lane.diagnostics
+        )
+        for lane in no_match
+    )
+
+
 def provider_result_diagnostics(
     observation: ProviderObservation, evidence: ProviderOperationalEvidence
 ) -> tuple[FailureDiagnostic, ...]:
-    """Merge adapter diagnostics and operational evidence exactly once."""
+    """Merge adapter diagnostics, lane refusals and operational evidence once.
+
+    The refused-product count is lifted from the lanes here and nowhere else, so
+    a retry successor that merges two of these results never counts it twice.
+    """
     return merge_provider_diagnostics(
         observation.diagnostics,
+        *(
+            tuple(
+                value
+                for value in lane.diagnostics
+                if value.category is FailureCategory.WORK_IDENTITY_REFUSED
+            )
+            for lane in observation.lanes
+        ),
         provider_attempt_diagnostics(
             evidence.attempt_records,
             status=observation.status.value,
             incomplete_causes=evidence.incomplete_causes,
             identity_conflict_only=_identity_conflict_is_the_only_over_bound_reason(
                 observation
+            ),
+            work_identity_refused_only=(
+                _work_identity_refusal_is_the_only_no_match_reason(observation)
             ),
         ),
     )

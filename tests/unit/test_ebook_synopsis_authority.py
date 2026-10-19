@@ -238,10 +238,10 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation():
         AutomaticDecision,
         qualification_manifest_is_current,
     )
-    from mechanical_librarian.domain.metadata_report import MetadataReport
     from mechanical_librarian.domain.proposal_set import ProposalSet
     from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet
     from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.support.metadata_report_schemas import retained_report_as_current
 
     root = Path(__file__).parents[1] / "fixtures/ebook-synopsis-predecessor"
     for capture in (root, root / "qualified"):
@@ -265,7 +265,7 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation():
                 == provenance["files"][name]
             )
         for scenario in ("duplicate", "extent", "concise"):
-            MetadataReport.from_json(
+            retained_report_as_current(
                 (capture / f"{scenario}-report.json").read_text().strip()
             )
             with pytest.raises(ValueError, match="proposal document is invalid"):

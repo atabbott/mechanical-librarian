@@ -45,7 +45,9 @@ from mechanical_librarian.application.metadata_report import (
     ProviderFailureSnapshot,
     ProviderLaneResult,
     ProviderResult,
+    QualifiedLaneObservation,
     merge_provider_cover_descriptors,
+    observe_work_ladder,
     provider_observation,
     qualify_provider_observation,
 )
@@ -307,8 +309,8 @@ class AudibleCatalogMetadataProvider:
             for lane in plan.lanes:
                 self._cover_descriptors = ()
                 lookup = _lane_lookup(lane, plan)
-                physical = self._resolve(ledger, lane, lookup, deadline=deadline)
-                observation = qualify_provider_observation(physical, lookup)
+                qualified = self._resolve(ledger, lane, lookup, deadline=deadline)
+                observation = qualified.observation
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -316,8 +318,10 @@ class AudibleCatalogMetadataProvider:
                         observation.candidates,
                         observation.accessed_at,
                         recording_lookup_candidates=observation.recording_lookup_candidates,
+                        diagnostics=qualified.diagnostics,
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
+                        exhausted_dispatch=qualified.exhausted_dispatch,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -348,19 +352,23 @@ class AudibleCatalogMetadataProvider:
         lookup: MetadataLookup,
         *,
         deadline: float | None,
-    ) -> ProviderObservation:
+    ) -> QualifiedLaneObservation:
         """Dispatch one lane's work through the ledger's replay boundary.
 
         The dispatch lives outside the lane loop so the closure below binds this
-        one lane rather than whichever lane the loop reached last.
+        one lane rather than whichever lane the loop reached last. A WORK lane's
+        ladder walk qualifies every rung it dispatches, so its result arrives
+        already qualified.
         """
         if lane.kind is ProviderQueryKind.ASIN:
             physical, _replayed = ledger.resolve_detail(
                 _lane_asin(lane),
                 execute=lambda: self._observe_asin(lane, lookup, deadline=deadline),
             )
-            return physical
-        physical, _replayed = ledger.resolve(
+            return QualifiedLaneObservation(
+                qualify_provider_observation(physical, lookup)
+            )
+        qualified, _replayed = ledger.resolve(
             kind=lane.kind.value,
             matched_family=lane.matched_family,
             title=lane.title,
@@ -368,7 +376,7 @@ class AudibleCatalogMetadataProvider:
             projection=_RESPONSE_GROUPS,
             execute=lambda: self._observe_work(lookup, deadline=deadline),
         )
-        return physical
+        return qualified
 
     def _observe_asin(
         self,
@@ -431,18 +439,19 @@ class AudibleCatalogMetadataProvider:
         lookup: MetadataLookup,
         *,
         deadline: float | None,
-    ) -> ProviderObservation:
-        if lookup.title is None or not lookup.authors:
-            return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
-        queries = work_query_ladder(lookup.title, lookup.authors)
-        if not queries:
-            return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
-        last = self._result(lookup, ProviderStatus.NO_MATCH)
-        for query in queries:
-            last = self._observe_work_query(lookup, query, deadline=deadline)
-            if last.status is not ProviderStatus.NO_MATCH:
-                return last
-        return last
+    ) -> QualifiedLaneObservation:
+        if (
+            lookup.title is None
+            or not lookup.authors
+            or not work_query_ladder(lookup.title, lookup.authors)
+        ):
+            return QualifiedLaneObservation(
+                self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
+            )
+        return observe_work_ladder(
+            lookup,
+            lambda query: self._observe_work_query(lookup, query, deadline=deadline),
+        )
 
     def _observe_work_query(
         self,

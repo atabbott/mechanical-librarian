@@ -669,6 +669,7 @@ class GenerateProviderRetrySuccessor:
                 observation.diagnostics,
                 observation.dispatch_lineage,
                 observation.transformation_lineage,
+                exhausted_dispatch=observation.exhausted_dispatch,
             )
 
         merged = provider_observation(
