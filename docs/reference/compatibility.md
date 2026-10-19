@@ -41,7 +41,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v52` plus `proposal-set-v8` under
+  `metadata-report-v53` plus `proposal-set-v8` under
   `fixed-conservative-v33`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
@@ -365,3 +365,12 @@ runtime band and an `empty_no_match` rung may be one the band emptied. A v51
 lane meant the unnarrowed page, so the exact SQLite discriminator requires a
 **clean rebuild** under ADR-0013. Prior v51 reports and stores are refused
 before mutation. No migration, adoption or relabelling is supplied.
+
+## Band-first recording-lookup hints (#1257)
+
+Report `metadata-report-v53` adds `recording_lookup_hints` to every provider
+lane: up to two Audible products refused on title whose runtime is inside the
+tight band, which the ASIN feed looks up last. A fed ASIN answer naming another
+work now keeps only its ASIN. The exact SQLite discriminator requires a **clean
+rebuild** under ADR-0013. Prior v52 reports and stores are refused before
+mutation. No migration, adoption or relabelling is supplied.

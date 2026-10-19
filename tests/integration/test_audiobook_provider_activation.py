@@ -501,7 +501,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v52" == published.schema_version
+        assert "metadata-report-v53" == published.schema_version
         # Three authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -1823,3 +1823,317 @@ def test_an_ebook_plan_carries_no_alternative_and_no_audiobook_family() -> None:
         for query in work_query_ladder(title, ("Andy Weir",))
         for family in query.transformations
     }
+
+
+# #1257: a refused tight-band product's ASIN reaches the per-ASIN lanes as a
+# lookup-only hint, over the real Audible and Audnexus adapters. Every name
+# and identifier here is synthetic.
+_HINT_ASIN = "B000000011"
+
+
+def _hint_flow(
+    root: Path,
+    audible: Callable[[str], list[dict[str, object]]],
+    *,
+    audnexus_titles: Mapping[str, str] | None = None,
+    audnexus_minutes: Mapping[str, int] | None = None,
+    alternative: str | None = None,
+    target_asin: str | None = None,
+) -> tuple[MetadataReport, tuple[object, ...], list[str], dict[str, int]]:
+    """Publish one runtime-bearing audiobook, asserting at most a target ASIN."""
+    import copy
+    from dataclasses import replace
+
+    import httpx
+
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.audnexus_metadata import (
+        AudnexusMetadataProvider,
+    )
+    from mechanical_librarian.domain.metadata_report import AudioDiscoveryTitle
+    from tests.support.audiobook_providers import payload
+
+    root.mkdir(mode=0o700, exist_ok=True)
+    inspected = AudioInspectionResult(
+        _CONTENT_DIGEST,
+        (_local_claim(ClaimKind.DURATION, _LOCAL_DURATION, 1),),
+        AudioFacts(
+            embedded_cover=AudioEmbeddedCover(False),
+            tracks=(
+                AudioTrackDigest(1, _FILE_IDENTITY, _CONTENT_DIGEST, "m4b", "book.m4b"),
+            ),
+        ),
+    )
+    if alternative is not None:
+        inspected = replace(
+            inspected,
+            audio=replace(
+                inspected.audio,
+                discovery_titles=(AudioDiscoveryTitle("path_leaf", alternative),),
+            ),
+        )
+
+    def client(handler: Callable[[httpx.Request], httpx.Response]) -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(handler))
+
+    def search(request: httpx.Request) -> httpx.Response:
+        products = audible(request.url.params["title"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"total_results": len(products), "products": products},
+        )
+
+    requests: list[str] = []
+
+    def books(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path.endswith("/chapters"):
+            return httpx.Response(404, json={})
+        asin = request.url.path.split("/")[2]
+        book = copy.deepcopy(payload("audnexus_book"))
+        book["asin"] = asin
+        book["title"] = (audnexus_titles or {}).get(asin, "Project Hail Mary")
+        if asin in (audnexus_minutes or {}):
+            book["runtimeLengthMin"] = (audnexus_minutes or {})[asin]
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=book
+        )
+
+    def adapter(
+        kind: type, name: str, handler: Callable
+    ) -> Callable[[], MetadataProvider]:
+        return lambda: kind(
+            name,
+            client(handler),
+            262144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1700000000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+
+    calls: list[tuple[str, ProviderQueryKind]] = []
+    providers: dict[str, MetadataProvider | Callable[[], MetadataProvider]] = {
+        "audible_catalog": adapter(AudibleCatalogMetadataProvider, "audible", search),
+        "audnexus": adapter(AudnexusMetadataProvider, "enrichment", books),
+        "audiosilo": _FakeAudiobookProvider(
+            "silo", "audiosilo", calls, status=ProviderStatus.NO_MATCH
+        ),
+        "itunes_search": _FakeAudiobookProvider(
+            "store",
+            "itunes_search",
+            calls,
+            status=ProviderStatus.NO_MATCH,
+            lane_kinds=frozenset({ProviderQueryKind.WORK}),
+        ),
+    }
+    snapshot = _snapshot()
+    if target_asin is not None:
+        snapshot = replace(
+            snapshot,
+            fields=tuple(
+                TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, target_asin)
+                if field.destination is TargetDestination.ASIN
+                else field
+                for field in snapshot.fields
+            ),
+        )
+    with (
+        patch(__name__ + "._audio_result", return_value=inspected),
+        patch(__name__ + "._CONTENT_DIGEST", inspected.content_digest),
+        patch(__name__ + "._snapshot", return_value=snapshot),
+    ):
+        serialized, repository = _run(root, providers)
+    try:
+        work = repository._connection.execute(
+            "SELECT stage,state,outcome FROM review_preparation_work"
+        ).fetchone()
+        rows = {
+            table: repository._connection.execute(
+                f"SELECT count(*) FROM {table}"
+            ).fetchone()[0]
+            for table in ("review_cases", "automatic_decisions", "field_effects")
+        }
+    finally:
+        repository.close()
+    return MetadataReport.from_json(serialized), work, requests, rows
+
+
+def _audible_product(asin: str, title: str, minutes: int = 970) -> dict[str, object]:
+    return {
+        "asin": asin,
+        "title": title,
+        "authors": [{"name": "Andy Weir"}],
+        "runtime_length_min": minutes,
+    }
+
+
+def _hinted_lane(report: MetadataReport):
+    audible = _audible(report)
+    return next(
+        lane
+        for lane in audible.lanes
+        if lane.kind is ProviderQueryKind.WORK and lane.recording_lookup_hints
+    )
+
+
+def test_a_hint_whose_mirror_states_an_admissible_title_admits(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.domain.proposal_set import (
+        AudiobookReviewScope,
+        audiobook_review_scope,
+    )
+
+    report, work, requests, _rows = _hint_flow(
+        tmp_path, lambda _title: [_audible_product(_HINT_ASIN, "Wrong Title")]
+    )
+
+    (hint,) = _hinted_lane(report).recording_lookup_hints
+    assert (_HINT_ASIN, 58_200) == (hint.asin, hint.runtime_seconds)
+    assert f"/books/{_HINT_ASIN}" in requests
+    enrichment = next(
+        value for value in report.providers if value.provider == "enrichment"
+    )
+    assert ProviderStatus.CANDIDATES is enrichment.status
+    assert AudiobookReviewScope.RECORDING is audiobook_review_scope(report)
+    assert ("proposal", "queued", None) == work
+
+
+def test_a_hint_whose_mirror_repeats_the_refused_title_leaves_nothing(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        recording_identity_basis,
+    )
+
+    report, work, requests, rows = _hint_flow(
+        tmp_path,
+        lambda _title: [_audible_product(_HINT_ASIN, "Wrong Title")],
+        audnexus_titles={_HINT_ASIN: "Wrong Title"},
+    )
+
+    assert _hinted_lane(report).recording_lookup_hints
+    assert f"/books/{_HINT_ASIN}" in requests
+    assert ("complete", "complete", "evidence_only") == work
+    assert {"review_cases": 0, "automatic_decisions": 0, "field_effects": 0} == rows
+    assert recording_identity_basis(report) is None
+
+
+@pytest.mark.parametrize("runtime", ["in_band", "unstated"])
+def test_a_target_fed_asin_naming_another_work_leaves_nothing(
+    tmp_path: Path, runtime: str
+) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        recording_identity_basis,
+    )
+    from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+
+    report, work, requests, rows = _hint_flow(
+        tmp_path,
+        lambda _title: [],
+        audnexus_titles={_HINT_ASIN: "Wrong Title"},
+        audnexus_minutes={} if runtime == "in_band" else {_HINT_ASIN: 0},
+        target_asin=_HINT_ASIN,
+    )
+
+    assert f"/books/{_HINT_ASIN}" in requests
+    assert not any(lane.recording_lookup_hints for lane in _audible(report).lanes)
+    assert ("complete", "complete", "evidence_only") == work
+    assert {"review_cases": 0, "automatic_decisions": 0, "field_effects": 0} == rows
+    assert recording_identity_basis(report) is None
+    assert audiobook_review_scope(report) is None
+
+
+def test_a_hint_admitted_on_title_but_out_of_band_stays_work_only(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        admitted_audiobook_identity,
+        recording_identity_basis,
+    )
+    from mechanical_librarian.domain.proposal_set import (
+        AudiobookReviewScope,
+        audiobook_review_scope,
+    )
+
+    report, _work, requests, _rows = _hint_flow(
+        tmp_path,
+        lambda _title: [_audible_product(_HINT_ASIN, "Wrong Title")],
+        audnexus_minutes={_HINT_ASIN: 900},
+    )
+
+    assert _hinted_lane(report).recording_lookup_hints
+    assert f"/books/{_HINT_ASIN}" in requests
+    assert not admitted_audiobook_identity(report)
+    assert recording_identity_basis(report) is None
+    assert AudiobookReviewScope.WORK is audiobook_review_scope(report)
+
+
+def test_an_out_of_band_refused_product_is_never_looked_up(tmp_path: Path) -> None:
+    report, work, requests, _rows = _hint_flow(
+        tmp_path, lambda _title: [_audible_product(_HINT_ASIN, "Wrong Title", 900)]
+    )
+
+    assert all(
+        not lane.recording_lookup_hints
+        for provider in report.providers
+        for lane in provider.lanes
+    )
+    assert [] == requests
+    assert ("complete", "complete", "evidence_only") == work
+
+
+def test_a_hint_beside_an_admitted_product_leaves_its_outcome_unchanged(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.domain.proposal_set import (
+        audiobook_review_scope,
+        evaluate_report,
+    )
+
+    admitted = _audible_product(_ASIN, "Project Hail Mary")
+    titles = {_HINT_ASIN: "Wrong Title"}
+    report, work, requests, _rows = _hint_flow(
+        tmp_path / "hinted",
+        lambda _title: [admitted, _audible_product(_HINT_ASIN, "Wrong Title")],
+        audnexus_titles=titles,
+    )
+    baseline, base_work, base_requests, _ = _hint_flow(
+        tmp_path / "baseline", lambda _title: [admitted], audnexus_titles=titles
+    )
+
+    lane = _hinted_lane(report)
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert (_HINT_ASIN,) == tuple(value.asin for value in lane.recording_lookup_hints)
+    assert f"/books/{_HINT_ASIN}" in requests
+    assert f"/books/{_HINT_ASIN}" not in base_requests
+    assert work == base_work == ("proposal", "queued", None)
+    assert audiobook_review_scope(report) == audiobook_review_scope(baseline)
+    assert [value.to_data() for value in evaluate_report(report).results] == [
+        value.to_data() for value in evaluate_report(baseline).results
+    ]
+
+
+def test_the_alternative_lanes_refused_tight_product_is_no_hint(
+    tmp_path: Path,
+) -> None:
+    report, _work, requests, _rows = _hint_flow(
+        tmp_path,
+        lambda title: (
+            []
+            if title == "Project Hail Mary"
+            else [_audible_product(_HINT_ASIN, "Wrong")]
+        ),
+        alternative="The Real Title",
+    )
+
+    audible = _audible(report)
+    assert 2 == len(audible.lanes)
+    assert all(not lane.recording_lookup_hints for lane in audible.lanes)
+    assert [] == requests

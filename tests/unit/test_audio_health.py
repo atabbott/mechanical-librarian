@@ -213,7 +213,12 @@ def _demoted_search_lane(
             ProviderQueryKind.ASIN,
             "audible_catalog",
         ),
-        MetadataLookup(ProviderQueryKind.ASIN, claims),
+        MetadataLookup(
+            ProviderQueryKind.ASIN,
+            claims,
+            work_title="Project Hail Mary",
+            work_authors=("Andy Weir",),
+        ),
     )
 
 

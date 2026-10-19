@@ -1424,6 +1424,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="overflow-runtime-narrowing-predecessor-f46",
         ),
+        pytest.param(
+            "b3178f2f3bb157e06d34e2296f045a51879585406befbe1de3134fd965901e21",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="recording-lookup-hints-predecessor-f19a",
+        ),
+        pytest.param(
+            "7593157b9e1e456ef6ae8b0d7b46731dddb8396a352a50c5eba6df71db8d37de",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="recording-lookup-hints-predecessor-f20",
+        ),
+        pytest.param(
+            "f0bab4c99b2670f6395f757d9d358f52c658d9939ec1024968a06940b15d3289",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="recording-lookup-hints-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

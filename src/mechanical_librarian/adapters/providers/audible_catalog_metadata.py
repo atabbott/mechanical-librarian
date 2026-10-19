@@ -366,6 +366,7 @@ class AudibleCatalogMetadataProvider:
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
                         exhausted_dispatch=qualified.exhausted_dispatch,
+                        recording_lookup_hints=qualified.recording_lookup_hints,
                     )
                 )
                 merged = merge_provider_cover_descriptors(

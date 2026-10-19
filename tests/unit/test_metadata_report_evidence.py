@@ -2511,3 +2511,361 @@ def test_valid_provider_title_retains_exact_unicode(
         applicability="not_applicable",
     )
     assert claim.value == value
+
+
+def _hinted_admission(
+    hints: tuple[str, ...] = ("B000000011",),
+) -> MetadataReport:
+    """An asserted lane admitted on its one rung beside band-first hints (#1257)."""
+    from mechanical_librarian.application.metadata_report import (
+        ProviderLaneResult,
+        provider_observation,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        FileFacts,
+        RecordingLookupHint,
+        TargetFacts,
+        WorkDispatchLineage,
+    )
+    from mechanical_librarian.domain.work_identity import work_query_ladder
+    from tests.support.audiobook_providers import work_plan
+    from tests.support.audiobook_reports import (
+        audio_local_claims,
+        audio_target_fields,
+        audiobook_candidate,
+    )
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    plan = work_plan(*audio_local_claims())
+    rung = WorkDispatchLineage.from_query(
+        work_query_ladder("Project Hail Mary", ("Andy Weir",), audiobook=True)[0]
+    )
+    candidate = audiobook_candidate(
+        plan.local_claims, provider="audible", identity="audible-product-B08G9PRS1K"
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=plan.local_claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(
+            provider_observation(
+                "audible",
+                (
+                    ProviderLaneResult(
+                        plan.lanes[0],
+                        ProviderStatus.CANDIDATES,
+                        (candidate,),
+                        dispatch_lineage=rung,
+                        recording_lookup_hints=tuple(
+                            RecordingLookupHint(asin, 58_200, rung) for asin in hints
+                        ),
+                    ),
+                ),
+                authority="audible_catalog",
+            ),
+        ),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _readdressed(data: dict[str, object]) -> str:
+    import hashlib
+
+    identity = dict(data)
+    identity.pop("report_id")
+    data["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+    )
+    return canonical_json(data)
+
+
+def _hint_lane(data: dict[str, object], provider: int = 0) -> dict[str, object]:
+    providers = cast(list[dict[str, object]], data["providers"])
+    lanes = cast(list[dict[str, object]], providers[provider]["lanes"])
+    return lanes[0]
+
+
+def _hint_at(data: dict[str, object], provider: int = 0) -> dict[str, object]:
+    hints = cast(
+        list[dict[str, object]], _hint_lane(data, provider)["recording_lookup_hints"]
+    )
+    return hints[0]
+
+
+def _other_rung() -> dict[str, object]:
+    from mechanical_librarian.domain.metadata_report import WorkDispatchLineage
+    from mechanical_librarian.domain.work_identity import work_query_ladder
+
+    return WorkDispatchLineage.from_query(
+        work_query_ladder("Project Hail Mary: A Novel", ("Andy Weir",), audiobook=True)[
+            1
+        ]
+    ).to_data()
+
+
+def _foreign(data: dict[str, object]) -> None:
+    cast(list[dict[str, object]], data["providers"])[0]["authority"] = "google_books"
+
+
+def _audnexus(data: dict[str, object]) -> None:
+    cast(list[dict[str, object]], data["providers"])[0]["authority"] = "audnexus"
+
+
+def _itunes(data: dict[str, object]) -> None:
+    cast(list[dict[str, object]], data["providers"])[0]["authority"] = "itunes_search"
+
+
+def _duplicated(data: dict[str, object]) -> None:
+    _hint_at(data)["asin"] = "B000000001"
+
+
+def _out_of_band(data: dict[str, object]) -> None:
+    _hint_at(data)["runtime_seconds"] = 58_244 + 91
+
+
+def _admitted_duplicate(data: dict[str, object]) -> None:
+    _hint_at(data)["asin"] = "B08G9PRS1K"
+
+
+def _unladdered_rung(data: dict[str, object]) -> None:
+    _hint_at(data)["rung"] = _other_rung()
+
+
+def _unladdered_dispatch(data: dict[str, object]) -> None:
+    lineage = cast(dict[str, object], _hint_lane(data)["dispatch_lineage"])
+    lineage["candidate_limit_narrowing_retry"] = True
+
+
+def _second_audible(data: dict[str, object]) -> None:
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    second = recording_lookup_hint_report(
+        hint_asins=("B000000021", "B000000022"), provider="audible-second"
+    )
+    cast(list[object], data["providers"]).extend(
+        json.loads(second.to_json())["providers"]
+    )
+
+
+def _three_hints(data: dict[str, object]) -> None:
+    hints = cast(list[object], _hint_lane(data)["recording_lookup_hints"])
+    rung = cast(dict[str, object], hints[0])["rung"]
+    hints.extend(
+        {
+            "asin": asin,
+            "basis": "runtime_within_tight_band",
+            "rung": rung,
+            "runtime_seconds": 58_200,
+        }
+        for asin in ("B000000021", "B000000022")
+    )
+
+
+def _hint_base(base: str) -> MetadataReport:
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    if base == "admitted":
+        return _hinted_admission()
+    return recording_lookup_hint_report(lookup_asins=("B000000001",))
+
+
+@pytest.mark.parametrize(
+    ("base", "mutations", "message"),
+    (
+        ("admitted", (_foreign,), "recording lookup hint provenance is invalid"),
+        ("admitted", (_audnexus,), "recording lookup hint provenance is invalid"),
+        ("admitted", (_itunes,), "recording lookup hint provenance is invalid"),
+        ("lookup", (_audnexus,), "recording lookup hint provenance is invalid"),
+        ("lookup", (_itunes,), "recording lookup hint provenance is invalid"),
+        (
+            "admitted",
+            (_foreign, _admitted_duplicate, _out_of_band),
+            "recording lookup hint provenance is invalid",
+        ),
+        ("admitted", (_unladdered_rung,), "recording lookup hint rung is inconsistent"),
+        (
+            "admitted",
+            (_unladdered_dispatch,),
+            "recording lookup hint rung is inconsistent",
+        ),
+        (
+            "admitted",
+            (_unladdered_rung, _admitted_duplicate),
+            "recording lookup hint rung is inconsistent",
+        ),
+        ("admitted", (_admitted_duplicate,), "duplicates a retained product"),
+        ("lookup", (_duplicated,), "duplicates a retained product"),
+        ("lookup", (_duplicated, _out_of_band), "duplicates a retained product"),
+        ("lookup", (_out_of_band,), "recording lookup hint is outside the tight band"),
+        (
+            "lookup",
+            (_out_of_band, _second_audible),
+            "recording lookup hint is outside the tight band",
+        ),
+        ("lookup", (_three_hints,), "provider lane recording lookup hints are invalid"),
+    ),
+    ids=(
+        "foreign_authority",
+        "audnexus_authority",
+        "itunes_authority",
+        "audnexus_lookup_authority",
+        "itunes_lookup_authority",
+        "provenance_first",
+        "rung_outside_ladder",
+        "admission_outside_ladder",
+        "rung_before_duplicate",
+        "admitted_asin",
+        "exact_lookup_asin",
+        "duplicate_before_band",
+        "outside_band",
+        "band_with_a_second_provider",
+        "over_provider_bound",
+    ),
+)
+def test_a_report_replays_its_recording_lookup_hints_in_precedence_order(
+    base: str,
+    mutations: tuple[Callable[[dict[str, object]], None], ...],
+    message: str,
+) -> None:
+    report = _hint_base(base)
+    assert report == MetadataReport.from_json(report.to_json())
+    data = cast(dict[str, object], json.loads(report.to_json()))
+    for mutate in mutations:
+        mutate(data)
+    with pytest.raises(ReportValueError, match=message):
+        MetadataReport.from_json(_readdressed(data))
+
+
+def test_two_audible_providers_each_keep_their_own_hint_bound() -> None:
+    """The bound is per Audible observation: each has one asserted lane."""
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    data = cast(
+        dict[str, object],
+        json.loads(
+            recording_lookup_hint_report(
+                hint_asins=("B000000011", "B000000012")
+            ).to_json()
+        ),
+    )
+    _second_audible(data)
+    report = MetadataReport.from_json(_readdressed(data))
+
+    assert 4 == sum(
+        len(lane.recording_lookup_hints)
+        for provider in report.providers
+        for lane in provider.lanes
+    )
+    assert report == MetadataReport.from_json(report.to_json())
+
+
+def test_an_ebook_report_carries_no_recording_lookup_hint() -> None:
+    data = cast(dict[str, object], json.loads(_hinted_admission().to_json()))
+    data["audio"] = None
+    cast(dict[str, object], data["file"])["format"] = "epub"
+    with pytest.raises(
+        ReportValueError, match="recording lookup hint provenance is invalid"
+    ):
+        MetadataReport.from_json(_readdressed(data))
+
+
+def test_the_alternative_lane_cannot_carry_a_forged_hint() -> None:
+    """The #1255 rule holds for hints: only the asserted lane states them."""
+    from mechanical_librarian.domain.metadata_report import (
+        FileFacts,
+        ProviderLaneObservation,
+        ProviderObservation,
+        ProviderQueryKind,
+        RecordingLookupHint,
+        TargetFacts,
+        WorkDispatchLineage,
+        work_ladder_diagnostics,
+    )
+    from mechanical_librarian.domain.work_identity import work_query_ladder
+    from tests.support.audiobook_providers import (
+        alternative_work_plan,
+        audio_target,
+        local_runtime_claim,
+    )
+
+    plan = alternative_work_plan()
+    local = (*plan.local_claims, local_runtime_claim())
+    lanes = []
+    for lane in plan.lanes:
+        ladder = tuple(
+            WorkDispatchLineage.from_query(query)
+            for query in work_query_ladder(
+                lane.title or "", lane.authors, audiobook=True
+            )
+        )
+        hints = (
+            (RecordingLookupHint("B000000011", 58_200, ladder[0]),)
+            if lane.title_basis is not None
+            else ()
+        )
+        lanes.append(
+            ProviderLaneObservation(
+                lane.identity,
+                ProviderQueryKind.WORK,
+                ProviderStatus.NO_MATCH,
+                lane.input_references,
+                diagnostics=work_ladder_diagnostics(0, len(ladder)),
+                exhausted_dispatch=ladder,
+                recording_lookup_hints=hints,
+            )
+        )
+    lanes.sort(key=lambda value: value.identity)
+    diagnostics = work_ladder_diagnostics(
+        0, sum(len(v.exhausted_dispatch) for v in lanes)
+    )
+    with pytest.raises(
+        ReportValueError, match="recording lookup hint provenance is invalid"
+    ):
+        MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "audio",
+                "item-1",
+                audio_target("Asserted Title", ("Ada Author",)).fields,
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+            local_claims=local,
+            local_reasons=("target_metadata_title",),
+            providers=(
+                ProviderObservation(
+                    "audible",
+                    ProviderStatus.NO_MATCH,
+                    tuple(sorted({r for v in lanes for r in v.input_references})),
+                    query_kind=ProviderQueryKind.DISCOVERY,
+                    authority="audible_catalog",
+                    lanes=tuple(lanes),
+                    diagnostics=diagnostics,
+                ),
+            ),
+            audio=plan.audio,
+        )
+
+
+@pytest.mark.parametrize("admitted", (False, True))
+def test_hints_leave_every_decision_reader_unchanged(admitted: bool) -> None:
+    """A hint asserts nothing: proposals, basis and scope ignore it (#1257)."""
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        recording_identity_basis,
+    )
+    from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    if admitted:
+        hinted, bare = _hinted_admission(), _hinted_admission(())
+    else:
+        hinted = recording_lookup_hint_report(lookup_asins=("B000000001",))
+        bare = recording_lookup_hint_report(lookup_asins=("B000000001",), hint_asins=())
+    assert hinted.report_id != bare.report_id
+    assert hinted.providers[0].lanes[0].recording_lookup_hints
+    assert recording_identity_basis(hinted) == recording_identity_basis(bare)
+    assert audiobook_review_scope(hinted) == audiobook_review_scope(bare)
+    assert hinted.identifier_evidence == bare.identifier_evidence
+    assert [value.to_data() for value in evaluate_report(hinted).results] == [
+        value.to_data() for value in evaluate_report(bare).results
+    ]

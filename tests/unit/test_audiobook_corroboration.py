@@ -24,6 +24,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     local_chapter_durations_seconds,
     local_runtime_seconds,
     loose_band_survivors,
+    recording_lookup_hints,
     runtime_agreement,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -38,9 +39,14 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderChapterStructure,
     ProviderClaim,
+    RecordingLookupHint,
     TargetFacts,
     comparison_links,
     default_target_fields,
+)
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_query_ladder,
 )
 from tests.support.audiobook_reports import chapter_runtime_report
 from tests.support.metadata_report_doubles import single_track_audio_facts
@@ -242,6 +248,124 @@ def test_loose_band_narrowing_needs_one_local_runtime() -> None:
         loose_band_survivors([candidates[0]], ())  # type: ignore[arg-type]
     with pytest.raises(CorroborationValueError):
         loose_band_survivors(("a",), ())  # type: ignore[arg-type]
+
+
+_RUNG = WorkDispatchLineage.from_query(
+    work_query_ladder("Synthetic Journey", ("Example Author",), audiobook=True)[0]
+)
+
+
+def _hinted(
+    identity: str,
+    seconds: str | None,
+    *asins: str | None,
+) -> ProviderCandidate:
+    """One product stating these ASIN claims beside an optional runtime.
+
+    A `None` ASIN is a malformed identifier statement.
+    """
+    asin_claims = tuple(
+        ProviderClaim.create(
+            provider="audible",
+            candidate=identity,
+            kind=ClaimKind.ASIN,
+            value=value,
+            state=FieldState.VALID if value is not None else FieldState.MALFORMED,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+            raw_order=order,
+        )
+        for order, value in enumerate(asins, 1)
+    )
+    stated = _stating(identity, seconds)
+    return ProviderCandidate(identity, identity, (*stated.claims, *asin_claims))
+
+
+def test_a_tight_band_product_admission_did_not_keep_becomes_a_hint() -> None:
+    """The #1257 producer keeps the tight band's edge and drops 120 s out."""
+    local = (_runtime_claim("36000.000"),)
+    edge = 36_000 + RUNTIME_BAND_TIGHT_SECONDS
+    products = (
+        _hinted("z-edge", f"{edge}.000", "B000000003"),
+        _hinted(
+            "y-short-edge", f"{36_000 - RUNTIME_BAND_TIGHT_SECONDS}.000", "B000000001"
+        ),
+        _hinted("x-loose", f"{36_000 + 120}.000", "B000000002"),
+        _hinted("w-loose-short", f"{36_000 - 120}.000", "B000000004"),
+    )
+
+    hints = recording_lookup_hints(products, (), local, _RUNG)
+
+    # Ordered by ASIN rather than by page position.
+    assert (
+        RecordingLookupHint("B000000001", 36_000 - RUNTIME_BAND_TIGHT_SECONDS, _RUNG),
+        RecordingLookupHint("B000000003", edge, _RUNG),
+    ) == hints
+    assert {
+        "asin": "B000000003",
+        "basis": "runtime_within_tight_band",
+        "rung": _RUNG.to_data(),
+        "runtime_seconds": edge,
+    } == hints[1].to_data()
+
+
+@pytest.mark.parametrize(
+    "product",
+    (
+        _hinted("a", "36000.000"),
+        _hinted("a", "36000.000", "B000000001", "B000000002"),
+        _hinted("a", "36000.000", "b000000001"),
+        _hinted("a", "36000.000", "B000000001", None),
+        _hinted("a", None, "B000000001"),
+        _hinted("a", "0.400", "B000000001"),
+    ),
+    ids=(
+        "no_asin",
+        "two_asins",
+        "non_canonical_asin",
+        "invalid_asin",
+        "no_runtime",
+        "sub_second_runtime",
+    ),
+)
+def test_a_product_without_one_asin_and_one_runtime_is_no_hint(
+    product: ProviderCandidate,
+) -> None:
+    local = (_runtime_claim("30.000"),)
+    assert () == recording_lookup_hints((product,), (), local, _RUNG)
+
+
+def test_a_hint_needs_one_local_runtime() -> None:
+    products = (_hinted("a", "36000.000", "B000000001"),)
+    assert () == recording_lookup_hints(products, (), (), _RUNG)
+    disagreeing = (_runtime_claim("36000.000"), _runtime_claim("35000.000"))
+    assert () == recording_lookup_hints(products, (), disagreeing, _RUNG)
+
+
+def test_a_retained_identity_or_asin_is_never_a_hint() -> None:
+    """An admitted or #1004 product is kept already, under either name."""
+    local = (_runtime_claim("36000.000"),)
+    kept = _hinted("kept", "36000.000", "B000000001")
+    same_identity = _hinted("kept", "36000.000", "B000000009")
+    same_asin = _hinted("other", "36000.000", "B000000001")
+    fresh = _hinted("fresh", "36000.000", "B000000002")
+
+    assert (RecordingLookupHint("B000000002", 36_000, _RUNG),) == (
+        recording_lookup_hints(
+            (kept, same_identity, same_asin, fresh), (kept,), local, _RUNG
+        )
+    )
+
+
+def test_the_hint_producer_refuses_malformed_input() -> None:
+    local = (_runtime_claim("36000.000"),)
+    product = _hinted("a", "36000.000", "B000000001")
+    with pytest.raises(CorroborationValueError):
+        recording_lookup_hints([product], (), local, _RUNG)  # type: ignore[arg-type]
+    with pytest.raises(CorroborationValueError):
+        recording_lookup_hints((product,), ("a",), local, _RUNG)  # type: ignore[arg-type]
+    with pytest.raises(CorroborationValueError):
+        recording_lookup_hints((product,), (), local, None)  # type: ignore[arg-type]
 
 
 def test_a_chapter_vector_aligns_within_tolerance_and_diverges_beyond_it() -> None:

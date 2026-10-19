@@ -126,7 +126,8 @@ def test_real_series_association_and_title_witness_remain_authoritative(
                 "title_layout": "preserve",
             },
         )
-        if media == "audiobook" and variant == "no_local_title":
+        # A fed answer under another author keeps only its ASIN (#1257).
+        if media == "audiobook" and variant in {"no_local_title", "wrong_author"}:
             assert not admitted_audiobook_identity(report)
             assert case_id is None
             results = {
@@ -140,7 +141,7 @@ def test_real_series_association_and_title_witness_remain_authoritative(
             ).fetchone() == (0,)
             assert repository.pending_field_effect_decision_documents(10) == ()
             return
-        if media == "audiobook" and variant != "wrong_author":
+        if media == "audiobook":
             assert admitted_audiobook_identity(report)
         outcomes = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)

@@ -241,6 +241,20 @@ choices. Retry reconstructs the same context and lanes from retained evidence.
 Library and Detail identify the supporting provider and candidate under Recording
 source. This adds owner review without automatic or effect authority.
 
+An Audible lane on the asserted audiobook ladder also records up to two
+`recording_lookup_hints` per Audible provider (#1257): products it refused on
+title whose stated runtime is within 90 seconds of the recording's and which
+state one canonical ASIN no retained candidate holds. Each records `asin`,
+`runtime_seconds`, the basis `runtime_within_tight_band` and its `rung`. They
+stay on an exhausted `no_match` lane or beside `candidates`, and a terminal
+failure drops them. The ASIN feed sends their ASINs to Audnexus and AudioSilo
+after every other origin, within the four-lane cap and in the same pass; they
+grant nothing themselves. A fed ASIN the item did not name admits only when the
+answer passes exact work-identity admission and the tight band, so never without
+a title and authors; an answer naming another work keeps only its ASIN and
+leaves no proposal. Every other lane serializes `[]`. The report is
+`metadata-report-v53`.
+
 Those decisions are applied through the same guarded path an ebook's take
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
 When no candidate is admitted -- unanswered, answered about a work rather than
@@ -612,8 +626,8 @@ item's, or that state none, and `candidate_limit_exceeded` now means more than
 five such products rather than a popular title. A page the band empties is an
 `empty_no_match` rung, so `empty_no_match` also counts a rung with no in-band
 product, and the ladder walks on. Survivors are ordinary candidates; the report
-records no dropped count. Other items, ebook plans and ASIN lookups are
-unchanged. The report is `metadata-report-v52`.
+records no dropped count. Other items, ebook plans and ASIN lookups send
+unchanged requests, though Audible's fixed 1 MiB aggregate applies to them too.
 
 | Provider | Normalized and widening grammar | Narrowing grammar |
 | --- | --- | --- |

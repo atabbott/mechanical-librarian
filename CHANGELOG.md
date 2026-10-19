@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- An audiobook Audible refuses on title but whose running time matches the
+  recording's is now looked up by its ASIN on Audnexus and AudioSilo, and kept
+  only when that answer names the same book. A looked-up answer naming another
+  book no longer suggests its title or counts as a recording match. Upgrading
+  requires a clean rebuild (#1257).
+
 - An Audible audiobook search that finds many products now sets aside those
   whose running time is more than ten minutes from the recording's, so a popular
   title no longer ends the search as too many matches. Upgrading requires a

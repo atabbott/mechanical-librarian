@@ -1756,7 +1756,14 @@ consumes the complete plausible set for narrator agreement, with every member
 and contributor reference reconstructed; that agreement cannot elect an ASIN
 or ISBN. Bounded ASIN acquisition and matched-runtime vetoes retain their
 separate roles. A lookup hint or runtime alone grants no work or recording
-authority. Existing provider
+authority. The ASIN feed gains one origin (#1257), the canonical ASIN of an
+Audible product refused on title whose runtime is inside the tight band; the
+dispatch set, the four-lane cap, the per-provider bounds and URL construction
+are unchanged, and the dispatch set does not grow. A fed ASIN the item's own
+surfaces did not name admits only with exact work-identity admission and the
+tight band; a candidate refused on work identity keeps only its ASIN, so no
+fed origin's stated runtime or work statements reach recording identity or a
+proposal. Existing provider
 limits, isolated probe limits, read-only media and explicit retry stay unchanged.
 
 ## Incumbent description paragraphs
