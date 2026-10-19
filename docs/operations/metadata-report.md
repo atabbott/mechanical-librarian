@@ -566,10 +566,11 @@ On an audiobook plan (#1245), a rung whose every product work-identity admission
 refuses continues to the next rung within the same per-rung budget and deadline,
 and an admitted rung stops the walk. When every dispatched rung was empty or
 refused, the `no_match` lane records each rung's dispatch lineage in ladder
-order as `exhausted_dispatch`, counting empty rungs as `empty_no_match` and
-refused products as `work_identity_refused`; replay rejects a ladder the
-target's title and authors do not produce. A terminal failure on any rung ends
-the walk with that rung's own result. Ebook lanes record no ladder.
+order as `exhausted_dispatch`, counting empty rungs as `empty_no_match` and,
+as `work_identity_refused`, the products refused summed across its refused
+rungs, so a product refused on two rungs counts twice; replay rejects a ladder
+the target's title and authors do not produce. A terminal failure on any rung
+ends the walk with that rung's own result. Ebook lanes record no ladder.
 
 | Provider | Normalized and widening grammar | Narrowing grammar |
 | --- | --- | --- |

@@ -114,9 +114,10 @@ proposal, packet, reviewer, and target-write authority remain unchanged.
 ## Amendment: work identity refusal (2026-10-19, #1245)
 
 Add `work_identity_refused` to the closed provider diagnostic categories, at
-provider/identity, not retryable. Its count is the number of provider products
-that work-identity admission refused on an audiobook work lane's query ladder,
-so a refused rung is no longer reported as `empty_no_match`. The lane states
+provider/identity, not retryable. Its count is the products work-identity
+admission refused, summed across an audiobook work lane's refused rungs, so a
+product refused on two rungs counts twice and a refused rung is no longer
+reported as `empty_no_match`. The lane states
 the count beside its exhausted ladder; the application lifts it once to the
 provider aggregate, and a status-derived `empty_no_match` is dropped only where
 refusal is that observation's sole no-match reason. A terminal failure on any

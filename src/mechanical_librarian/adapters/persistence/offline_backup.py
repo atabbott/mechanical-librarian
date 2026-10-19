@@ -1,8 +1,8 @@
 """Owner-only verified backups and source rechecks for offline database plans.
 
-The qualification-state bridge and the schema adoption both copy their source
-to an owner-only backup beside it, verify the copy byte for byte, and recheck
-the source and backup identities before and after they write. `subject` names
+The qualification-state bridge copies its source to an owner-only backup
+beside it, verifies the copy byte for byte, and rechecks the source and backup
+identities before and after it writes. `subject` names
 the plan in every refusal, and `recovery` is the error a plan raises when a
 failed backup could not be cleaned up.
 """
