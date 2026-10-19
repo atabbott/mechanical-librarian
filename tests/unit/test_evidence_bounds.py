@@ -20,6 +20,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     _HTML_TAG_SLASH_PATTERN,
     _LABELLED_PATH_PATTERN,
     _MULTIWORD_CREDENTIAL_PATTERN,
+    _QUOTED_TAG_SPAN_PATTERN,
     _TAG_SPAN_PATTERN,
     _UNC_PATH_PATTERN,
     _WINDOWS_DRIVE_ROOT_PATTERN,
@@ -389,6 +390,8 @@ def test_guarded_scans_keep_each_refusal(text: str) -> None:
         "<p>One</p>\r\n\u2028<p>Two</p>",
         "<p>Plain synopsis.</p><p>Second<br/>para.</p>",
         "<p>Secret history of Rome.</p>",
+        '<p>Read the <a href="https://example.com/book">site</a>.</p>',
+        '<p>He said "hi" > all.</p>',
     ),
 )
 def test_incumbent_description_admits_tag_slashes_and_line_separators(
@@ -457,6 +460,10 @@ def test_incumbent_description_admits_tag_slashes_and_line_separators(
                 "Bearer abcdefg1</p><p>More text",
                 'pass<a href="x">word</a>=hunter2',
                 "</p> secret: x",
+                # A quoted `>` or an unbalanced quote inside a tag (R7).
+                'pas<a title="a>b">sword=hunter2</p>',
+                "pas<a title='a>b'>sword=hunter2</p>",
+                'pas<a title="x>sword=hunter2</p>',
             )
         ),
         *(
@@ -498,8 +505,11 @@ def test_shared_projection_grammar_is_unchanged(value: str) -> None:
         evidence_bounds.validate_projection_text(value, "label", 256)
 
 
-def _tag_free(text: str) -> str:
-    return _TAG_SPAN_PATTERN.sub("", text).strip(" \t\r\n")
+def _tag_free(text: str) -> tuple[str, ...]:
+    return tuple(
+        spans.sub("", text).strip(" \t\r\n")
+        for spans in (_TAG_SPAN_PATTERN, _QUOTED_TAG_SPAN_PATTERN)
+    )
 
 
 def _projection_outcome(text: str, *, markup: bool) -> tuple[str, str]:
@@ -541,6 +551,10 @@ _MARKUP_FRAGMENTS = (
     "<i>",
     '<a href="x">',
     "Secret: x",
+    '<a title="',
+    "'>",
+    '">',
+    "sword=x",
 )
 
 
@@ -564,9 +578,9 @@ def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
         assert markup == _projection_outcome(text, markup=False)
     elif markup[0] == "admitted":
         # Whatever markup admits, the default scan admits with every tag-like
-        # span removed and the edges stripped.
-        removed = _tag_free(text)
-        assert _projection_outcome(removed, markup=False) == ("admitted", removed)
+        # span removed and the edges stripped, read plainly and quote-aware.
+        for removed in _tag_free(text):
+            assert _projection_outcome(removed, markup=False) == ("admitted", removed)
 
 
 @pytest.mark.parametrize(
@@ -582,7 +596,7 @@ def test_markup_scan_differs_only_on_a_tag_slash(text: str) -> None:
 def test_split_text_reads_as_its_tag_free_form(text: str) -> None:
     # The default scan does not refuse a bare cookie header, so neither does a
     # split one; every other split shape is refused as its tag-free form is.
-    expected = _projection_outcome(_tag_free(text), markup=False)
+    expected = _projection_outcome(_tag_free(text)[0], markup=False)
     assert _projection_outcome(text, markup=True) == (
         expected if expected[0] != "admitted" else ("admitted", text)
     )

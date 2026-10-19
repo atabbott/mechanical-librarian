@@ -1800,29 +1800,33 @@ attribute-free closing or self-closing HTML tag (`</p>`, `<br />`) is markup.
 Text holding one is admitted only when three scans pass: every rule but the
 absolute-path rule on the original text; the absolute-path rule on the text with
 each such tag rewritten to its slash-free form; and the whole default scan,
-every path and credential rule, on the text with every tag-like span
-(`<[^<>]*>`: opening, closing or self-closing, with or without attributes)
-removed and its edges stripped. So `</p>/srv/media`, `<a href="/x">`,
-`<img src="/x" />` and `&lt;/p&gt;` stay refused, and so does a credential, label or
-non-absolute path any tag splits or a leading tag hides (`https://u:p</i>@h`,
+every path and credential rule, on the text with every tag-like span (opening,
+closing or self-closing, with or without attributes) removed and its edges
+stripped, once with plain spans (`<[^<>]*>`) and once with quote-aware spans
+that keep a quoted `>` inside its tag; each alone misses either a quoted `>` or
+an unbalanced quote. So `</p>/srv/media`, `<a href="/x">`, `<img src="/x" />`
+and `&lt;/p&gt;` stay refused, and so does a credential, label or non-absolute
+path any tag splits or a leading tag hides (`https://u:p</i>@h`,
 `pass<b>word</b>=x`, `C<b>:</b>\Books`, `<p>Secret: x</p>`). Whatever this
-admits, the default scan admits with every tag-like span removed. Only ASCII tag
-names and ASCII spacing form a tag. U+2028 is a line separator: the codepoint
-scan reads it as LF after CRLF folds, so `\r\u2028` still exposes a lone CR.
-Admission order is exact type and non-blank text, original bounds, forbidden
-codepoints and edge whitespace (C1 masked), then C1, production paths and
-credentials. Text whose only defect is C1 (U+0080–U+009F, usually Windows-1252
-decoded as Latin-1) is refused as `contains C1 control text` (the adapter keeps
-only the field's `malformed` state, as for every other refusal); it is never
-repaired, because a guessed decoding would show a value the library does not
-hold. C1 beside another forbidden codepoint keeps the generic refusal. The
-stored value, fingerprints and field-value versions stay the original string.
-Tag-bearing incumbents compare as literal text and stay `target_state_unusable`
-for automatic synopsis authority. U+2029, NEL, entity-escaped tags and tags with
-attributes stay refused. Discovery titles, provider and local claims and every
-other projection keep the shared grammar and `_FORBIDDEN_CODEPOINTS` unchanged.
-Shadow-review packets may now carry literal markup or U+2028 in incumbent text,
-as JSON data only.
+admits, the default scan admits with every tag-like span removed, both ways.
+Only ASCII tag names and ASCII spacing form a tag. U+2028 is a line separator:
+the codepoint scan reads it as LF after CRLF folds, so `\r\u2028` still exposes
+a lone CR. Admission order is exact type and non-blank text, original bounds,
+forbidden codepoints and edge whitespace (C1 masked), then C1, production paths
+and credentials. Text whose only defect is C1 (U+0080–U+009F, usually
+Windows-1252 decoded as Latin-1) is refused as `contains C1 control text` (the
+adapter keeps only the field's `malformed` state, as for every other refusal);
+it is never repaired, because a guessed decoding would show a value the library
+does not hold. C1 beside another forbidden codepoint keeps the generic refusal.
+The stored value, fingerprints and field-value versions stay the original
+string. Tag-bearing incumbents compare as literal text and stay
+`target_state_unusable` for automatic synopsis authority. A path inside an
+attribute (`<a href="/x">`, `<img src="/x" />`) stays refused, and a slash
+inside a tag with attributes is never read as markup. U+2029, NEL and
+entity-escaped tags stay refused. Discovery titles, provider and local claims
+and every other projection keep the shared grammar and `_FORBIDDEN_CODEPOINTS`
+unchanged. Shadow-review packets may now carry literal markup or U+2028 in
+incumbent text, as JSON data only.
 
 ## Author evidence authority
 
