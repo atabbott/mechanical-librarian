@@ -588,7 +588,8 @@ name, the plan carries the alternative lane alone, and so it does when the
 asserted title has no query rung at all, such as a bare `Part II`. Only Audible
 dispatches it, and only after the asserted lane ends `no_match`; any other
 asserted status suppresses it. Every other adapter, iTunes included, suppresses
-it on every plan. On the alternative lane, admission replays against the alternative title
+it on every plan.
+On the alternative lane, admission replays against the alternative title
 on the audiobook ladder; a rung admitted but not runtime-corroborated counts as
 refused, and a `candidates` lane keeps exactly one corroborated candidate with
 its marketplace evidence. The lane contributes no recording-lookup hints and

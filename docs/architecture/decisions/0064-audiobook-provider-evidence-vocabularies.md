@@ -40,7 +40,8 @@ qualification.
    dispatches and only after the asserted lane ends `NO_MATCH` (or alone, when
    the asserted title collapses to a series name the target records).
    Collapse also covers an asserted title with no query rung at all, such as a
-   bare `Part II`, which no provider could be asked. It is band-gated: a candidate it keeps must admit against the alternative title
+   bare `Part II`, which no provider could be asked. It is band-gated: a
+   candidate it keeps must admit against the alternative title
    and be runtime-corroborated, and an admitted but uncorroborated rung counts
    as refused. #1246 found a tight product admitted against an alternative for
    28 items, 14 of them runtime-corroborated with the alternative as lookup

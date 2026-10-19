@@ -1490,16 +1490,22 @@ def observe_provider(
             )
         except Exception:
             accessed_at = None
+        # An alternative work lane is recorded only where it could have been
+        # sent, so a retry never replays one the adapter would suppress: only
+        # Audible dispatches it, and unconditionally only when the plan has no
+        # asserted work lane (#1255).
+        alternative_sent = authority == "audible_catalog" and not any(
+            lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
+            for lane in plan.lanes
+        )
         observation = provider_observation(
             provider_name,
             tuple(
                 ProviderLaneResult(
                     lane, ProviderStatus.UNAVAILABLE, accessed_at=accessed_at
                 )
-                # An alternative work lane is recorded only once sent, so a
-                # retry never replays one the adapter would suppress (#1255).
                 for lane in plan.lanes
-                if lane.title_basis is None
+                if lane.title_basis is None or alternative_sent
             ),
             authority=authority,
         )
