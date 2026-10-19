@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -64,6 +66,8 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.operations import StageTimer, StageTiming
 from mechanical_librarian.application.provider_evidence import (
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
@@ -866,9 +870,11 @@ def test_application_replays_after_file_reorder_and_constructs_provider_once() -
     assert repository.closed
 
 
-def test_application_shares_aggregate_deadline_with_metadata_and_cover_providers() -> (
-    None
-):
+def test_application_shares_aggregate_with_covers_and_caps_the_metadata_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = 1000.0
+    monkeypatch.setattr(time, "monotonic", lambda: started)
     selected = TargetFile("a" * 64, "book.epub", "epub")
     snapshot = TargetSnapshot("ebook", "Current title", (selected,))
     target = FakeTarget([snapshot, snapshot])
@@ -923,8 +929,13 @@ def test_application_shares_aggregate_deadline_with_metadata_and_cover_providers
     report = MetadataReport.from_json(service.run("item-1", 0))
 
     assert ProviderStatus.NO_MATCH == report.providers[0].status
-    assert ["current", "metadata", "cover"] == [boundary for boundary, _ in observed]
-    assert observed[0][1] == observed[1][1] == observed[2][1]
+    # The incumbent read and the cover fetches share the 60-second aggregate;
+    # the provider observation gets only its 20-second share of it (#1248).
+    assert [
+        ("current", started + 60),
+        ("metadata", started + 20),
+        ("cover", started + 60),
+    ] == observed
 
 
 def test_incomplete_cause_property_is_mapped_without_private_material() -> None:
@@ -2488,6 +2499,7 @@ def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
     started = clock[0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
     events = []
+    metadata_calls = []
     selected = TargetFile(
         "a" * 64,
         "book.m4b" if media == "audiobook" else "book.epub",
@@ -2510,6 +2522,7 @@ def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
     class Provider:
         def observe(self, plan, *, deadline):
             events.append(("metadata", deadline))
+            metadata_calls.append((clock[0], deadline))
             clock[0] = started + 61
             return ProviderResult(
                 ProviderObservation(
@@ -2578,8 +2591,370 @@ def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
     assert alternative.timeout_scope == "not_started_due_to_aggregate_deadline"
     if incumbent != "absent":
         assert events[0] == ("current", started + 60)
-    metadata = [event for event in events if event[0] == "metadata"]
-    assert metadata and all(deadline == started + 60 for _, deadline in metadata)
+    # Each observation gets its 20-second share, never past the aggregate: an
+    # incumbent read that consumed the window leaves exactly the aggregate.
+    assert metadata_calls and all(
+        deadline == min(started + 60, call + 20) for call, deadline in metadata_calls
+    )
+    if incumbent == "consumes_budget":
+        assert [deadline for _, deadline in metadata_calls] == [started + 60]
+
+
+class _SlowProvider:
+    """A provider that spends its whole deadline and records it ran out (#1248).
+
+    It advances the fake clock to exactly the deadline it was handed and
+    answers every lane INCOMPLETE with the SDK's deadline cause, which is what
+    an adapter records when its share elapses before it could dispatch again.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        authority: str,
+        clock: list[float],
+        calls: list[tuple[str, float, float]],
+    ) -> None:
+        self._name = name
+        self._authority = authority
+        self._clock = clock
+        self._calls = calls
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        assert deadline is not None
+        self._calls.append((self._name, self._clock[0], deadline))
+        self._clock[0] = deadline
+        return ProviderResult(
+            provider_observation(
+                self._name,
+                tuple(
+                    ProviderLaneResult(lane, ProviderStatus.INCOMPLETE)
+                    for lane in plan.lanes
+                    if lane.title_basis is None
+                ),
+                authority=self._authority,
+            ),
+            evidence=ProviderOperationalEvidence(
+                incomplete_causes=(
+                    ProviderIncompleteCauseRecord(ProviderIncompleteCause.DEADLINE),
+                ),
+            ),
+        )
+
+
+class _FastProvider:
+    """A provider that answers every lane at once with no match."""
+
+    def __init__(
+        self,
+        name: str,
+        authority: str,
+        clock: list[float],
+        calls: list[tuple[str, float, float]],
+    ) -> None:
+        self._name = name
+        self._authority = authority
+        self._clock = clock
+        self._calls = calls
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        assert deadline is not None
+        self._calls.append((self._name, self._clock[0], deadline))
+        return ProviderResult(
+            provider_observation(
+                self._name,
+                tuple(
+                    ProviderLaneResult(lane, ProviderStatus.NO_MATCH)
+                    for lane in plan.lanes
+                    if lane.title_basis is None
+                ),
+                authority=self._authority,
+            )
+        )
+
+
+def _share_snapshot(media: str) -> TargetSnapshot:
+    """One target of either medium with a title and an author to search on."""
+    selected = (
+        TargetFile("a" * 64, "book.m4b", "m4b")
+        if media == "audiobook"
+        else TargetFile("a" * 64, "book.epub", "epub")
+    )
+    return replace(_fed_snapshot(selected), media_kind=media)
+
+
+def _share_service(
+    media: str,
+    snapshot: TargetSnapshot,
+    repository: FakeReportRepository,
+    bindings: tuple[ProviderBinding, ...],
+    cover_observer: object,
+) -> GenerateMetadataReport:
+    return GenerateMetadataReport(
+        target=FakeTarget([snapshot, snapshot]),
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        audio_inspector=_fed_inspector(),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=bindings,
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "books",
+            "primary",
+            "library-id",
+            media,
+            "books",
+            tuple(sorted(binding.name for binding in bindings)),
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+        cover_observer=cover_observer,
+    )
+
+
+@pytest.mark.parametrize("media", ("ebook", "audiobook"))
+@pytest.mark.parametrize("slow", (0, 1, 2, 3))
+def test_each_provider_receives_at_most_its_share_of_the_aggregate(
+    media: str, slow: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One slow provider no longer spends the window the next ones need (#1248).
+
+    Every observation gets `min(aggregate, dispatch + 20)`. Two providers
+    that each use their whole share still leave the next one time to answer;
+    three use the whole 60 seconds, and then the aggregate binds rather than a
+    fresh share.
+    """
+    clock = [1000.0]
+    started = clock[0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    calls: list[tuple[str, float, float]] = []
+    boundaries: list[tuple[str, float]] = []
+
+    class CoverObserver:
+        def observe_current(self, _target, local, aggregate_deadline):
+            boundaries.append(("current", aggregate_deadline))
+            return local
+
+        def observe(self, _target, _providers, local, _descriptors, aggregate):
+            boundaries.append(("cover", aggregate))
+            return local
+
+    # Both authorities are in the audiobook dispatch set, so #1247's filter
+    # dispatches every binding for either medium.
+    bindings = (
+        *(
+            ProviderBinding(
+                f"slow-{index}",
+                True,
+                partial(_SlowProvider, f"slow-{index}", "hardcover", clock, calls),
+                authority="hardcover",
+            )
+            for index in range(slow)
+        ),
+        *(
+            ProviderBinding(
+                f"fast-{index}",
+                True,
+                partial(_FastProvider, f"fast-{index}", "open_library", clock, calls),
+                authority="open_library",
+            )
+            for index in range(2)
+        ),
+    )
+    repository = FakeReportRepository()
+
+    report = MetadataReport.from_json(
+        _share_service(
+            media, _share_snapshot(media), repository, bindings, CoverObserver()
+        ).run("item-1", 0)
+    )
+
+    assert [binding.name for binding in bindings] == [name for name, _, _ in calls]
+    assert all(deadline == min(started + 60, call + 20) for _, call, deadline in calls)
+    slow_calls = calls[:slow]
+    fast_calls = calls[slow:]
+    assert all(deadline - call <= 20 for _, call, deadline in slow_calls)
+    if slow < 3:
+        assert all(call < deadline for _, call, deadline in fast_calls)
+    else:
+        assert all(deadline == started + 60 for _, _, deadline in fast_calls)
+    # The incumbent read and the alternative covers keep the whole aggregate.
+    assert [("current", started + 60), ("cover", started + 60)] == boundaries
+    by_name = {value.provider: value for value in report.providers}
+    for index in range(slow):
+        observation = by_name[f"slow-{index}"]
+        assert ProviderStatus.INCOMPLETE is observation.status
+        assert (FailureCategory.TIMEOUT, FailureStage.REQUEST, False) in {
+            (value.category, value.stage, value.retryable)
+            for value in observation.diagnostics
+        }
+    for index in range(2):
+        assert ProviderStatus.NO_MATCH is by_name[f"fast-{index}"].status
+    assert repository.closed
+
+
+def test_an_asin_feed_after_a_slow_provider_dispatches_within_its_share(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ASIN feed pass runs the same loop, so it draws the same share."""
+    clock = [1000.0]
+    started = clock[0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    calls: list[tuple[str, float, float]] = []
+    asin_plans: list[MetadataDiscoveryPlan] = []
+
+    class Audnexus(_AsinAnsweringProvider):
+        def observe(
+            self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+        ) -> ProviderResult:
+            assert deadline is not None
+            calls.append(("audnexus", clock[0], deadline))
+            return super().observe(plan, deadline=deadline)
+
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    snapshot = _fed_snapshot(selected, asin="B0ASSERTED")
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            FakeReportRepository(),
+            _fed_inspector(),
+            (
+                ProviderBinding(
+                    "slow",
+                    True,
+                    lambda: _SlowProvider("slow", "hardcover", clock, calls),
+                    authority="hardcover",
+                ),
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: Audnexus("audnexus", asin_plans),
+                    authority="audnexus",
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+
+    # Phase one: the slow provider spends its share; Audnexus has nothing to
+    # answer. Phase two feeds Audnexus the asserted ASIN with time left.
+    assert ["slow", "audnexus", "audnexus"] == [name for name, _, _ in calls]
+    assert ["B0ASSERTED"] == [lane.canonical_asin for lane in asin_plans[1].lanes]
+    _, fed_at, fed_deadline = calls[2]
+    assert fed_at == started + 20
+    assert fed_deadline == min(started + 60, fed_at + 20) == started + 40
+    assert fed_at < fed_deadline
+    audnexus = next(
+        value for value in published.providers if value.provider == "audnexus"
+    )
+    assert [ProviderQueryKind.ASIN] == [lane.kind for lane in audnexus.lanes]
+
+
+@pytest.mark.parametrize("media", ("ebook", "audiobook"))
+def test_cover_fetches_start_within_the_aggregate_after_a_slow_provider(
+    media: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow provider leaves the alternative cover its own attempt window."""
+    from unittest.mock import patch
+
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from mechanical_librarian.adapters.providers.remote_cover import (
+        CoverDeadline,
+        RemoteCoverTimeout,
+    )
+    from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverDesignation,
+        CoverProvenance,
+    )
+
+    clock = [1000.0]
+    started = clock[0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    calls: list[tuple[str, float, float]] = []
+    fetches: list[tuple[float, CoverDeadline]] = []
+
+    class Catalogue:
+        def observe(
+            self, _plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+        ) -> ProviderResult:
+            assert deadline is not None
+            calls.append(("catalogue", clock[0], deadline))
+            return ProviderResult(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (ProviderCandidate("edition", "work", ()),),
+                ),
+                (
+                    ProviderCoverDescriptor(
+                        "catalogue",
+                        CoverSourceKind.HARDCOVER,
+                        cover_source_id(CoverSourceKind.HARDCOVER, "cover"),
+                        "https://example.com/cover.jpg",
+                        CoverProvenance(
+                            "catalogue", CoverDesignation.WORK, "work", "edition"
+                        ),
+                    ),
+                ),
+            )
+
+    def fetch(_url: str, *, deadline: CoverDeadline, **_options: object) -> None:
+        fetches.append((clock[0], deadline))
+        raise RemoteCoverTimeout("timed out")
+
+    snapshot = _share_snapshot(media)
+    target = FakeTarget([snapshot, snapshot])
+    observer = _CoverEvidenceObserver(
+        target,
+        CoverArtifactStore(tmp_path / "artifacts"),
+        (ProviderConnectionConfiguration("catalogue", True, True, None),),
+    )
+    repository = FakeReportRepository()
+    with patch(
+        "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+        side_effect=fetch,
+    ):
+        report = MetadataReport.from_json(
+            _share_service(
+                media,
+                snapshot,
+                repository,
+                (
+                    ProviderBinding(
+                        "slow",
+                        True,
+                        lambda: _SlowProvider("slow", "open_library", clock, calls),
+                        authority="open_library",
+                    ),
+                    ProviderBinding(
+                        "catalogue", True, Catalogue, authority="hardcover"
+                    ),
+                ),
+                observer,
+            ).run("item-1", 0)
+        )
+
+    assert [
+        ("slow", started, started + 20),
+        ("catalogue", started + 20, started + 40),
+    ] == calls
+    assert [(started + 20, CoverDeadline(started + 60, started + 40))] == fetches
+    alternative = next(
+        value
+        for value in report.cover_sources
+        if value.kind is CoverSourceKind.HARDCOVER
+    )
+    assert CoverSourceState.TIMEOUT is alternative.state
+    assert "attempted" == alternative.timeout_scope
+    assert repository.closed
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))

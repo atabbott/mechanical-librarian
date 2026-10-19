@@ -657,7 +657,8 @@ attempts. Every referenced, enabled Google Books connection keeps at most five
 transport retries per query and 54 aggregate attempts. Query-ladder and
 narrowing dispatches count as retry dispatches inside those existing ceilings;
 they do not create a separate provider-spend budget. All lanes share one client,
-response-byte envelope, and 60-second aggregate deadline; Google Books,
+response-byte envelope, and, in a preparation, the provider's 20-second share
+of the item's 60-second deadline (#1248); Google Books,
 Hardcover, Inventaire, and Open Library use shared one-second request-start
 pacers across foreground and recovery work. Google Books requests six
 rows to detect overflow while retaining no more than five candidates.
@@ -841,8 +842,14 @@ upgrade from work-scoped to edition-scoped authority.
 
 The declared current ABS cover is acquired before metadata providers, for both
 ebooks and audiobooks, within the same single 60-second aggregate window used
-by metadata and alternative covers. A provider consuming the remaining budget
-does not discard the acquired incumbent. Known absence or terminal refusal is
+by metadata and alternative covers. Each dispatched metadata provider may spend
+at most 20 seconds of that window, and never past it, apart from one in-flight
+transport phase overrunning slightly as the aggregate already allows (#1248). One slow or
+unavailable provider therefore records its own timeout or deadline-incomplete
+outcome while later providers and alternative cover fetches still start; three
+providers that each use their full share can still use the whole window. A
+provider consuming the remaining budget does not discard the acquired
+incumbent. Known absence or terminal refusal is
 preserved; an expired request that never starts records
 `not_started_due_to_aggregate_deadline`, while a dispatched timeout records
 `attempted`. Final target, media and cover-byte currentness checks still run
