@@ -462,7 +462,9 @@ def test_incumbent_description_admits_tag_slashes_and_line_separators(
                 "</p> secret: x",
                 # A quoted `>` or an unbalanced quote inside a tag (R7).
                 'pas<a title="a>b">sword=hunter2</p>',
-                "pas<a title='a>b'>sword=hunter2</p>",
+                # Distinct text, not only quotes: the tier runner's safe identity
+                # alphabet folds both quote characters to one.
+                "pas<a title='c>d'>sword=hunter2</p>",
                 'pas<a title="x>sword=hunter2</p>',
             )
         ),
