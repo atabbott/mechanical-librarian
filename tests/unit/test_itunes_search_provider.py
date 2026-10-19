@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from typing import Any, Callable
 
 import httpx
@@ -19,6 +20,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
     observe_provider,
 )
+from mechanical_librarian.domain import metadata_report as d
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceKind,
@@ -774,3 +776,50 @@ def test_an_ebook_plan_still_stops_at_the_first_store_rung_with_results() -> Non
     assert ProviderStatus.NO_MATCH is observation.status
     assert () == observation.lanes[0].exhausted_dispatch
     assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _categories(observation)
+
+
+def _alternative_plan(*, collapsed: bool = False) -> MetadataDiscoveryPlan:
+    target = audio_target("Asserted Title", ("Andy Weir",))
+    if collapsed:
+        series = d.TargetField(
+            TargetDestination.SERIES,
+            d.TargetFieldState.VALUE,
+            (d.TargetSeries("Asserted Title", "3"),),
+        )
+        target = replace(
+            target,
+            fields=tuple(
+                series if field.destination is TargetDestination.SERIES else field
+                for field in target.fields
+            ),
+        )
+    return audiobook_discovery_plan(
+        target,
+        (target_title_claim("Asserted Title"),),
+        audio=replace(
+            single_track_audio_facts(),
+            discovery_titles=(d.AudioDiscoveryTitle("path_leaf", "The Real Title"),),
+        ),
+    )
+
+
+def test_the_store_never_sends_an_audiobook_alternative_title() -> None:
+    """It states no running time, so an alternative lane could retain nothing."""
+    plan = _alternative_plan()
+    seen, handle = _recorder(_store({"resultCount": 0, "results": []}))
+    observation = _provider(handle).observe(plan).observation
+
+    assert ["Asserted Title Andy Weir"] == [url.params["term"] for url in seen]
+    assert [None] == [
+        next(lane for lane in plan.lanes if lane.identity == value.identity).title_basis
+        for value in observation.lanes
+    ]
+    assert ProviderStatus.NO_MATCH is observation.status
+
+
+def test_a_series_collapsed_plan_sends_the_store_no_work_lane() -> None:
+    seen, handle = _recorder()
+    observation = _provider(handle).observe(_alternative_plan(collapsed=True))
+
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.observation.status
+    assert [] == seen

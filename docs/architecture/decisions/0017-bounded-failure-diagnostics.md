@@ -129,6 +129,13 @@ ladder, and there is no adoption or legacy fallback. Admission rules, provider
 status, ebook lanes, proposal, packet, reviewer, and target-write authority
 remain unchanged.
 
+## Amendment: uncorroborated alternative rungs (#1255)
+
+On an audiobook's alternative work lane, a rung whose products admit against
+the alternative title but none of which the runtime band corroborates is a
+refused rung: its products count toward `work_identity_refused` and the ladder
+continues. No new category is added.
+
 ## Consequences
 
 ### Positive

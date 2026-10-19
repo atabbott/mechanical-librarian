@@ -9,10 +9,12 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from mechanical_librarian.application import metadata_report as app
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -45,6 +47,7 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
     usable_isbn_families,
 )
+from mechanical_librarian.domain import metadata_report as dom
 from mechanical_librarian.domain.audiobook_corroboration import (
     runtime_corroborated_candidate,
 )
@@ -89,6 +92,7 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
     normalize_date_value,
     publication_date_is_voting,
+    work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -1114,7 +1118,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v50" == report.schema_version
+    assert "metadata-report-v51" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -1125,7 +1129,7 @@ _REFUSED_TITLE = "Project Hail Mary: A Novel"
 _REFUSED_AUTHORS = ("Andy Weir",)
 _REFUSED_LADDER = tuple(
     WorkDispatchLineage.from_query(query)
-    for query in work_query_ladder(_REFUSED_TITLE, _REFUSED_AUTHORS)
+    for query in work_query_ladder(_REFUSED_TITLE, _REFUSED_AUTHORS, audiobook=True)
 )
 
 
@@ -1147,10 +1151,16 @@ def _exhausted_report(
     title: str = _REFUSED_TITLE,
     audio: bool = True,
 ) -> MetadataReport:
+    fields = audio_target(title, _REFUSED_AUTHORS).fields
+    # The lane is the one its own target plans, so only its ladder can differ.
+    lane = replace(
+        lane,
+        identity=work_discovery_lane_payloads(
+            fields, (target_title_claim(_REFUSED_TITLE),)
+        )[0].identity,
+    )
     return MetadataReport.create(
-        target=TargetFacts(
-            "primary", "audio", "item-1", audio_target(title, _REFUSED_AUTHORS).fields
-        ),
+        target=TargetFacts("primary", "audio", "item-1", fields),
         file=FileFacts(0, "a" * 64, "b" * 64, "m4b" if audio else "epub"),
         local_claims=(target_title_claim(_REFUSED_TITLE),),
         local_reasons=("target_metadata_title",),
@@ -3377,4 +3387,318 @@ def test_bound_request_cannot_borrow_another_local_asin_shortcut() -> None:
     assert not any(
         e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
         for e in result.candidates[0].evidence
+    )
+
+
+_LEAF = dom.AudioDiscoveryTitle("path_leaf", "The Real Title")
+_TAG = dom.AudioDiscoveryTitle("title_tag", "Another Real Title")
+
+
+def _discovery_audio(
+    *titles: dom.AudioDiscoveryTitle,
+) -> dom.AudioFacts:
+    return replace(single_track_audio_facts(), discovery_titles=titles)
+
+
+def _series_target(title: str, series: str) -> TargetSnapshot:
+    target = _audio_target(title, ("Ada Author",))
+    recorded = TargetField(
+        TargetDestination.SERIES,
+        TargetFieldState.VALUE,
+        (dom.TargetSeries(series, "3"),),
+    )
+    return replace(
+        target,
+        fields=tuple(
+            recorded if field.destination is TargetDestination.SERIES else field
+            for field in target.fields
+        ),
+    )
+
+
+def test_an_alternative_lane_stands_beside_a_byte_identical_asserted_lane() -> None:
+    target = _audio_target("Asserted Title", ("Ada Author",))
+    claims = (_target_title_claim("Asserted Title"),)
+    previous = audiobook_discovery_plan(target, claims)
+    plan = audiobook_discovery_plan(target, claims, audio=_discovery_audio(_LEAF, _TAG))
+
+    asserted = next(lane for lane in plan.lanes if lane.title_basis is None)
+    alternative = next(lane for lane in plan.lanes if lane.title_basis is not None)
+    assert 2 == len(plan.lanes)
+    assert previous.lanes == (asserted,)
+    assert ("path_leaf", "The Real Title") == (
+        alternative.title_basis,
+        alternative.title,
+    )
+    assert (ProviderQueryKind.WORK, ("Ada Author",)) == (
+        alternative.kind,
+        alternative.authors,
+    )
+    assert asserted.input_references == alternative.input_references
+    assert alternative.identity == dom.discovery_lane_identity(
+        {
+            "authors": ["Ada Author"],
+            "input_references": list(asserted.input_references),
+            "kind": "work",
+            "title": "The Real Title",
+            "title_basis": "path_leaf",
+        }
+    )
+    assert (asserted, alternative) == app.provider_discovery_lane_order(plan)
+
+
+def test_a_title_equal_to_a_recorded_series_collapses_to_the_alternative() -> None:
+    target = _series_target("Series Name", "series name")
+    claims = (_target_title_claim("Series Name"),)
+    plan = audiobook_discovery_plan(target, claims, audio=_discovery_audio(_LEAF))
+
+    assert [("path_leaf", "The Real Title")] == [
+        (lane.title_basis, lane.title) for lane in plan.lanes
+    ]
+    assert app.alternative_work_lane_permitted(plan, None)
+    # Without a surviving discovery title the asserted lane stays alone.
+    assert [None] == [
+        lane.title_basis
+        for lane in audiobook_discovery_plan(
+            target, claims, audio=_discovery_audio()
+        ).lanes
+    ]
+    # A position-like title the target does not record as a series keeps the
+    # asserted lane beside the alternative.
+    kept = audiobook_discovery_plan(
+        _series_target("Plain Work, Book 3", "Other Series"),
+        (_target_title_claim("Plain Work, Book 3"),),
+        audio=_discovery_audio(_LEAF),
+    )
+    assert [None, "path_leaf"] == [
+        lane.title_basis for lane in app.provider_discovery_lane_order(kept)
+    ]
+
+
+@pytest.mark.parametrize("title", ("Part II", "Book 3", "Volume 1"))
+def test_a_title_with_no_query_rung_collapses_to_the_alternative(title: str) -> None:
+    target = _audio_target(title, ("Ada Author",))
+    claims = (_target_title_claim(title),)
+    plan = audiobook_discovery_plan(target, claims, audio=_discovery_audio(_LEAF))
+
+    assert () == work_query_ladder(title, ("Ada Author",), audiobook=True)
+    assert [("path_leaf", "The Real Title")] == [
+        (lane.title_basis, lane.title) for lane in plan.lanes
+    ]
+    assert app.alternative_work_lane_permitted(plan, None)
+
+
+def test_a_report_replays_the_collapse_of_a_title_with_no_query_rung() -> None:
+    fields = _audio_target("Part II", ("Ada Author",)).fields
+    claims = (_target_title_claim("Part II"),)
+    (asserted,) = work_discovery_lane_payloads(fields, claims)
+    (alternative,) = work_discovery_lane_payloads(fields, claims, (_LEAF,))
+    assert "path_leaf" == alternative.title_basis
+
+    def report(identity: str) -> MetadataReport:
+        lane = ProviderLaneObservation(
+            identity,
+            ProviderQueryKind.WORK,
+            ProviderStatus.UNAVAILABLE,
+            asserted.input_references,
+        )
+        return MetadataReport.create(
+            target=TargetFacts("primary", "audio", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+            local_claims=claims,
+            local_reasons=("target_metadata_title",),
+            providers=(
+                ProviderObservation(
+                    "audible",
+                    ProviderStatus.UNAVAILABLE,
+                    lane.input_references,
+                    query_kind=ProviderQueryKind.WORK,
+                    authority="audible_catalog",
+                    lanes=(lane,),
+                ),
+            ),
+            audio=_discovery_audio(_LEAF),
+        )
+
+    replayed = report(alternative.identity)
+    assert replayed == MetadataReport.from_json(replayed.to_json())
+    # The asserted lane is no longer planned, so a report claiming it is
+    # refused rather than replayed.
+    with pytest.raises(ReportValueError, match="provider work lane is unknown"):
+        report(asserted.identity)
+
+
+def test_discovery_titles_repeating_a_query_already_made_do_not_survive() -> None:
+    fields = _series_target("Asserted Title", "Series Name").fields
+    titles = (
+        dom.AudioDiscoveryTitle("path_leaf", "asserted title"),
+        dom.AudioDiscoveryTitle("title_tag", "Series Name"),
+    )
+    assert () == dom.surviving_discovery_titles(titles, fields)
+    assert () == dom.surviving_discovery_titles(
+        (dom.AudioDiscoveryTitle("path_leaf", "Ada Author"),), fields
+    )
+    assert (_LEAF,) == dom.surviving_discovery_titles(
+        (_LEAF, dom.AudioDiscoveryTitle("title_tag", "THE REAL TITLE")), ()
+    )
+
+
+@pytest.mark.parametrize(
+    "titles",
+    (
+        (_TAG, _LEAF),
+        (_LEAF, _LEAF),
+        (_LEAF, dom.AudioDiscoveryTitle("title_tag", "the real title")),
+        (_LEAF, _TAG, _TAG),
+        [_LEAF],
+    ),
+    ids=("tag_before_leaf", "repeated_basis", "closed_equal", "three", "list"),
+)
+def test_audio_facts_refuse_disordered_or_repeated_discovery_titles(
+    titles: Any,
+) -> None:
+    with pytest.raises(ReportValueError):
+        _discovery_audio(*titles) if type(titles) is tuple else replace(
+            single_track_audio_facts(), discovery_titles=titles
+        )
+
+
+@pytest.mark.parametrize(
+    ("basis", "title"),
+    (
+        ("folder", "The Real Title"),
+        ("path_leaf", " The Real Title"),
+        ("path_leaf", "The  Real Title"),
+        ("path_leaf", "The Real\u202eTitle"),
+        ("path_leaf", ""),
+        ("path_leaf", "x" * 281),
+    ),
+)
+def test_a_discovery_title_is_one_known_basis_and_normalized_text(
+    basis: str, title: str
+) -> None:
+    with pytest.raises(ReportValueError):
+        dom.AudioDiscoveryTitle(basis, title)
+
+
+def test_discovery_titles_round_trip_and_are_a_closed_audio_key() -> None:
+    audio = _discovery_audio(_LEAF, _TAG)
+    data = audio.to_data()
+
+    assert [
+        {"basis": "path_leaf", "title": "The Real Title"},
+        {"basis": "title_tag", "title": "Another Real Title"},
+    ] == data["discovery_titles"]
+    assert audio == dom._audio_facts_from_data(data)
+    for broken in (
+        {key: value for key, value in data.items() if key != "discovery_titles"},
+        {**data, "discovery_titles": [{"basis": "path_leaf"}]},
+        {**data, "discovery_titles": [{**data["discovery_titles"][0], "x": 1}]},
+    ):
+        with pytest.raises(ReportValueError):
+            dom._audio_facts_from_data(broken)
+
+
+def test_runtime_observations_keep_the_recorded_discovery_titles() -> None:
+    audio = _discovery_audio(_LEAF)
+    # Only each candidate's identity and short-runtime mark are read here.
+    observation = cast(
+        ProviderObservation,
+        SimpleNamespace(
+            candidates=(
+                SimpleNamespace(
+                    identity="audible-product-1", runtime_short_of_local=True
+                ),
+            )
+        ),
+    )
+    observed = app._audio_with_runtime_observations(audio, (observation,))
+
+    assert observed is not None and observed.observations
+    assert (_LEAF,) == observed.discovery_titles
+
+
+@pytest.mark.parametrize(
+    "lanes",
+    (
+        ("alternative", "alternative"),
+        ("asserted", "asserted"),
+    ),
+)
+def test_a_plan_holds_one_asserted_and_one_alternative_work_lane_at_most(
+    lanes: tuple[str, ...],
+) -> None:
+    def lane(index: int, kind: str) -> MetadataDiscoveryLane:
+        return MetadataDiscoveryLane(
+            f"lane_{index:064d}",
+            ProviderQueryKind.WORK,
+            ("local_" + "1" * 64,),
+            title=f"Plain Work {index}",
+            authors=("Ada Author",),
+            title_basis="path_leaf" if kind == "alternative" else None,
+        )
+
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryPlan(
+            (),
+            tuple(lane(index, kind) for index, kind in enumerate(lanes)),
+            audio=single_track_audio_facts(),
+        )
+
+
+def test_an_alternative_lane_belongs_only_to_an_audiobook_plan() -> None:
+    alternative = MetadataDiscoveryLane(
+        "lane_" + "2" * 64,
+        ProviderQueryKind.WORK,
+        (),
+        title="The Real Title",
+        authors=("Ada Author",),
+        title_basis="path_leaf",
+    )
+    with pytest.raises(MetadataReportError):
+        MetadataDiscoveryPlan((), (alternative,))
+    assert MetadataDiscoveryPlan(
+        (), (alternative,), audio=single_track_audio_facts()
+    ).lanes == (alternative,)
+    for broken in (
+        {"title_basis": "folder"},
+        {"kind": ProviderQueryKind.ISBN, "matched_family": "9780306406157"},
+    ):
+        with pytest.raises(MetadataReportError):
+            replace(alternative, **broken)
+
+
+@pytest.mark.parametrize(
+    ("status", "permitted"),
+    (
+        (ProviderStatus.NO_MATCH, True),
+        (ProviderStatus.UNAVAILABLE, False),
+        (ProviderStatus.INCOMPLETE, False),
+        (ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, False),
+        (ProviderStatus.INSUFFICIENT_INPUT, False),
+        (ProviderStatus.RATE_LIMITED, False),
+        (ProviderStatus.MALFORMED, False),
+        (None, False),
+    ),
+)
+def test_only_an_asserted_no_match_permits_the_alternative_lane(
+    status: ProviderStatus | None, permitted: bool
+) -> None:
+    target = _audio_target("Asserted Title", ("Ada Author",))
+    plan = audiobook_discovery_plan(
+        target,
+        (_target_title_claim("Asserted Title"),),
+        audio=_discovery_audio(_LEAF),
+    )
+    asserted = app.provider_discovery_lane_order(plan)[0]
+    result = None if status is None else ProviderLaneResult(asserted, status)
+
+    assert permitted is app.alternative_work_lane_permitted(plan, result)
+    assert not app.alternative_work_lane_permitted(
+        plan,
+        ProviderLaneResult(
+            asserted,
+            ProviderStatus.CANDIDATES,
+            (_audiobook_candidate(_audio_local_claims()),),
+        ),
     )

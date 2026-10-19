@@ -571,6 +571,36 @@ as `work_identity_refused`, the products refused summed across its refused
 rungs, so a product refused on two rungs counts twice; replay rejects a ladder
 the target's title and authors do not produce. A terminal failure on any rung
 ends the walk with that rung's own result. Ebook lanes record no ladder.
+An audiobook ladder (#1255) also applies two query-only families to its
+normalized rung, `leading_sequence_token` and `right_hand_segment`, after
+`order_inverted_series_prefix`; ebook ladders never do.
+
+An audiobook's audio section records `discovery_titles`: at most two, the
+folder leaf (`path_leaf`) before a single-file item's title tag
+(`title_tag`), each shaped by one bounded grammar that refuses hostile text
+whole. An entry closed-equal to the asserted title, an asserted author, a
+series name the target records or an earlier entry is dropped. With no local
+ASIN, the plan builds the asserted work lane exactly as before and at most one
+alternative work lane from the first surviving entry; its identity payload adds
+`title_basis` to the asserted authors, the target title's input references,
+`kind` and `title`. When the asserted normalized rung equals a recorded series
+name, the plan carries the alternative lane alone, and so it does when the
+asserted title has no query rung at all, such as a bare `Part II`. Only Audible
+dispatches it, and only after the asserted lane ends `no_match`; any other
+asserted status suppresses it. Every other adapter, iTunes included, suppresses
+it on every plan.
+On the alternative lane, admission replays against the alternative title
+on the audiobook ladder; a rung admitted but not runtime-corroborated counts as
+refused, and a `candidates` lane keeps exactly one corroborated candidate with
+its marketplace evidence. The lane contributes no recording-lookup hints and
+no overflow witness, and it grants no work-only or chapter-basis authority: a
+corroborated candidate reaches only recording authority. Report validation
+recomputes the planned lanes from the target, local claims and recorded titles
+and refuses, in order, an unknown work lane identity, a missing asserted lane,
+an invalid alternative candidate, an alternative admission that does not
+replay, and an exhausted ladder that does not. A retry successor merges over
+the lanes it observed and never dispatches an alternative the original
+observation suppressed.
 
 | Provider | Normalized and widening grammar | Narrowing grammar |
 | --- | --- | --- |

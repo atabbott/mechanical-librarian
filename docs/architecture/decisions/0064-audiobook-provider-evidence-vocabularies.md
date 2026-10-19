@@ -35,6 +35,17 @@ qualification.
    builds ASIN lanes from the local ASIN claims, and falls back to the
    title-and-author `WORK` lane when the item names no identifier at all, which
    is 57.6% of the reference library.
+   Since #1255 that fallback may carry one conditional alternative `WORK`
+   lane, from the item's first surviving discovery title, which only Audible
+   dispatches and only after the asserted lane ends `NO_MATCH` (or alone, when
+   the asserted title collapses to a series name the target records).
+   Collapse also covers an asserted title with no query rung at all, such as a
+   bare `Part II`, which no provider could be asked. It is band-gated: a
+   candidate it keeps must admit against the alternative title
+   and be runtime-corroborated, and an admitted but uncorroborated rung counts
+   as refused. #1246 found a tight product admitted against an alternative for
+   28 items, 14 of them runtime-corroborated with the alternative as lookup
+   title and 0 against the asserted title.
 2. **The resolving marketplace is provenance, not a constant.** A new
    `ProviderEvidenceKind.ASIN_MARKETPLACE` records which marketplace an ASIN
    lookup resolved in, drawn from the closed set `us, uk, de, fr, au, in, ca,

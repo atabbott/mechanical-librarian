@@ -268,3 +268,17 @@ The #1004 report-v42 extension consumes the existing v4 duration-absence and
 chapter-omission facts without changing this protocol or parser authority. A
 complete referenced chapter track may survive an unstated audio runtime; the
 chapter endpoint remains coverage evidence, never a synthesized duration claim.
+
+## Discovery titles (#1255)
+
+The parent derives at most two query-only discovery titles from evidence it
+already holds: the existing folder leaf, when `_audio_item_folder` names one
+common directory, and the one track's title tag, when the item has exactly one
+track. Each passes one bounded grammar that refuses separators, controls,
+bidirectional overrides and noncharacters outright and strips only trailing
+bracket tags, a trailing year, a trailing credit and a leading track number.
+The child protocol and its outputs are unchanged. The titles are recorded in
+`AudioFacts.discovery_titles`, never as a local claim, field result or proposal
+value. On #1246's 122-item no-match tail the folder leaf reached 57 items and
+the single-file title tag 36; together with the two ladder families, 72 items
+and 83 distinct queries.

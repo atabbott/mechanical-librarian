@@ -21,6 +21,9 @@ from mechanical_librarian.application import metadata_report as m
 from mechanical_librarian.application.metadata_report import ProviderObservationFailure
 from mechanical_librarian.domain import metadata_report as d
 from mechanical_librarian.domain import proposal_set as p
+from mechanical_librarian.domain.audiobook_corroboration import (
+    recording_identity_basis,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceKind,
@@ -1420,3 +1423,244 @@ def test_an_ebook_plan_still_stops_at_the_first_rung_that_returned_products() ->
     assert ProviderStatus.NO_MATCH is observation.status
     assert () == observation.lanes[0].exhausted_dispatch
     assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == _diagnostics(observation)
+
+
+_ASSERTED = "Asserted Title"
+_ALTERNATIVE = "The Real Title"
+_AUTHORS = ("Andy Weir",)
+
+
+def _alternative_audio(title: str = _ALTERNATIVE) -> d.AudioFacts:
+    return replace(
+        single_track_audio_facts(),
+        discovery_titles=(d.AudioDiscoveryTitle("path_leaf", title),),
+    )
+
+
+def _series_collapsed_target() -> m.TargetSnapshot:
+    recorded = d.TargetField(
+        TargetDestination.SERIES,
+        d.TargetFieldState.VALUE,
+        (d.TargetSeries(_ASSERTED, "3"),),
+    )
+    target = audio_target(_ASSERTED, _AUTHORS)
+    return replace(
+        target,
+        fields=tuple(
+            recorded if field.destination is TargetDestination.SERIES else field
+            for field in target.fields
+        ),
+    )
+
+
+def _alternative_plan(
+    runtime: str = "58244.201",
+    *,
+    title: str = _ASSERTED,
+    target: m.TargetSnapshot | None = None,
+) -> m.MetadataDiscoveryPlan:
+    return m.audiobook_discovery_plan(
+        audio_target(title, _AUTHORS) if target is None else target,
+        (target_title_claim(title), local_runtime_claim(runtime)),
+        audio=_alternative_audio(),
+    )
+
+
+def _alternative_report(
+    observation: Any,
+    *,
+    audio: d.AudioFacts | None = None,
+    target: m.TargetSnapshot | None = None,
+) -> MetadataReport:
+    target = audio_target(_ASSERTED, _AUTHORS) if target is None else target
+    return MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "item-1", target.fields),
+        file=d.FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(target_title_claim(_ASSERTED), local_runtime_claim()),
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=_alternative_audio() if audio is None else audio,
+    )
+
+
+def _by_basis(observation: Any, plan: m.MetadataDiscoveryPlan) -> dict[Any, Any]:
+    bases = {lane.identity: lane.title_basis for lane in plan.lanes}
+    return {bases[lane.identity]: lane for lane in observation.lanes}
+
+
+def test_an_asserted_no_match_dispatches_the_alternative_lane_after_it() -> None:
+    plan = _alternative_plan()
+    seen, handle = _pages(_search_page(), _work_page(_ALTERNATIVE))
+    observation = _observed(handle, plan).observation
+    lanes = _by_basis(observation, plan)
+
+    assert [_ASSERTED, _ALTERNATIVE] == [url.params["title"] for url in seen]
+    assert 2 == observation.request_accounting.logical_requests
+    assert ProviderStatus.NO_MATCH is lanes[None].status
+    assert ProviderStatus.CANDIDATES is lanes["path_leaf"].status
+    (candidate,) = observation.candidates
+    assert ("us",) == tuple(
+        value.value
+        for value in _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
+    )
+    assert () == observation.recording_lookup_candidates
+    report = _alternative_report(observation)
+    assert report == MetadataReport.from_json(report.to_json())
+    # The corroborated recording is the alternative lane's only authority: it
+    # grants no chapter basis, which stays bound to the target's own title.
+    (provider,) = report.providers
+    assert p.provider_candidate_represents_target_recording(
+        report, provider, provider.candidates[0]
+    )
+    assert recording_identity_basis(report) is None
+
+
+def test_an_alternative_candidate_outside_the_band_is_a_refused_rung() -> None:
+    plan = _alternative_plan("51000.000")
+    seen, handle = _pages(_search_page(), _work_page(_ALTERNATIVE))
+    observation = _observed(handle, plan).observation
+    alternative = _by_basis(observation, plan)["path_leaf"]
+
+    assert 2 == len(seen)
+    assert ProviderStatus.NO_MATCH is alternative.status
+    assert _ladder(_ALTERNATIVE, _AUTHORS) == alternative.exhausted_dispatch
+    assert d.work_ladder_diagnostics(0, 1) == alternative.diagnostics
+    assert () == observation.candidates
+    assert () == observation.recording_lookup_candidates
+    assert FailureCategory.WORK_IDENTITY_REFUSED in {
+        category for category, _ in _diagnostics(observation)
+    }
+    _alternative_report(observation)
+
+
+@pytest.mark.parametrize(
+    "asserted",
+    (
+        _json(_work_page(_ASSERTED)),
+        _json({"error": "unavailable"}, 503),
+        _json(
+            {
+                "total_results": 6,
+                "products": [
+                    {**_search_page(0)["products"][0], "asin": f"B0{index:08d}"}
+                    for index in range(6)
+                ],
+            }
+        ),
+    ),
+    ids=("candidates", "unavailable", "candidate_limit"),
+)
+def test_an_asserted_lane_that_answers_suppresses_the_alternative(
+    asserted: httpx.Response,
+) -> None:
+    plan = _alternative_plan()
+    seen, handle = _recorder(default=asserted)
+    observation = _observed(handle, plan).observation
+
+    assert {_ASSERTED} == {url.params["title"] for url in seen}
+    assert [None] == list(_by_basis(observation, plan))
+    assert ProviderStatus.NO_MATCH is not observation.lanes[0].status
+
+
+def test_a_series_collapsed_title_asks_only_the_alternative() -> None:
+    target = _series_collapsed_target()
+    plan = _alternative_plan(target=target)
+    seen, handle = _pages(_work_page(_ALTERNATIVE))
+    observation = _observed(handle, plan).observation
+
+    assert [_ALTERNATIVE] == [url.params["title"] for url in seen]
+    assert ProviderStatus.CANDIDATES is observation.status
+    _alternative_report(observation, target=target)
+
+
+def _lane_result(
+    lane: m.MetadataDiscoveryLane,
+    observed: Any,
+    candidates: tuple[Any, ...] = (),
+    accessed_at: str | None = None,
+) -> m.ProviderLaneResult:
+    return m.ProviderLaneResult(
+        lane,
+        observed.status,
+        candidates,
+        accessed_at,
+        diagnostics=observed.diagnostics,
+        dispatch_lineage=observed.dispatch_lineage,
+        transformation_lineage=observed.transformation_lineage,
+        exhausted_dispatch=observed.exhausted_dispatch,
+    )
+
+
+def _asserted_only(title: str, runtime: str) -> Any:
+    """One asserted-lane observation whose single product is titled `title`."""
+    seen, handle = _pages(_work_page(title))
+    return _observed(
+        handle,
+        m.audiobook_discovery_plan(
+            audio_target(title, _AUTHORS),
+            (target_title_claim(title), local_runtime_claim(runtime)),
+            audio=single_track_audio_facts(),
+        ),
+    ).observation
+
+
+def test_a_report_replays_its_alternative_lane_in_precedence_order() -> None:
+    plan = _alternative_plan()
+    asserted, alternative = m.provider_discovery_lane_order(plan)
+    _, handle = _pages(_search_page(), _work_page(_ALTERNATIVE))
+    valid = _observed(handle, plan).observation
+    lanes = _by_basis(valid, plan)
+    at = valid.accessed_at
+
+    def observation(*results: m.ProviderLaneResult) -> Any:
+        return m.provider_observation("audible", results, authority="audible_catalog")
+
+    uncorroborated = _asserted_only(_ALTERNATIVE, "51000.000")
+    other = _asserted_only("Other Title", "58244.201")
+    shapeless = observation(
+        _lane_result(asserted, lanes[None], accessed_at=at),
+        _lane_result(
+            alternative,
+            uncorroborated.lanes[0],
+            uncorroborated.candidates,
+            at,
+        ),
+    )
+    cases = (
+        # Unknown identity outranks the bad candidate it also carries.
+        (shapeless, _alternative_audio("Other Real Title"), "work lane is unknown"),
+        (
+            observation(
+                _lane_result(alternative, lanes["path_leaf"], valid.candidates, at)
+            ),
+            None,
+            "work lanes do not match the plan",
+        ),
+        (shapeless, None, "alternative candidate is invalid"),
+        (
+            observation(
+                _lane_result(asserted, lanes[None], accessed_at=at),
+                _lane_result(alternative, other.lanes[0], other.candidates, at),
+            ),
+            None,
+            "work identity lineage is inconsistent",
+        ),
+        (
+            observation(
+                _lane_result(asserted, lanes[None], accessed_at=at),
+                # A ladder the alternative title does not produce.
+                m.ProviderLaneResult(
+                    alternative,
+                    ProviderStatus.NO_MATCH,
+                    accessed_at=at,
+                    diagnostics=d.work_ladder_diagnostics(2, 0),
+                    exhausted_dispatch=_ladder(_SUBTITLED, _AUTHORS),
+                ),
+            ),
+            None,
+            "exhausted dispatch is inconsistent",
+        ),
+    )
+    for provider, audio, message in cases:
+        with pytest.raises(ReportValueError, match=message):
+            _alternative_report(provider, audio=audio)

@@ -59,10 +59,12 @@ class _RecordedChild:
         facts: Callable[[int, Fingerprint], tuple[AudioInspectionFact, ...]]
         | None = None,
         outcomes: dict[int, AudioInspectionOutcome] | None = None,
+        title: str | None = None,
     ) -> None:
         self.calls: list[dict[str, object]] = []
         self._facts = facts
         self._outcomes = outcomes or {}
+        self._title = title
 
     def __call__(
         self,
@@ -95,6 +97,7 @@ class _RecordedChild:
                 if self._facts is None
                 else self._facts(ordinal, expected_source)
             ),
+            title=self._title,
         )
 
 
@@ -689,3 +692,54 @@ def test_two_inspections_of_one_projected_set_compose_the_same_manifest(
         [value.to_data() for value in first.audio.tracks]
     ) == canonical_json([value.to_data() for value in second.audio.tracks])
     assert first.content_digest == second.content_digest
+
+
+@pytest.mark.parametrize(
+    ("paths", "title", "expected"),
+    (
+        (
+            ("03 - The Real Title (2019) [B0XXXXXXX] - Narrator Name/book.m4b",),
+            "Another Real Title",
+            (("path_leaf", "The Real Title"), ("title_tag", "Another Real Title")),
+        ),
+        (
+            ("Author/The Real Title/book.m4b",),
+            "the real title",
+            (("path_leaf", "The Real Title"),),
+        ),
+        (
+            ("The Real Title/01.mp3", "The Real Title/02.mp3"),
+            "Chapter One Title",
+            (("path_leaf", "The Real Title"),),
+        ),
+        (("book.m4b",), "Another Real Title", (("title_tag", "Another Real Title"),)),
+        (("CD1/01.mp3", "CD2/01.mp3"), "Another Real Title", ()),
+        (("\u202eevil Title/book.m4b",), "Bad\u200bTag", ()),
+        (("(2019) [tag]/book.m4b",), None, ()),
+    ),
+    ids=(
+        "leaf_then_tag",
+        "closed_equal_tag",
+        "multi_track_has_no_tag",
+        "mount_root_has_no_leaf",
+        "split_directories",
+        "hostile_names",
+        "decoration_only",
+    ),
+)
+def test_the_parent_records_discovery_titles_from_the_leaf_and_a_lone_tag(
+    mount: MediaMountConfiguration,
+    monkeypatch: pytest.MonkeyPatch,
+    paths: tuple[str, ...],
+    title: str | None,
+    expected: tuple[tuple[str, str], ...],
+) -> None:
+    child = _RecordedChild(title=title)
+    monkeypatch.setattr(composition, "run_audio_inspector_child", child)
+    tracks = tuple(_write(mount, path, path.encode()) for path in paths)
+
+    result = _IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+
+    assert expected == tuple(
+        (value.basis, value.title) for value in result.audio.discovery_titles
+    )

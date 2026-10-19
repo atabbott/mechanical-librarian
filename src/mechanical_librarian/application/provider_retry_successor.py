@@ -524,10 +524,15 @@ class GenerateProviderRetrySuccessor:
     ) -> tuple[MetadataDiscoveryLane, ...]:
         planned = {lane.identity: lane for lane in plan.lanes}
         observed = {lane.identity: lane for lane in original.lanes}
-        if set(planned) != set(observed):
+        # A suppressed alternative work lane is planned and never observed;
+        # every other planned lane must have been (#1255).
+        if not set(observed) <= set(planned) or any(
+            planned[identity].title_basis is None
+            for identity in set(planned) - set(observed)
+        ):
             raise ProviderRetrySuccessorError("provider retry source is invalid")
         selected = tuple(
-            planned[identity] for identity in identities if identity in planned
+            planned[identity] for identity in identities if identity in observed
         )
         permitted = _RETRYABLE | (
             _GENERATION_WOKEN if generation_woken else frozenset()
@@ -672,9 +677,12 @@ class GenerateProviderRetrySuccessor:
                 exhausted_dispatch=observation.exhausted_dispatch,
             )
 
+        # Merge over the observed lanes only: retrying an asserted lane that
+        # now finds nothing never dispatches the alternative it would have
+        # permitted, a limitation the successor states rather than widens.
         merged = provider_observation(
             original.provider,
-            tuple(result(lane) for lane in plan.lanes),
+            tuple(result(lane) for lane in plan.lanes if lane.identity in old_lanes),
             authority=original.authority,
             diagnostics=merge_provider_diagnostics(
                 original.diagnostics, replacement.diagnostics

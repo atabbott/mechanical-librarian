@@ -10,6 +10,7 @@ with; nothing reads that body, so its head is the whole proof.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AudioDiscoveryTitle,
     ClaimKind,
     ClaimScope,
     LocalClaim,
@@ -27,6 +29,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
+from tests.support.metadata_report_doubles import single_track_audio_facts
 
 PAYLOADS = Path(__file__).parent / "audiobook_provider_payloads"
 
@@ -163,3 +166,17 @@ def work_plan(
 def local_runtime_claim(value: str = "58244.201") -> LocalClaim:
     """One container-stated running time, which the runtime band compares."""
     return audio_claim(ClaimKind.DURATION, value, 2)
+
+
+def alternative_work_plan(
+    title: str = "Asserted Title", authors: tuple[str, ...] = ("Ada Author",)
+) -> MetadataDiscoveryPlan:
+    """One audiobook plan whose asserted lane has an alternative beside it."""
+    return audiobook_discovery_plan(
+        audio_target(title, authors),
+        (target_title_claim(title),),
+        audio=replace(
+            single_track_audio_facts(),
+            discovery_titles=(AudioDiscoveryTitle("path_leaf", "The Real Title"),),
+        ),
+    )

@@ -7,6 +7,12 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 
+from mechanical_librarian.domain.audio_inspection import MAX_OBSERVED_CHARACTERS
+from mechanical_librarian.domain.evidence_bounds import (
+    _FORBIDDEN_CODEPOINTS,
+    EvidenceValueError,
+    validate_projection_text,
+)
 from mechanical_librarian.domain.validation import exact_type, nonempty_text
 
 
@@ -29,6 +35,8 @@ class WorkTitleTransformationFamily(StrEnum):
     PARENTHESIZED_YEAR = "parenthesized_year"
     TRAILING_SERIES_SEQUENCE = "trailing_series_sequence"
     ORDER_INVERTED_SERIES_PREFIX = "order_inverted_series_prefix"
+    LEADING_SEQUENCE_TOKEN = "leading_sequence_token"
+    RIGHT_HAND_SEGMENT = "right_hand_segment"
     SUBTITLE_SEGMENT = "subtitle_segment"
     PUNCTUATION_AMPERSAND_FOLD = "punctuation_ampersand_fold"
     LATIN_COMBINING_MARKS = "latin_combining_marks"
@@ -98,6 +106,9 @@ class WorkTitleTransformationRule:
     query_enabled: bool
     admission_enabled: bool
     rung: WorkDispatchRung
+    # An audiobook-only row shapes an audiobook's query alone, so an ebook
+    # ladder is exactly the ladder it was before the row existed (#1255).
+    audiobook_only: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -105,6 +116,7 @@ class WorkTitleTransformationRule:
             or type(self.query_enabled) is not bool
             or type(self.admission_enabled) is not bool
             or type(self.rung) is not WorkDispatchRung
+            or type(self.audiobook_only) is not bool
             or self.admission_enabled
             and not self.query_enabled
         ):
@@ -211,6 +223,20 @@ WORK_TITLE_TRANSFORMATION_RULES = (
         True,
         False,
         WorkDispatchRung.NORMALIZED,
+    ),
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.LEADING_SEQUENCE_TOKEN,
+        True,
+        False,
+        WorkDispatchRung.NORMALIZED,
+        audiobook_only=True,
+    ),
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.RIGHT_HAND_SEGMENT,
+        True,
+        False,
+        WorkDispatchRung.NORMALIZED,
+        audiobook_only=True,
     ),
     WorkTitleTransformationRule(
         WorkTitleTransformationFamily.SUBTITLE_SEGMENT,
@@ -477,6 +503,49 @@ _INVERTED_SERIES = re.compile(
     r"[\t\n\r\f\v ]+[-–—][\t\n\r\f\v ]+(.+)$",
     re.IGNORECASE,
 )
+# A leading position token: "3. Title", "Book 2: Title", "#4 - Title".  At
+# most three digits, so a year-shaped or four-digit title ("1984", "2001: A
+# Space Odyssey") never matches, and a colon or stop must be followed by a
+# space, so a time ("3:10 to Yuma") never matches either.
+_LEADING_SEQUENCE = re.compile(
+    r"(?:(?:book|vol(?:ume)?|part|no)\.? ?)?#?[0-9]{1,3}(?:\.[0-9]{1,2})?"
+    r"(?:[-–—:.)] | [-–—] )(?P<rest>.+)",
+    re.IGNORECASE,
+)
+_SPACED_DASHES = (" - ", " – ", " — ")
+# A path leaf's leading track number: "03 - Title", "1. Title".
+_LEADING_TRACK_NUMBER = re.compile(r"[0-9]{1,3} ?[-–—.] ")
+_ROMAN_NUMERAL = re.compile(
+    r"m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})", re.IGNORECASE
+)
+# The one closed stop list both audiobook title grammars read: a segment made
+# only of these is decoration, and a trailing " - Name" holding one is not a
+# name.  Roman numerals and digit-bearing tokens are stop tokens as well.
+_DISCOVERY_STOP_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "book",
+        "part",
+        "volume",
+        "vol",
+        "chapter",
+        "episode",
+        "edition",
+        "unabridged",
+        "abridged",
+        "dramatized",
+        "collection",
+        "omnibus",
+        "trilogy",
+        "series",
+        "saga",
+        "chronicles",
+    }
+)
+_MAX_DISCOVERY_SOURCE_CHARACTERS = 255
+_MAX_DISCOVERY_STRIP_PASSES = 4
 _IDENTIFIER = re.compile(
     r"\b(?P<label>isbn(?:-1[03])?|asin)[\t\n\r\f\v ]*[:#-]?[\t\n\r\f\v ]*"
     r"(?P<value>[0-9A-Z][0-9A-Z -]{7,20})\b",
@@ -493,13 +562,19 @@ _TYPOGRAPHIC_TRANSLATION = str.maketrans(
 _ADMISSION_TYPOGRAPHIC_TRANSLATION = str.maketrans({"\u00a0": " ", "–": "-", "—": "-"})
 
 
-def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, ...]:
-    """Return at most three distinct, deterministic WORK dispatches."""
+def work_query_ladder(
+    title: str, authors: tuple[str, ...], *, audiobook: bool = False
+) -> tuple[WorkQuery, ...]:
+    """Return at most three distinct, deterministic WORK dispatches.
+
+    `audiobook` admits the audiobook-only rows; an ebook ladder never reads them.
+    """
     if (
         type(title) is not str
         or type(authors) is not tuple
         or not authors
         or any(type(value) is not str for value in authors)
+        or type(audiobook) is not bool
     ):
         raise ValueError("work query input is invalid")
     shaped_title = _normalized_query_text(title)
@@ -511,7 +586,11 @@ def work_query_ladder(title: str, authors: tuple[str, ...]) -> tuple[WorkQuery, 
     )
     applied: list[WorkTitleTransformationFamily] = []
     for rule in WORK_TITLE_TRANSFORMATION_RULES:
-        if rule.rung is not WorkDispatchRung.NORMALIZED or not rule.query_enabled:
+        if (
+            rule.rung is not WorkDispatchRung.NORMALIZED
+            or not rule.query_enabled
+            or (rule.audiobook_only and not audiobook)
+        ):
             continue
         transformed = apply_work_title_transformation(
             rule.family, shaped_title, shaped_authors
@@ -835,7 +914,7 @@ def replay_provider_work_identity_admission(
                 break
     if not admission.admitted or dispatch_lineage is None:
         return WorkIdentityAdmission(False)
-    queries = work_query_ladder(local_title, local_authors)
+    queries = work_query_ladder(local_title, local_authors, audiobook=audiobook)
     permitted = {WorkDispatchLineage.from_query(query) for query in queries} | {
         WorkDispatchLineage.from_query(narrowing_work_query(query)) for query in queries
     }
@@ -944,6 +1023,23 @@ def apply_work_title_transformation(
     if family is WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX:
         match = _INVERTED_SERIES.fullmatch(title)
         return _clean(match.group(1)) if match is not None else title
+    if family is WorkTitleTransformationFamily.LEADING_SEQUENCE_TOKEN:
+        match = _LEADING_SEQUENCE.fullmatch(title)
+        rest = "" if match is None else _clean(match.group("rest"))
+        return rest if _has_letter(rest) else title
+    if family is WorkTitleTransformationFamily.RIGHT_HAND_SEGMENT:
+        if sum(title.count(separator) for separator in _SPACED_DASHES) != 1:
+            return title
+        separator = next(value for value in _SPACED_DASHES if value in title)
+        left, right = (_clean(value) for value in title.split(separator, 1))
+        if (
+            not _has_letter(left)
+            or not _has_letter(right)
+            or _SERIES_MARKER.fullmatch(right) is not None
+            or all(_discovery_stop_token(token) for token in right.split())
+        ):
+            return title
+        return right
     if family is WorkTitleTransformationFamily.SUBTITLE_SEGMENT:
         if ":" in title:
             return _clean(title.split(":", 1)[0])
@@ -957,6 +1053,91 @@ def apply_work_title_transformation(
         folded = _latin_combining_marks_fold(title)
         return title if folded is None else folded
     raise RuntimeError("work title transformation table is incomplete")
+
+
+def discovery_title_candidate(text: str) -> str | None:
+    """Shape one folder leaf or title tag into query-only discovery text.
+
+    The input is hostile: a folder name or a container tag the owner never
+    vetted.  Anything that could be a path, carries a control, a bidirectional
+    override or a noncharacter, or runs past one filesystem component is
+    refused whole rather than repaired.  What survives is stripped of trailing
+    bracket tags, a trailing "(YYYY)" and a trailing " - Name" credit, in at
+    most four bounded passes, and of a leading "NN - " track number, and is
+    returned only if it is still public-safe projection text naming a letter.
+    It is the same NFC, whitespace-collapsed form `normalize_title` returns.
+    """
+    if (
+        type(text) is not str
+        or len(text) > _MAX_DISCOVERY_SOURCE_CHARACTERS
+        or any(character in text for character in "/\\\x00")
+        or any(
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in text
+        )
+        or _FORBIDDEN_CODEPOINTS.search(text) is not None
+    ):
+        return None
+    value = " ".join(unicodedata.normalize("NFC", text).split())
+    name_stripped = False
+    for _ in range(_MAX_DISCOVERY_STRIP_PASSES):
+        before = value
+        value = _clean(_BRACKET_SOURCE.sub("", value))
+        value = apply_work_title_transformation(
+            WorkTitleTransformationFamily.PARENTHESIZED_YEAR, value, ()
+        )
+        if not name_stripped:
+            stripped = _trailing_name_stripped(value)
+            name_stripped = stripped != value
+            value = stripped
+        if value == before:
+            break
+    track = _LEADING_TRACK_NUMBER.match(value)
+    value = _clean(value if track is None else value[track.end() :])
+    if not _has_letter(value):
+        return None
+    try:
+        return validate_projection_text(
+            value, "discovery title", MAX_OBSERVED_CHARACTERS
+        )
+    except EvidenceValueError:
+        return None
+
+
+def _trailing_name_stripped(value: str) -> str:
+    """Strip one trailing " - Name" credit of one to four capitalised tokens."""
+    index, separator = max(
+        (value.rfind(separator), separator) for separator in _SPACED_DASHES
+    )
+    if index < 0:
+        return value
+    left = _clean(value[:index])
+    tokens = value[index + len(separator) :].split(" ")
+    if (
+        not _has_letter(left)
+        or not 1 <= len(tokens) <= 4
+        or any(
+            not token[:1].isupper()
+            or any(not (c.isalpha() or c in ".'’-") for c in token)
+            or _discovery_stop_token(token)
+            for token in tokens
+        )
+    ):
+        return value
+    return left
+
+
+def _discovery_stop_token(token: str) -> bool:
+    word = token.strip(".,:;!?'\"()[]").casefold()
+    return (
+        not word
+        or word in _DISCOVERY_STOP_WORDS
+        or any(character.isdigit() for character in word)
+        or _ROMAN_NUMERAL.fullmatch(word) is not None
+    )
+
+
+def _has_letter(value: str) -> bool:
+    return any(character.isalpha() for character in value)
 
 
 def work_title_election_matches(
@@ -1423,6 +1604,7 @@ __all__ = [
     "admit_provider_work_identity",
     "closed_creator_display_possibility",
     "direct_work_title_election_matches",
+    "discovery_title_candidate",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",
     "work_dispatch_lineage_from_data",

@@ -59,6 +59,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     diagnostics_are_canonical,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_DISCOVERY_TITLE_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     MAX_AUDIO_TRACKS,
@@ -102,7 +103,9 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_work_identity_contradiction,
     provider_lane_candidate_reference,
     recording_variant_conflict,
+    surviving_discovery_titles,
     validate_provider_access_time,
+    work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.work_identity import (
@@ -256,6 +259,9 @@ class MetadataLookup:
     work_title: str | None = None
     work_authors: tuple[str, ...] = ()
     requested_asin: str | None = None
+    # Set only on an audiobook's alternative WORK lane, whose title is a
+    # discovery title rather than the target's own (#1255).
+    title_basis: str | None = None
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
@@ -265,6 +271,12 @@ class MetadataLookup:
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.authors) is not tuple
             or any(type(value) is not str for value in self.authors)
+            or self.title_basis is not None
+            and (
+                self.title_basis not in AUDIO_DISCOVERY_TITLE_BASES
+                or self.kind is not ProviderQueryKind.WORK
+                or self.audio is None
+            )
         ):
             raise MetadataReportError("provider lookup is invalid")
         if self.requested_asin is not None and (
@@ -304,6 +316,7 @@ class MetadataDiscoveryLane:
     title: str | None = None
     authors: tuple[str, ...] = ()
     canonical_asin: str | None = None
+    title_basis: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -322,6 +335,11 @@ class MetadataDiscoveryLane:
             }
             or type(self.input_references) is not tuple
             or tuple(sorted(set(self.input_references))) != self.input_references
+            or self.title_basis is not None
+            and (
+                self.title_basis not in AUDIO_DISCOVERY_TITLE_BASES
+                or self.kind is not ProviderQueryKind.WORK
+            )
         ):
             raise MetadataReportError("provider discovery lane is invalid")
         if self.kind is ProviderQueryKind.ISBN:
@@ -358,10 +376,10 @@ class MetadataDiscoveryLane:
 
 
 def _metadata_discovery_query_count(
-    lanes: tuple[MetadataDiscoveryLane, ...],
+    lanes: tuple[MetadataDiscoveryLane, ...], *, audiobook: bool = False
 ) -> int:
     return sum(
-        len(work_query_ladder(lane.title, lane.authors))
+        len(work_query_ladder(lane.title, lane.authors, audiobook=audiobook))
         if lane.kind is ProviderQueryKind.WORK and lane.title is not None
         else 1
         for lane in lanes
@@ -386,7 +404,9 @@ class MetadataDiscoveryPlan:
             or type(self.lanes) is not tuple
             or any(type(value) is not MetadataDiscoveryLane for value in self.lanes)
             or len(self.lanes) > MAX_ISBN_DISCOVERY_LANES + 1
-            or _metadata_discovery_query_count(self.lanes)
+            or _metadata_discovery_query_count(
+                self.lanes, audiobook=self.audio is not None
+            )
             > MAX_PROVIDER_DISCOVERY_QUERIES
             or tuple(value.identity for value in self.lanes)
             != tuple(sorted({value.identity for value in self.lanes}))
@@ -410,7 +430,15 @@ class MetadataDiscoveryPlan:
                 )
                 != sum(lane.kind is ProviderQueryKind.ISBN for lane in self.lanes)
             )
-            or sum(lane.kind is ProviderQueryKind.WORK for lane in self.lanes) > 1
+            # One asserted WORK lane and, on an audiobook plan only, one
+            # alternative beside or instead of it.
+            or sum(
+                lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
+                for lane in self.lanes
+            )
+            > 1
+            or sum(lane.title_basis is not None for lane in self.lanes)
+            > (0 if self.audio is None else 1)
             or len(asin_lanes) > MAX_ASIN_DISCOVERY_LANES
             or len({lane.canonical_asin for lane in asin_lanes}) != len(asin_lanes)
         ):
@@ -516,57 +544,25 @@ class ProviderLaneResult:
 
 
 def _work_discovery_lanes(
-    target_fields: tuple[TargetField, ...], local_claims: tuple[LocalClaim, ...]
+    target_fields: tuple[TargetField, ...],
+    local_claims: tuple[LocalClaim, ...],
+    audio: AudioFacts | None = None,
 ) -> tuple[MetadataDiscoveryLane, ...]:
-    """Derive the single title-and-author lane, shared by both media plans."""
-    fields = {field.destination: field for field in target_fields}
-    title = fields[TargetDestination.TITLE]
-    authors = fields[TargetDestination.AUTHORS]
-    complete_work = (
-        title.state is TargetFieldState.VALUE
-        and type(title.value) is str
-        and authors.state is TargetFieldState.VALUE
-        and type(authors.value) is tuple
-        and bool(authors.value)
-        and all(type(value) is str for value in authors.value)
-        and len(
-            {normalize_title(cast("str", value)).casefold() for value in authors.value}
-        )
-        == len(authors.value)
-    )
-    if not complete_work:
-        return ()
-    # ``complete_work`` is exactly the conjunction that proved the title is a
-    # ``str`` and the authors are a non-empty tuple of ``str``.
-    normalized_title = normalize_title(cast("str", title.value))
-    normalized_authors = tuple(
-        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
-    )
-    title_references = tuple(
-        sorted(
-            claim.reference
-            for claim in local_claims
-            if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
-        )
-    )
-    if not title_references:
-        return ()
-    identity = discovery_lane_identity(
-        {
-            "authors": list(normalized_authors),
-            "input_references": list(title_references),
-            "kind": ProviderQueryKind.WORK.value,
-            "title": normalized_title,
-        }
-    )
-    return (
+    """Build the WORK lanes both media plans share from one payload set."""
+    return tuple(
         MetadataDiscoveryLane(
-            identity,
+            payload.identity,
             ProviderQueryKind.WORK,
-            title_references,
-            title=normalized_title,
-            authors=normalized_authors,
-        ),
+            payload.input_references,
+            title=payload.title,
+            authors=payload.authors,
+            title_basis=payload.title_basis,
+        )
+        for payload in work_discovery_lane_payloads(
+            target_fields,
+            local_claims,
+            None if audio is None else audio.discovery_titles,
+        )
     )
 
 
@@ -618,19 +614,40 @@ def metadata_discovery_plan(
 def provider_discovery_lane_order(
     plan: MetadataDiscoveryPlan,
 ) -> tuple[MetadataDiscoveryLane, ...]:
-    """Schedule one unambiguous ISBN lane before its optional work fallback."""
+    """Schedule one unambiguous ISBN lane before its optional work fallback.
+
+    An audiobook's alternative WORK lane always follows its asserted one,
+    whose result decides whether the alternative is dispatched at all.
+    """
     eligible = _eligible_isbn_lane(plan)
-    if eligible is None:
+    if eligible is None and all(lane.title_basis is None for lane in plan.lanes):
         return plan.lanes
     return tuple(
         sorted(
             plan.lanes,
             key=lambda lane: (
-                lane.kind is ProviderQueryKind.WORK,
-                lane is not eligible,
+                eligible is not None and lane.kind is ProviderQueryKind.WORK,
+                eligible is not None and lane is not eligible,
+                lane.title_basis is not None,
             ),
         )
     )
+
+
+def alternative_work_lane_permitted(
+    plan: MetadataDiscoveryPlan, asserted: ProviderLaneResult | None
+) -> bool:
+    """Permit the alternative WORK lane only after an asserted lane found nothing.
+
+    No match -- an empty ladder or one whose every product admission refused
+    -- is the only asserted outcome that permits it, and a plan whose series
+    collapse dropped the asserted lane permits it outright. A failure, an
+    overflow or insufficient input is never reclassified as permission.
+    """
+    return not any(
+        lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
+        for lane in plan.lanes
+    ) or (asserted is not None and asserted.status is ProviderStatus.NO_MATCH)
 
 
 def identifier_suppresses_discovery(
@@ -638,12 +655,18 @@ def identifier_suppresses_discovery(
     results: list[ProviderLaneResult],
     lane: MetadataDiscoveryLane,
 ) -> bool:
-    """Keep discovery unspent only after one applicable identifier result."""
+    """Keep discovery unspent only after one applicable identifier result.
+
+    An audiobook's alternative WORK lane is always left unspent here: only
+    Audible dispatches it, so every adapter that asks suppresses it (#1255).
+    """
     eligible = _eligible_isbn_lane(plan)
     work_contexts = tuple(
         (planned.title, planned.authors)
         for planned in plan.lanes
-        if planned.kind is ProviderQueryKind.WORK and planned.title is not None
+        if planned.kind is ProviderQueryKind.WORK
+        and planned.title is not None
+        and planned.title_basis is None
     )
     applicable_identifier = (
         eligible is not None
@@ -668,7 +691,7 @@ def identifier_suppresses_discovery(
             for result in results
         )
     )
-    return (
+    return lane.title_basis is not None or (
         lane.kind is ProviderQueryKind.WORK
         and eligible is not None
         and applicable_identifier
@@ -723,6 +746,11 @@ def audiobook_discovery_plan(
     suppresses the search lane: it is fed to the per-ASIN providers afterwards,
     by `audiobook_asin_feed_plan`, where the runtime band still judges what it
     returns. The alternatives rule above is about *local* identifiers only.
+
+    The search may carry a second, alternative WORK lane from the item's first
+    surviving discovery title, dispatched only when the asserted lane finds
+    nothing (`alternative_work_lane_permitted`), or alone when the asserted
+    title collapses to a series name the target records (#1255).
     """
     context = metadata_lookup(target, ())
     canonical_asins = sorted(_local_identifier_asins(local_claims))
@@ -743,9 +771,12 @@ def audiobook_discovery_plan(
         )
         lanes.append(_asin_discovery_lane(asin, references))
     if not lanes:
-        lanes.extend(_work_discovery_lanes(target.fields, local_claims))
+        lanes.extend(_work_discovery_lanes(target.fields, local_claims, audio))
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
-    if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
+    if (
+        _metadata_discovery_query_count(ordered_lanes, audiobook=audio is not None)
+        > MAX_PROVIDER_DISCOVERY_QUERIES
+    ):
         return MetadataDiscoveryPlan(
             local_claims, (), True, audio, context.title, context.authors
         )
@@ -1459,6 +1490,14 @@ def observe_provider(
             )
         except Exception:
             accessed_at = None
+        # An alternative work lane is recorded only where it could have been
+        # sent, so a retry never replays one the adapter would suppress: only
+        # Audible dispatches it, and unconditionally only when the plan has no
+        # asserted work lane (#1255).
+        alternative_sent = authority == "audible_catalog" and not any(
+            lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
+            for lane in plan.lanes
+        )
         observation = provider_observation(
             provider_name,
             tuple(
@@ -1466,6 +1505,7 @@ def observe_provider(
                     lane, ProviderStatus.UNAVAILABLE, accessed_at=accessed_at
                 )
                 for lane in plan.lanes
+                if lane.title_basis is None or alternative_sent
             ),
             authority=authority,
         )
@@ -1661,7 +1701,8 @@ def qualify_provider_observation(
             dispatch_lineage=observation.dispatch_lineage,
             audiobook=lookup.audio is not None,
         )
-        qualified_witness = admission.admitted
+        # An alternative lane never carries an overflow witness (#1255).
+        qualified_witness = admission.admitted and lookup.title_basis is None
         return ProviderObservation(
             observation.provider,
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
@@ -1721,6 +1762,7 @@ def qualify_provider_observation(
                 ).admitted
             )
             if lookup.audio is not None
+            and lookup.title_basis is None
             and observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
             else (),
         )
@@ -1742,6 +1784,28 @@ def qualify_provider_observation(
         else corroborated[0]
     )
     is_audio = observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+    if lookup.title_basis is not None and (
+        corroborated is None
+        or not any(
+            evidence.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            and evidence.scope is ClaimScope.EDITION
+            for evidence in corroborated[0].evidence
+        )
+    ):
+        # An alternative lane keeps only a band-corroborated recording with
+        # its marketplace evidence; an admitted set without one is a refused
+        # rung, and the ladder walks on (#1255).
+        return ProviderObservation(
+            observation.provider,
+            ProviderStatus.NO_MATCH,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+            observation.authority,
+            accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
+            request_accounting=observation.request_accounting,
+        )
     filtered = tuple(
         _shaped_with_runtime_comparison(
             candidate,
@@ -1750,7 +1814,9 @@ def qualify_provider_observation(
             recording_hints=is_audio,
         )
         for candidate in (
-            set_admission.candidates
+            (selected,)
+            if lookup.title_basis is not None
+            else set_admission.candidates
             if (is_audio and observation.authority != "itunes_search")
             or (
                 lookup.audio is not None
@@ -1814,7 +1880,9 @@ def observe_work_ladder(
     refused_products = 0
     hints: tuple[ProviderCandidate, ...] = ()
     observation: ProviderObservation | None = None
-    for query in work_query_ladder(lookup.title or "", lookup.authors):
+    for query in work_query_ladder(
+        lookup.title or "", lookup.authors, audiobook=lookup.audio is not None
+    ):
         physical = observe_rung(query)
         observation = qualify_provider_observation(physical, lookup)
         if physical.status is ProviderStatus.NO_MATCH:
@@ -2411,6 +2479,7 @@ class GenerateMetadataReport:
                         lane.matched_family,
                     )
                     for lane in plan.lanes
+                    if lane.title_basis is None
                 )
                 observations.append(
                     ProviderObservation(
@@ -2589,7 +2658,18 @@ class GenerateMetadataReport:
                 or {"no_local_audio_claims"}
             )
         )
-        plan = audiobook_discovery_plan(initial, combined_claims, audio=audio.audio)
+        facts = audio.audio
+        if facts is not None:
+            # Composition holds no target, so the drops that need one -- the
+            # asserted title, authors and recorded series -- land here, on the
+            # same persisted field the plan and its replay read (#1255).
+            facts = replace(
+                facts,
+                discovery_titles=surviving_discovery_titles(
+                    facts.discovery_titles, initial.fields
+                ),
+            )
+        plan = audiobook_discovery_plan(initial, combined_claims, audio=facts)
         cover_aggregate_deadline = time.monotonic() + 60.0
         try:
             current_sources = (
@@ -2660,9 +2740,7 @@ class GenerateMetadataReport:
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
-                audio=_audio_with_runtime_observations(
-                    audio.audio, tuple(observations)
-                ),
+                audio=_audio_with_runtime_observations(facts, tuple(observations)),
             )
         except Exception as error:
             _release_repository(repository, error)
@@ -2906,6 +2984,7 @@ __all__ = [
     "TargetSnapshot",
     "UnsupportedMediaError",
     "admitted_audiobook_identity",
+    "alternative_work_lane_permitted",
     "audiobook_asin_feed_plan",
     "audiobook_discovery_plan",
     "merge_provider_cover_descriptor",

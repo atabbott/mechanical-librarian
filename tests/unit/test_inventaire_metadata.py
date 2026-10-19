@@ -36,6 +36,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationFamily,
 )
 from mechanical_librarian.infrastructure.security.credentials import inventaire_client
+from tests.support.audiobook_providers import alternative_work_plan
 from tests.support.metadata_report_schemas import synthetic_report
 
 
@@ -184,7 +185,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v50"
+    assert report.schema_version == "metadata-report-v51"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -1458,7 +1459,7 @@ def test_complete_discovery_preserves_negative_only_creator_equivalence(
         1 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 0
     )
     assert observation.lanes
-    assert report.schema_version == "metadata-report-v50"
+    assert report.schema_version == "metadata-report-v51"
 
 
 @pytest.mark.parametrize(
@@ -1593,3 +1594,25 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
                 ).fetchone()[0]
                 == 0
             )
+
+
+def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
+    """Only Audible asks an alternative title; this adapter suppresses it."""
+    plan = alternative_work_plan()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"results": []})
+
+    observation = _provider(httpx.MockTransport(handler)).observe(plan).observation
+
+    assert requests
+    assert not any(
+        "Real" in str(request.url) or b"Real" in request.content for request in requests
+    )
+    assert [None] == [
+        next(lane for lane in plan.lanes if lane.identity == value.identity).title_basis
+        for value in observation.lanes
+    ]
+    assert len(requests) == observation.request_accounting.logical_requests

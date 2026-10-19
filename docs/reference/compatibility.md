@@ -41,7 +41,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v50` plus `proposal-set-v8` under
+  `metadata-report-v51` plus `proposal-set-v8` under
   `fixed-conservative-v33`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
@@ -348,3 +348,11 @@ and the closed `work_identity_refused` diagnostic, so its exact SQLite
 discriminator requires a **clean rebuild** under ADR-0013. Prior v49 reports and
 stores are refused before mutation; ebook lanes record no ladder. #1232's
 `schema-adopt` plan is retired. No migration, adoption or relabelling is supplied.
+
+## Audiobook discovery titles (#1255)
+
+Report `metadata-report-v51` adds each audiobook's recorded discovery titles and
+binds the alternative work lane they may plan, so its exact SQLite
+discriminator requires a **clean rebuild** under ADR-0013. Prior v50 reports and
+stores are refused before mutation; ebook plans and ladders are unchanged. No
+migration, adoption or relabelling is supplied.

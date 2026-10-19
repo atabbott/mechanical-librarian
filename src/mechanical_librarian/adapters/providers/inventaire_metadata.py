@@ -346,7 +346,9 @@ class InventaireMetadataProvider:
             or not lookup.authors
         ):
             return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
-        queries = work_query_ladder(lookup.title, lookup.authors)
+        queries = work_query_ladder(
+            lookup.title, lookup.authors, audiobook=lookup.audio is not None
+        )
         if not queries:
             return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
         last = self._result(lookup, ProviderStatus.NO_MATCH)

@@ -298,8 +298,13 @@ class ITunesSearchMetadataProvider:
                 ProviderStatus.QUERY_LIMIT_EXCEEDED,
                 authority="itunes_search",
             )
+        # Only the asserted work lane: an audiobook's alternative title is
+        # never sent to the store, whose twelve-attempt budget it would share
+        # (#1255; a second iTunes lane is #1254's question).
         lanes = tuple(
-            lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK
+            lane
+            for lane in plan.lanes
+            if lane.kind is ProviderQueryKind.WORK and lane.title_basis is None
         )
         if not lanes:
             self._client.close()
@@ -411,7 +416,9 @@ class ITunesSearchMetadataProvider:
         if (
             lookup.title is None
             or not lookup.authors
-            or not work_query_ladder(lookup.title, lookup.authors)
+            or not work_query_ladder(
+                lookup.title, lookup.authors, audiobook=lookup.audio is not None
+            )
         ):
             return QualifiedLaneObservation(
                 self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)

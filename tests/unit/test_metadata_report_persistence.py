@@ -37,6 +37,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.metadata_report import (
+    AudioDiscoveryTitle,
     FileFacts,
     MetadataReport,
     TargetFacts,
@@ -199,7 +200,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v50",
+                "metadata-report-v51",
                 "fixed-conservative-v6",
             ),
         ),
@@ -330,17 +331,24 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v49",
+            "previous v49",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v49",
             ),
         ),
         (
-            "previous proposal policy v3",
+            "immediate previous v50",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v50",
+            ),
+        ),
+        (
+            "previous proposal policy v3",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v51",
                 "fixed-conservative-v3",
             ),
         ),
@@ -348,7 +356,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v50",
+                "metadata-report-v51",
                 "fixed-conservative-v4",
             ),
         ),
@@ -356,7 +364,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v50",
+                "metadata-report-v51",
                 "fixed-conservative-v5",
             ),
         ),
@@ -364,7 +372,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v50",
+                "metadata-report-v51",
                 "fixed-conservative-v7",
             ),
         ),
@@ -520,7 +528,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v50",)
+        assert schema_version == ("metadata-report-v51",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -704,7 +712,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v50'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v51'", "= 'metadata-report-v49'"
             ),
         )
         # Reconstruct the frozen producer's reviewer table too; never update
@@ -1937,13 +1945,14 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v50"
+        assert restored.schema_version == "metadata-report-v51"
     finally:
         reopened.close()
 
 
 def _current_audio_report(
     cited_candidate: str = "audible-product-B08G9PRS1K",
+    discovery_titles: tuple[AudioDiscoveryTitle, ...] = (),
 ) -> MetadataReport:
     """One current audiobook report exercising retained audio provenance.
 
@@ -1989,6 +1998,7 @@ def _current_audio_report(
                     candidate=cited_candidate,
                 ),
             ),
+            discovery_titles=discovery_titles,
         ),
     )
 
@@ -2059,7 +2069,7 @@ def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> Non
 
     published = _current_audio_report()
     current = json.loads(published.to_json())
-    assert current["schema_version"] == "metadata-report-v50"
+    assert current["schema_version"] == "metadata-report-v51"
     assert MetadataReport.from_json(published.to_json()) == published
 
     previous = json.loads(json.dumps(current))
@@ -2251,7 +2261,7 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
             Path(__file__).parents[1] / "fixtures/metadata-report-v46/report-v46.json"
         ).read_text()
     )
-    document["schema_version"] = "metadata-report-v50"
+    document["schema_version"] = "metadata-report-v51"
     document.pop("report_id")
     document["report_id"] = (
         "report_" + hashlib.sha256(canonical_json(document).encode()).hexdigest()
@@ -2386,7 +2396,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v50'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v51'", "= 'metadata-report-v49'"
             ),
         )
         old.setattr(
@@ -2516,3 +2526,31 @@ def test_validated_report_row_preserves_complete_validation_and_error_precedence
         ):
             with pytest.raises(MetadataReportError, match="^" + message + "$"):
                 validate(tuple(row))
+
+
+def test_discovery_titles_survive_publication_and_reopen(tmp_path: Path) -> None:
+    """The v51 audio record is read back exactly, and a v50 document is not."""
+    from mechanical_librarian.domain.metadata_report import ReportValueError
+
+    titles = (
+        AudioDiscoveryTitle("path_leaf", "The Real Title"),
+        AudioDiscoveryTitle("title_tag", "Another Real Title"),
+    )
+    report = _current_audio_report(discovery_titles=titles)
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    repository.publish(report, lambda: True)
+    repository.close()
+    reopened = open_repository(path, create=False)
+    try:
+        restored = MetadataReport.from_json(reopened.get(report.report_id))
+    finally:
+        reopened.close()
+    assert restored == report
+    assert restored.audio is not None and titles == restored.audio.discovery_titles
+
+    previous = json.loads(report.to_json())
+    previous["schema_version"] = "metadata-report-v50"
+    del previous["audio"]["discovery_titles"]
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(json.dumps(previous))

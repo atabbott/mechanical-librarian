@@ -345,7 +345,9 @@ class GoogleBooksMetadataProvider:
         ):
             family = None
             references = ()
-            work_queries = work_query_ladder(lookup.title, lookup.authors)
+            work_queries = work_query_ladder(
+                lookup.title, lookup.authors, audiobook=lookup.audio is not None
+            )
             if not work_queries:
                 return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
         else:

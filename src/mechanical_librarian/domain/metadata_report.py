@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping, Self, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     MAX_AUDIO_TRACKS,
+    MAX_OBSERVED_CHARACTERS,
     AudioChapter,
     AudioChapterComposition,
     AudioEmbeddedCover,
@@ -65,6 +66,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
+    WorkDispatchRung,
     WorkIdentityAdmission,
     WorkTitleTransformationFamily,
     WorkTitleTransformationLineage,
@@ -77,8 +79,11 @@ from mechanical_librarian.domain.work_identity import (
     work_title_has_variant_marker,
     work_title_transformation_lineage_from_data,
 )
+from mechanical_librarian.domain.work_identity import (
+    _closed_equal as _closed_title_equal,
+)
 
-REPORT_SCHEMA = "metadata-report-v50"
+REPORT_SCHEMA = "metadata-report-v51"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1045,6 +1050,35 @@ def audio_set_content_digest(digests: tuple[str, ...]) -> str:
     return hashlib.sha256(canonical_json(list(digests)).encode("utf-8")).hexdigest()
 
 
+# The two item surfaces a discovery title is read from, in the order a plan
+# prefers them: the folder leaf, then the single-file title tag (#1255).
+AUDIO_DISCOVERY_TITLE_BASES = ("path_leaf", "title_tag")
+
+
+@dataclass(frozen=True, slots=True)
+class AudioDiscoveryTitle:
+    """One query-only alternative title read from the item's own surfaces.
+
+    Discovery input only: it is never a local claim, a field result, or a
+    proposal value, and it asserts no identity. A provider candidate it finds
+    is retained only when it admits against this title and the runtime band
+    corroborates it.
+    """
+
+    basis: str
+    title: str
+
+    def __post_init__(self) -> None:
+        if type(self.basis) is not str or self.basis not in AUDIO_DISCOVERY_TITLE_BASES:
+            raise ReportValueError("audio discovery title is invalid")
+        _projection_text(self.title, "audio discovery title", MAX_OBSERVED_CHARACTERS)
+        if normalize_title(self.title) != self.title:
+            raise ReportValueError("audio discovery title is invalid")
+
+    def to_data(self) -> dict[str, str]:
+        return {"basis": self.basis, "title": self.title}
+
+
 @dataclass(frozen=True, slots=True)
 class AudioFacts:
     """The bounded structured audio section of one audiobook report.
@@ -1064,6 +1098,10 @@ class AudioFacts:
 
     ``observations`` names what composing the set noticed about the set.  None
     of them is evidence about the work, and the vocabulary is closed.
+
+    ``discovery_titles`` holds at most one title per surface, folder leaf
+    first, no two of them the same title.  They shape one alternative WORK
+    query and nothing else.
     """
 
     chapters: tuple[AudioChapter, ...] = ()
@@ -1074,6 +1112,7 @@ class AudioFacts:
     tracks: tuple[AudioTrackDigest, ...] = ()
     observations: tuple[AudioObservation, ...] = ()
     chapter_rows_omitted: bool = False
+    discovery_titles: tuple[AudioDiscoveryTitle, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -1128,6 +1167,21 @@ class AudioFacts:
             or any(ordinal > len(self.tracks) for ordinal in self.embedded_cover.tracks)
         ):
             raise ReportValueError("audio observations are invalid")
+        titles = self.discovery_titles
+        if (
+            type(titles) is not tuple
+            or any(type(value) is not AudioDiscoveryTitle for value in titles)
+            or [AUDIO_DISCOVERY_TITLE_BASES.index(value.basis) for value in titles]
+            != sorted(
+                {AUDIO_DISCOVERY_TITLE_BASES.index(value.basis) for value in titles}
+            )
+            or any(
+                _closed_title_equal(value.title, other.title)
+                for index, value in enumerate(titles)
+                for other in titles[index + 1 :]
+            )
+        ):
+            raise ReportValueError("audio discovery titles are invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1135,6 +1189,7 @@ class AudioFacts:
             "chapters_truncated": self.chapters_truncated,
             "chapter_rows_omitted": self.chapter_rows_omitted,
             "composition": self.composition.value,
+            "discovery_titles": [value.to_data() for value in self.discovery_titles],
             "embedded_cover": self.embedded_cover.to_data(),
             "observations": [value.to_data() for value in self.observations],
             "sidecars": [value.to_data() for value in self.sidecars],
@@ -2560,14 +2615,19 @@ class ProviderObservation:
                         or self.candidates
                     )
                 )
+                # Hints come from the asserted lane, which the report pins;
+                # an audiobook's alternative lane may stand beside it.
                 or (
                     self.lanes
                     and (
-                        len(work_lanes) != 1
-                        or work_lanes[0].status is not ProviderStatus.NO_MATCH
-                        or work_lanes[0].candidates
-                        or work_lanes[0].dispatch_lineage is not None
-                        or work_lanes[0].transformation_lineage is not None
+                        not 1 <= len(work_lanes) <= 2
+                        or not any(
+                            lane.status is ProviderStatus.NO_MATCH
+                            and not lane.candidates
+                            and lane.dispatch_lineage is None
+                            and lane.transformation_lineage is None
+                            for lane in work_lanes
+                        )
                     )
                 )
             ):
@@ -2944,6 +3004,142 @@ def target_work_identity_context(
     ):
         return None
     return normalized_title, normalized_authors
+
+
+@dataclass(frozen=True, slots=True)
+class WorkLanePayload:
+    """One WORK lane's identity payload, the only binding a lane's title has.
+
+    The asserted lane carries no `title_basis`, so its payload is the one
+    every earlier report keyed it on. An alternative lane names the surface
+    its title was read from, which keeps it a different lane from an asserted
+    lane over the same text.
+    """
+
+    title: str
+    authors: tuple[str, ...]
+    input_references: tuple[str, ...]
+    title_basis: str | None = None
+
+    @property
+    def identity(self) -> str:
+        payload: dict[str, object] = {
+            "authors": list(self.authors),
+            "input_references": list(self.input_references),
+            "kind": ProviderQueryKind.WORK.value,
+            "title": self.title,
+        }
+        if self.title_basis is not None:
+            payload["title_basis"] = self.title_basis
+        return discovery_lane_identity(payload)
+
+
+def surviving_discovery_titles(
+    titles: tuple[AudioDiscoveryTitle, ...], fields: tuple[TargetField, ...]
+) -> tuple[AudioDiscoveryTitle, ...]:
+    """Drop every discovery title that would only repeat a query already made.
+
+    A title equal to the asserted title, to an asserted author, to a series
+    name the target records, or to an earlier entry adds nothing a second
+    lane could ask, so it is not kept.
+    """
+    values = {field.destination: field for field in fields}
+    excluded: list[str] = []
+    for destination in (TargetDestination.TITLE, TargetDestination.AUTHORS):
+        field = values.get(destination)
+        if field is not None and type(field.value) is str:
+            excluded.append(field.value)
+        elif field is not None and type(field.value) is tuple:
+            excluded.extend(value for value in field.value if type(value) is str)
+    excluded.extend(_target_series_names(fields))
+    kept: list[AudioDiscoveryTitle] = []
+    for value in titles:
+        if not any(
+            _closed_title_equal(value.title, other)
+            for other in (*excluded, *(entry.title for entry in kept))
+        ):
+            kept.append(value)
+    return tuple(kept)
+
+
+def _target_series_names(fields: tuple[TargetField, ...]) -> tuple[str, ...]:
+    return tuple(
+        series.name
+        for field in fields
+        if field.destination is TargetDestination.SERIES and type(field.value) is tuple
+        for series in field.value
+        if type(series) is TargetSeries
+    )
+
+
+def work_discovery_lane_payloads(
+    fields: tuple[TargetField, ...],
+    local_claims: tuple[LocalClaim, ...],
+    discovery_titles: tuple[AudioDiscoveryTitle, ...] | None = None,
+) -> tuple[WorkLanePayload, ...]:
+    """Return the WORK lanes one plan dispatches and one report replays.
+
+    The asserted lane is the target's own title and complete author set, read
+    from the target-title claim. `discovery_titles` is `None` for an ebook,
+    which has no alternative. On an audiobook the first surviving discovery
+    title adds one alternative lane over the same authors and references, and
+    when the asserted title's first rung is a series name the target records
+    (series collapse) the alternative replaces the asserted lane rather than
+    joining it.
+    """
+    values = {field.destination: field for field in fields}
+    title = values[TargetDestination.TITLE]
+    authors = values[TargetDestination.AUTHORS]
+    complete_work = (
+        title.state is TargetFieldState.VALUE
+        and type(title.value) is str
+        and authors.state is TargetFieldState.VALUE
+        and type(authors.value) is tuple
+        and bool(authors.value)
+        and all(type(value) is str for value in authors.value)
+        and len(
+            {normalize_title(cast("str", value)).casefold() for value in authors.value}
+        )
+        == len(authors.value)
+    )
+    if not complete_work:
+        return ()
+    # ``complete_work`` is exactly the conjunction that proved the title is a
+    # ``str`` and the authors are a non-empty tuple of ``str``.
+    normalized_title = normalize_title(cast("str", title.value))
+    normalized_authors = tuple(
+        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
+    )
+    references = tuple(
+        sorted(
+            claim.reference
+            for claim in local_claims
+            if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
+        )
+    )
+    if not references:
+        return ()
+    asserted = WorkLanePayload(normalized_title, normalized_authors, references)
+    surviving = (
+        ()
+        if discovery_titles is None
+        else surviving_discovery_titles(discovery_titles, fields)
+    )
+    if not surviving:
+        return (asserted,)
+    alternative = WorkLanePayload(
+        surviving[0].title, normalized_authors, references, surviving[0].basis
+    )
+    first = work_query_ladder(normalized_title, normalized_authors, audiobook=True)[:1]
+    # A title with no query rung (a bare position such as "Part II") cannot
+    # be asked at all, so it collapses exactly as a series-equal one does.
+    collapsed = not first or any(
+        query.rung is WorkDispatchRung.NORMALIZED
+        and _closed_title_equal(query.title, name)
+        for query in first
+        for name in _target_series_names(fields)
+    )
+    return (alternative,) if collapsed else (asserted, alternative)
 
 
 def provider_candidate_work_identity_contradiction(
@@ -3462,12 +3658,49 @@ class MetadataReport:
             and all(type(value) is str for value in target_authors_value)
             else ()
         )
+        # An audiobook report replays the WORK lanes its plan could carry, so
+        # a lane identity names exactly the title it was dispatched with.
+        planned = (
+            {}
+            if self.audio is None
+            else {
+                payload.identity: payload
+                for payload in work_discovery_lane_payloads(
+                    self.target.fields, self.local_claims, self.audio.discovery_titles
+                )
+            }
+        )
+        asserted = next(
+            (
+                identity
+                for identity, value in planned.items()
+                if value.title_basis is None
+            ),
+            None,
+        )
         for provider in self.providers:
+            work_identities = {
+                lane.identity
+                for lane in provider.lanes
+                if lane.kind is ProviderQueryKind.WORK
+            }
+            if self.audio is not None and work_identities:
+                if not work_identities.issubset(planned):
+                    raise ReportValueError("provider work lane is unknown")
+                # An alternative lane is absent when it was suppressed; the
+                # asserted lane, where the plan has one, never is.
+                if any(
+                    identity not in work_identities
+                    and planned[identity].title_basis is None
+                    for identity in planned
+                ):
+                    raise ReportValueError("provider work lanes do not match the plan")
             if provider.recording_lookup_candidates:
                 lookup_lanes = tuple(
                     lane
                     for lane in provider.lanes
                     if lane.kind is ProviderQueryKind.WORK
+                    and (asserted is None or lane.identity == asserted)
                 )
                 if len(lookup_lanes) != 1 or not lookup_lanes[0].input_references:
                     raise ReportValueError("recording lookup lane is missing")
@@ -3479,24 +3712,10 @@ class MetadataReport:
                     and claim.basis == "target_metadata"
                     and claim.canonical == target_title
                 }
-                expected_lane = (
-                    "lane_"
-                    + hashlib.sha256(
-                        canonical_json(
-                            {
-                                "authors": [
-                                    normalize_title(author) for author in target_authors
-                                ],
-                                "input_references": list(lane.input_references),
-                                "kind": ProviderQueryKind.WORK.value,
-                                "title": normalize_title(target_title or ""),
-                            }
-                        ).encode()
-                    ).hexdigest()
-                )
                 if (
                     not set(lane.input_references).issubset(work_inputs)
-                    or lane.identity != expected_lane
+                    or lane.identity != asserted
+                    or lane.status is not ProviderStatus.NO_MATCH
                 ):
                     raise ReportValueError("recording lookup lane is inconsistent")
             if provider.recording_lookup_candidates and (
@@ -3512,31 +3731,26 @@ class MetadataReport:
                 )
             ):
                 raise ReportValueError("recording lookup work identity is inconsistent")
-            exhausted = tuple(
-                lane.exhausted_dispatch
-                for lane in provider.lanes
-                if lane.exhausted_dispatch
-            )
-            # An exhausted lane walked its target's whole audiobook ladder, in
-            # ladder order, so its lineages replay from the target alone.
-            if exhausted and (
-                not is_audio
-                or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-                or target_title is None
-                or not target_authors
-                or any(
-                    value
-                    != tuple(
-                        WorkDispatchLineage.from_query(query)
-                        for query in work_query_ladder(
-                            normalize_title(target_title),
-                            tuple(normalize_title(author) for author in target_authors),
-                        )
-                    )
-                    for value in exhausted
+            candidates = {value.identity: value for value in provider.candidates}
+            for lane in provider.lanes:
+                payload = planned.get(lane.identity)
+                if (
+                    payload is None
+                    or payload.title_basis is None
+                    or lane.status is not ProviderStatus.CANDIDATES
+                ):
+                    continue
+                lane_candidates = tuple(
+                    candidates[value.edition_identity] for value in lane.candidates
                 )
-            ):
-                raise ReportValueError("provider exhausted dispatch is inconsistent")
+                # The alternative lane retains one band-corroborated recording,
+                # which is what keeps its marketplace evidence.
+                if len(lane_candidates) != 1 or not any(
+                    value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                    and value.scope is ClaimScope.EDITION
+                    for value in lane_candidates[0].evidence
+                ):
+                    raise ReportValueError("provider alternative candidate is invalid")
             witness = provider.edition_enrichment_overflow
             if witness is not None:
                 work_lanes = tuple(
@@ -3566,11 +3780,18 @@ class MetadataReport:
                     dispatch_lineage=dispatch,
                     audiobook=self.audio is not None,
                 )
-                if not admission.admitted or admission.transformation != lineage:
+                if (
+                    not admission.admitted
+                    or admission.transformation != lineage
+                    or any(
+                        (payload := planned.get(lane.identity)) is not None
+                        and payload.title_basis is not None
+                        for lane in work_lanes
+                    )
+                ):
                     raise ReportValueError(
                         "edition overflow witness does not match target"
                     )
-            candidates = {value.identity: value for value in provider.candidates}
             work_lanes = tuple(
                 lane
                 for lane in provider.lanes
@@ -3601,9 +3822,15 @@ class MetadataReport:
                 lane_candidates = tuple(
                     candidates[value.edition_identity] for value in lane.candidates
                 )
+                # An alternative lane admits against the title it asked with.
+                payload = planned.get(lane.identity)
                 set_admission = provider_candidate_set_work_identity_admission(
                     lane_candidates,
-                    target_title or "",
+                    (
+                        payload.title
+                        if payload is not None and payload.title_basis is not None
+                        else target_title or ""
+                    ),
                     target_authors,
                     lane.dispatch_lineage,
                     audiobook=self.audio is not None,
@@ -3615,6 +3842,27 @@ class MetadataReport:
                 ):
                     raise ReportValueError(
                         "provider work identity lineage is inconsistent"
+                    )
+            # An exhausted lane walked its own title's whole audiobook ladder,
+            # in ladder order, so its lineages replay from the plan alone.
+            for lane in provider.lanes:
+                if not lane.exhausted_dispatch:
+                    continue
+                payload = planned.get(lane.identity)
+                if (
+                    not is_audio
+                    or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                    or payload is None
+                    or lane.exhausted_dispatch
+                    != tuple(
+                        WorkDispatchLineage.from_query(query)
+                        for query in work_query_ladder(
+                            payload.title, payload.authors, audiobook=True
+                        )
+                    )
+                ):
+                    raise ReportValueError(
+                        "provider exhausted dispatch is inconsistent"
                     )
         if (
             type(self.field_results) is not tuple
@@ -5400,6 +5648,7 @@ def _audio_facts_from_data(value: object) -> AudioFacts | None:
             "chapters_truncated",
             "chapter_rows_omitted",
             "composition",
+            "discovery_titles",
             "embedded_cover",
             "observations",
             "sidecars",
@@ -5430,6 +5679,13 @@ def _audio_facts_from_data(value: object) -> AudioFacts | None:
                 for observation in _list(item["observations"])
             ),
             item["chapter_rows_omitted"],
+            tuple(
+                AudioDiscoveryTitle(entry["basis"], entry["title"])
+                for entry in (
+                    _object(value, {"basis", "title"})
+                    for value in _list(item["discovery_titles"])
+                )
+            ),
         )
     except ValueError as error:
         raise ReportValueError("audio facts are invalid") from error
@@ -6183,6 +6439,8 @@ __all__ = [
     "PROVIDER_LANE_KINDS",
     "report_content_address",
     "CLAIM_BASES",
+    "AUDIO_DISCOVERY_TITLE_BASES",
+    "AudioDiscoveryTitle",
     "AudioFacts",
     "MetadataReport",
     "ProviderCandidate",
@@ -6230,6 +6488,9 @@ __all__ = [
     "provider_lane_candidate_reference",
     "stable_reference",
     "validate_observed_title",
+    "WorkLanePayload",
+    "surviving_discovery_titles",
+    "work_discovery_lane_payloads",
     "work_ladder_diagnostics",
 ]
 

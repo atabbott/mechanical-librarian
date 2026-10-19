@@ -324,6 +324,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
+    AudioDiscoveryTitle,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -337,6 +338,7 @@ from mechanical_librarian.domain.metadata_report import (
     audio_set_content_digest,
     canonical_json,
     claim_scope,
+    surviving_discovery_titles,
 )
 from mechanical_librarian.domain.owner_settings import SettingsView
 from mechanical_librarian.domain.proposal_set import ProposalSet, audiobook_review_scope
@@ -346,6 +348,7 @@ from mechanical_librarian.domain.setup_state import (
     SetupStateDocument,
 )
 from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
+from mechanical_librarian.domain.work_identity import discovery_title_candidate
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 from mechanical_librarian.infrastructure.local_media import (
@@ -1140,6 +1143,30 @@ class _IsolatedAudioInspector:
                 ),
                 composed.observations,
                 composed.chapter_rows_omitted,
+                # The folder leaf, then a lone track's own title tag, each read
+                # through the hostile-name grammar. The drops that need the
+                # target -- its title, authors and series -- happen when the
+                # report is planned (#1255).
+                surviving_discovery_titles(
+                    tuple(
+                        AudioDiscoveryTitle(basis, title)
+                        for basis, text in (
+                            (
+                                "path_leaf",
+                                folder.rsplit("/", 1)[-1] if folder else None,
+                            ),
+                            (
+                                "title_tag",
+                                inspected[0].inspection.title
+                                if len(inspected) == 1
+                                else None,
+                            ),
+                        )
+                        if text is not None
+                        and (title := discovery_title_candidate(text)) is not None
+                    ),
+                    (),
+                ),
             )
             if len(canonical_json(audio.to_data()).encode("utf-8")) > MAX_AUDIO_BYTES:
                 # An audio section the retained report cannot hold is evidence

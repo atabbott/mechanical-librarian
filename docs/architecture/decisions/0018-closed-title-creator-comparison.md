@@ -105,6 +105,23 @@ once, preserving cardinality and duplicate values. Direct identity admission,
 identity bindings, Latin and filename compound productions remain ordered; this
 adds no transformation lineage or schema change.
 
+The #1255 amendment adds two rows, after `order_inverted_series_prefix` and
+before `subtitle_segment`, and an audiobook-only column to the table:
+`leading_sequence_token` and `right_hand_segment`. Both are query-enabled,
+admission-disabled and shape the normalized rung, and only
+`work_query_ladder(..., audiobook=True)` applies them, so every ebook ladder and
+lineage is byte-identical. `leading_sequence_token` removes one anchored
+position token -- an optional book, vol(ume), part or no prefix with an
+optional "." or "#", one to three digits with an optional one- or two-digit
+decimal, then a separator -- when the rest names a letter.
+`right_hand_segment` keeps the right side of exactly one spaced dash when both
+sides name a letter and the right side is neither a series marker nor only
+words from the closed stop list both audiobook title grammars share. On
+#1246's no-match tail the two reached 32 items (15 and 17), and they rewrite
+rung 1 for 5 of 91 case-bearing items and 47 of 238. Admission is unchanged: a rewritten query
+admits only what exact admission against the lane's own title admits. The
+schema advances to `metadata-report-v51`.
+
 ## Consequences
 
 ### Positive

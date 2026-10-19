@@ -130,6 +130,12 @@ F35: a title F35 would never have elected no longer abstains under
 instead. Without it the two elections are not disjoint — F35's abstentions
 pre-empted the subtitle-segment and series families of F41 entirely.
 
+### Audiobook single-family lineages (#1255)
+
+`leading_sequence_token` and `right_hand_segment` (ADR-0018) are permitted
+single-family dispatch lineages on the audiobook ladder only. No compound
+production is added: neither family composes with another, and neither admits.
+
 ## Consequences
 
 ### Positive

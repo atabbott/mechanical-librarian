@@ -1394,6 +1394,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="work-ladder-refusal-predecessor-f46",
         ),
+        pytest.param(
+            "df4243cdf60308fe751e98eef91310023585bc2845146741fee24098ab76d640",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="discovery-second-title-predecessor-f19a",
+        ),
+        pytest.param(
+            "c8f0913f1bf3056b36f23213fdd545e769ce811c03ac03a373824f79fe306cc0",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="discovery-second-title-predecessor-f20",
+        ),
+        pytest.param(
+            "9d160f18aa04ddbfe5f332a9fdd9797b08913627a06de7c6b77617c6c316bb0a",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="discovery-second-title-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

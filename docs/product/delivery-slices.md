@@ -279,7 +279,7 @@ clean form is in the item's path.
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
 | F55 Recording-lookup hints | #1257 | A product inside the tight runtime band that work-identity admission refused is tested by the per-ASIN lanes as a lookup hint, without asserting identity. | Blocked by #1245 and #1246; ADR-0064 amendment. |
-| F56 Second audiobook title source | #1255 | Two query-only ladder families, the path leaf and the single-file title tag give a no-match item a second WORK query without asserting identity. | Blocked by #1246; ADR-0018, ADR-0063/0066 and ADR-0064 amendments. |
+| F56 Second audiobook title source | #1255 | Two query-only ladder families, the path leaf and the single-file title tag give a no-match item a second WORK query without asserting identity; Audible asks it only after the asserted title finds nothing, and keeps only a runtime-corroborated recording. | Delivered; ADR-0018, ADR-0063/0066, ADR-0064 and ADR-0067 amendments. |
 | F57 Band-corroborated admission | #1260 | Lineage-decorated titles, a band-first set rule and an initials fold admit a recording only when the tight runtime band corroborates it. | Blocked by #1259; amends ADR-0067's one-production consequence first, per the owner's decision of 2026-10-19. |
 | F58 Work-level series and title review | #1253 | The F54 work-only route offers owner choices for series, series sequence and title from witnessed work evidence. | Ready; ADR-0069 amendment. |
 
