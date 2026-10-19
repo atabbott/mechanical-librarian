@@ -25,7 +25,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    canonical_json,
     default_target_fields,
+    report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
@@ -316,9 +318,15 @@ def test_actual_v32_baseline_table_refuses_before_rows_without_mutation(
     path = tmp_path / "baseline-table.sqlite"
     repository = open_repository(path)
     report = _report("Title", "b" * 64)
-    assert report.report_id == capsule["report_id"]
+    # The capsule's producer wrote metadata-report-v49, which differs from this
+    # provider-less current report only in its schema label (#1245).
+    produced = report.to_data()
+    produced["schema_version"] = "metadata-report-v49"
+    produced.pop("report_id")
+    produced["report_id"] = report_content_address(produced)
+    assert produced["report_id"] == capsule["report_id"]
     assert (
-        hashlib.sha256(report.to_json().encode()).hexdigest()
+        hashlib.sha256(canonical_json(produced).encode()).hexdigest()
         == capsule["report_sha256"]
     )
     repository.publish(report, lambda: True)
