@@ -1560,7 +1560,12 @@ _RECORDING_FORMAT_TERMS = (
         "wrong_work_tight",
         "reordered_authors",
         "author_subset",
-        *(f"recording_format_{term}" for term in _RECORDING_FORMAT_TERMS),
+        # The tier runner reduces an id to a safe alphabet, so the hyphenated
+        # and spaced forms of one term are told apart by position.
+        *(
+            f"recording_format_{index}_{term}"
+            for index, term in enumerate(_RECORDING_FORMAT_TERMS)
+        ),
         "translated",
         "provider_variant_marker",
         "ebook",
