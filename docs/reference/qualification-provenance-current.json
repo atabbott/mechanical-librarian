@@ -723,7 +723,7 @@
     "tests/unit/test_sqlite_row_delta_audit.py": "013e6a009bdff0208e11cdb9abf36eb240fec76b035f079801fc7580962a8221",
     "tests/unit/test_test_tiers.py": "fb22db380050b20b2721b3e1caf6177d1ab274a46e3b0e433c063ade72506bcd",
     "tests/unit/test_transaction_scope.py": "220aa16d0156ce795a036fe3c246a6167452eeb555408d07e8b86f982b26a13a",
-    "tests/unit/test_work_identity.py": "9522c552ba92d0dbb4d4abb7595c8c8c6fba5f7874b7c6d9f5ba516f8bebefd3"
+    "tests/unit/test_work_identity.py": "1f7891253ff7c09494490948cc2edc2bf33bc2a78543381b332438c6a094f514"
   },
   "source_classification": {
     ".github/renovate.json": "provenance",
