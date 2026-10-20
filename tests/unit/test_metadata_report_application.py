@@ -9,9 +9,10 @@ import json
 import tempfile
 import time
 from dataclasses import replace
+from enum import StrEnum
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -106,6 +107,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    DispatchOutcome,
     FieldSource,
     FieldState,
     FileFacts,
@@ -113,6 +115,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
+    ProviderLaneDispatch,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -3248,3 +3251,206 @@ def test_an_overflowing_audiobook_plan_limits_only_the_dispatch_set() -> None:
         for name in _EVERY_ADAPTER
         if name in AUDIOBOOK_DISPATCH_ADAPTERS
     ] == [(value.provider, value.status) for value in report.providers]
+
+
+def test_a_disabled_audiobook_binding_records_every_lane_as_not_dispatched() -> None:
+    bindings = (_never_built("audible_catalog", enabled=False),)
+
+    report = MetadataReport.from_json(_mixed_service(bindings).run("audiobook", 0))
+
+    (observation,) = report.providers
+    assert observation.status is ProviderStatus.DISABLED
+    assert observation.lanes
+    assert all(
+        lane.dispatch == ProviderLaneDispatch(DispatchOutcome.NOT_DISPATCHED)
+        for lane in observation.lanes
+    )
+
+
+class _ResultProvider:
+    """Answer one plan with an assembled result, or raise the given error."""
+
+    def __init__(self, answer: ProviderResult | BaseException) -> None:
+        self._answer = answer
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        if isinstance(self._answer, BaseException):
+            raise self._answer
+        return self._answer
+
+
+def _audiobook_work_plan() -> MetadataDiscoveryPlan:
+    from tests.support.audiobook_providers import work_plan
+    from tests.support.audiobook_reports import audio_local_claims
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    return replace(work_plan(*audio_local_claims()), audio=single_track_audio_facts())
+
+
+def _work_ladder(plan: MetadataDiscoveryPlan) -> tuple[WorkDispatchLineage, ...]:
+    lane = plan.lanes[0]
+    return tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(
+            cast(str, lane.title), lane.authors, audiobook=True
+        )
+    )
+
+
+def _dispatched_lane(
+    status: ProviderStatus,
+    *,
+    authority: str = "audible_catalog",
+    causes: tuple[ProviderIncompleteCause, ...] = (),
+    exhausted: bool = False,
+    refused: bool = False,
+    rungs: int | None = None,
+    near_miss: int | None = None,
+    audio: bool = True,
+) -> tuple[ProviderObservation, ...]:
+    from mechanical_librarian.application.metadata_report import (
+        WorkLadderFacts,
+        observe_provider,
+    )
+    from mechanical_librarian.domain.metadata_report import work_ladder_diagnostics
+    from tests.support.audiobook_reports import audiobook_candidate
+
+    plan = _audiobook_work_plan()
+    if not audio:
+        plan = replace(plan, audio=None)
+    lane = plan.lanes[0]
+    ladder = _work_ladder(plan)
+    admitted = status is ProviderStatus.CANDIDATES
+    result = ProviderLaneResult(
+        lane,
+        status,
+        (
+            (
+                audiobook_candidate(
+                    plan.local_claims,
+                    provider="catalogue",
+                    identity="audible-product-B08G9PRS1K",
+                ),
+            )
+            if admitted
+            else ()
+        ),
+        diagnostics=(
+            work_ladder_diagnostics(
+                len(ladder) - int(refused), len(ladder) if refused else 0
+            )
+            if exhausted
+            else ()
+        ),
+        dispatch_lineage=ladder[0] if admitted else None,
+        exhausted_dispatch=ladder if exhausted else (),
+    )
+    answer = ProviderResult(
+        provider_observation("catalogue", (result,), authority=authority),
+        evidence=ProviderOperationalEvidence(
+            incomplete_causes=tuple(
+                ProviderIncompleteCauseRecord(cause) for cause in causes
+            )
+        ),
+        work_ladders=(
+            () if rungs is None else (WorkLadderFacts(lane.identity, rungs, near_miss),)
+        ),
+    )
+    return (
+        observe_provider(
+            "catalogue", authority, cast(Any, _ResultProvider(answer)), plan
+        ).observation,
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "options", "outcome"),
+    (
+        (ProviderStatus.CANDIDATES, {"rungs": 1}, DispatchOutcome.ADMITTED),
+        (ProviderStatus.NO_MATCH, {"exhausted": True}, DispatchOutcome.EMPTY),
+        (
+            ProviderStatus.NO_MATCH,
+            {"exhausted": True, "refused": True},
+            DispatchOutcome.REFUSED,
+        ),
+        (ProviderStatus.NO_MATCH, {}, DispatchOutcome.EMPTY_OR_REFUSED),
+        (ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, {}, DispatchOutcome.OVERFLOW),
+        (ProviderStatus.UNAVAILABLE, {}, DispatchOutcome.UNAVAILABLE),
+        (ProviderStatus.RATE_LIMITED, {}, DispatchOutcome.UNAVAILABLE),
+        (
+            ProviderStatus.INCOMPLETE,
+            {"causes": (ProviderIncompleteCause.DEADLINE,)},
+            DispatchOutcome.STARVED,
+        ),
+    ),
+    ids=lambda value: value.value if isinstance(value, StrEnum) else None,
+)
+def test_preparation_records_each_audiobook_lane_outcome_once(
+    status: ProviderStatus, options: dict[str, Any], outcome: DispatchOutcome
+) -> None:
+    (observation,) = _dispatched_lane(status, **options)
+    (lane,) = observation.lanes
+
+    assert lane.dispatch is not None
+    assert outcome is lane.dispatch.outcome
+    assert options.get("rungs") == lane.dispatch.rungs
+    assert lane.dispatch.near_miss_seconds is None
+
+
+def test_a_walked_ladder_carries_its_depth_and_near_miss_onto_the_record() -> None:
+    (observation,) = _dispatched_lane(
+        ProviderStatus.NO_MATCH, exhausted=True, refused=True, rungs=3, near_miss=-900
+    )
+
+    assert (
+        ProviderLaneDispatch(DispatchOutcome.REFUSED, 3, -900)
+        == observation.lanes[0].dispatch
+    )
+
+
+@pytest.mark.parametrize(
+    "causes",
+    (
+        (),
+        (ProviderIncompleteCause.DEADLINE, ProviderIncompleteCause.DISPATCH_COUNT),
+        (ProviderIncompleteCause.DEADLINE, ProviderIncompleteCause.AGGREGATE_BYTES),
+        (ProviderIncompleteCause.DISPATCH_COUNT,),
+        (ProviderIncompleteCause.AGGREGATE_BYTES,),
+    ),
+    ids=("no_cause", "dispatch_count", "aggregate_bytes", "count_only", "bytes_only"),
+)
+def test_an_incomplete_lane_is_starved_only_by_the_deadline_alone(
+    causes: tuple[ProviderIncompleteCause, ...],
+) -> None:
+    """A spent byte or dispatch budget is not starvation, even beside it."""
+    (observation,) = _dispatched_lane(ProviderStatus.INCOMPLETE, causes=causes)
+
+    assert ProviderLaneDispatch(DispatchOutcome.UNAVAILABLE) == (
+        observation.lanes[0].dispatch
+    )
+
+
+def test_a_failed_adapter_records_its_audiobook_lanes_as_unavailable() -> None:
+    from mechanical_librarian.application.metadata_report import observe_provider
+
+    plan = _audiobook_work_plan()
+    observation = observe_provider(
+        "catalogue",
+        "audible_catalog",
+        cast(Any, _ResultProvider(RuntimeError("synthetic failure"))),
+        plan,
+    ).observation
+
+    assert [ProviderLaneDispatch(DispatchOutcome.UNAVAILABLE)] == [
+        lane.dispatch for lane in observation.lanes
+    ]
+
+
+def test_an_ebook_observation_keeps_no_dispatch_record() -> None:
+    (observation,) = _dispatched_lane(
+        ProviderStatus.NO_MATCH, exhausted=True, rungs=3, audio=False
+    )
+
+    assert [None] == [lane.dispatch for lane in observation.lanes]

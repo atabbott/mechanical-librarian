@@ -2882,3 +2882,109 @@ def test_a_faulted_collapsed_plan_keeps_the_alternative_only_where_it_is_sent(
     assert [(alternative.identity, ProviderStatus.NO_MATCH)] == [
         (lane.identity, lane.status) for lane in observation.lanes
     ]
+
+
+def test_a_retry_keeps_an_unselected_dispatch_record_and_recomputes_its_own(
+    retry: _Retry,
+) -> None:
+    """Only the retried lane's record is new; its sibling's stays byte-identical."""
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+    )
+    from tests.support.audiobook_providers import local_runtime_claim
+
+    target = audio_target("Asserted Title", ("Ada Author",))
+    claims = (target_title_claim("Asserted Title"), local_runtime_claim("58244.201"))
+    audio = replace(
+        single_track_audio_facts(),
+        discovery_titles=(AudioDiscoveryTitle("path_leaf", "The Real Title"),),
+    )
+    plan = audiobook_discovery_plan(target, claims, audio=audio)
+    asserted, alternative = provider_discovery_lane_order(plan)
+    ladder = tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(
+            asserted.title or "", asserted.authors, audiobook=True
+        )
+    )
+    walked = ProviderLaneDispatch(DispatchOutcome.REFUSED, len(ladder), -1200)
+    prepared = recorded_dispatch(
+        provider_observation(
+            "audible",
+            (
+                ProviderLaneResult(
+                    asserted,
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=work_ladder_diagnostics(0, len(ladder)),
+                    exhausted_dispatch=ladder,
+                ),
+                ProviderLaneResult(alternative, ProviderStatus.UNAVAILABLE),
+            ),
+            authority="audible_catalog",
+        )
+    )
+    original = replace(
+        prepared,
+        lanes=tuple(
+            replace(lane, dispatch=walked)
+            if lane.identity == asserted.identity
+            else lane
+            for lane in prepared.lanes
+        ),
+    )
+    requests: list[httpx.Request] = []
+
+    def empty(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"total_results": 0, "products": []})
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding(
+            "audible",
+            True,
+            lambda: AudibleCatalogMetadataProvider(
+                "audible",
+                httpx.Client(transport=httpx.MockTransport(empty)),
+                262_144,
+                5.0,
+                marketplaces=("us",),
+                clock=lambda: 0.0,
+                wall_clock=lambda: 1_700_000_000.0,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            ),
+            "audible_catalog",
+        ),
+        "audible_catalog",
+        2,
+    )
+    service = retry.service(configured)
+    selected = service._selected(plan, original, (alternative.identity,))
+    replacement, _delay, _evidence = service._observe(
+        configured, plan, selected, original, deadline=1_700_000_100.0
+    )
+    merged = service._merged(plan, original, selected, replacement)
+
+    lanes = {lane.identity: lane for lane in merged.lanes}
+    before = {lane.identity: lane for lane in original.lanes}
+    assert before[asserted.identity].to_data() == lanes[asserted.identity].to_data()
+    assert ProviderLaneDispatch(DispatchOutcome.UNAVAILABLE) == (
+        before[alternative.identity].dispatch
+    )
+    retried = lanes[alternative.identity]
+    assert retried.dispatch == ProviderLaneDispatch(
+        DispatchOutcome.EMPTY, len(requests), None
+    )
+    assert retried.exhausted_dispatch and len(requests) == len(
+        retried.exhausted_dispatch
+    )
+    successor = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", target.fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("target_metadata_title",),
+        providers=(merged,),
+        audio=audio,
+    )
+    assert successor == MetadataReport.from_json(successor.to_json())

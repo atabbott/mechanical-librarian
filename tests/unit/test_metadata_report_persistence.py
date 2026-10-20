@@ -14,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -2629,3 +2630,99 @@ def test_discovery_titles_survive_publication_and_reopen(tmp_path: Path) -> None
     del previous["audio"]["discovery_titles"]
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(json.dumps(previous))
+
+
+def _walked_audible_report() -> MetadataReport:
+    """A refused asserted Audible lane with its ladder depth and near-miss."""
+    from dataclasses import replace as _replace
+
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+    )
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    base = recording_lookup_hint_report()
+    (provider,) = base.providers
+    (lane,) = provider.lanes
+    walked = _replace(
+        lane,
+        dispatch=ProviderLaneDispatch(
+            DispatchOutcome.REFUSED, len(lane.exhausted_dispatch), -1200
+        ),
+    )
+    return MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(_replace(provider, lanes=(walked,)),),
+        audio=base.audio,
+    )
+
+
+def test_lane_dispatch_records_survive_publication_and_reopen(tmp_path: Path) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+    )
+
+    report = _walked_audible_report()
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    repository.publish(report, lambda: True)
+    repository.close()
+    reopened = open_repository(path, create=False)
+    try:
+        restored = MetadataReport.from_json(reopened.get(report.report_id))
+    finally:
+        reopened.close()
+
+    assert restored == report
+    (lane,) = restored.providers[0].lanes
+    assert lane.dispatch == ProviderLaneDispatch(
+        DispatchOutcome.REFUSED, len(lane.exhausted_dispatch), -1200
+    )
+
+
+def _lanes_of(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [lane for provider in data["providers"] for lane in provider["lanes"]]
+
+
+def _forged_without_dispatch(data: dict[str, Any]) -> None:
+    for lane in _lanes_of(data):
+        del lane["dispatch"]
+
+
+def _forged_null_audio_dispatch(data: dict[str, Any]) -> None:
+    for lane in _lanes_of(data):
+        lane["dispatch"] = None
+
+
+@pytest.mark.parametrize(
+    ("forge", "message"),
+    (
+        (_forged_without_dispatch, "report object is malformed"),
+        (_forged_null_audio_dispatch, "provider lane dispatch presence is invalid"),
+    ),
+    ids=("missing_record", "null_audio_record"),
+)
+def test_a_current_document_with_a_forged_dispatch_record_is_refused(
+    forge: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    """Every audio lane states its record; an ebook lane's is proved beside
+    the lane table in the discovery tests."""
+    from mechanical_librarian.domain.metadata_report import (
+        ReportValueError,
+        canonical_json,
+    )
+
+    data = json.loads(_walked_audible_report().to_json())
+    assert data["schema_version"] == "metadata-report-v56"
+    forge(data)
+    identity = {key: value for key, value in data.items() if key != "report_id"}
+    data["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+    )
+    with pytest.raises(ReportValueError, match=message):
+        MetadataReport.from_json(canonical_json(data))
