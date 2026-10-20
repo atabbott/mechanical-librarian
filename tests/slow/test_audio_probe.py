@@ -40,7 +40,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioInspectionOutcome,
     AudioObservationKind,
 )
-from mechanical_librarian.domain.metadata_report import ClaimKind
+from mechanical_librarian.domain.metadata_report import ClaimKind, FieldState
 from tests.support.audio_containers import (
     AC3_OBJECT_TYPE,
     Mp4Fixture,
@@ -172,6 +172,35 @@ def test_a_generated_audiobook_yields_one_closed_local_evidence_set(
     assert result.audio.chapters_truncated is False
     assert result.audio.embedded_cover.present is True
     assert len(result.content_digest) == 64
+
+
+def test_a_long_comment_becomes_an_oversized_prefix_and_und_no_language(
+    media_root: Path,
+) -> None:
+    """The probe's real output, cut on the parent's terms (#1250)."""
+    comment = ("A long recorded comment " * 25)[:599] + "."
+    assert len(comment) == 600
+    (media_root / "book.m4b").write_bytes(
+        mp4_audiobook(
+            Mp4Fixture(
+                language="und",
+                well_known={"©cmt": comment, "prID": "123456789"},
+            )
+        )
+    )
+
+    result = _inspect(media_root, "book.m4b")
+
+    [description] = [
+        value for value in result.claims if value.kind is ClaimKind.DESCRIPTION
+    ]
+    assert description.state is FieldState.OVERSIZED
+    assert description.canonical is None
+    assert description.observed == comment[:512]
+    assert description.observed[-1] != " "
+    assert not any(
+        value.kind in {ClaimKind.LANGUAGE, ClaimKind.ASIN} for value in result.claims
+    )
 
 
 def test_an_mp3_audiobook_separates_mapped_frames_from_user_text(

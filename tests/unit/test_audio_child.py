@@ -680,3 +680,55 @@ def test_failed_child_cannot_carry_omission_evidence() -> None:
         AudioInspection(
             AudioInspectionOutcome.MALFORMED, None, chapter_rows_omitted=True
         )
+
+
+def _long_description_report() -> AudioInspection:
+    probe = json.loads(_PROBE)
+    probe["format"]["tags"]["comment"] = "C" * 600
+    [report] = _run(_context(probe=json.dumps(probe)))
+    return report
+
+
+def test_the_parent_reads_an_oversized_description_prefix_back() -> None:
+    report = _long_description_report()
+
+    parsed = AudioInspection.from_json(report.to_json())
+
+    assert parsed == report
+    assert [
+        (value.observed_value, value.canonical_value, value.state)
+        for value in parsed.facts
+        if value.field is AudioInspectionField.DESCRIPTION
+    ] == [("C" * 512, None, "oversized")]
+
+
+@pytest.mark.parametrize(
+    ("field", "observed", "state", "canonical"),
+    (
+        ("asin", "B0CW1KL2QD", "oversized", None),
+        ("contributor", "Recorded Narrator", "oversized", None),
+        ("language", "und", "valid", "und"),
+        ("language", "XXX", "malformed", None),
+    ),
+)
+def test_a_forged_child_fact_fails_closed_in_the_parent(
+    field: str, observed: str, state: str, canonical: str | None
+) -> None:
+    """The parent refuses what the child would never have emitted (#1250)."""
+    document = json.loads(_long_description_report().to_json())
+    document["facts"].append(
+        {
+            "canonical": canonical,
+            "field": field,
+            "observed": observed,
+            "role": "narrator" if field == "contributor" else None,
+            "state": state,
+            "support": observed,
+            "surface": "mp4_ilst",
+        }
+    )
+
+    with pytest.raises(ValueError, match="protocol"):
+        AudioInspection.from_json(
+            json.dumps(document, sort_keys=True, separators=(",", ":"))
+        )

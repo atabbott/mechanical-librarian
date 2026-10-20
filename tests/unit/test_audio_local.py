@@ -19,7 +19,9 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     sidecar_surface,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    NON_LINGUISTIC_LANGUAGE_CODES,
     AudioEvidenceSurface,
+    AudioInspectionFact,
     AudioInspectionField,
     AudioInspectionLimits,
     AudioInspectionOutcome,
@@ -102,9 +104,7 @@ def test_unusable_duration_produces_no_claim(duration: str) -> None:
     assert _values(interpretation, AudioInspectionField.DURATION) == set()
 
 
-@pytest.mark.parametrize(
-    "language", ("English", "english", "en", "eng", "UND", "und", "mul", "zxx")
-)
+@pytest.mark.parametrize("language", ("English", "english", "en", "eng"))
 def test_stream_language_is_read_from_the_stream_surface(language) -> None:
     interpretation = _read(
         _probe(
@@ -121,6 +121,119 @@ def test_stream_language_is_read_from_the_stream_surface(language) -> None:
     assert _values(interpretation, AudioInspectionField.LANGUAGE) == {
         ("container_stream", language)
     }
+
+
+@pytest.mark.parametrize("language", ("UND", "und", "mul", "mis", "zxx", "xxx", "Xxx"))
+def test_a_code_that_names_no_language_is_no_language_claim(language: str) -> None:
+    """ISO 639-2's special codes say the language was not stated (#1250)."""
+    stream = _read(
+        _probe(
+            streams=[
+                {
+                    "codec_type": "audio",
+                    "codec_name": "aac",
+                    "tags": {"language": language},
+                }
+            ]
+        )
+    )
+    tagged = _read(
+        _probe(format_name="mp3", tags={"language": language}),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
+                "metadata.json",
+                json.dumps({"language": language}),
+            ),
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_OPF,
+                "metadata.opf",
+                f"<package><dc:language>{language}</dc:language></package>",
+            ),
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_NFO, "book.nfo", f"Language: {language}\n"
+            ),
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_CUE,
+                "book.cue",
+                f"REM LANGUAGE {language}\n",
+            ),
+        ),
+    )
+
+    assert _values(stream, AudioInspectionField.LANGUAGE) == set()
+    assert _values(tagged, AudioInspectionField.LANGUAGE) == set()
+
+
+def test_a_real_language_beside_a_placeholder_is_still_read() -> None:
+    interpretation = _read(
+        _probe(
+            tags={"language": "eng"},
+            streams=[
+                {
+                    "codec_type": "audio",
+                    "codec_name": "aac",
+                    "tags": {"language": "und"},
+                }
+            ],
+        )
+    )
+
+    assert _values(interpretation, AudioInspectionField.LANGUAGE) == {
+        ("mp4_freeform", "eng")
+    }
+
+
+@pytest.mark.parametrize("code", sorted(NON_LINGUISTIC_LANGUAGE_CODES))
+@pytest.mark.parametrize("state", ("valid", "malformed"))
+def test_a_language_fact_holding_a_placeholder_code_is_refused(
+    code: str, state: str
+) -> None:
+    """The fact refuses it on its own, so a forged child fails closed."""
+    with pytest.raises(ValueError, match="names no language"):
+        AudioInspectionFact(
+            AudioInspectionField.LANGUAGE,
+            _SOURCE,
+            code.upper(),
+            code.upper() if state == "valid" else None,
+            code.upper(),
+            AudioEvidenceSurface.CONTAINER_STREAM,
+            state,
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    tuple(
+        value
+        for value in AudioInspectionField
+        if value is not AudioInspectionField.DESCRIPTION
+    ),
+)
+def test_only_a_description_fact_can_be_oversized(field: AudioInspectionField) -> None:
+    with pytest.raises(ValueError, match="state is inconsistent"):
+        AudioInspectionFact(
+            field,
+            _SOURCE,
+            "value",
+            None,
+            "value",
+            AudioEvidenceSurface.MP4_ILST,
+            "oversized",
+            "narrator" if field is AudioInspectionField.CONTRIBUTOR else None,
+        )
+    assert (
+        AudioInspectionFact(
+            AudioInspectionField.DESCRIPTION,
+            _SOURCE,
+            "value",
+            None,
+            "value",
+            AudioEvidenceSurface.MP4_ILST,
+            "oversized",
+        ).state
+        == "oversized"
+    )
 
 
 def test_mp4_tags_separate_named_atoms_from_freeform_ones() -> None:
@@ -900,3 +1013,188 @@ def test_chapter_overflow_and_examined_omission_are_independent() -> None:
     )
     assert unexamined.chapter_rows_omitted is False
     assert unexamined.chapters_truncated is True
+
+
+def test_an_audible_product_id_is_not_an_asin() -> None:
+    """``prID`` is a product id, never an ASIN, so it is no ASIN claim (#1250)."""
+    interpretation = _read(_probe(tags={"prID": "123456", "asin": "B0CW1KL2QD"}))
+
+    assert _asins(interpretation) == {("mp4_ilst", "B0CW1KL2QD", "B0CW1KL2QD", "valid")}
+
+
+def _descriptions(
+    interpretation: audio_local.AudioInterpretation,
+) -> list[tuple[str, str | None, str, str]]:
+    return [
+        (
+            value.observed_value,
+            value.canonical_value,
+            value.state,
+            value.supporting_context,
+        )
+        for value in interpretation.facts
+        if value.field is AudioInspectionField.DESCRIPTION
+    ]
+
+
+def test_a_description_at_the_bound_is_valid_and_whole() -> None:
+    description = "D" * 512
+    interpretation = _read(_probe(tags={"description": description}))
+
+    assert _descriptions(interpretation) == [
+        (description, description, "valid", description)
+    ]
+
+
+@pytest.mark.parametrize("width", (513, 600))
+def test_a_longer_description_keeps_its_first_512_characters_as_oversized(
+    width: int,
+) -> None:
+    """The prefix is evidence a description exists, never a value (#1250)."""
+    description = "D" * width
+    interpretation = _read(_probe(tags={"comment": description}))
+
+    assert _descriptions(interpretation) == [("D" * 512, None, "oversized", "D" * 512)]
+
+
+@pytest.mark.parametrize("character", ("é", "\U0001f600"))
+def test_a_cut_is_made_on_code_points_and_stays_within_its_byte_bound(
+    character: str,
+) -> None:
+    interpretation = _read(_probe(tags={"description": character * 513}))
+
+    [(observed, canonical, state, _support)] = _descriptions(interpretation)
+    assert (observed, canonical, state) == (character * 512, None, "oversized")
+    assert len(observed.encode("utf-8")) <= 4 * 512
+
+
+def test_a_cut_through_a_decomposed_character_loses_only_the_tail() -> None:
+    description = "a" * 511 + "e\u0301" + "b" * 40
+    interpretation = _read(_probe(tags={"description": description}))
+
+    [(observed, _canonical, state, _support)] = _descriptions(interpretation)
+    assert state == "oversized"
+    assert observed == "a" * 511 + "e"
+    assert description.startswith(observed)
+
+
+def test_whitespace_that_collapses_under_the_bound_is_not_a_cut() -> None:
+    description = "word    " * 100
+    interpretation = _read(_probe(tags={"description": description}))
+
+    collapsed = " ".join(description.split())
+    assert len(description) > 512 >= len(collapsed)
+    assert _descriptions(interpretation) == [
+        (collapsed, collapsed, "valid", f"description: {collapsed}")
+    ]
+
+
+@pytest.mark.parametrize(
+    "hidden",
+    (
+        " api_key=synthetic",
+        " /Users/owner/Audiobooks/book.m4b",
+        " /home/owner/media",
+        " control \x9b text",
+        " surrogate \ud800 text",
+    ),
+)
+def test_a_value_is_validated_whole_before_it_is_cut(hidden: str) -> None:
+    """What lies past character 512 still refuses the value (#1250)."""
+    description = "D" * 600 + hidden
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
+                "metadata.json",
+                json.dumps({"description": description}),
+            ),
+        ),
+    )
+
+    assert _descriptions(interpretation) == []
+
+
+def test_a_description_past_the_tag_width_is_no_claim() -> None:
+    limits = AudioInspectionLimits(tag_value_characters=1024)
+    description = "D" * 1025
+    interpretation = _read(
+        _probe(tags={"description": description}),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps({"publisherSummary": description}),
+            ),
+        ),
+        limits=limits,
+    )
+
+    assert _descriptions(interpretation) == []
+    assert audio_local.bounded_description(description, limits) is None
+    assert audio_local.bounded_description("D" * 1024, limits) == (
+        "D" * 512,
+        "oversized",
+    )
+
+
+def test_sidecar_descriptions_past_the_bound_are_oversized_too() -> None:
+    description = "S" * 700
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_LIBATION,
+                "book.metadata.json",
+                json.dumps({"publisherSummary": description}),
+            ),
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_OPF,
+                "metadata.opf",
+                f"<package><dc:description>{description}</dc:description></package>",
+            ),
+        ),
+    )
+
+    assert {
+        (value.surface.value, value.observed_value, value.state)
+        for value in interpretation.facts
+        if value.field is AudioInspectionField.DESCRIPTION
+    } == {
+        ("sidecar_libation", "S" * 512, "oversized"),
+        ("sidecar_opf", "S" * 512, "oversized"),
+    }
+
+
+def test_a_line_sidecar_description_past_its_line_grammar_is_still_unread() -> None:
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_NFO, "book.nfo", f"Plot: {'P' * 600}\n"
+            ),
+        ),
+    )
+
+    assert _descriptions(interpretation) == []
+
+
+def test_an_oversized_prefix_and_a_whole_value_are_two_observations() -> None:
+    """The cut prefix and a whole 512-character value share text, not state."""
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
+                "metadata.json",
+                json.dumps({"description": "D" * 512, "publisherSummary": "D" * 600}),
+            ),
+        ),
+    )
+
+    assert sorted(
+        (value.state, value.canonical_value is None)
+        for value in interpretation.facts
+        if value.field is AudioInspectionField.DESCRIPTION
+    ) == [("oversized", True), ("valid", False)]
