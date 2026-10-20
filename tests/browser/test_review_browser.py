@@ -7778,9 +7778,22 @@ def test_same_name_series_owner_journey(media, destination):
             if destination == "ask":
                 expect(choice).to_be_enabled()
                 choice.focus()
-                choice.press("Space")
-                expect(choice).to_have_attribute("aria-pressed", "true")
-                page.reload()
+                # Reopen the field only once the decision is acknowledged and
+                # the case has advanced past it (#1297).
+                with page.expect_response(
+                    lambda response: response.url.endswith("/decisions")
+                ) as recorded:
+                    choice.press("Space")
+                assert 200 == recorded.value.status
+                following = "asin" if media == "audiobook" else "isbn"
+                expect(
+                    page.get_by_role(
+                        "heading",
+                        name=f"Which {following} should this work use?",
+                        exact=True,
+                    )
+                ).to_be_visible()
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
                 expect(choice).to_have_attribute("aria-pressed", "true")
             elif destination == "automatic":
                 expect(choice).to_have_attribute("aria-pressed", "true")
@@ -7853,8 +7866,17 @@ def test_audiobook_work_owner_journey():
                 exact=True,
             )
             choice.focus()
-            choice.press("Space")
-            expect(choice).to_have_attribute("aria-pressed", "true")
+            # The choice reads pressed while it is still recording, and a reload
+            # before the request leaves aborts it. Reload only once the case has
+            # acknowledged the decision and completed (#1297).
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                choice.press("Space")
+            assert 200 == recorded.value.status
+            expect(
+                page.get_by_role("heading", name="Review complete", exact=True)
+            ).to_be_visible()
             page.reload()
             expect(choice).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
@@ -7915,16 +7937,35 @@ def test_audiobook_work_series_title_owner_journey():
                 "button", name=re.compile(r"^Choose proposed value: Example Saga")
             )
             series.focus()
-            series.press("Space")
-            expect(series).to_have_attribute("aria-pressed", "true")
-            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+            # Each choice is acknowledged, and the case advances past it,
+            # before the page moves on (#1297).
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                series.press("Space")
+            assert 200 == recorded.value.status
+            expect(
+                page.get_by_role(
+                    "heading", name="Which title should this work use?", exact=True
+                )
+            ).to_be_visible()
             title = page.get_by_role(
                 "button", name="Choose proposed value: Synthetic Journey", exact=True
             )
             title.focus()
-            title.press("Enter")
-            expect(title).to_have_attribute("aria-pressed", "true")
-            page.reload()
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                title.press("Enter")
+            assert 200 == recorded.value.status
+            expect(
+                page.get_by_role(
+                    "heading",
+                    name="Which description should this work use?",
+                    exact=True,
+                )
+            ).to_be_visible()
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
             expect(title).to_have_attribute("aria-pressed", "true")
             # Only the book's own fields are offered; the subtitle, cover and
             # recording rows stay out.
@@ -8027,9 +8068,26 @@ def test_audiobook_synopsis_owner_journey(destination):
                 expect(choice).to_be_enabled()
                 if destination == "ask":
                     choice.focus()
-                    choice.press("Space")
-                expect(choice).to_have_attribute("aria-pressed", "true")
-                page.reload()
+                    # Reopen the field only once the decision is acknowledged
+                    # and the case has advanced past it (#1297).
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ) as recorded:
+                        choice.press("Space")
+                    assert 200 == recorded.value.status
+                    expect(
+                        page.get_by_role(
+                            "heading",
+                            name="Which asin should this work use?",
+                            exact=True,
+                        )
+                    ).to_be_visible()
+                    page.goto(
+                        f"{origin}/library?lens=all&preview={case_id}&field=description"
+                    )
+                else:
+                    expect(choice).to_have_attribute("aria-pressed", "true")
+                    page.reload()
                 expect(choice).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(
@@ -8106,8 +8164,17 @@ def test_ebook_synopsis_owner_journey(destination):
                 expect(choice).to_be_enabled()
                 if destination == "ask":
                     choice.focus()
-                    choice.press("Space")
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                    # Reload only once the decision is acknowledged (#1297).
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ) as recorded:
+                        choice.press("Space")
+                    assert 200 == recorded.value.status
+                    expect(
+                        page.get_by_role("heading", name="Review complete", exact=True)
+                    ).to_be_visible()
+                else:
+                    expect(choice).to_have_attribute("aria-pressed", "true")
                 page.reload()
                 expect(choice).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
@@ -8178,8 +8245,17 @@ def test_ebook_isbn_owner_journey(destination):
                 expect(choice).to_be_enabled()
                 if destination == "ask":
                     choice.focus()
-                    choice.press("Space")
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                    # Reload only once the decision is acknowledged (#1297).
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ) as recorded:
+                        choice.press("Space")
+                    assert 200 == recorded.value.status
+                    expect(
+                        page.get_by_role("heading", name="Review complete", exact=True)
+                    ).to_be_visible()
+                else:
+                    expect(choice).to_have_attribute("aria-pressed", "true")
                 page.reload()
                 expect(choice).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
