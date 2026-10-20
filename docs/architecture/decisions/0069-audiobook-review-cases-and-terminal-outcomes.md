@@ -160,7 +160,7 @@ exists for an automatic decision to be minted from.
 > Revised by #1249: a field being the owner's no longer puts it in the
 > attention queue. A recording joins the queue under exactly an ebook's
 > conditions, so a settled fill no record decided asks for nothing there,
-> though it stays choosable in its case.
+> though it stays choosable in its case, as an optional, uncounted choice (A4).
 
 ## Consequences
 

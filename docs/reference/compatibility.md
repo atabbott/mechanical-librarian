@@ -393,4 +393,6 @@ field asks for the owner only for a reason an ebook's would. EPUB facts are
 unchanged. No report, proposal, outcome or policy version moves, but the
 trigger maintaining the facts changes text, so the exact schema comparison
 requires a **clean rebuild** under ADR-0013. Predecessor stores are refused
-before mutation. No migration, adoption or relabelling is supplied.
+before mutation. No migration, adoption or relabelling is supplied. The
+case-detail field `classification` gains the value `owner_choosable` for such a
+settled fill; `review-case-detail-v5` and stored documents are unchanged.

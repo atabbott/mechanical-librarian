@@ -74,7 +74,10 @@ Library, Attention, and case detail project one closed field classification.
 ordinary-next states. `automatic_recorded` remains inspectable and editable but
 does not count as owner work; an automatic `abstention` is instead a manual
 fallback. `human_recorded` is retained inspection, and `unsupported` explains
-the unavailable capability without inventing a selectable empty value. SQLite
+the unavailable capability without inventing a selectable empty value.
+`owner_choosable` is a recording's settled fill that no policy routes to Ask:
+it stays editable as an optional choice and is neither queued nor counted
+(#1249). SQLite
 uses the same membership expression for the list and both counts; application
 projection supplies the owner-readable reason and never promotes an invalid
 row into an Attention failure.
