@@ -2223,6 +2223,7 @@ def _dispatch_flow(
     from tests.support.audiobook_providers import payload
     from tests.support.hardcover_evidence import hardcover_envelope
 
+    root.mkdir(mode=0o700, exist_ok=True)
     seen: dict[str, list[str]] = {
         name: [] for name in ("audible", "enrichment", "hardcover", "silo")
     }
