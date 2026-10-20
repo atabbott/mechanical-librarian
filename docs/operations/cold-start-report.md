@@ -10,13 +10,15 @@ uv run python scripts/cold_start_report.py \
     --config /copy/config.json \
     --database /copy/application.sqlite3 \
     --catalogue /copy/catalogue.sqlite3 \
-    --mount-root books=/host/path/to/mount
+    --mount-root books=/host/path/to/mount \
+    --stage-timings /copy/stage-timings.json
 ```
 
-It writes nothing and prints one `cold-start-report-v2` JSON document. It can
+It writes nothing and prints one `cold-start-report-v3` JSON document. It can
 run at any point during or after preparation, repeatedly. `--mount-root`
 remaps a configured mount name to a host path for the extension census,
-because the configuration records container paths.
+because the configuration records container paths. `--stage-timings` is
+optional and names a copy of the diagnostic stage-timing file.
 
 The report is aggregate-only by construction. It contains connection, library,
 provider, and mount names from the operator's own configuration, destination
@@ -55,6 +57,21 @@ items by classification and format from the catalogue, works in the
 preparation ledger); and automatic decisions bucketed by how many independent
 provider sources corroborate the chosen candidate (0, 1, 2, 3_plus).
 
+Each library also carries an `audiobook_dispatch` block (#1258) counting how
+the provider lanes of every current audiobook report ended, `report_only`
+packages included because discovery reaches every audiobook. `reports` is the
+number of audiobook reports; `lanes` counts each provider's lanes by kind
+(`asin`, `work`, or `work_alternative`) and dispatch outcome; `providers`
+counts each provider's derived class per report, where a refusal outranks an
+empty ladder in a no-match and one starved lane makes an incomplete provider
+starved; `audible_rungs` counts Audible WORK lanes by outcome and the number
+of ladder rungs attempted; `band` counts each provider's lanes by the best
+runtime band a retained candidate reaches (`tight`, `loose`, `outside`,
+`unstated`, or `none` for a lane that retained nothing); and `near_miss`
+counts the recorded Audible near-misses by sign and magnitude bucket
+(`600-900`, `900-1800`, `1800-3600`, `3600+` seconds, each closed on its upper
+bound). An ebook-only library reports zero reports and empty lists.
+
 Top-level totals give the quiet fraction — the headline first-boot attention
 rate is its complement and includes only libraries still present in the loaded
 configuration. If any configured library has unavailable cover authority, the
@@ -69,7 +86,15 @@ is treated as a different input rather than nondeterminism.
 
 Timing uses the preparation scan and work ledgers, not the diagnostic timing
 ring buffer: the ring holds at most 256 uncorrelated samples and is disabled
-by default, so it cannot support throughput claims. When a repeated scan has
+by default, so it cannot support throughput claims. What the ring can show is
+where one item's preparation time goes, so with `--stage-timings` the document
+adds a `stage_timings` block over the retained tail only: its record count,
+first and last recording times, and per stage and wait class the sample count
+and nearest-rank p50, p95 and maximum duration in milliseconds. At 11 to 14
+records per audiobook item the tail covers roughly the last 18 to 23 items.
+Without the option the block is `null`; a named file that does not exist or
+that the product's own reader refuses stops the report rather than reading as
+an empty tail. When a repeated scan has
 not yet published its new catalogue generation, retained work and absence rows
 from the preceding cycle are suppressed rather than presented as current.
 

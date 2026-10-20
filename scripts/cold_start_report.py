@@ -3,7 +3,7 @@
 A workbench instrument, deliberately not part of the installed product: run it
 from a checkout against the configuration file and COPIES of (or read-only
 access to) the application and catalogue databases. It writes nothing and
-prints one ``cold-start-report-v2`` JSON document to stdout.
+prints one ``cold-start-report-v3`` JSON document to stdout.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
@@ -15,12 +15,19 @@ cannot establish the live cover policy and replay authority, so a library with
 a current cover consideration reports its attention aggregates as unavailable
 instead of guessing that its cover fields are quiet.
 
+Each library also carries an ``audiobook_dispatch`` census of how every
+current audiobook report's provider lanes ended (#1258): counts per lane
+outcome, provider class, Audible ladder depth, runtime band and near-miss
+bucket, over every current audiobook including report-only ones. An optional
+stage-timing file adds the retained tail's per-stage percentiles.
+
 Usage:
     uv run python scripts/cold_start_report.py \
         --config /copy/config.json \
         --database /copy/application.sqlite3 \
         --catalogue /copy/catalogue.sqlite3 \
-        [--mount-root books=/host/path/to/mount ...]
+        [--mount-root books=/host/path/to/mount ...] \
+        [--stage-timings /copy/stage-timings.json]
 
 ``--mount-root`` remaps a configured mount name to a host path for the
 extension census, because the configuration records container paths.
@@ -30,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sqlite3
 import stat
@@ -40,6 +48,7 @@ from pathlib import Path
 from typing import TextIO, cast
 from urllib.parse import quote
 
+from mechanical_librarian.adapters.operational_evidence import LocalTimingStore
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_FROM_SQL,
@@ -47,10 +56,23 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_FIELD_ATTENTION_SQL,
 )
 from mechanical_librarian.application.configuration import ApplicationConfiguration
+from mechanical_librarian.application.operations import OperationsError, StageTiming
+from mechanical_librarian.domain.audiobook_corroboration import (
+    lane_band,
+    local_claim_runtime_seconds,
+)
+from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
+    MetadataReport,
+    ProviderLaneDispatch,
+    ProviderQueryKind,
+    provider_dispatch_class,
+    work_discovery_lane_payloads,
+)
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
-COLD_START_REPORT_SCHEMA = "cold-start-report-v2"
+COLD_START_REPORT_SCHEMA = "cold-start-report-v3"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
@@ -96,6 +118,14 @@ _PROVIDER_ROWS_SQL = (
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id,"
     "json_each(mr.document,'$.providers') provider "
     "WHERE ml.outcome!='report_only'"
+)
+# The provider rows' join without their report-only exclusion: discovery
+# reaches every audiobook, so its dispatch census counts every current one.
+_AUDIO_REPORTS_SQL = (
+    "SELECT ml.connection_name,ml.library_name,mr.document "
+    "FROM current_review_packages ml "
+    "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
+    "WHERE json_extract(mr.document,'$.audio') IS NOT NULL"
 )
 _UNMATCHED_WORKS_SQL = (
     "SELECT ml.connection_name,ml.library_name,count(*) "
@@ -216,6 +246,8 @@ _ABSENCE_REASONS = frozenset(
     }
 )
 _SAFETY_CAUSE = "automatic_safety_suspended"
+# Upper bounds, inclusive, of the near-miss magnitude buckets past the loose band.
+_NEAR_MISS_RANGES = ((900, "600-900"), (1800, "900-1800"), (3600, "1800-3600"))
 _MAX_MOUNT_WALK_FILES = 1_000_000
 
 
@@ -296,6 +328,56 @@ def _provider_lane_rows(connection: sqlite3.Connection) -> list[tuple[object, ..
             statuses = [status]
         for lane_status in statuses:
             rows.append((connection_name, library_name, provider, lane_status))
+    return rows
+
+
+def _audiobook_dispatch_rows(
+    connection: sqlite3.Connection,
+) -> list[tuple[object, ...]]:
+    """One row per current audiobook report: its providers' dispatch facts.
+
+    Each provider is (provider, class, lanes) and each lane is (lane kind,
+    outcome, rungs, near-miss, band): closed vocabulary and integers only.
+    """
+    rows: list[tuple[object, ...]] = []
+    for connection_name, library_name, document in connection.execute(
+        _AUDIO_REPORTS_SQL
+    ).fetchall():
+        report = MetadataReport.from_json(document)
+        audio = cast("AudioFacts", report.audio)
+        alternatives = {
+            payload.identity
+            for payload in work_discovery_lane_payloads(
+                report.target.fields, report.local_claims, audio.discovery_titles
+            )
+            if payload.title_basis is not None
+        }
+        local = local_claim_runtime_seconds(report.local_claims)
+        providers = []
+        for provider in report.providers:
+            lanes = []
+            for lane in provider.lanes:
+                dispatch = cast("ProviderLaneDispatch", lane.dispatch)
+                lanes.append(
+                    (
+                        "work_alternative"
+                        if lane.kind is ProviderQueryKind.WORK
+                        and lane.identity in alternatives
+                        else lane.kind.value,
+                        dispatch.outcome.value,
+                        dispatch.rungs,
+                        dispatch.near_miss_seconds,
+                        lane_band(provider, lane, local),
+                    )
+                )
+            providers.append(
+                (
+                    provider.provider,
+                    provider_dispatch_class(provider).value,
+                    tuple(lanes),
+                )
+            )
+        rows.append((connection_name, library_name, tuple(providers)))
     return rows
 
 
@@ -424,6 +506,7 @@ def cold_start_snapshot(connection: sqlite3.Connection) -> dict[str, object]:
             "absences": _rows(connection, _ABSENCE_COUNTS_SQL),
             "duplicates": _duplicate_groups(connection),
             "agreement": _agreement_rows(connection),
+            "audiobook_dispatch": _audiobook_dispatch_rows(connection),
         }
     finally:
         connection.execute("COMMIT")
@@ -514,6 +597,97 @@ def _bucket(count: int) -> str:
     return str(count)
 
 
+def _near_miss_bucket(value: int) -> tuple[str, str]:
+    magnitude = abs(value)
+    return (
+        "+" if value > 0 else "-",
+        next(
+            (name for bound, name in _NEAR_MISS_RANGES if magnitude <= bound), "3600+"
+        ),
+    )
+
+
+def _audiobook_dispatch(rows: list[tuple[object, ...]]) -> dict[str, object]:
+    """Count one library's audiobook dispatch facts into the census block."""
+    lanes: Counter[tuple[str, str, str]] = Counter()
+    classes: Counter[tuple[str, str]] = Counter()
+    rungs: Counter[tuple[str, int]] = Counter()
+    bands: Counter[tuple[str, str]] = Counter()
+    misses: Counter[tuple[str, str]] = Counter()
+    for row in rows:
+        for provider, dispatch_class, provider_lanes in cast(
+            "tuple[tuple[str, str, tuple[tuple[str, str, int | None, int | None, str], ...]], ...]",
+            row[2],
+        ):
+            classes[(provider, dispatch_class)] += 1
+            for kind, outcome, depth, miss, band in provider_lanes:
+                lanes[(provider, kind, outcome)] += 1
+                bands[(provider, band)] += 1
+                if depth is not None:
+                    rungs[(outcome, depth)] += 1
+                if miss is not None:
+                    misses[_near_miss_bucket(miss)] += 1
+    return {
+        "reports": len(rows),
+        "lanes": [
+            {"provider": provider, "lane": kind, "outcome": outcome, "count": count}
+            for (provider, kind, outcome), count in sorted(lanes.items())
+        ],
+        "providers": [
+            {"provider": provider, "class": value, "items": count}
+            for (provider, value), count in sorted(classes.items())
+        ],
+        "audible_rungs": [
+            {"outcome": outcome, "rungs": depth, "count": count}
+            for (outcome, depth), count in sorted(rungs.items())
+        ],
+        "band": [
+            {"provider": provider, "band": band, "count": count}
+            for (provider, band), count in sorted(bands.items())
+        ],
+        "near_miss": {
+            "items": sum(misses.values()),
+            "buckets": [
+                {"sign": sign, "range": name, "count": count}
+                for (sign, name), count in sorted(misses.items())
+            ],
+        },
+    }
+
+
+def _stage_timings(values: tuple[StageTiming, ...]) -> dict[str, object]:
+    """Nearest-rank percentiles per stage over the retained timing tail."""
+    durations: dict[tuple[str, str], list[int]] = {}
+    for value in values:
+        durations.setdefault((value.stage, value.wait_class), []).append(
+            value.duration_ms
+        )
+
+    def rank(ordered: list[int], quantile: float) -> int:
+        return ordered[math.ceil(len(ordered) * quantile) - 1]
+
+    stages = []
+    for (stage, wait_class), recorded in sorted(durations.items()):
+        ordered = sorted(recorded)
+        stages.append(
+            {
+                "stage": stage,
+                "wait_class": wait_class,
+                "count": len(ordered),
+                "p50": rank(ordered, 0.5),
+                "p95": rank(ordered, 0.95),
+                "max": ordered[-1],
+            }
+        )
+    return {
+        "basis": "retained_tail",
+        "records": len(values),
+        "first_recorded_at": min((value.recorded_at for value in values), default=None),
+        "last_recorded_at": max((value.recorded_at for value in values), default=None),
+        "stages": stages,
+    }
+
+
 def _rate(ready: int, elapsed_seconds: int) -> float | None:
     if ready <= 0 or elapsed_seconds <= 0:
         return None
@@ -526,8 +700,9 @@ def assemble_cold_start_report(
     catalogue_counts: tuple[int, tuple[tuple[str, str, str, str, int], ...]] | None,
     mount_files: dict[str, dict[str, int] | None],
     generated_at: int,
+    stage_timings: tuple[StageTiming, ...] | None = None,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v2`` document from persisted aggregates.
+    """Build the ``cold-start-report-v3`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
@@ -616,6 +791,10 @@ def assemble_cold_start_report(
         agreement.setdefault((connection_name, library_name), Counter())[
             _bucket(len(correlations & provider_identities))
         ] += 1
+
+    dispatch_rows: dict[tuple[object, object], list[tuple[object, ...]]] = {}
+    for row in cast("list[tuple[object, ...]]", snapshot["audiobook_dispatch"]):
+        dispatch_rows.setdefault((row[0], row[1]), []).append(row)
 
     catalogue_generation: int | None = None
     catalogue_by_library: dict[tuple[str, str], dict[str, Counter[str]]] = {}
@@ -781,6 +960,7 @@ def assemble_cold_start_report(
                 "automatic_decision_corroboration": dict(
                     sorted(agreement.get(key, Counter()).items())
                 ),
+                "audiobook_dispatch": _audiobook_dispatch(dispatch_rows.get(key, [])),
             }
         )
 
@@ -821,7 +1001,24 @@ def assemble_cold_start_report(
         },
         "zero_lane_providers": sorted(zero_lane_providers),
         "libraries": libraries,
+        "stage_timings": (
+            None if stage_timings is None else _stage_timings(stage_timings)
+        ),
     }
+
+
+def _read_stage_timings(path: Path) -> tuple[StageTiming, ...]:
+    """Read one stage-timing file through the product's own parser.
+
+    That parser answers an absent file with no records, which here would read
+    as a measured empty tail, so a missing file is refused before it is asked.
+    """
+    if not path.is_file():
+        raise SystemExit("--stage-timings names no stage-timing file")
+    try:
+        return LocalTimingStore(path, enabled=True).list()
+    except OperationsError as error:
+        raise SystemExit("--stage-timings file is unreadable") from error
 
 
 def _mount_roots(values: list[str]) -> dict[str, Path]:
@@ -846,10 +1043,21 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
         metavar="NAME=PATH",
         help="remap a configured mount name to a host path for the file census",
     )
+    parser.add_argument(
+        "--stage-timings",
+        type=Path,
+        metavar="PATH",
+        help="a stage-timings-v1 file whose retained tail is summarized",
+    )
     arguments = parser.parse_args(argv)
     output = sys.stdout if stdout is None else stdout
 
     roots = _mount_roots(arguments.mount_root)
+    timings = (
+        None
+        if arguments.stage_timings is None
+        else _read_stage_timings(arguments.stage_timings)
+    )
     configuration = load_configuration_file(arguments.config)
     connection = _open_read_only(arguments.database)
     try:
@@ -864,7 +1072,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
         for mount in configuration.mounts
     }
     report = assemble_cold_start_report(
-        configuration, snapshot, counts, mount_files, int(time.time())
+        configuration, snapshot, counts, mount_files, int(time.time()), timings
     )
     output.write(
         json.dumps(report, ensure_ascii=False, sort_keys=True, indent=1) + "\n"
