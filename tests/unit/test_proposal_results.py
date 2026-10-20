@@ -90,7 +90,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         proposal_set.proposal_set_id
         == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
     )
-    assert "fixed-conservative-v33" == POLICY_VERSION
+    assert "fixed-conservative-v34" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
     assert (
         re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
@@ -783,19 +783,27 @@ def test_multiline_populated_description_never_becomes_fill_empty(
     assert all(value.assessment.value != "fills_empty" for value in result.alternatives)
 
 
-def test_actual_v32_producer_is_rejected():
+@pytest.mark.parametrize(
+    "version,source_sha",
+    (
+        ("v32", "85cd6578323f6868612697493a0240f603e80008"),
+        ("v33", "cd82592055ecaf9fdf727cc2f9c5b607e7f1f92c"),
+    ),
+)
+def test_actual_predecessor_producer_is_rejected(version, source_sha):
     import hashlib
     from pathlib import Path
 
     capsule = json.loads(
         (
             Path(__file__).parents[1]
-            / "support/proposal_predecessors/fixed-conservative-v32.json"
+            / f"support/proposal_predecessors/fixed-conservative-{version}.json"
         ).read_text()
     )
+    assert capsule["source_sha"] == source_sha
     document = capsule["proposal_document"]
     assert hashlib.sha256(document.encode()).hexdigest() == capsule["proposal_sha256"]
-    assert json.loads(document)["policy_version"] == "fixed-conservative-v32"
+    assert json.loads(document)["policy_version"] == f"fixed-conservative-{version}"
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(document)
     current = evaluate_report(_report())

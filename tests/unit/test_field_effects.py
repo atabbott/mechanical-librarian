@@ -4703,16 +4703,23 @@ def test_activity_projection_never_retries_a_nonbusy_error(
 
 
 @pytest.mark.parametrize(
-    "field,category,option",
+    "field,category,option,reordered",
     (
-        ("title", "title_layout", "preserve"),
-        ("title", "title_layout", "title_and_subtitle"),
-        ("authors", "contributor_names", "preserve"),
-        ("authors", "contributor_names", "canonical"),
+        ("title", "title_layout", "preserve", False),
+        ("title", "title_layout", "title_and_subtitle", False),
+        ("authors", "contributor_names", "preserve", False),
+        ("authors", "contributor_names", "canonical", False),
+        # A recording's authors in another order preserve the target (#1252).
+        ("authors", "contributor_names", "preserve", True),
+        ("authors", "contributor_names", "canonical", True),
     ),
 )
 def test_audiobook_title_author_preservation_is_one_durable_no_change(
-    effects: _EffectEnvironment, field: str, category: str, option: str
+    effects: _EffectEnvironment,
+    field: str,
+    category: str,
+    option: str,
+    reordered: bool,
 ) -> None:
     from mechanical_librarian.domain.audiobook_corroboration import (
         admitted_audiobook_identity,
@@ -4723,7 +4730,14 @@ def test_audiobook_title_author_preservation_is_one_durable_no_change(
         TargetFieldState,
     )
 
-    report = synthetic_audiobook_bibliographic_report()
+    report = (
+        synthetic_audiobook_bibliographic_report(
+            source_authors=("A Writer", "B Writer"),
+            target_authors=("B Writer", "A Writer"),
+        )
+        if reordered
+        else synthetic_audiobook_bibliographic_report()
+    )
     assert admitted_audiobook_identity(report)
     fields = tuple(
         TargetField(item.destination, TargetFieldState.VALUE, "Synthetic Journey")

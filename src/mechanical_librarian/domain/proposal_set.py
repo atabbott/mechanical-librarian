@@ -9,7 +9,7 @@ import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Mapping, Self, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Self, cast
 
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
@@ -34,6 +34,7 @@ from mechanical_librarian.domain.field_outcomes import (
 )
 from mechanical_librarian.domain.field_value_comparison import (
     canonical_text,
+    creator_list_reordered,
     title_identity_key,
     values_match,
 )
@@ -57,6 +58,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    ReportValueError,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -86,6 +88,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
     direct_work_title_election_matches,
+    series_label_segment,
     work_title_election_matches,
 )
 
@@ -98,7 +101,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v33"
+POLICY_VERSION = "fixed-conservative-v34"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -4421,6 +4424,19 @@ def _alternatives(
             proposal_values,
             key=lambda value: canonical_json(value.to_data()),
         )
+        if (
+            report.audio is not None
+            and destination is TargetDestination.AUTHORS
+            and target.state is TargetFieldState.VALUE
+            and creator_list_reordered(target.value, proposal_value.value)
+        ):
+            # A recording's authors in another order name the same people, so
+            # the alternative states the target's own order and preserves it
+            # rather than adding to it; an ebook's order stays a difference
+            # (#1252).
+            proposal_value = _value(
+                destination, tuple(cast("tuple[str, ...]", target.value))
+            )
         if target.state is TargetFieldState.VALUE and _matches(
             destination, target.value, proposal_value
         ):
@@ -4524,6 +4540,134 @@ def series_name_equivalence_key(value: str) -> str:
     if len(words) > 1 and words[-1:] in (["trilogy"], ["series"]):
         words = words[:-1]
     return " ".join(words)
+
+
+_TRAILING_SERIES_POSITION = re.compile(
+    r"[\t\n\r\f\v ,:-]*(?:(?:book|volume|vol\.?|part|no\.?)[\t\n\r\f\v ]*)?#?"
+    r"[\t\n\r\f\v ]*[0-9]{1,3}(?:\.[0-9]{1,2})?[\t\n\r\f\v ]*$",
+    re.IGNORECASE,
+)
+
+
+def case_series_names(report: MetadataReport, proposal: ProposalSet) -> tuple[str, ...]:
+    """Every series name one case states: the target's, its sources' and its
+    proposal's alternatives', which is the evidence a title strip is read by."""
+    target = canonical_target_fields(report.target.fields)[TargetDestination.SERIES]
+    values = [
+        cast("tuple[TargetSeries, ...]", value.value.value)
+        for value in _series_observations(report)
+    ] + [
+        cast("tuple[TargetSeries, ...]", alternative.value.value)
+        for result in proposal.results
+        if result.destination is TargetDestination.SERIES
+        for alternative in result.alternatives
+    ]
+    if target.state is TargetFieldState.VALUE and type(target.value) is tuple:
+        values.append(cast("tuple[TargetSeries, ...]", target.value))
+    return tuple(member.name for value in values for member in value)
+
+
+_TITLE_PART_BOUNDARY = re.compile(r"[()\[\]]|:| [-–—] |[,;]")
+_TITLE_ENCLOSURE = re.compile(r"\(([^()]*)\)|\[([^\[\]]*)\]")
+
+
+def _part_key(text: str, key: Callable[[str], str]) -> str | None:
+    """Key one part of a valid title, or None when the part is blank or unkeyable."""
+    if not text.strip():
+        return None
+    try:
+        return key(text)
+    except ReportValueError:
+        return None
+
+
+def _series_label_text(segment: str, keys: set[str]) -> bool:
+    """Whether removed title text is, or holds, a series label.
+
+    It does when it, its enclosure-free form, an enclosure's content or any one
+    part between separators and enclosures reads as a label by the closed
+    series grammar or names a case series less any trailing position, or when
+    its words hold a case series name's words as one contiguous run.
+    """
+    parts = [
+        segment,
+        _TITLE_ENCLOSURE.sub(" ", segment),
+        *(inner or other for inner, other in _TITLE_ENCLOSURE.findall(segment)),
+        *_TITLE_PART_BOUNDARY.split(segment),
+    ]
+    if any(
+        part.strip()
+        and (
+            series_label_segment(part)
+            or _part_key(
+                _TRAILING_SERIES_POSITION.sub("", part), series_name_equivalence_key
+            )
+            in keys
+        )
+        for part in parts
+    ):
+        return True
+    folded = _part_key(
+        segment, lambda text: _comparison(TargetDestination.SERIES, text)
+    )
+    words = re.findall(r"\w+", folded or "")
+    return any(
+        words[index : index + len(run)] == run
+        for run in (re.findall(r"\w+", key) for key in keys)
+        if run
+        for index in range(len(words) - len(run) + 1)
+    )
+
+
+def title_strip_series_label(
+    current: object, desired: object, series_names: tuple[str, ...]
+) -> str | None:
+    """Name the series label a scalar title replacement deletes, if it deletes one.
+
+    `desired` must be `current` less one leading or trailing run of text that a
+    separator (a colon, a spaced dash, a comma or a semicolon) or an enclosure
+    (parentheses or brackets) sets apart, compared under `title_identity_key`.
+    That run deletes a series label when `_series_label_text` reads one in it.
+    Any other strip, every non-contiguous rewrite and every blank or unkeyable
+    part names nothing, so the predicate never raises on a valid title (#1252).
+    """
+    if type(current) is not str or type(desired) is not str:
+        return None
+    wanted = _part_key(desired, title_identity_key)
+    if not wanted:
+        return None
+    removed: list[str] = []
+    for boundary in _TITLE_PART_BOUNDARY.finditer(current):
+        mark = boundary.group()
+        if mark not in ")]" and _part_key(
+            current[: boundary.start()], title_identity_key
+        ) == (wanted):
+            removed.append(
+                current[boundary.start() if mark in "([" else boundary.end() :]
+            )
+        if mark not in "([" and _part_key(
+            current[boundary.end() :], title_identity_key
+        ) == (wanted):
+            removed.append(
+                current[: boundary.end() if mark in ")]" else boundary.start()]
+            )
+    keys = {
+        key
+        for name in series_names
+        if (key := _part_key(name, series_name_equivalence_key))
+    }
+    for segment in removed:
+        text = segment.strip()
+        whole = _TITLE_ENCLOSURE.fullmatch(text)
+        named = (whole.group(1) or whole.group(2) or "").strip() if whole else text
+        # The named text is keyed by callers, so text no key reads is no strip.
+        if (
+            text
+            and _part_key(named, title_identity_key) is not None
+            and _series_label_text(text, keys)
+        ):
+            return named
+    return None
 
 
 def _eligible_identifier(
@@ -5656,8 +5800,10 @@ __all__ = [
     "ProposalValue",
     "ProposalValueError",
     "ProposalValueKind",
+    "case_series_names",
     "evaluate_report",
     "provider_candidate_represents_target_work",
     "segment_corroboration",
     "subtitle_segment_evidence",
+    "title_strip_series_label",
 ]

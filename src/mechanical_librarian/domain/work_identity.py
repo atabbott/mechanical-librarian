@@ -512,6 +512,12 @@ _LEADING_SEQUENCE = re.compile(
     r"(?:[-–—:.)] | [-–—] )(?P<rest>.+)",
     re.IGNORECASE,
 )
+# A position the shared series grammar above does not spell: "Saga #3", "No. 4".
+_POSITION_NUMBER = re.compile(
+    r"(?:^|[\t\n\r\f\v ])(?:#|no\.?[\t\n\r\f\v ]*#?)[\t\n\r\f\v ]*"
+    r"[0-9]{1,3}(?:\.[0-9]{1,2})?$",
+    re.IGNORECASE,
+)
 _SPACED_DASHES = (" - ", " – ", " — ")
 # A path leaf's leading track number: "03 - Title", "1. Title".
 _LEADING_TRACK_NUMBER = re.compile(r"[0-9]{1,3} ?[-–—.] ")
@@ -1140,6 +1146,30 @@ def _has_letter(value: str) -> bool:
     return any(character.isalpha() for character in value)
 
 
+def series_label_segment(segment: str) -> bool:
+    """Whether one title segment reads as a series label by grammar alone.
+
+    The grammar is the transformation table's own: a segment ending in a series
+    position ("Saga, Book 1", "Vol. 2", "Saga #3", "No. 4"), the series prefix
+    of an order-inverted title ("Saga Book 2" before " - Title"), or a whole
+    leading sequence token ("Book 2", "#4"). A series named without a position
+    is not a label here; only the caller's series evidence can say so (#1252).
+    """
+    text = _clean(segment)
+    if not text:
+        return False
+    # Each title-shaped grammar is asked about this segment as the whole of
+    # its own part, so a longer segment that only starts with one is not read.
+    inverted = _INVERTED_SERIES.fullmatch(f"{text} - x")
+    leading = _LEADING_SEQUENCE.fullmatch(f"{text}: x")
+    return (
+        _SERIES_MARKER.search(text) is not None
+        or _POSITION_NUMBER.search(text) is not None
+        or (inverted is not None and inverted.group(1) == "x")
+        or (leading is not None and leading.group("rest") == "x")
+    )
+
+
 def work_title_election_matches(
     title: str, authors: tuple[str, ...]
 ) -> tuple[WorkTitleElectionMatch, ...]:
@@ -1607,6 +1637,7 @@ __all__ = [
     "discovery_title_candidate",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",
+    "series_label_segment",
     "work_dispatch_lineage_from_data",
     "work_query_ladder",
     "work_title_has_variant_marker",

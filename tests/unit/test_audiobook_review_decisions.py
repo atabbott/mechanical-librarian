@@ -29,8 +29,10 @@ from mechanical_librarian.application.review_web import (
     _case_and_report,
     _decision_projection,
 )
+from mechanical_librarian.domain import audiobook_decision_qualification, shadow_outcome
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
+    narrator_cast_disjoint,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent
 from mechanical_librarian.domain.field_effect import (
@@ -56,13 +58,21 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
-from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
+    evaluate_report,
+    title_strip_series_label,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
     project_audiobook_automatic_decision_value,
 )
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
+from mechanical_librarian.domain.shadow_outcome import (
+    ShadowFieldOutcome,
+    ShadowOutcomeSet,
+)
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
@@ -75,6 +85,7 @@ from tests.support.audiobook_reports import (
     chapter_runtime_report,
     corroborated_audiobook_report,
     retained_recorded_only_decision,
+    synthetic_audiobook_bibliographic_report,
 )
 from tests.support.proposal_evidence import _fields as _proposal_fields
 from tests.support.proposal_evidence import _provider as _proposal_provider
@@ -1980,3 +1991,397 @@ def test_a_recording_cover_with_only_preparation_reads_as_an_ebooks_does(
         False,
         False,
     )
+
+
+def _recording_outcomes(
+    report: MetadataReport,
+    automatic: tuple[str, ...],
+    options: dict[str, str] | None = None,
+) -> dict[str, ShadowFieldOutcome]:
+    """Project one recording's case under a policy routing `automatic` to Automatic."""
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    }
+    destinations.update(dict.fromkeys(automatic, "automatic"))
+    policy = resolve_policy(
+        MetadataPolicyProfile.create(
+            "F46 tranche", {**DEFAULT_OPTIONS, **(options or {})}, destinations
+        ),
+        report.target.library,
+    )
+    proposal = evaluate_report(
+        report, policy.resolved_id, human_review_destinations(policy)
+    )
+    case = ReviewCase.create(proposal, report)
+    outcome = ShadowOutcomeSet.create(
+        case,
+        decide_shadow_packet(ShadowReviewPacket.create(case, proposal, report)),
+        policy,
+        2,
+        report,
+        proposal,
+        media_kind="audiobook",
+    )
+    return {value.destination: value for value in outcome.outcomes}
+
+
+def _routing(outcome: ShadowFieldOutcome) -> tuple[str, str, str | None]:
+    return outcome.policy_destination, outcome.disposition, outcome.policy_option
+
+
+_SERIES_STRIP: dict[str, Any] = {
+    "title": "Saltmarsh: Saltmarsh Chronicles, Book 1",
+    "source_title": "Saltmarsh",
+    "source_subtitle": None,
+}
+
+
+@pytest.mark.parametrize(
+    "current,desired,series_names,removed",
+    (
+        (
+            "Saltmarsh: Saltmarsh Chronicles, Book 1",
+            "Saltmarsh",
+            (),
+            "Saltmarsh Chronicles, Book 1",
+        ),
+        (
+            "Saltmarsh - Saltmarsh Chronicles",
+            "Saltmarsh",
+            ("The Saltmarsh Chronicles",),
+            "Saltmarsh Chronicles",
+        ),
+        ("Saltmarsh; Ember Saga 2", "Saltmarsh", ("Ember Saga",), "Ember Saga 2"),
+        (
+            "Tidewater Hollow (Lantern Cycle #1)",
+            "Tidewater Hollow",
+            (),
+            "Lantern Cycle #1",
+        ),
+        ("Tidewater Hollow [Book 1]", "Tidewater Hollow", (), "Book 1"),
+        ("Book 2: The Drowned Bell", "The Drowned Bell", (), "Book 2"),
+        (
+            "Saltmarsh Chronicles, Saltmarsh",
+            "Saltmarsh",
+            ("Saltmarsh Chronicles",),
+            "Saltmarsh Chronicles",
+        ),
+        ("Saltmarsh - Saltmarsh Chronicles", "Saltmarsh", (), None),
+        ("Title (Unabridged)", "Title", (), None),
+        ("Synthetic Journey: A Tale of Courage", "Synthetic Journey", (), None),
+        ("Saltmarsh Rising", "Saltmarsh", ("Saltmarsh",), None),
+        ("Saltmarsh: Saltmarsh Chronicles, Book 1", "Saltmarsh Book 1", (), None),
+        (
+            "Saltmarsh: Saltmarsh Chronicles, Book 1",
+            "Saltmarsh: Saltmarsh Chronicles, Book 1",
+            (),
+            None,
+        ),
+        (None, "Saltmarsh", (), None),
+        ("Saltmarsh: Book 1", ["Saltmarsh"], (), None),
+        # A blank side of a boundary is no strip, never an invalid title.
+        ("[Saltmarsh]", "Saltmarsh", (), None),
+        ("(Saltmarsh)", "Saltmarsh", (), None),
+        (",Saltmarsh", "Saltmarsh", (), None),
+        ("Saltmarsh;", "Other", (), None),
+        # Removed text no title key reads is no strip, so callers can key it.
+        ("Saltmarsh - \\Book 1", "Saltmarsh", (), None),
+        # A leading enclosure is a boundary like a trailing one.
+        ("(Book 1) Saltmarsh", "Saltmarsh", (), "Book 1"),
+        # A label nested in the removed text, or a case series named inside it.
+        (
+            "Saltmarsh: Saltmarsh Chronicles, Book 1 (Unabridged)",
+            "Saltmarsh",
+            (),
+            "Saltmarsh Chronicles, Book 1 (Unabridged)",
+        ),
+        (
+            "Saltmarsh (Saltmarsh Chronicles, Book 1) (Unabridged)",
+            "Saltmarsh",
+            (),
+            "(Saltmarsh Chronicles, Book 1) (Unabridged)",
+        ),
+        (
+            "Saltmarsh: Book 1 of the Saltmarsh Chronicles",
+            "Saltmarsh",
+            ("Saltmarsh Chronicles",),
+            "Book 1 of the Saltmarsh Chronicles",
+        ),
+        (
+            "Saltmarsh: A Novel (Unabridged)",
+            "Saltmarsh",
+            ("Saltmarsh Chronicles",),
+            None,
+        ),
+        ("Saltmarsh (Unabridged)", "Saltmarsh", ("Saltmarsh Chronicles",), None),
+    ),
+)
+def test_title_strip_series_label_reads_exactly_one_removed_segment(
+    current, desired, series_names, removed
+):
+    assert title_strip_series_label(current, desired, series_names) == removed
+
+
+@pytest.mark.parametrize(
+    "title", ("[Saltmarsh]", "(Saltmarsh)"), ids=("brackets", "parentheses")
+)
+def test_a_wholly_enclosed_title_projects_as_at_the_base(title, monkeypatch):
+    report = synthetic_audiobook_bibliographic_report(
+        title=title, source_title="Saltmarsh", source_subtitle=None
+    )
+    routing = _routing(_recording_outcomes(report, ("title_layout",))["title"])
+    monkeypatch.setattr(shadow_outcome, "title_strip_series_label", lambda *_args: None)
+    assert routing == _routing(_recording_outcomes(report, ("title_layout",))["title"])
+    assert routing[0] == "automatic"
+
+
+@pytest.mark.parametrize(
+    "variant,routing",
+    (
+        ("series_empty", ("ask", "manual", "title_and_subtitle")),
+        (
+            "series_populated",
+            (
+                "automatic",
+                "candidate",
+                "title_and_subtitle:audiobook_title_replace",
+            ),
+        ),
+    ),
+)
+def test_a_title_strip_deleting_an_unpreserved_series_label_is_asked(
+    variant, routing, monkeypatch
+):
+    report = synthetic_audiobook_bibliographic_report(
+        **_SERIES_STRIP,
+        target_series=(
+            ("Saltmarsh Chronicles", "1") if variant == "series_populated" else None
+        ),
+    )
+    title = _recording_outcomes(report, ("title_layout",))["title"]
+    assert not title.combination_ids
+    assert _routing(title) == routing
+    # Without the guard the same strip is the qualified automatic replacement.
+    monkeypatch.setattr(shadow_outcome, "title_strip_series_label", lambda *_args: None)
+    assert _routing(_recording_outcomes(report, ("title_layout",))["title"]) == (
+        "automatic",
+        "candidate",
+        "title_and_subtitle:audiobook_title_replace",
+    )
+
+
+_REPLACED_TITLE = (
+    "automatic",
+    "candidate",
+    "title_and_subtitle:audiobook_title_replace",
+)
+
+
+@pytest.mark.parametrize(
+    "variant,routing",
+    (
+        ("series_not_elected", ("ask", "manual", "title_and_subtitle")),
+        ("series_elected", _REPLACED_TITLE),
+        ("series_populated", _REPLACED_TITLE),
+    ),
+)
+def test_a_combined_title_strip_asks_unless_its_series_is_kept_or_elected(
+    variant, routing, monkeypatch
+):
+    """A sourced series binds the title into a combination with it, the shape
+    every real recording title replacement takes, and the guard reads it."""
+    report = synthetic_audiobook_bibliographic_report(
+        **_SERIES_STRIP,
+        source_series=("Saltmarsh Chronicles", "1"),
+        target_series=(
+            ("Saltmarsh Chronicles", "1") if variant == "series_populated" else None
+        ),
+    )
+    automatic = (
+        ("title_layout", "series") if variant == "series_elected" else ("title_layout",)
+    )
+    outcomes = _recording_outcomes(report, automatic)
+    title = outcomes["title"]
+    assert title.combination_ids
+    assert _routing(title) == routing
+    if variant != "series_populated":
+        series = outcomes["series"]
+        assert series.combination_ids == title.combination_ids
+        assert _routing(series) == (
+            ("automatic", "candidate", "primary_narrative:audiobook_series_fill")
+            if variant == "series_elected"
+            else ("ask", "manual", "primary_narrative:audiobook_series_fill")
+        )
+    # Without the guard, as at the base, the unelected strip was Automatic.
+    monkeypatch.setattr(shadow_outcome, "title_strip_series_label", lambda *_args: None)
+    assert _routing(_recording_outcomes(report, automatic)["title"]) == (
+        _REPLACED_TITLE
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ("unabridged", "subtitle_without_label"),
+)
+def test_title_strips_that_delete_no_series_label_keep_their_authority(variant):
+    variants: dict[str, dict[str, Any]] = {
+        "unabridged": {
+            "title": "Saltmarsh (Unabridged)",
+            "source_title": "Saltmarsh",
+            "source_subtitle": None,
+        },
+        "subtitle_without_label": {"source_subtitle": None},
+    }
+    report = synthetic_audiobook_bibliographic_report(**variants[variant])
+    title = _recording_outcomes(report, ("title_layout",))["title"]
+    assert _routing(title) == (
+        "automatic",
+        "candidate",
+        "title_and_subtitle:audiobook_title_replace",
+    )
+
+
+@pytest.mark.parametrize("split", (False, True))
+def test_a_paired_layout_carries_the_stripped_series_label_to_its_subtitle(split):
+    """The title and subtitle pair moves the removed segment into the subtitle
+    fill the same outcome set elects; without that fill the label is lost."""
+    report = synthetic_audiobook_bibliographic_report(
+        **{**_SERIES_STRIP, "source_subtitle": "Saltmarsh Chronicles, Book 1"}
+    )
+    outcomes = _recording_outcomes(
+        report,
+        ("title_layout", "subtitle"),
+        {"title_layout": "title_and_subtitle", "subtitle": "corroborated_split"}
+        if split
+        else None,
+    )
+    title = outcomes["title"]
+    assert title.combination_ids
+    if split:
+        assert _routing(outcomes["subtitle"]) == (
+            "automatic",
+            "candidate",
+            "corroborated_split:audiobook_subtitle_fill",
+        )
+        assert outcomes["subtitle"].combination_ids == title.combination_ids
+        assert _routing(title) == _REPLACED_TITLE
+    else:
+        assert _routing(title) == ("ask", "manual", "title_and_subtitle")
+
+
+@pytest.mark.parametrize(
+    "local,product,disjoint",
+    (
+        (("Rory Sample",), ("Jane Doe",), True),
+        ((), ("Jane Doe",), False),
+        (("Rory Sample",), (), False),
+        (("Rory Sample", "Jane Doe"), ("Jane Doe",), False),
+        (("Jane Doe",), ("Jane Doe", "Rory Sample"), False),
+        (("Jane Doe",), ("Jane Doe",), False),
+        (("Jane Q. Doe",), ("Jane Doe",), False),
+        (("Ann O’Brien",), ("Ann O'Brien",), False),
+        (("Wren Sample, Ivo Placeholder",), ("Wren Sample",), False),
+        (("Wren Sample, Ivo Placeholder",), ("Ivo Placeholder", "Carl Cast"), False),
+        (("Wren Sample, Ivo Placeholder",), ("Carl Cast",), True),
+        (("Wren Sample",), ("Wren Sample & Ivo Placeholder",), False),
+        # A shared surname alone names nobody both casts credit.
+        (("John Doe",), ("Jane Doe",), True),
+    ),
+)
+def test_narrator_cast_disjoint_needs_two_casts_sharing_nobody(
+    local, product, disjoint
+):
+    assert narrator_cast_disjoint(local, product) is disjoint
+
+
+@pytest.mark.parametrize(
+    "local,product,asked",
+    (
+        (("Rory Sample",), ("Jane Doe",), True),
+        ((), ("Jane Doe",), False),
+        (("Rory Sample",), ("Jane Doe", "Rory Sample"), False),
+        (("Jane Doe",), ("Jane Doe",), False),
+        (("Jane Q. Doe",), ("Jane Doe",), False),
+        (("Wren Sample, Ivo Placeholder",), ("Wren Sample",), False),
+        (("Wren Sample, Ivo Placeholder",), ("Ivo Placeholder", "Carl Cast"), False),
+        (("Wren Sample, Ivo Placeholder",), ("Carl Cast",), True),
+        (("John Doe",), ("Jane Doe",), True),
+    ),
+)
+def test_a_narrator_replacement_disjoint_from_the_files_own_cast_is_asked(
+    local, product, asked, monkeypatch
+):
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=product,
+        target_narrators=("Old Reader",),
+        local_narrators=local,
+    )
+    automatic = (
+        "automatic",
+        "candidate",
+        "canonical:audiobook_narrators_replace",
+    )
+    narrators = _recording_outcomes(
+        report, ("contributor_names",), {"contributor_names": "canonical"}
+    )["narrators"]
+    assert _routing(narrators) == (
+        ("ask", "manual", "canonical") if asked else automatic
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "narrator_cast_disjoint",
+        lambda *_args: False,
+    )
+    assert (
+        _routing(
+            _recording_outcomes(
+                report, ("contributor_names",), {"contributor_names": "canonical"}
+            )["narrators"]
+        )
+        == automatic
+    )
+
+
+@pytest.mark.parametrize(
+    "source,second,target,routing",
+    (
+        (
+            ("A Writer", "B Writer"),
+            None,
+            ("B Writer", "A Writer"),
+            ("automatic", "keep_current", "canonical:audiobook_authors_preserve"),
+        ),
+        (
+            ("A Writer", "B Writer"),
+            None,
+            ("A Writer",),
+            ("automatic", "candidate", "canonical:audiobook_authors_add"),
+        ),
+        (
+            ("A Writer", "B Writer", "C Writer"),
+            ("C Writer", "A Writer", "B Writer"),
+            ("B Writer", "A Writer", "C Writer"),
+            ("automatic", "conflict", "canonical:audiobook_authors_replace"),
+        ),
+    ),
+    ids=("reorder", "author_added", "competing_orders"),
+)
+def test_a_recordings_author_reorder_is_a_preservation_not_a_write(
+    source, second, target, routing
+):
+    report = synthetic_audiobook_bibliographic_report(
+        source_authors=source, second_source_authors=second, target_authors=target
+    )
+    authors = _recording_outcomes(
+        report, ("contributor_names",), {"contributor_names": "canonical"}
+    )["authors"]
+    assert _routing(authors) == routing

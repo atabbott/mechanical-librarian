@@ -36,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    TargetSeries,
     WorkDispatchLineage,
     default_target_fields,
     finalize_candidate_comparisons,
@@ -659,9 +660,25 @@ def synthetic_audiobook_bibliographic_report(
     *,
     adult_product: object = None,
     source_authors: tuple[str, ...] = ("Example Author",),
+    second_source_authors: tuple[str, ...] | None = None,
     target_authors: tuple[str, ...] = ("Example Author",),
+    title: str = "Synthetic Journey: A Tale of Courage",
+    source_title: str = "Synthetic Journey",
+    source_subtitle: str | None = "A Tale of Courage",
+    source_series: tuple[str, str] | None = None,
+    target_series: tuple[str, str | None] | None = None,
+    source_narrators: tuple[str, ...] = (),
+    target_narrators: tuple[str, ...] = (),
+    local_narrators: tuple[str, ...] = (),
 ) -> MetadataReport:
-    """A real adapter produces a recording-admitted synthetic bibliographic pair."""
+    """A real adapter produces a recording-admitted synthetic bibliographic pair.
+
+    The keywords vary only the target title, series and narrators, the
+    product's title, subtitle, series and narrators, the second product's
+    authors, and the file's own narrator tags (#1252).
+    """
+    from dataclasses import replace
+
     import httpx
 
     from mechanical_librarian.adapters.providers.audnexus_metadata import (
@@ -676,13 +693,35 @@ def synthetic_audiobook_bibliographic_report(
         target_title_claim,
     )
 
-    title = "Synthetic Journey: A Tale of Courage"
     target = audio_target(title, target_authors)
+    populated = {
+        TargetDestination.SERIES: None
+        if target_series is None
+        else (TargetSeries(*target_series),),
+        TargetDestination.NARRATORS: target_narrators or None,
+    }
+    target = replace(
+        target,
+        fields=tuple(
+            TargetField(
+                field.destination,
+                TargetFieldState.VALUE,
+                populated[field.destination],
+            )
+            if populated.get(field.destination) is not None
+            else field
+            for field in target.fields
+        ),
+    )
     claims = (
         target_title_claim(title),
         audio_claim(ClaimKind.ASIN, "B000000001", 1),
         audio_claim(ClaimKind.ASIN, "B000000002", 2),
         audio_claim(ClaimKind.DURATION, "58200.000", 3),
+        *(
+            audio_claim(ClaimKind.CONTRIBUTOR, name, 4 + index, role="narrator")
+            for index, name in enumerate(local_narrators)
+        ),
     )
     audio = single_track_audio_facts("b" * 64)
     plan = audiobook_discovery_plan(target, claims, audio=audio)
@@ -694,11 +733,34 @@ def synthetic_audiobook_bibliographic_report(
             200,
             json={
                 "asin": request.url.path.split("/")[2],
-                "title": "Synthetic Journey",
-                "subtitle": "A Tale of Courage",
+                "title": source_title,
+                "subtitle": source_subtitle,
                 "runtimeLengthMin": 970,
                 "isAdult": adult_product,
-                "authors": [{"name": name} for name in source_authors],
+                "authors": [
+                    {"name": name}
+                    for name in (
+                        second_source_authors
+                        if second_source_authors is not None
+                        and request.url.path.split("/")[2] == "B000000002"
+                        else source_authors
+                    )
+                ],
+                **(
+                    {"narrators": [{"name": name} for name in source_narrators]}
+                    if source_narrators
+                    else {}
+                ),
+                **(
+                    {
+                        "seriesPrimary": {
+                            "name": source_series[0],
+                            "position": source_series[1],
+                        }
+                    }
+                    if source_series is not None
+                    else {}
+                ),
             },
         )
 

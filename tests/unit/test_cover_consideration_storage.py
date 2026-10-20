@@ -149,10 +149,29 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     assert fixture["source_sha"] == "3b11eefebd70ecf7d26015cc9e3f6ff78e95521c"
     database = tmp_path / "predecessor.sqlite"
     connection = sqlite3.connect(database)
-    # The producer also predates #1245's report discriminator.
+    support = Path(__file__).parents[1]
+    # The producer also predates #1245's report discriminator, and #1252's
+    # proposal and decision policy literals, which its own DDL carried.
     with (
         patch.object(
             schema, "_COVER_CONSIDERATIONS_SQL", fixture["cover_considerations_sql"]
+        ),
+        patch.object(
+            schema,
+            "_PROPOSAL_SETS_SQL",
+            json.loads(
+                (
+                    support
+                    / "support/proposal_predecessors/fixed-conservative-v33.json"
+                ).read_text()
+            )["proposal_sets_ddl"],
+        ),
+        patch.object(
+            schema,
+            "_SHADOW_DECISION_OUTCOMES_SQL",
+            json.loads((support / "fixtures/series-strip-guard-v20.json").read_text())[
+                "shadow_decision_outcomes_sql"
+            ],
         ),
         patch.object(
             schema,
