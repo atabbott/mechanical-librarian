@@ -7853,8 +7853,17 @@ def test_audiobook_work_owner_journey():
                 exact=True,
             )
             choice.focus()
-            choice.press("Space")
-            expect(choice).to_have_attribute("aria-pressed", "true")
+            # The choice reads pressed while it is still recording, and a reload
+            # before the request leaves aborts it. Reload only once the case has
+            # acknowledged the decision and completed (#1297).
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                choice.press("Space")
+            assert 200 == recorded.value.status
+            expect(
+                page.get_by_role("heading", name="Review complete", exact=True)
+            ).to_be_visible()
             page.reload()
             expect(choice).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
