@@ -2355,3 +2355,494 @@ def test_an_admitted_rung_counts_its_depth() -> None:
     assert d.ProviderLaneDispatch(d.DispatchOutcome.ADMITTED, 2, None) == (
         _dispatch(observation, plan)
     )
+
+
+# Band-corroborated work admission (#1260), over the real adapter. The item's
+# own running time is 58,244 s; 970 minutes is inside the 90 s tight band and
+# 900 minutes is outside the 600 s loose band. Every name here is synthetic.
+_BAND_TITLE = "Plain Work (Example Saga)"
+_BAND_AUTHORS = ("Ada Example",)
+
+
+def _band_product(
+    asin: str,
+    title: str,
+    *,
+    authors: tuple[str, ...] = _BAND_AUTHORS,
+    minutes: int | None = 970,
+) -> dict[str, Any]:
+    product: dict[str, Any] = {
+        "asin": asin,
+        "title": title,
+        "authors": [{"name": value} for value in authors],
+    }
+    if minutes is not None:
+        product["runtime_length_min"] = minutes
+    return product
+
+
+def _band_plan(
+    *,
+    title: str = _BAND_TITLE,
+    authors: tuple[str, ...] = _BAND_AUTHORS,
+    runtime: str | None = "58244.201",
+    alternative: str | None = None,
+) -> m.MetadataDiscoveryPlan:
+    from mechanical_librarian.domain.metadata_report import AudioDiscoveryTitle
+
+    return m.audiobook_discovery_plan(
+        audio_target(title, authors),
+        (
+            target_title_claim(title),
+            *(() if runtime is None else (local_runtime_claim(runtime),)),
+        ),
+        audio=replace(
+            single_track_audio_facts(),
+            discovery_titles=(
+                ()
+                if alternative is None
+                else (AudioDiscoveryTitle("path_leaf", alternative),)
+            ),
+        ),
+    )
+
+
+def _band_observation(
+    products: Callable[[str], list[dict[str, Any]]],
+    plan: m.MetadataDiscoveryPlan,
+) -> tuple[Any, list[str]]:
+    asked: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params["title"])
+        page = products(asked[-1])
+        return _json({"total_results": len(page), "products": page})
+
+    return _observed(handle, plan).observation, asked
+
+
+def _band_report(
+    observation: Any,
+    plan: m.MetadataDiscoveryPlan,
+    *,
+    title: str = _BAND_TITLE,
+    authors: tuple[str, ...] = _BAND_AUTHORS,
+) -> MetadataReport:
+    assert plan.audio is not None
+    report = MetadataReport.create(
+        target=d.TargetFacts(
+            "primary", "audio", "item-1", audio_target(title, authors).fields
+        ),
+        file=d.FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=plan.local_claims,
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=plan.audio,
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+    return report
+
+
+@pytest.mark.parametrize(
+    ("title", "production"),
+    (
+        (_BAND_TITLE, "band_parenthesized_series_name"),
+        ("Plain Work, Book 2", "band_trailing_series_sequence"),
+        ("Example Saga Book 2 - Plain Work", "band_order_inverted_series_prefix"),
+    ),
+)
+def test_a_tight_product_equal_to_the_shaped_rung_admits_as_a_recording(
+    title: str, production: str
+) -> None:
+    observation, asked = _band_observation(
+        lambda _title: [_band_product("B000000001", "Plain Work")],
+        _band_plan(title=title),
+    )
+    report = _band_report(observation, _band_plan(title=title), title=title)
+
+    (lane,) = observation.lanes
+    assert ["Plain Work"] == asked
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert lane.transformation_lineage is not None
+    assert production == lane.transformation_lineage.production
+    (candidate,) = observation.candidates
+    assert any(
+        value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for value in candidate.evidence
+    )
+    assert not lane.recording_lookup_hints
+    assert p.AudiobookReviewScope.RECORDING is p.audiobook_review_scope(report)
+    assert recording_identity_basis(report) is None
+    # The proposal set replays the same band-aware admission before it lets
+    # the candidate describe the target work.
+    (provider,) = report.providers
+    assert p.provider_candidate_represents_target_work(
+        report, provider, provider.candidates[0]
+    )
+
+
+@pytest.mark.parametrize(
+    ("products", "plan_arguments"),
+    (
+        ([_band_product("B000000001", "Plain Work", minutes=900)], {}),
+        ([_band_product("B000000001", "Plain Work")], {"runtime": None}),
+        (
+            [_band_product("B000000001", "Plain Work")],
+            {"title": "Plain Work (Dramatized)"},
+        ),
+        ([_band_product("B000000001", "Other Work")], {}),
+    ),
+    ids=("out_of_band", "no_local_runtime", "dramatized", "wrong_work_tight"),
+)
+def test_a_band_first_refusal_leaves_the_lane_refused(
+    products: list[dict[str, Any]], plan_arguments: dict[str, Any]
+) -> None:
+    plan = _band_plan(**plan_arguments)
+    observation, _asked = _band_observation(lambda _title: products, plan)
+    report = _band_report(
+        observation, plan, title=plan_arguments.get("title", _BAND_TITLE)
+    )
+
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert not observation.candidates
+    assert p.AudiobookReviewScope.RECORDING is not p.audiobook_review_scope(report)
+
+
+def test_a_wrong_work_tight_product_stays_a_hint() -> None:
+    plan = _band_plan()
+    observation, _asked = _band_observation(
+        lambda _title: [_band_product("B000000001", "Other Work")], plan
+    )
+
+    (lane,) = observation.lanes
+    assert ("B000000001",) == tuple(value.asin for value in lane.recording_lookup_hints)
+
+
+def test_the_alternative_lane_never_admits_band_first() -> None:
+    """#1255's rule is byte-identical: the widening is the asserted lane's."""
+    plan = _band_plan(title="Asserted Title", alternative=_BAND_TITLE)
+    observation, asked = _band_observation(
+        lambda title: (
+            []
+            if title == "Asserted Title"
+            else [_band_product("B000000001", "Plain Work")]
+        ),
+        plan,
+    )
+    _band_report(observation, plan, title="Asserted Title")
+
+    assert ["Asserted Title", "Plain Work"] == asked
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert all(lane.transformation_lineage is None for lane in observation.lanes)
+
+
+@pytest.mark.parametrize(
+    ("product_author", "admitted"),
+    (("J. R. R. Example", True), ("JRR Example", False)),
+)
+def test_initials_fold_admits_inside_the_band_only(
+    product_author: str, admitted: bool
+) -> None:
+    plan = _band_plan(title="Plain Work", authors=("J.R.R. Example",))
+    observation, _asked = _band_observation(
+        lambda _title: [
+            _band_product("B000000001", "Plain Work", authors=(product_author,))
+        ],
+        plan,
+    )
+    _band_report(observation, plan, title="Plain Work", authors=("J.R.R. Example",))
+
+    assert admitted is (observation.status is ProviderStatus.CANDIDATES)
+    if admitted:
+        (lane,) = observation.lanes
+        assert lane.transformation_lineage is not None
+        assert [
+            (value.side.value, value.ordinal)
+            for value in lane.transformation_lineage.applications
+        ] == [("local", 0), ("provider", 0)]
+        assert "band_initials_fold" == lane.transformation_lineage.production
+
+
+def _forced_band_claims(
+    monkeypatch: pytest.MonkeyPatch, claims: tuple[Any, ...]
+) -> None:
+    """Hand every set admission the band claims a forger would assert."""
+    original = m.provider_candidate_set_work_identity_admission
+
+    def forged(*arguments: Any, **keywords: Any) -> Any:
+        return original(*arguments, **{**keywords, "band_claims": claims})
+
+    monkeypatch.setattr(m, "provider_candidate_set_work_identity_admission", forged)
+
+
+@pytest.mark.parametrize(
+    ("plan_arguments", "title"),
+    (
+        ({"runtime": "50000.000"}, _BAND_TITLE),
+        ({"runtime": None}, _BAND_TITLE),
+        ({"title": "Asserted Title", "alternative": _BAND_TITLE}, "Asserted Title"),
+    ),
+    ids=("out_of_band_local_runtime", "no_local_runtime", "alternative_lane"),
+)
+def test_a_report_refuses_a_band_lineage_its_own_claims_do_not_replay(
+    monkeypatch: pytest.MonkeyPatch, plan_arguments: dict[str, Any], title: str
+) -> None:
+    plan = _band_plan(**plan_arguments)
+    with monkeypatch.context() as patched:
+        _forced_band_claims(
+            patched,
+            (
+                *(
+                    value
+                    for value in plan.local_claims
+                    if value.kind is not ClaimKind.DURATION
+                ),
+                local_runtime_claim("58244.201"),
+            ),
+        )
+        observation, _asked = _band_observation(
+            lambda value: (
+                []
+                if value == "Asserted Title"
+                else [_band_product("B000000001", "Plain Work")]
+            ),
+            plan,
+        )
+    assert ProviderStatus.CANDIDATES is observation.status
+
+    with pytest.raises(
+        ReportValueError, match="provider work identity lineage is inconsistent"
+    ):
+        _band_report(observation, plan, title=title)
+
+
+def test_a_report_refuses_forged_initials_fold_sides() -> None:
+    from mechanical_librarian.domain.work_identity import (
+        WorkTitleTransformationApplication,
+        WorkTitleTransformationField,
+        WorkTitleTransformationLineage,
+        WorkTitleTransformationSide,
+    )
+
+    plan = _band_plan(title="Plain Work", authors=("J.R.R. Example",))
+    observation, _asked = _band_observation(
+        lambda _title: [
+            _band_product("B000000001", "Plain Work", authors=("J. R. R. Example",))
+        ],
+        plan,
+    )
+    forged = WorkTitleTransformationLineage(
+        (
+            WorkTitleTransformationApplication(
+                WorkTitleTransformationFamily.INITIALS_FOLD,
+                WorkTitleTransformationSide.PROVIDER,
+                WorkTitleTransformationField.AUTHORS,
+                0,
+            ),
+        )
+    )
+    (lane,) = observation.lanes
+    observation = replace(
+        observation,
+        lanes=(replace(lane, transformation_lineage=forged),),
+    )
+
+    with pytest.raises(
+        ReportValueError, match="provider work identity lineage is inconsistent"
+    ):
+        _band_report(observation, plan, title="Plain Work", authors=("J.R.R. Example",))
+
+
+def test_a_band_admitted_title_is_offered_for_the_owner_to_choose() -> None:
+    plan = _band_plan()
+    observation, _asked = _band_observation(
+        lambda _title: [_band_product("B000000001", "Plain Work")], plan
+    )
+    title = next(
+        value
+        for value in evaluate_report(_band_report(observation, plan)).results
+        if value.destination is TargetDestination.TITLE
+    )
+
+    # The series the decoration named is not preserved, so #1252's guard
+    # leaves the plain title an owner choice rather than an automatic one.
+    assert ProposalOutcome.UNRESOLVED_CHOICE is title.outcome
+    assert ["Plain Work"] == [value.value.value for value in title.alternatives]
+
+
+def test_the_asserted_title_explicitly_contradicting_a_rung_match_refuses_it() -> None:
+    """The rung title matches, but the asserted title contradicts the product.
+
+    "Plain Work [Tag]" is the shaped rung; the product's own ladder strips the
+    tag, so no rung of the asserted title meets one of the product's (#1260).
+    """
+    title = "Plain Work [Tag] (Example Saga)"
+    plan = _band_plan(title=title)
+    product = _band_product("B000000001", "Plain Work [Tag]")
+    observation, asked = _band_observation(lambda _title: [product], plan)
+
+    assert ["Plain Work [Tag]", "Plain Work Tag"] == asked
+    assert ProviderStatus.NO_MATCH is observation.status
+
+
+def test_an_alternative_trailing_sequence_rung_contradicting_the_asserted_title_is_refused() -> (
+    None
+):
+    """#1259's control: the one W1 mention that explicitly contradicts the
+    asserted title sits on an alternative rung, which never widens."""
+    plan = _band_plan(title="Asserted Title", alternative="Plain Work, Book 2")
+    product = _band_product("B000000001", "Plain Work")
+    observation, asked = _band_observation(
+        lambda value: [] if value == "Asserted Title" else [product], plan
+    )
+    _band_report(observation, plan, title="Asserted Title")
+    (alternative,) = (lane for lane in plan.lanes if lane.title_basis is not None)
+    probe = m.qualify_provider_observation(
+        d.ProviderObservation(
+            "audible",
+            ProviderStatus.CANDIDATES,
+            (),
+            (_band_candidate(plan, product),),
+            ProviderQueryKind.WORK,
+            "audible_catalog",
+            dispatch_lineage=WorkDispatchLineage(
+                WorkDispatchRung.NORMALIZED,
+                (WorkTitleTransformationFamily.TRAILING_SERIES_SEQUENCE,),
+            ),
+        ),
+        _band_lookup(plan, alternative),
+    )
+
+    assert ["Asserted Title", "Plain Work"] == asked
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert ProviderStatus.NO_MATCH is probe.status
+    assert d.WorkIdentityContradiction.EXPLICIT is (
+        d.provider_candidate_work_identity_contradiction(
+            _band_candidate(plan, product), "Asserted Title", _BAND_AUTHORS
+        )
+    )
+
+
+def _band_candidate(plan: m.MetadataDiscoveryPlan, product: dict[str, Any]) -> Any:
+    """The one candidate the adapter builds from a product, unqualified."""
+    from mechanical_librarian.adapters.providers import audible_catalog_metadata
+
+    return audible_catalog_metadata._candidate(
+        "audible",
+        product,
+        plan.local_claims,
+        marketplace="us",
+        schema_rejections=lambda _count: None,
+    )
+
+
+def _band_lookup(plan: m.MetadataDiscoveryPlan, lane: Any) -> m.MetadataLookup:
+    return m.MetadataLookup(
+        ProviderQueryKind.WORK,
+        plan.local_claims,
+        lane.title,
+        lane.authors,
+        audio=plan.audio,
+        work_title=plan.work_title,
+        work_authors=plan.work_authors,
+        title_basis=lane.title_basis,
+    )
+
+
+@pytest.mark.parametrize(
+    ("authority", "status"),
+    (
+        ("audible_catalog", ProviderStatus.CANDIDATES),
+        ("hardcover", ProviderStatus.NO_MATCH),
+        ("open_library", ProviderStatus.NO_MATCH),
+    ),
+)
+def test_only_an_audiobook_authority_admits_band_first(
+    authority: str, status: ProviderStatus
+) -> None:
+    plan = _band_plan()
+    (lane,) = plan.lanes
+    qualified = m.qualify_provider_observation(
+        d.ProviderObservation(
+            "audible",
+            ProviderStatus.CANDIDATES,
+            (),
+            (_band_candidate(plan, _band_product("B000000001", "Plain Work")),),
+            ProviderQueryKind.WORK,
+            authority,
+            dispatch_lineage=WorkDispatchLineage.from_query(
+                work_query_ladder(_BAND_TITLE, _BAND_AUTHORS, audiobook=True)[0]
+            ),
+        ),
+        _band_lookup(plan, lane),
+    )
+
+    assert status is qualified.status
+
+
+def test_a_set_admitted_without_the_band_keeps_its_candidates_and_lineage() -> None:
+    """Monotone: an exact decorated product beside a tight plain product."""
+    plan = _band_plan()
+    (lane,) = plan.lanes
+    candidates = (
+        _band_candidate(plan, _band_product("B000000001", _BAND_TITLE)),
+        _band_candidate(plan, _band_product("B000000002", "Plain Work")),
+    )
+    dispatch = WorkDispatchLineage.from_query(
+        work_query_ladder(_BAND_TITLE, _BAND_AUTHORS, audiobook=True)[0]
+    )
+    banded, plain = (
+        d.provider_candidate_set_work_identity_admission(
+            candidates,
+            _BAND_TITLE,
+            _BAND_AUTHORS,
+            dispatch,
+            audiobook=True,
+            band_claims=claims,
+        )
+        for claims in (plan.local_claims, None)
+    )
+
+    assert banded == plain
+    assert banded.admitted and (candidates[0],) == banded.candidates
+    assert banded.transformation is None
+
+
+def test_an_ebook_lookup_never_admits_band_first() -> None:
+    plan = _band_plan()
+    (lane,) = plan.lanes
+    candidate = _band_candidate(plan, _band_product("B000000001", "Plain Work"))
+    qualified = m.qualify_provider_observation(
+        d.ProviderObservation(
+            "audible",
+            ProviderStatus.CANDIDATES,
+            (),
+            (candidate,),
+            ProviderQueryKind.WORK,
+            "audible_catalog",
+            dispatch_lineage=WorkDispatchLineage.from_query(
+                work_query_ladder(_BAND_TITLE, _BAND_AUTHORS)[0]
+            ),
+        ),
+        m.MetadataLookup(
+            ProviderQueryKind.WORK, plan.local_claims, lane.title, lane.authors
+        ),
+    )
+
+    assert ProviderStatus.NO_MATCH is qualified.status
+
+
+def test_a_band_admitted_report_is_v57_and_a_v56_relabel_is_refused() -> None:
+    plan = _band_plan()
+    observation, _asked = _band_observation(
+        lambda _title: [_band_product("B000000001", "Plain Work")], plan
+    )
+    report = _band_report(observation, plan)
+    previous = report.to_data()
+    previous["schema_version"] = "metadata-report-v56"
+    previous.pop("report_id")
+    previous["report_id"] = d.report_content_address(previous)
+
+    assert "metadata-report-v57" == report.schema_version
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(d.canonical_json(previous))

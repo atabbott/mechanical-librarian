@@ -1914,12 +1914,22 @@ def qualify_provider_observation(
             diagnostics=observation.diagnostics,
             request_accounting=observation.request_accounting,
         )
+    # Band claims reach only the asserted lane of an audiobook plan at an
+    # audiobook authority (#1260): the alternative lane (#1255), ebooks and
+    # every other authority keep the closed comparison alone.
     set_admission = provider_candidate_set_work_identity_admission(
         observation.candidates,
         lookup.title or "",
         lookup.authors,
         observation.dispatch_lineage,
         audiobook=lookup.audio is not None,
+        band_claims=(
+            lookup.local_claims
+            if lookup.audio is not None
+            and lookup.title_basis is None
+            and observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+            else None
+        ),
     )
     if not set_admission.admitted:
         return ProviderObservation(
@@ -1950,6 +1960,9 @@ def qualify_provider_observation(
     # Gate order: the work-identity admission above has already decided that
     # this candidate set names the item's title and author. Only then may the
     # runtime band widen one of them from a work statement to an edition one.
+    # The band-corroborated productions invert that order for themselves
+    # alone (ADR-0064, #1260): the band was a precondition of their admission,
+    # so the product they admitted is tight by construction and selected here.
     # A band that does not pass falls through to the work-scope shape every
     # other authority gets, so the widening below is dead code for an ebook
     # provider: none of them is an audiobook authority and none states a

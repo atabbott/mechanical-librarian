@@ -519,7 +519,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v56" == published.schema_version
+        assert "metadata-report-v57" == published.schema_version
         # Three authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -1874,8 +1874,13 @@ def _hint_flow(
     audnexus_minutes: Mapping[str, int] | None = None,
     alternative: str | None = None,
     target_asin: str | None = None,
+    title: str = "Project Hail Mary",
+    authors: tuple[str, ...] = ("Andy Weir",),
 ) -> tuple[MetadataReport, tuple[object, ...], list[str], dict[str, int]]:
-    """Publish one runtime-bearing audiobook, asserting at most a target ASIN."""
+    """Publish one runtime-bearing audiobook, asserting at most a target ASIN.
+
+    `title` and `authors` are the target's own, which the asserted lane asks.
+    """
     import copy
     from dataclasses import replace
 
@@ -1967,7 +1972,16 @@ def _hint_flow(
             lane_kinds=frozenset({ProviderQueryKind.WORK}),
         ),
     }
-    snapshot = _snapshot()
+    snapshot = replace(
+        _snapshot(),
+        title=title,
+        fields=tuple(
+            TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, authors)
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields(title)
+        ),
+    )
     if target_asin is not None:
         snapshot = replace(
             snapshot,
@@ -1999,11 +2013,16 @@ def _hint_flow(
     return MetadataReport.from_json(serialized), work, requests, rows
 
 
-def _audible_product(asin: str, title: str, minutes: int = 970) -> dict[str, object]:
+def _audible_product(
+    asin: str,
+    title: str,
+    minutes: int = 970,
+    authors: tuple[str, ...] = ("Andy Weir",),
+) -> dict[str, object]:
     return {
         "asin": asin,
         "title": title,
-        "authors": [{"name": "Andy Weir"}],
+        "authors": [{"name": value} for value in authors],
         "runtime_length_min": minutes,
     }
 
@@ -2172,6 +2191,278 @@ def test_the_alternative_lanes_refused_tight_product_is_no_hint(
     assert 2 == len(audible.lanes)
     assert all(not lane.recording_lookup_hints for lane in audible.lanes)
     assert [] == requests
+
+
+# #1260: band-corroborated work admission over the real Audible and Audnexus
+# adapters. 970 minutes is inside the 90 s tight band of the item's runtime and
+# 900 outside the 600 s loose band. Every name here is synthetic.
+_BAND_TITLE = "Plain Work (Example Saga)"
+_BAND_AUTHORS = ("Ada Example",)
+
+
+def _band_flow(
+    root: Path,
+    products: list[dict[str, object]],
+    *,
+    title: str = _BAND_TITLE,
+    authors: tuple[str, ...] = _BAND_AUTHORS,
+) -> tuple[MetadataReport, tuple[object, ...], list[str], dict[str, int]]:
+    return _hint_flow(
+        root,
+        lambda _title: products,
+        audnexus_titles={str(value["asin"]): "Wrong Title" for value in products},
+        title=title,
+        authors=authors,
+    )
+
+
+def test_a_decorated_title_admits_its_plain_tight_recording(tmp_path: Path) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        recording_identity_basis,
+    )
+    from mechanical_librarian.domain.proposal_set import (
+        AudiobookReviewScope,
+        audiobook_review_scope,
+    )
+
+    report, work, _requests, _rows = _band_flow(
+        tmp_path,
+        [_audible_product(_HINT_ASIN, "Plain Work", authors=_BAND_AUTHORS)],
+    )
+
+    (lane,) = (
+        value
+        for value in _audible(report).lanes
+        if value.kind is ProviderQueryKind.WORK
+    )
+    assert ProviderStatus.CANDIDATES is lane.status
+    assert lane.transformation_lineage is not None
+    assert "band_parenthesized_series_name" == lane.transformation_lineage.production
+    assert not lane.recording_lookup_hints
+    assert AudiobookReviewScope.RECORDING is audiobook_review_scope(report)
+    assert recording_identity_basis(report) is None
+    assert ("proposal", "queued", None) == work
+
+
+@pytest.mark.parametrize(
+    ("title", "product", "hinted"),
+    (
+        (_BAND_TITLE, ("Plain Work", 900), False),
+        (_BAND_TITLE, ("Wrong Title", 970), True),
+        ("Plain Work (Dramatized)", ("Plain Work", 970), True),
+    ),
+    ids=("out_of_band", "wrong_title_tight", "dramatized"),
+)
+def test_a_band_first_refusal_stays_evidence_only(
+    tmp_path: Path, title: str, product: tuple[str, int], hinted: bool
+) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        recording_identity_basis,
+    )
+
+    report, work, requests, rows = _band_flow(
+        tmp_path,
+        [_audible_product(_HINT_ASIN, product[0], product[1], _BAND_AUTHORS)],
+        title=title,
+    )
+
+    assert ProviderStatus.NO_MATCH is _audible(report).status
+    assert hinted is any(lane.recording_lookup_hints for lane in _audible(report).lanes)
+    assert hinted is (f"/books/{_HINT_ASIN}" in requests)
+    assert ("complete", "complete", "evidence_only") == work
+    assert {"review_cases": 0, "automatic_decisions": 0, "field_effects": 0} == rows
+    assert recording_identity_basis(report) is None
+
+
+@pytest.mark.parametrize(
+    ("provider_author", "admitted"), (("A. B. Example", True), ("AB Example", False))
+)
+def test_dotted_initials_admit_against_the_spaced_form_only(
+    tmp_path: Path, provider_author: str, admitted: bool
+) -> None:
+    report, work, _requests, _rows = _band_flow(
+        tmp_path,
+        [_audible_product(_HINT_ASIN, "Plain Work", authors=(provider_author,))],
+        title="Plain Work",
+        authors=("A.B. Example",),
+    )
+
+    lanes = tuple(
+        value for value in _audible(report).lanes if value.transformation_lineage
+    )
+    assert admitted is (ProviderStatus.CANDIDATES is _audible(report).status)
+    assert (("band_initials_fold",) if admitted else ()) == tuple(
+        value.transformation_lineage.production
+        for value in lanes
+        if value.transformation_lineage is not None
+    )
+    assert (
+        ("proposal", "queued", None)
+        if admitted
+        else ("complete", "complete", "evidence_only")
+    ) == work
+
+
+def _ebook_flow(root: Path) -> tuple[MetadataReport, tuple[object, ...], list[str]]:
+    """Publish one decorated-title ebook against a real Open Library adapter.
+
+    Open Library returns the plain-titled work, and the ebook's own claims
+    include a running time inside the band, which no ebook is ever compared on.
+    """
+    import contextlib
+    from dataclasses import replace
+
+    import httpx
+
+    from mechanical_librarian.adapters.providers.open_library_metadata import (
+        OpenLibraryMetadataProvider,
+        OpenLibraryPacer,
+    )
+    from mechanical_librarian.application.metadata_report import InspectionResult
+
+    root.mkdir(mode=0o700, exist_ok=True)
+    work = {
+        "key": "/works/OL5W",
+        "title": "Plain Work",
+        "authors": [{"author": {"key": "/authors/OL7A"}}],
+    }
+    edition = {
+        "key": "/books/OL1M",
+        "title": "Plain Work",
+        "works": [{"key": "/works/OL5W"}],
+    }
+    asked: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search.json":
+            asked.append(request.url.params["title"])
+            body: object = {
+                "docs": [
+                    {
+                        "key": "/works/OL5W",
+                        "title": "Plain Work",
+                        "author_name": list(_BAND_AUTHORS),
+                        "author_key": ["OL7A"],
+                        "edition_key": ["OL1M"],
+                        "editions": {"docs": [{"key": "/books/OL1M"}]},
+                    }
+                ]
+            }
+        else:
+            body = edition if request.url.path == "/books/OL1M.json" else work
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=body
+        )
+
+    class Inspector:
+        def __init__(self, _artifacts: object) -> None:
+            pass
+
+        def inspect(self, *_args: object) -> InspectionResult:
+            return InspectionResult(
+                _CONTENT_DIGEST, (_local_claim(ClaimKind.DURATION, _LOCAL_DURATION, 1),)
+            )
+
+        def unchanged(self, *_args: object) -> bool:
+            return True
+
+    base = _configuration()
+    configuration = replace(
+        base,
+        libraries=(
+            LibraryConfiguration(
+                "fiction", "primary", "lib-1", "ebook", "books", ("openlibrary",)
+            ),
+        ),
+        mounts=(MediaMountConfiguration("books", "/container", "/service", True),),
+        providers=(
+            ProviderConnectionConfiguration(
+                "openlibrary",
+                True,
+                False,
+                None,
+                "open_library",
+                contact_email="owner@example.invalid",
+            ),
+        ),
+    )
+    snapshot = TargetSnapshot(
+        "ebook",
+        _BAND_TITLE,
+        (TargetFile(_FILE_IDENTITY, "book.epub", "epub"),),
+        fields=tuple(
+            TargetField(
+                TargetDestination.AUTHORS, TargetFieldState.VALUE, _BAND_AUTHORS
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields(_BAND_TITLE)
+        ),
+    )
+    entry = replace(
+        _catalogue_entry(),
+        title=_BAND_TITLE,
+        authors=_BAND_AUTHORS,
+        has_ebook=True,
+        has_audio=False,
+        service_path=f"/{_ITEM}.epub",
+        format="epub",
+        mount="books",
+        source_fingerprint=None,
+    )
+    provider = OpenLibraryMetadataProvider(
+        "openlibrary",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+    )
+    with contextlib.ExitStack() as stack:
+        for target, value in (
+            (__name__ + "._configuration", configuration),
+            (__name__ + "._catalogue_entry", entry),
+            (__name__ + "._snapshot", snapshot),
+        ):
+            stack.enter_context(patch(target, return_value=value))
+        for name, double in (
+            ("open_library_client", object()),
+            ("OpenLibraryMetadataProvider", provider),
+        ):
+            stack.enter_context(patch.object(composition, name, return_value=double))
+        stack.enter_context(
+            patch.object(composition, "_IsolatedEpubInspector", Inspector)
+        )
+        serialized, repository = _run(
+            root,
+            {
+                authority: lambda: pytest.fail("an ebook built an audiobook provider")
+                for authority in (
+                    "audible_catalog",
+                    "audnexus",
+                    "audiosilo",
+                    "itunes_search",
+                )
+            },
+        )
+    try:
+        state = repository._connection.execute(
+            "SELECT stage,state,outcome FROM review_preparation_work"
+        ).fetchone()
+    finally:
+        repository.close()
+    return MetadataReport.from_json(serialized), state, asked
+
+
+def test_an_ebook_with_a_decorated_title_stays_unchanged(tmp_path: Path) -> None:
+    """The ladder still asks the plain title, and its work is still refused."""
+    report, work, asked = _ebook_flow(tmp_path)
+
+    assert report.audio is None
+    assert ["Plain Work"] == asked
+    (provider,) = report.providers
+    assert ProviderStatus.NO_MATCH is provider.status
+    assert not provider.candidates
+    assert all(lane.transformation_lineage is None for lane in provider.lanes)
+    assert ("proposal", "queued", None) == work
 
 
 # #1258: one audiobook whose lanes end in every dispatch outcome, over the real

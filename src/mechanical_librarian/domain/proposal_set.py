@@ -86,6 +86,7 @@ from mechanical_librarian.domain.metadata_report import (
     recording_association_references,
     recording_variant_conflict,
     target_work_identity_context,
+    work_discovery_lane_payloads,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
@@ -3339,6 +3340,7 @@ def _target_backed_lookup_contains(
                     expected_title,
                     expected_authors,
                     audiobook=report.audio is not None,
+                    band_claims=_asserted_lane_band_claims(report, provider, lane),
                 )
                 and lane.identity
                 == discovery_lane_identity(
@@ -3377,6 +3379,7 @@ def _candidate_set_replays_work_qualification(
     expected_authors: tuple[str, ...],
     *,
     audiobook: bool = False,
+    band_claims: tuple[LocalClaim, ...] | None = None,
 ) -> bool:
     """Replay one unambiguous WORK candidate set before granting authority."""
     candidates_by_identity = {value.identity: value for value in provider.candidates}
@@ -3394,12 +3397,39 @@ def _candidate_set_replays_work_qualification(
         expected_authors,
         lane.dispatch_lineage,
         audiobook=audiobook,
+        band_claims=band_claims,
     )
     return (
         admission.admitted
         and admission.candidates == lane_candidates
         and candidate in admission.candidates
         and admission.transformation == lane.transformation_lineage
+    )
+
+
+def _asserted_lane_band_claims(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    lane: ProviderLaneObservation,
+) -> tuple[LocalClaim, ...] | None:
+    """Read the claims a band-corroborated admission replays against (#1260).
+
+    Only an audiobook plan's asserted WORK lane at an audiobook authority has
+    them, exactly as report construction and report validation pass them.
+    """
+    return (
+        report.local_claims
+        if report.audio is not None
+        and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and any(
+            payload.identity == lane.identity and payload.title_basis is None
+            for payload in work_discovery_lane_payloads(
+                report.target.fields,
+                report.local_claims,
+                report.audio.discovery_titles,
+            )
+        )
+        else None
     )
 
 
@@ -3527,6 +3557,7 @@ def provider_candidate_represents_target_work(
                 expected_authors,
                 lane.dispatch_lineage,
                 audiobook=report.audio is not None,
+                band_claims=_asserted_lane_band_claims(report, provider, lane),
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
         else:
