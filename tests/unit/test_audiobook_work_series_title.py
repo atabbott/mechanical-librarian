@@ -253,6 +253,10 @@ _MASKED_TITLE = ProposalResult(
         ("Synthétic Journey", "Synthetic Journey", False),
         ("Synthétic Journey (Unabridged)", "Synthetic Journey", False),
         ("Synthétic Journey (Unabridged)", "Synthétic Journey", True),
+        ("Synthétic Journey", "Sýnthetic Journey", False),
+        ("Synthétic Journey", "Synthètic Journey", False),
+        ("Synthétic Journey (Unabridged)", "Sýnthetic Journey", False),
+        ("Synthétic_Journey", "Synthétic Journey", True),
         ("Synthetic \u201cJourney\u201d", 'Synthetic "Journey"', False),
         ("Synthetic Journey\u2019s", "Synthetic Journey's", False),
         ("Synthetic Journey's", "Synthetic Journey\u2019s", False),
@@ -272,10 +276,17 @@ def test_a_title_cleanup_keeps_every_mark_and_more_than_quote_form(
     (
         ("synthetic journey", "Synthetic Journey"),
         ("Synthétic Journey", "Synthetic Journey"),
+        ("Synthétic Journey", "Sýnthetic Journey"),
         ("Synthetic \u201cJourney\u201d", 'Synthetic "Journey"'),
         ('Synthetic "Journey"', "Synthetic \u201cJourney\u201d"),
     ),
-    ids=("case", "accent-strip", "straight-quotes", "typographic-quotes"),
+    ids=(
+        "case",
+        "accent-strip",
+        "moved-accent",
+        "straight-quotes",
+        "typographic-quotes",
+    ),
 )
 def test_a_witnessed_title_that_is_no_cleanup_stays_masked(current, provider_title):
     report = synthetic_audiobook_product_lookup_report(

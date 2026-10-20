@@ -73,9 +73,10 @@ witnessed provider title, and subtitle, cover and every recording field stay
 excluded. The duplicate-component and combination checks still run over title,
 subtitle and series. A report opens work scope when a witnessed source states a
 description, genres or a series, or a title that cleans up the current one. A
-cleanup removes no accent or other combining mark the current title carries and
-differs by more than quote form; any other witnessed title is no choice, and
-without a cleanup the title stays masked exactly as before #1253.
+cleanup removes or moves no accent or other combining mark the current title
+carries, each mark staying on the same letter of the aligned titles, and differs
+by more than quote form; any other witnessed title is no choice, and without a
+cleanup the title stays masked exactly as before #1253.
 
 A work-scope description or genre choice whose every alternative only trims or
 extends the current value, by contiguous words or by genre-set containment,

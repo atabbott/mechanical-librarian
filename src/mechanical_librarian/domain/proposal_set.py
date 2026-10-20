@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
@@ -1215,12 +1216,65 @@ _STRAIGHT_QUOTES = str.maketrans(
 )
 
 
+def _mark_clusters(text: str) -> list[tuple[str, list[str]]]:
+    """Each NFD base character with the combining marks that follow it."""
+    clusters: list[tuple[str, list[str]]] = []
+    for character in unicodedata.normalize("NFD", text):
+        if not unicodedata.category(character).startswith("M"):
+            lower = character.lower()
+            clusters.append((lower if len(lower) == 1 else character, []))
+        elif clusters:
+            clusters[-1][1].append(character)
+        else:
+            clusters.append(("", [character]))
+    return clusters
+
+
+def _aligned_letters(current: list[str], candidate: list[str]) -> dict[int, int]:
+    blocks = difflib.SequenceMatcher(
+        None, current, candidate, autojunk=False
+    ).get_matching_blocks()
+    return {
+        block.a + offset: block.b + offset
+        for block in blocks
+        for offset in range(block.size)
+    }
+
+
+def _keeps_every_mark(current: str, candidate: str) -> bool:
+    """Whether every mark the current title carries stays on the same letter.
+
+    Letters are paired by aligning the mark-folded titles, as the work
+    admission compares them; a letter the alignment drops, or pairs
+    differently when read from either end, loses its marks.
+    """
+    ours, theirs = _mark_clusters(current), _mark_clusters(candidate)
+    ours_bases = [base for base, _ in ours]
+    theirs_bases = [base for base, _ in theirs]
+    forward = _aligned_letters(ours_bases, theirs_bases)
+    backward = _aligned_letters(ours_bases[::-1], theirs_bases[::-1])
+    for index, (_, marks) in enumerate(ours):
+        if not marks:
+            continue
+        paired = forward.get(index)
+        reverse = backward.get(len(ours) - 1 - index)
+        if paired is None or reverse is None or paired != len(theirs) - 1 - reverse:
+            return False
+        kept = list(theirs[paired][1])
+        for mark in marks:
+            if mark not in kept:
+                return False
+            kept.remove(mark)
+    return True
+
+
 def _work_title_cleanup(target: TargetField, value: ProposalValue) -> bool:
     """Whether a witnessed work title cleans up the current title (#1253).
 
     A cleanup fills an absent title, or differs from the current one without
-    removing any combining mark the current title carries and by more than
-    quote form. Anything else preserves the current title on the work route.
+    removing or moving any combining mark the current title carries and by
+    more than quote form. Anything else preserves the current title on the
+    work route.
     """
     if target.state is not TargetFieldState.VALUE:
         return True
@@ -1231,12 +1285,8 @@ def _work_title_cleanup(target: TargetField, value: ProposalValue) -> bool:
         or _matches(TargetDestination.TITLE, current, value)
     ):
         return False
-    kept = list(unicodedata.normalize("NFD", candidate))
-    for mark in unicodedata.normalize("NFD", current):
-        if unicodedata.combining(mark):
-            if mark not in kept:
-                return False
-            kept.remove(mark)
+    if not _keeps_every_mark(current, candidate):
+        return False
     return not values_match(
         TargetDestination.TITLE,
         current.translate(_STRAIGHT_QUOTES),
