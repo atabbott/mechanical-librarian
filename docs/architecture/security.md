@@ -1792,6 +1792,10 @@ tight band; a candidate refused on work identity keeps only its ASIN, so no
 fed origin's stated runtime or work statements reach recording identity or a
 proposal. Existing provider
 limits, isolated probe limits, read-only media and explicit retry stay unchanged.
+Each audiobook lane's dispatch record (#1258) holds enum values and integers
+only. Its near-miss is a signed whole-second difference between two stated
+runtimes, taken from a page the adapter already parsed, with no provider text,
+title or ASIN and no new request.
 
 ## Incumbent description paragraphs
 

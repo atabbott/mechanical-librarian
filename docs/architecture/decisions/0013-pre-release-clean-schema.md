@@ -169,3 +169,9 @@ document cannot be read as current. The decision policy moves to
 and genre floor, so v21 decisions are refused too. Every earlier application
 database is rejected before mutation and needs a clean rebuild; no adoption is
 supplied.
+
+Issue #1258 also takes the clean-rebuild branch. `metadata-report-v56` adds the
+required `dispatch` record to every provider lane, `null` on an ebook lane, so
+a v55 document has no field the current reader requires and cannot be read as
+current. Every earlier application database is rejected before mutation and
+needs a clean rebuild; no adoption is supplied.

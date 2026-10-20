@@ -68,6 +68,7 @@ from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asserted_asin_report,
     manual_audiobook_observation,
+    recorded_dispatch,
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
@@ -127,7 +128,7 @@ def test_provider_series_suffix_admission_replays_the_actual_association(
         file=base.file,
         local_claims=plan.local_claims,
         local_reasons=("embedded_tag_duration",),
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=base.audio,
     )
     path = tmp_path / "application.sqlite3"
@@ -2203,3 +2204,154 @@ def test_a_lane_result_states_hints_only_where_the_lane_can() -> None:
         with pytest.raises(m.MetadataReportError):
             replace(valid, **changes)
     assert valid.recording_lookup_hints == (hint,)
+
+
+# The #1258 near-miss: the closest title-matching product the loose band ruled
+# out, read from the whole parsed page before narrowing and never sent for.
+def _dispatch(observation: Any, plan: m.MetadataDiscoveryPlan, basis: Any = None):
+    lane = _by_basis(observation, plan)[basis]
+    assert lane.dispatch is not None
+    return lane.dispatch
+
+
+def _without_near_miss(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mechanical_librarian.adapters.providers import audible_catalog_metadata
+
+    monkeypatch.setattr(
+        audible_catalog_metadata, "loose_band_near_miss", lambda *_: None
+    )
+
+
+def _observed_twice(
+    monkeypatch: pytest.MonkeyPatch,
+    plan: m.MetadataDiscoveryPlan,
+    *pages: dict[str, Any],
+) -> tuple[Any, Any, list[httpx.URL], list[httpx.URL]]:
+    """The same walk with and without the near-miss, to show it is free."""
+    seen, handle = _pages(*pages)
+    observation = _observed(handle, plan).observation
+    with monkeypatch.context() as patched:
+        _without_near_miss(patched)
+        unmeasured_seen, unmeasured = _pages(*pages)
+        bare = _observed(unmeasured, plan).observation
+    return observation, bare, seen, unmeasured_seen
+
+
+def _stripped(observation: Any) -> dict[str, Any]:
+    data = observation.to_data()
+    for lane in data["lanes"]:
+        lane["dispatch"]["near_miss_seconds"] = None
+    return data
+
+
+def test_a_narrowed_page_measures_its_near_miss_before_the_band_drops_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 1000 minutes locally: 980 is 1200 s short, 1030 is 1800 s long, and the
+    # three at 1000 are the survivors the five-candidate bound sees.
+    page = _narrowed_page(*[1_000] * 3, 980, 1_030, *[500] * 14)
+    plan = _narrowing_plan()
+    observation, bare, seen, bare_seen = _observed_twice(monkeypatch, plan, page)
+
+    assert [("25", _NARROWED)] == [
+        (url.params["num_results"], url.params["title"]) for url in seen
+    ]
+    assert seen == bare_seen
+    assert _identities(0, 1, 2) == {
+        value.identity for value in observation.recording_lookup_candidates
+    }
+    assert _stripped(observation) == _stripped(bare)
+    assert -1_200 == _dispatch(observation, plan).near_miss_seconds
+    assert _dispatch(bare, plan).near_miss_seconds is None
+    report = _narrowed_report(observation)
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+def test_an_unnarrowed_page_measures_its_near_miss_too() -> None:
+    plan = _narrowing_plan()
+    seen, handle = _pages(_narrowed_page(500, 1_030, 1_000))
+    observation = _observed(handle, plan).observation
+
+    assert [("25", _NARROWED)] == [
+        (url.params["num_results"], url.params["title"]) for url in seen
+    ]
+    assert 1_800 == _dispatch(observation, plan).near_miss_seconds
+    report = _narrowed_report(observation)
+    assert MetadataReport.from_json(report.to_json()) == report
+
+
+def _refused_page(title: str, minutes: int, local_minutes: int) -> dict[str, Any]:
+    """A narrowed page whose only title match the band drops, beside five
+    in-band products of other works that admission refuses."""
+    products = [
+        {
+            "asin": f"B0{index:08d}",
+            "title": f"Another Work {index}",
+            "authors": [{"name": "Andy Weir"}],
+            "runtime_length_min": local_minutes,
+        }
+        for index in range(1, 6)
+    ]
+    products.append(
+        {
+            "asin": "B000000099",
+            "title": title,
+            "authors": [{"name": "Andy Weir"}],
+            "runtime_length_min": minutes,
+        }
+    )
+    return {"total_results": len(products), "products": products}
+
+
+def test_the_near_miss_is_the_minimum_over_every_rung_walked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 850 minutes locally: 875 is 1500 s long and 835 is 900 s short.
+    plan = m.audiobook_discovery_plan(
+        audio_target(_SUBTITLED, ("Andy Weir",)),
+        (target_title_claim(_SUBTITLED), local_runtime_claim("51000.000")),
+        audio=single_track_audio_facts(),
+    )
+    observation, bare, seen, bare_seen = _observed_twice(
+        monkeypatch,
+        plan,
+        _refused_page(_SUBTITLED, 875, 850),
+        _refused_page(_SUBTITLED, 835, 850),
+    )
+
+    ladder = _ladder(_SUBTITLED, ("Andy Weir",))
+    assert 2 == len(seen) == len(ladder)
+    assert seen == bare_seen
+    assert _stripped(observation) == _stripped(bare)
+    assert d.ProviderLaneDispatch(
+        d.DispatchOutcome.REFUSED, len(ladder), -900
+    ) == _dispatch(observation, plan)
+
+
+def test_only_the_asserted_lane_records_a_near_miss() -> None:
+    # 58244 s locally, and both lanes' title match states 950 minutes.
+    plan = _alternative_plan()
+    seen, handle = _pages(
+        _refused_page(_ASSERTED, 950, 970), _refused_page(_ALTERNATIVE, 950, 970)
+    )
+    observation = _observed(handle, plan).observation
+
+    assert [_ASSERTED, _ALTERNATIVE] == [url.params["title"] for url in seen]
+    assert d.ProviderLaneDispatch(d.DispatchOutcome.REFUSED, 1, 57_000 - 58_244) == (
+        _dispatch(observation, plan)
+    )
+    assert d.ProviderLaneDispatch(d.DispatchOutcome.REFUSED, 1, None) == (
+        _dispatch(observation, plan, "path_leaf")
+    )
+    _alternative_report(observation)
+
+
+def test_an_admitted_rung_counts_its_depth() -> None:
+    seen, handle = _pages(_search_page(1), _work_page(_SUBTITLED))
+    plan = _audiobook_work_plan()
+    observation = _observed(handle, plan).observation
+
+    assert 2 == len(seen)
+    assert d.ProviderLaneDispatch(d.DispatchOutcome.ADMITTED, 2, None) == (
+        _dispatch(observation, plan)
+    )

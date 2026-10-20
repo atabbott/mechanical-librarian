@@ -12,6 +12,7 @@ the wiring rather than the adapters, which have their own suites.
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -518,7 +519,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v55" == published.schema_version
+        assert "metadata-report-v56" == published.schema_version
         # Three authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -2171,3 +2172,346 @@ def test_the_alternative_lanes_refused_tight_product_is_no_hint(
     assert 2 == len(audible.lanes)
     assert all(not lane.recording_lookup_hints for lane in audible.lanes)
     assert [] == requests
+
+
+# #1258: one audiobook whose lanes end in every dispatch outcome, over the real
+# adapters. The asserted Audible lane is refused with a near-miss and its
+# in-band refusals become hints, so the per-ASIN providers answer fed lanes:
+# Audnexus admits one and fails on another, and AudioSilo finds nothing. Every
+# name and identifier here is synthetic.
+_DISPATCH_ADMITTED = "B000000001"
+_DISPATCH_FAILING = "B000000002"
+
+
+def _dispatch_flow(
+    root: Path, *, recorded: bool = True
+) -> tuple[str, tuple[object, ...], dict[str, list[str]], dict[str, int], object]:
+    """Publish the every-outcome item, optionally with no lane record at all.
+
+    Returns the published document, the work row, each provider's request
+    URLs, the decision rows, and what the published report admits.
+    """
+    import contextlib
+    import copy
+    from dataclasses import replace
+    from typing import Any
+
+    import httpx
+
+    from mechanical_librarian.adapters.providers import audible_catalog_metadata
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.audiosilo_metadata import (
+        AudioSiloMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.audnexus_metadata import (
+        AudnexusMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.hardcover_metadata import (
+        HardcoverMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.open_library_metadata import (
+        OpenLibraryMetadataProvider,
+    )
+    from mechanical_librarian.application import metadata_report as application
+    from mechanical_librarian.domain.metadata_report import AudioDiscoveryTitle
+    from mechanical_librarian.domain.proposal_set import (
+        audiobook_review_scope,
+        evaluate_report,
+    )
+    from tests.support.audiobook_providers import payload
+    from tests.support.hardcover_evidence import hardcover_envelope
+
+    root.mkdir(mode=0o700, exist_ok=True)
+    seen: dict[str, list[str]] = {
+        name: [] for name in ("audible", "enrichment", "hardcover", "silo")
+    }
+
+    def logged(
+        name: str, handler: Callable[[httpx.Request], httpx.Response]
+    ) -> Callable[[httpx.Request], httpx.Response]:
+        def handle(request: httpx.Request) -> httpx.Response:
+            seen[name].append(str(request.url))
+            return handler(request)
+
+        return handle
+
+    def page(title: str) -> list[dict[str, object]]:
+        if title != "The Real Title":
+            # The title match is 950 minutes against 970 locally, outside the
+            # loose band, beside five in-band products of other works.
+            return [
+                *(
+                    _audible_product(f"B{index:09d}", f"Another Work {index}")
+                    for index in range(1, 6)
+                ),
+                _audible_product("B000000099", "Project Hail Mary", 950),
+            ]
+        return [_audible_product(f"B{index:09d}", "Other") for index in range(11, 18)]
+
+    def search(request: httpx.Request) -> httpx.Response:
+        products = page(request.url.params["title"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"total_results": len(products), "products": products},
+        )
+
+    def books(request: httpx.Request) -> httpx.Response:
+        asin = request.url.path.split("/")[2]
+        if asin == _DISPATCH_FAILING:
+            return httpx.Response(500, json={})
+        if asin != _DISPATCH_ADMITTED or request.url.path.endswith("/chapters"):
+            return httpx.Response(404, json={})
+        book = copy.deepcopy(payload("audnexus_book"))
+        book["asin"] = asin
+        book["title"] = "Project Hail Mary"
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=book
+        )
+
+    def unreached(_request: httpx.Request) -> httpx.Response:
+        pytest.fail("a starved provider sent a request")
+
+    def client(name: str, handler: Callable) -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(logged(name, handler)))
+
+    fixed: dict[str, Any] = {
+        "wall_clock": lambda: 1700000000.0,
+        "sleep": lambda _: None,
+        "jitter": lambda: 0.0,
+    }
+    providers: dict[str, MetadataProvider | Callable[[], MetadataProvider]] = {
+        "audible_catalog": lambda: AudibleCatalogMetadataProvider(
+            "audible",
+            client("audible", search),
+            262144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            **fixed,
+        ),
+        "audnexus": lambda: AudnexusMetadataProvider(
+            "enrichment",
+            client("enrichment", books),
+            262144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            **fixed,
+        ),
+        "audiosilo": lambda: AudioSiloMetadataProvider(
+            "silo",
+            client("silo", lambda _request: httpx.Response(404, json={})),
+            262144,
+            5.0,
+            clock=lambda: 0.0,
+            **fixed,
+        ),
+        "itunes_search": _FakeAudiobookProvider("store", "itunes_search", []),
+    }
+    hardcover = HardcoverMetadataProvider(
+        "hardcover",
+        client(
+            "hardcover",
+            lambda _request: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=hardcover_envelope([], []),
+            ),
+        ),
+        262144,
+        5.0,
+        clock=lambda: 0.0,
+        **fixed,
+    )
+    # Its own clock already stands past any deadline the preparation hands it,
+    # so it stops before its first request: starved, not timed out.
+    open_library = OpenLibraryMetadataProvider(
+        "openlibrary",
+        client("openlibrary", unreached),
+        262144,
+        5.0,
+        clock=lambda: 1.0e12,
+        **fixed,
+    )
+    base = _configuration()
+    configuration = replace(
+        base,
+        libraries=(
+            replace(
+                base.libraries[0],
+                provider_connections=(
+                    "audible",
+                    "backup",
+                    "books",
+                    "enrichment",
+                    "hardcover",
+                    "inventaire",
+                    "openlibrary",
+                    "silo",
+                    "store",
+                ),
+            ),
+        ),
+        providers=tuple(
+            sorted(
+                (
+                    *base.providers,
+                    ProviderConnectionConfiguration(
+                        "backup", False, False, None, "audible_catalog"
+                    ),
+                    ProviderConnectionConfiguration(
+                        "hardcover", True, False, "/run/hardcover-token", "hardcover"
+                    ),
+                    ProviderConnectionConfiguration(
+                        "openlibrary",
+                        True,
+                        False,
+                        None,
+                        "open_library",
+                        contact_email="owner@example.invalid",
+                    ),
+                ),
+                key=lambda value: value.name,
+            )
+        ),
+    )
+    inspected = AudioInspectionResult(
+        _CONTENT_DIGEST,
+        (_local_claim(ClaimKind.DURATION, _LOCAL_DURATION, 1),),
+        AudioFacts(
+            embedded_cover=AudioEmbeddedCover(False),
+            tracks=(
+                AudioTrackDigest(1, _FILE_IDENTITY, _CONTENT_DIGEST, "m4b", "book.m4b"),
+            ),
+            discovery_titles=(AudioDiscoveryTitle("path_leaf", "The Real Title"),),
+        ),
+    )
+    with contextlib.ExitStack() as stack:
+        for target, value in (
+            (__name__ + "._audio_result", inspected),
+            (__name__ + "._configuration", configuration),
+        ):
+            stack.enter_context(patch(target, return_value=value))
+        for name, double in (
+            ("hardcover_client", object()),
+            ("open_library_client", object()),
+            ("HardcoverMetadataProvider", hardcover),
+            ("OpenLibraryMetadataProvider", open_library),
+        ):
+            stack.enter_context(patch.object(composition, name, return_value=double))
+        if not recorded:
+            # The same preparation with the record gone: no lane is given one,
+            # Audible never measures a near-miss, and nothing checks for it.
+            stack.enter_context(
+                patch.object(
+                    application,
+                    "with_lane_dispatch",
+                    lambda observation, _result, *, audio: observation,
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    audible_catalog_metadata, "loose_band_near_miss", lambda *_: None
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    MetadataReport, "_validate_lane_dispatch", lambda *_args: None
+                )
+            )
+        serialized, repository = _run(root, providers)
+        try:
+            work = repository._connection.execute(
+                "SELECT stage,state,outcome FROM review_preparation_work"
+            ).fetchone()
+            rows = {
+                table: repository._connection.execute(
+                    f"SELECT count(*) FROM {table}"
+                ).fetchone()[0]
+                for table in ("review_cases", "automatic_decisions", "field_effects")
+            }
+            stored = repository.get(MetadataReport.from_json(serialized).report_id)
+        finally:
+            repository.close()
+        published = MetadataReport.from_json(stored)
+        admitted = (
+            audiobook_review_scope(published),
+            [value.to_data() for value in evaluate_report(published).results],
+        )
+    assert serialized == stored
+    return serialized, work, seen, rows, admitted
+
+
+def test_one_audiobook_reaches_every_dispatch_outcome(tmp_path: Path) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+        provider_dispatch_class,
+    )
+
+    serialized, work, seen, _rows, _admitted = _dispatch_flow(tmp_path)
+    report = MetadataReport.from_json(serialized)
+
+    assert serialized == report.to_json()
+    lanes = {
+        provider.provider: sorted(
+            ((lane.kind.value, lane.dispatch) for lane in provider.lanes), key=str
+        )
+        for provider in report.providers
+    }
+    record = ProviderLaneDispatch
+    outcome = DispatchOutcome
+    assert {
+        "audible": [
+            ("work", record(outcome.OVERFLOW, 1)),
+            ("work", record(outcome.REFUSED, 1, 57_000 - 58_244)),
+        ],
+        "backup": [("work", record(outcome.NOT_DISPATCHED))],
+        "enrichment": [
+            ("asin", record(outcome.ADMITTED)),
+            ("asin", record(outcome.UNAVAILABLE)),
+        ],
+        "hardcover": [("work", record(outcome.EMPTY_OR_REFUSED))],
+        "openlibrary": [("work", record(outcome.STARVED))],
+        "silo": [("asin", record(outcome.EMPTY))] * 2,
+    } == lanes
+    assert set(DispatchOutcome) == {
+        dispatch.outcome
+        for values in lanes.values()
+        for _kind, dispatch in values
+        if dispatch is not None
+    }
+    assert {
+        "audible": outcome.OVERFLOW,
+        "backup": outcome.NOT_DISPATCHED,
+        "enrichment": outcome.ADMITTED,
+        "hardcover": outcome.EMPTY_OR_REFUSED,
+        "openlibrary": outcome.STARVED,
+        "silo": outcome.EMPTY,
+    } == {value.provider: provider_dispatch_class(value) for value in report.providers}
+    # The two in-band refusals Audible handed on are the only products asked.
+    assert {_DISPATCH_ADMITTED, _DISPATCH_FAILING} == {
+        url.split("/")[4] for url in seen["enrichment"]
+    }
+    assert ("proposal", "queued", None) == work
+
+
+def _without_dispatch(serialized: str) -> object:
+    document = json.loads(serialized)
+    document.pop("report_id")
+    for provider in document["providers"]:
+        for lane in provider["lanes"]:
+            lane.pop("dispatch")
+    return document
+
+
+def test_the_dispatch_record_changes_no_request_or_decision(tmp_path: Path) -> None:
+    recorded = _dispatch_flow(tmp_path / "recorded")
+    bare = _dispatch_flow(tmp_path / "bare", recorded=False)
+
+    assert recorded[0] != bare[0]
+    assert _without_dispatch(recorded[0]) == _without_dispatch(bare[0])
+    assert recorded[1:] == bare[1:]

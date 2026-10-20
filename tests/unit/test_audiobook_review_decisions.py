@@ -88,6 +88,7 @@ from tests.support.audiobook_reports import (
     audiobook_candidate,
     chapter_runtime_report,
     corroborated_audiobook_report,
+    recorded_dispatch,
     retained_recorded_only_decision,
     synthetic_audiobook_bibliographic_report,
 )
@@ -1561,7 +1562,7 @@ def _audiosilo_consumer_report(
         file=base.file,
         local_claims=local,
         local_reasons=base.local_reasons,
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=base.audio,
     )
     return MetadataReport.from_json(report.to_json())
@@ -1710,7 +1711,7 @@ def test_recording_work_subtitle_reaches_manual_sql_case_only(tmp_path, variant)
         file=base.file,
         local_claims=base.local_claims,
         local_reasons=base.local_reasons,
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=base.audio,
     )
     report = MetadataReport.from_json(report.to_json())
@@ -1893,7 +1894,7 @@ def test_final_author_target_precedes_lookup_and_normalization_authority(
         )
     )
     try:
-        observed = provider.observe(feed).observation
+        observed = recorded_dispatch(provider.observe(feed).observation)
     finally:
         provider._client.close()
     report = MetadataReport.create(

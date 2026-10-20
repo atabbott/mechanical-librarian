@@ -58,6 +58,7 @@ from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asserted_asin_report,
     manual_audiobook_observation,
+    recorded_dispatch,
 )
 from tests.support.audiobook_reports import (
     synthetic_audiobook_isbn_reason_report as _isbn_source_report,
@@ -622,7 +623,7 @@ def _tag_source_report(shape: str = "complete") -> d.MetadataReport:
         file=base.file,
         local_claims=claims,
         local_reasons=("target_metadata_title",),
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=base.audio,
     )
     assert m.admitted_audiobook_identity(report)
@@ -723,7 +724,7 @@ def _series_work_lookup_report(
         file=base.file,
         local_claims=claims,
         local_reasons=("target_metadata_title",),
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=base.audio,
     )
     return d.MetadataReport.from_json(report.to_json())

@@ -107,6 +107,8 @@ def _empty_snapshot() -> dict[str, object]:
         "absences": [],
         "duplicates": [],
         "agreement": [],
+        "audiobooks": [],
+        "dispatches": [],
     }
 
 
@@ -623,6 +625,13 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         assert status == "no_case"
         repository.close()
         before = database.read_bytes()
+        from mechanical_librarian.adapters.persistence.provider_recovery import (
+            SQLiteProviderRecoveryStore,
+        )
+
+        recovery = root / "provider-recovery.sqlite"
+        SQLiteProviderRecoveryStore.open(recovery).close()
+        recovery_before = recovery.read_bytes()
         mount_root = root / "books"
         mount_root.mkdir()
         (mount_root / "one.epub").write_bytes(b"a")
@@ -686,12 +695,15 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
                 str(root / "missing-catalogue"),
                 "--mount-root",
                 f"books={mount_root}",
+                "--recovery-database",
+                str(recovery),
             ],
             stdout=output,
         )
 
         assert code == 0
         assert before == database.read_bytes()
+        assert recovery_before == recovery.read_bytes()
         report = json.loads(output.getvalue())
         assert report["schema_version"] == cold_start.COLD_START_REPORT_SCHEMA
         assert report["catalogue_generation"] is None
@@ -700,6 +712,8 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         fidelity = library["scan_fidelity"]
         assert fidelity["mount_files_by_extension"] == {"epub": 2, "txt": 1}
         assert fidelity["target_items_by_classification"] is None
+        assert {"jobs": 0, "groups": []} == report["recovery_jobs"]
+        assert 1 == library["dispatches"]["items"]
         assert "Runner work" not in output.getvalue()
 
 
@@ -765,3 +779,759 @@ def test_main_rejects_a_malformed_mount_root() -> None:
             ],
             stdout=io.StringIO(),
         )
+
+
+def test_the_schema_is_pinned_at_its_third_version() -> None:
+    assert "cold-start-report-v3" == cold_start.COLD_START_REPORT_SCHEMA
+
+
+_EMPTY_DISPATCH = {
+    "reports": 0,
+    "lanes": [],
+    "providers": [],
+    "audible_rungs": [],
+    "band": [],
+    "near_miss": {"items": 0, "buckets": []},
+}
+
+
+def _dispatch_configuration() -> ApplicationConfiguration:
+    configuration = _configuration()
+    return ApplicationConfiguration(
+        connections=configuration.connections,
+        libraries=(
+            LibraryConfiguration(
+                "audiobooks", "primary", "library-b", "audiobook", "books", ()
+            ),
+            *configuration.libraries,
+        ),
+        mounts=configuration.mounts,
+        providers=configuration.providers,
+    )
+
+
+def _census_reports() -> tuple[MetadataReport, ...]:
+    """Three audiobook reports whose lanes reach every dispatch outcome."""
+    from dataclasses import replace
+
+    from mechanical_librarian.application.metadata_report import (
+        MetadataDiscoveryLane,
+        MetadataDiscoveryPlan,
+        ProviderLaneResult,
+        ProviderResult,
+        WorkLadderFacts,
+        provider_attempt_diagnostics,
+        provider_observation,
+        with_lane_dispatch,
+    )
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderIncompleteCause,
+        ProviderIncompleteCauseRecord,
+        ProviderOperationalEvidence,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+        ProviderLaneObservation,
+        ProviderObservation,
+        ProviderQueryKind,
+        ProviderStatus,
+        TargetField,
+        WorkDispatchLineage,
+        work_ladder_diagnostics,
+    )
+    from mechanical_librarian.domain.work_identity import work_query_ladder
+    from tests.support.audiobook_providers import (
+        alternative_work_plan,
+        asin_plan,
+        audio_target,
+        work_plan,
+    )
+    from tests.support.audiobook_reports import (
+        audio_local_claims,
+        audiobook_candidate,
+    )
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    def ladder(lane: MetadataDiscoveryLane) -> tuple[WorkDispatchLineage, ...]:
+        return tuple(
+            WorkDispatchLineage.from_query(query)
+            for query in work_query_ladder(
+                lane.title or "", lane.authors, audiobook=True
+            )
+        )
+
+    def observed(
+        name: str,
+        authority: str,
+        results: tuple[ProviderLaneResult, ...],
+        *,
+        deadline: bool = False,
+        ladders: tuple[WorkLadderFacts, ...] = (),
+    ) -> ProviderObservation:
+        causes = (
+            (ProviderIncompleteCauseRecord(ProviderIncompleteCause.DEADLINE),)
+            if deadline
+            else ()
+        )
+        observation = provider_observation(
+            name,
+            results,
+            authority=authority,
+            diagnostics=(
+                provider_attempt_diagnostics(
+                    (), status="incomplete", incomplete_causes=causes
+                )
+                if deadline
+                else ()
+            ),
+        )
+        return with_lane_dispatch(
+            observation,
+            ProviderResult(
+                observation,
+                evidence=ProviderOperationalEvidence(incomplete_causes=causes),
+                work_ladders=ladders,
+            ),
+            audio=True,
+        )
+
+    def report(
+        item: str,
+        fields: tuple[TargetField, ...],
+        plan: MetadataDiscoveryPlan,
+        *providers: ProviderObservation,
+    ) -> MetadataReport:
+        return MetadataReport.create(
+            target=TargetFacts("primary", "audiobooks", item, fields),
+            file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+            local_claims=plan.local_claims,
+            local_reasons=("embedded_tag_duration",),
+            providers=tuple(sorted(providers, key=lambda value: value.provider)),
+            audio=plan.audio,
+        )
+
+    work = replace(work_plan(*audio_local_claims()), audio=single_track_audio_facts())
+    (lane,) = work.lanes
+    walked = ladder(lane)
+    candidate = audiobook_candidate(work.local_claims, provider="audible-admitted")
+    disabled = ProviderObservation(
+        "second",
+        ProviderStatus.DISABLED,
+        query_kind=ProviderQueryKind.WORK,
+        authority="audible_catalog",
+        lanes=(
+            ProviderLaneObservation(
+                lane.identity,
+                lane.kind,
+                ProviderStatus.DISABLED,
+                lane.input_references,
+                dispatch=ProviderLaneDispatch(DispatchOutcome.NOT_DISPATCHED),
+            ),
+        ),
+    )
+    first = report(
+        "item-1",
+        audio_target().fields,
+        work,
+        observed(
+            "audible",
+            "audible_catalog",
+            (
+                ProviderLaneResult(
+                    lane,
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=work_ladder_diagnostics(0, len(walked)),
+                    exhausted_dispatch=walked,
+                ),
+            ),
+            ladders=(WorkLadderFacts(lane.identity, len(walked), -1_200),),
+        ),
+        observed(
+            "audible-admitted",
+            "audible_catalog",
+            (
+                ProviderLaneResult(
+                    lane,
+                    ProviderStatus.CANDIDATES,
+                    (candidate,),
+                    dispatch_lineage=walked[0],
+                ),
+            ),
+            ladders=(WorkLadderFacts(lane.identity, 1, 4_000),),
+        ),
+        observed(
+            "audible-empty",
+            "audible_catalog",
+            (
+                ProviderLaneResult(
+                    lane,
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=work_ladder_diagnostics(len(walked), 0),
+                    exhausted_dispatch=walked,
+                ),
+            ),
+            ladders=(WorkLadderFacts(lane.identity, len(walked)),),
+        ),
+        observed(
+            "audnexus",
+            "audnexus",
+            (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+        ),
+        observed(
+            "hardcover",
+            "hardcover",
+            (ProviderLaneResult(lane, ProviderStatus.NO_MATCH),),
+        ),
+        observed(
+            "open_library",
+            "open_library",
+            (ProviderLaneResult(lane, ProviderStatus.INCOMPLETE),),
+            deadline=True,
+        ),
+        disabled,
+    )
+    alternative = alternative_work_plan()
+    asserted, other = alternative.lanes
+    second = report(
+        "item-2",
+        audio_target("Asserted Title", ("Ada Author",)).fields,
+        alternative,
+        observed(
+            "audible",
+            "audible_catalog",
+            (
+                ProviderLaneResult(
+                    asserted,
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=work_ladder_diagnostics(len(ladder(asserted)), 0),
+                    exhausted_dispatch=ladder(asserted),
+                ),
+                ProviderLaneResult(other, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED),
+            ),
+            ladders=(
+                WorkLadderFacts(asserted.identity, len(ladder(asserted))),
+                WorkLadderFacts(other.identity, 1),
+            ),
+        ),
+    )
+    asin = asin_plan()
+    (asin_lane,) = asin.lanes
+    third = report(
+        "item-3",
+        audio_target().fields,
+        replace(asin, audio=single_track_audio_facts()),
+        observed(
+            "audible",
+            "audible_catalog",
+            (
+                ProviderLaneResult(
+                    asin_lane,
+                    ProviderStatus.CANDIDATES,
+                    (audiobook_candidate(asin.local_claims, provider="audible"),),
+                ),
+            ),
+        ),
+    )
+    return first, second, third
+
+
+def test_the_audiobook_dispatch_census_counts_every_outcome_exactly() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        database = Path(temporary) / "application.sqlite3"
+        repository = open_repository(database)
+        first, second, third = _census_reports()
+        for value in (first, second, third):
+            repository.publish(value, lambda: True)
+        # The third stays a report-only package, which the census still counts.
+        for value in (first, second):
+            proposal = evaluate_report(value)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        repository.close()
+        connection = cold_start._open_read_only(database)
+        try:
+            outcomes = connection.execute(
+                "SELECT outcome FROM current_review_packages ORDER BY item_id"
+            ).fetchall()
+            snapshot = cold_start.cold_start_snapshot(connection)
+        finally:
+            connection.close()
+
+    report = cold_start.assemble_cold_start_report(
+        _dispatch_configuration(), snapshot, None, {}, 1
+    )
+    blocks = {
+        library["library"]: library["audiobook_dispatch"]
+        for library in cast("list[dict[str, object]]", report["libraries"])
+    }
+
+    assert ("report_only",) == outcomes[-1]
+    assert _EMPTY_DISPATCH == blocks["ebooks"]
+    lanes = [
+        ("audible", "asin", "admitted", 1),
+        ("audible", "work", "empty", 1),
+        ("audible", "work", "refused", 1),
+        ("audible", "work_alternative", "overflow", 1),
+        ("audible-admitted", "work", "admitted", 1),
+        ("audible-empty", "work", "empty", 1),
+        ("audnexus", "work", "unavailable", 1),
+        ("hardcover", "work", "empty_or_refused", 1),
+        ("open_library", "work", "starved", 1),
+        ("second", "work", "not_dispatched", 1),
+    ]
+    assert {
+        "reports": 3,
+        "lanes": [
+            {"provider": provider, "lane": lane, "outcome": outcome, "count": count}
+            for provider, lane, outcome, count in lanes
+        ],
+        "providers": [
+            {"provider": provider, "class": value, "items": items}
+            for provider, value, items in (
+                ("audible", "admitted", 1),
+                ("audible", "overflow", 1),
+                ("audible", "refused", 1),
+                ("audible-admitted", "admitted", 1),
+                ("audible-empty", "empty", 1),
+                ("audnexus", "unavailable", 1),
+                ("hardcover", "empty_or_refused", 1),
+                ("open_library", "starved", 1),
+                ("second", "not_dispatched", 1),
+            )
+        ],
+        "audible_rungs": [
+            {"outcome": "admitted", "rungs": 1, "count": 1},
+            {"outcome": "empty", "rungs": 1, "count": 2},
+            {"outcome": "overflow", "rungs": 1, "count": 1},
+            {"outcome": "refused", "rungs": 1, "count": 1},
+        ],
+        "band": [
+            {"provider": provider, "band": band, "count": count}
+            for provider, band, count in (
+                ("audible", "none", 3),
+                ("audible", "tight", 1),
+                ("audible-admitted", "tight", 1),
+                ("audible-empty", "none", 1),
+                ("audnexus", "none", 1),
+                ("hardcover", "none", 1),
+                ("open_library", "none", 1),
+                ("second", "none", 1),
+            )
+        ],
+        "near_miss": {
+            "items": 2,
+            "buckets": [
+                {"sign": "+", "range": "3600+", "count": 1},
+                {"sign": "-", "range": "900-1800", "count": 1},
+            ],
+        },
+    } == blocks["audiobooks"]
+    serialized = json.dumps(blocks["audiobooks"])
+    assert "Project Hail Mary" not in serialized and "B08G9PRS1K" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("value", "bucket"),
+    (
+        (601, ("+", "600-900")),
+        (-900, ("-", "600-900")),
+        (901, ("+", "900-1800")),
+        (-1_800, ("-", "900-1800")),
+        (3_600, ("+", "1800-3600")),
+        (-3_601, ("-", "3600+")),
+    ),
+)
+def test_near_miss_buckets_close_on_their_upper_bound(
+    value: int, bucket: tuple[str, str]
+) -> None:
+    assert bucket == cold_start._near_miss_bucket(value)
+
+
+def _timing_file(directory: Path) -> Path:
+    from mechanical_librarian.adapters.operational_evidence import LocalTimingStore
+    from mechanical_librarian.application.operations import StageTiming
+
+    path = directory / "private" / "stage-timings.json"
+    store = LocalTimingStore(path, enabled=True)
+    for recorded_at, duration in enumerate((5, 1, 4, 2, 3, 10, 9, 8, 7, 6), 100):
+        store.append(StageTiming("provider_search", duration, "provider", recorded_at))
+    store.append(StageTiming("cover", 7, "target", 90))
+    return path
+
+
+def test_the_stage_timing_split_reports_nearest_rank_percentiles() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        timings = cold_start._read_stage_timings(_timing_file(Path(temporary)))
+
+    report = cold_start.assemble_cold_start_report(
+        _configuration(), _empty_snapshot(), None, {}, 1, timings
+    )
+
+    assert {
+        "basis": "retained_tail",
+        "records": 11,
+        "first_recorded_at": 90,
+        "last_recorded_at": 109,
+        "stages": [
+            {
+                "stage": "cover",
+                "wait_class": "target",
+                "count": 1,
+                "p50": 7,
+                "p95": 7,
+                "max": 7,
+            },
+            {
+                "stage": "provider_search",
+                "wait_class": "provider",
+                "count": 10,
+                "p50": 5,
+                "p95": 10,
+                "max": 10,
+            },
+        ],
+    } == report["stage_timings"]
+    assert (
+        cold_start.assemble_cold_start_report(
+            _configuration(), _empty_snapshot(), None, {}, 1
+        )["stage_timings"]
+        is None
+    )
+
+
+def test_a_missing_or_unreadable_stage_timing_file_is_refused(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit, match="names no stage-timing file"):
+        cold_start._read_stage_timings(tmp_path / "private" / "absent.json")
+    path = _timing_file(tmp_path)
+    path.chmod(0o644)
+    with pytest.raises(SystemExit, match="file is unreadable"):
+        cold_start._read_stage_timings(path)
+
+
+def _outcome_reports() -> tuple[MetadataReport, ...]:
+    """Four more audiobooks: one per runtime reason, and one work-only case."""
+    from dataclasses import replace
+
+    from mechanical_librarian.application.metadata_report import (
+        MetadataDiscoveryPlan,
+        ProviderLaneResult,
+        ProviderResult,
+        provider_observation,
+        with_lane_dispatch,
+    )
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverSource,
+        CoverSourceKind,
+        CoverSourceState,
+        cover_source_id,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        ProviderRequestAccounting,
+        ProviderStatus,
+        WorkDispatchLineage,
+    )
+    from mechanical_librarian.domain.work_identity import work_query_ladder
+    from tests.support.audiobook_providers import audio_target, work_plan
+    from tests.support.audiobook_reports import (
+        audio_local_claims,
+        audiobook_candidate,
+    )
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    plan = replace(work_plan(*audio_local_claims()), audio=single_track_audio_facts())
+    unmeasured = replace(
+        work_plan(*audio_local_claims(None)), audio=single_track_audio_facts()
+    )
+    (lane,) = plan.lanes
+    first_rung = WorkDispatchLineage.from_query(
+        work_query_ladder(lane.title or "", lane.authors, audiobook=True)[0]
+    )
+
+    def report(
+        item: str,
+        duration: str,
+        cover: CoverSource | None,
+        dispatched: tuple[int, int],
+        series: tuple[str, str] | None = None,
+        plan: MetadataDiscoveryPlan = plan,
+    ) -> MetadataReport:
+        observation = provider_observation(
+            "audible",
+            (
+                ProviderLaneResult(
+                    lane,
+                    ProviderStatus.CANDIDATES,
+                    (
+                        audiobook_candidate(
+                            plan.local_claims,
+                            provider="audible",
+                            duration=duration,
+                            series=series,
+                        ),
+                    ),
+                    dispatch_lineage=first_rung,
+                ),
+            ),
+            authority="audible_catalog",
+        )
+        initial, retry = dispatched
+        observation = with_lane_dispatch(
+            replace(
+                observation,
+                request_accounting=ProviderRequestAccounting(initial, initial, retry),
+            ),
+            ProviderResult(observation),
+            audio=True,
+        )
+        return MetadataReport.create(
+            target=TargetFacts("primary", "audiobooks", item, audio_target().fields),
+            file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+            local_claims=plan.local_claims,
+            local_reasons=("embedded_tag_duration",),
+            providers=(observation,),
+            cover_sources=() if cover is None else (cover,),
+            audio=plan.audio,
+        )
+
+    def abs_cover(state: CoverSourceState, scope: str | None = None) -> CoverSource:
+        return CoverSource(
+            cover_source_id(CoverSourceKind.ABS, "absent"),
+            CoverSourceKind.ABS,
+            state,
+            timeout_scope=scope,
+        )
+
+    # 58,244 s locally: 50,000 is outside the loose band and 58,700 inside it.
+    return (
+        report(
+            "item-4",
+            "50000.000",
+            abs_cover(CoverSourceState.TIMEOUT, "attempted"),
+            (3, 1),
+        ),
+        report(
+            "item-5",
+            "58700.000",
+            abs_cover(
+                CoverSourceState.TIMEOUT, "not_started_due_to_aggregate_deadline"
+            ),
+            (1, 0),
+        ),
+        report(
+            "item-6",
+            "50000.000",
+            abs_cover(CoverSourceState.ABSENT),
+            (0, 0),
+            series=("The Series", "1"),
+        ),
+        # No composed local runtime, so no candidate's runtime is comparable.
+        report("item-7", "58200.000", None, (0, 0), plan=unmeasured),
+    )
+
+
+def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        database = Path(temporary) / "application.sqlite3"
+        repository = open_repository(database)
+        for value in (*_census_reports(), *_outcome_reports()):
+            repository.publish(value, lambda: True)
+        repository.close()
+        connection = cold_start._open_read_only(database)
+        try:
+            snapshot = cold_start.cold_start_snapshot(connection)
+        finally:
+            connection.close()
+
+    base = _dispatch_configuration()
+    # Only an enabled provider in the audiobook dispatch set can go unsent:
+    # the disabled second Audible and the enabled iTunes store are not counted.
+    configuration = ApplicationConfiguration(
+        connections=base.connections,
+        libraries=(
+            LibraryConfiguration(
+                "audiobooks",
+                "primary",
+                "library-b",
+                "audiobook",
+                "books",
+                ("audible", "second", "store"),
+            ),
+            *base.libraries[1:],
+        ),
+        mounts=base.mounts,
+        providers=(
+            ProviderConnectionConfiguration(
+                "audible", True, False, None, "audible_catalog", marketplaces=("us",)
+            ),
+            *base.providers,
+            ProviderConnectionConfiguration(
+                "second", False, False, None, "audible_catalog"
+            ),
+            ProviderConnectionConfiguration(
+                "store", True, False, None, "itunes_search"
+            ),
+        ),
+    )
+    report = cold_start.assemble_cold_start_report(configuration, snapshot, None, {}, 1)
+    blocks = {
+        library["library"]: library
+        for library in cast("list[dict[str, object]]", report["libraries"])
+    }
+    audiobooks = blocks["audiobooks"]
+
+    assert {
+        "reports": 7,
+        "recording_admitted": 2,
+        "work_only": 1,
+        "evidence_only": {
+            "total": 4,
+            "no_retained_recording_candidate": 1,
+            "no_comparable_runtime": 1,
+            "runtime_contradiction": 1,
+            "runtime_near_miss_only_or_mixed": 1,
+        },
+    } == audiobooks["audiobook_outcomes"]
+    assert {
+        "reports": 7,
+        "without_read": 4,
+        "states": [
+            {"state": "absent", "timeout_scope": None, "count": 1},
+            {"state": "timeout", "timeout_scope": "attempted", "count": 1},
+            {
+                "state": "timeout",
+                "timeout_scope": "not_started_due_to_aggregate_deadline",
+                "count": 1,
+            },
+        ],
+    } == audiobooks["audiobook_cover_reads"]
+    providers = [
+        "audible",
+        "audible-admitted",
+        "audible-empty",
+        "audnexus",
+        "hardcover",
+        "open_library",
+        "second",
+    ]
+    assert {
+        "items": 7,
+        "initial": 4,
+        "retry": 1,
+        "mean_per_item": 0.71,
+        "per_item": [
+            {"range": name, "items": items}
+            for name, items in (
+                ("0", 5),
+                ("1", 1),
+                ("2", 0),
+                ("3-5", 1),
+                ("6-10", 0),
+                ("11-20", 0),
+                ("21+", 0),
+            )
+        ],
+        "providers": [
+            {
+                "provider": name,
+                "initial": 4 if name == "audible" else 0,
+                "retry": 1 if name == "audible" else 0,
+            }
+            for name in providers
+        ],
+        # Audible sent items 4 and 5 an initial request and the other five none.
+        "never_dispatched": {
+            "audiobook_items": 7,
+            "items": 5,
+            "providers": [{"provider": "audible", "items": 5}],
+        },
+    } == audiobooks["dispatches"]
+    ebooks = blocks["ebooks"]
+    assert 0 == cast("dict[str, object]", ebooks["audiobook_outcomes"])["reports"]
+    assert {
+        "items": 0,
+        "initial": 0,
+        "retry": 0,
+        "mean_per_item": None,
+        "per_item": [
+            {"range": name, "items": 0}
+            for name in ("0", "1", "2", "3-5", "6-10", "11-20", "21+")
+        ],
+        "providers": [],
+        "never_dispatched": {"audiobook_items": 0, "items": 0, "providers": []},
+    } == ebooks["dispatches"]
+    assert None is report["recovery_jobs"]
+
+
+@pytest.mark.parametrize(
+    ("bands", "reason"),
+    (
+        (frozenset(), "no_retained_recording_candidate"),
+        (frozenset({"unstated"}), "no_comparable_runtime"),
+        (frozenset({"outside"}), "runtime_contradiction"),
+        (frozenset({"loose"}), "runtime_near_miss_only_or_mixed"),
+        (frozenset({"loose", "outside"}), "runtime_near_miss_only_or_mixed"),
+        (frozenset({"loose", "unstated"}), "runtime_near_miss_only_or_mixed"),
+        (frozenset({"unstated", "outside"}), "runtime_near_miss_only_or_mixed"),
+        # Current admission admits a tight band, so it never reaches here alone.
+        (frozenset({"tight", "outside"}), "runtime_near_miss_only_or_mixed"),
+    ),
+)
+def test_an_evidence_only_audiobook_is_named_by_its_best_bands(
+    bands: frozenset[str], reason: str
+) -> None:
+    assert reason == cold_start._evidence_only_reason(bands)
+
+
+def test_recovery_jobs_count_by_provider_library_and_state(tmp_path: Path) -> None:
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+
+    path = tmp_path / "provider-recovery.sqlite"
+    store = SQLiteProviderRecoveryStore.open(path)
+    store.close()
+    connection = sqlite3.connect(path)
+    with connection:
+        connection.execute(
+            "INSERT INTO provider_recovery_members VALUES('catalogue','hardcover','search')"
+        )
+        for member, library, state in (
+            ("member-1", "ebooks", "queued"),
+            ("member-2", "ebooks", "queued"),
+            ("member-3", "ebooks", "complete"),
+            ("member-4", "audiobooks", "failed"),
+        ):
+            connection.execute(
+                "INSERT INTO provider_recovery_jobs(connection,adapter,scope,"
+                "generation,member_id,target_connection,library,item,"
+                "file_identity,source_report_id,package_report_id,"
+                "package_outcome,lane_ids,state,attempt,dispatch_reason,"
+                "dispatch_rank,enrollment_ordinal) VALUES('catalogue','hardcover',"
+                "'search',1,?,'primary',?,'item','file','report','report',"
+                "'report_only','[]',?,0,'blanket_scan',3,1)",
+                (member, library, state),
+            )
+    connection.close()
+
+    rows = cold_start._read_recovery_jobs(path)
+    report = cold_start.assemble_cold_start_report(
+        _configuration(), _empty_snapshot(), None, {}, 1, recovery_jobs=rows
+    )
+
+    group = {"provider": "catalogue", "adapter": "hardcover", "connection": "primary"}
+    assert {
+        "jobs": 4,
+        "groups": [
+            {**group, "library": "audiobooks", "state": "failed", "count": 1},
+            {**group, "library": "ebooks", "state": "complete", "count": 1},
+            {**group, "library": "ebooks", "state": "queued", "count": 2},
+        ],
+    } == report["recovery_jobs"]
+    with pytest.raises(SystemExit, match="names no recovery database"):
+        cold_start._read_recovery_jobs(tmp_path / "absent.sqlite")
+    (tmp_path / "other.sqlite").write_bytes(b"")
+    with pytest.raises(SystemExit, match="is unreadable"):
+        cold_start._read_recovery_jobs(tmp_path / "other.sqlite")

@@ -106,7 +106,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.work_identity import work_title_has_variant_marker
-from tests.support.audiobook_reports import recording_lookup_report
+from tests.support.audiobook_reports import recorded_dispatch, recording_lookup_report
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
@@ -2304,7 +2304,7 @@ def test_lookup_work_lane_and_sqlite_proposal_roundtrip(tmp_path: Path) -> None:
         file=raw.file,
         local_claims=plan.local_claims,
         local_reasons=raw.local_reasons,
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=raw.audio,
     )
     database = tmp_path / "reports.sqlite"
@@ -2533,6 +2533,7 @@ def _hinted_admission(
         audio_local_claims,
         audio_target_fields,
         audiobook_candidate,
+        recorded_dispatch,
     )
     from tests.support.metadata_report_doubles import single_track_audio_facts
 
@@ -2549,20 +2550,23 @@ def _hinted_admission(
         local_claims=plan.local_claims,
         local_reasons=("embedded_tag_duration",),
         providers=(
-            provider_observation(
-                "audible",
-                (
-                    ProviderLaneResult(
-                        plan.lanes[0],
-                        ProviderStatus.CANDIDATES,
-                        (candidate,),
-                        dispatch_lineage=rung,
-                        recording_lookup_hints=tuple(
-                            RecordingLookupHint(asin, 58_200, rung) for asin in hints
+            recorded_dispatch(
+                provider_observation(
+                    "audible",
+                    (
+                        ProviderLaneResult(
+                            plan.lanes[0],
+                            ProviderStatus.CANDIDATES,
+                            (candidate,),
+                            dispatch_lineage=rung,
+                            recording_lookup_hints=tuple(
+                                RecordingLookupHint(asin, 58_200, rung)
+                                for asin in hints
+                            ),
                         ),
                     ),
-                ),
-                authority="audible_catalog",
+                    authority="audible_catalog",
+                )
             ),
         ),
         audio=single_track_audio_facts(),
@@ -2869,3 +2873,221 @@ def test_hints_leave_every_decision_reader_unchanged(admitted: bool) -> None:
     assert [value.to_data() for value in evaluate_report(hinted).results] == [
         value.to_data() for value in evaluate_report(bare).results
     ]
+
+
+def _starved_audible(duration: str | None = "58244.201") -> MetadataReport:
+    """An asserted Audible lane the deadline stopped before its first rung."""
+    from mechanical_librarian.application.metadata_report import (
+        ProviderLaneResult,
+        ProviderResult,
+        provider_attempt_diagnostics,
+        provider_observation,
+        with_lane_dispatch,
+    )
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderIncompleteCause,
+        ProviderIncompleteCauseRecord,
+        ProviderOperationalEvidence,
+    )
+    from mechanical_librarian.domain.metadata_report import TargetFacts
+    from tests.support.audiobook_providers import work_plan
+    from tests.support.audiobook_reports import (
+        audio_local_claims,
+        audio_target_fields,
+    )
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    plan = work_plan(*audio_local_claims(duration))
+    causes = (ProviderIncompleteCauseRecord(ProviderIncompleteCause.DEADLINE),)
+    observation = provider_observation(
+        "audible",
+        (ProviderLaneResult(plan.lanes[0], ProviderStatus.INCOMPLETE),),
+        authority="audible_catalog",
+        diagnostics=provider_attempt_diagnostics(
+            (), status="incomplete", incomplete_causes=causes
+        ),
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=plan.local_claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(
+            with_lane_dispatch(
+                observation,
+                ProviderResult(
+                    observation,
+                    evidence=ProviderOperationalEvidence(incomplete_causes=causes),
+                ),
+                audio=True,
+            ),
+        ),
+        audio=single_track_audio_facts(),
+    )
+
+
+def _dispatch_record(data: dict[str, object]) -> dict[str, object]:
+    return cast(dict[str, object], _hint_lane(data)["dispatch"])
+
+
+def _absent_record(data: dict[str, object]) -> None:
+    _hint_lane(data)["dispatch"] = None
+
+
+def _off_table(data: dict[str, object]) -> None:
+    _dispatch_record(data)["outcome"] = "overflow"
+
+
+def _unbacked(data: dict[str, object]) -> None:
+    cast(list[dict[str, object]], data["providers"])[0]["diagnostics"] = []
+
+
+def _budget_spent(data: dict[str, object]) -> None:
+    provider = cast(list[dict[str, object]], data["providers"])[0]
+    cast(list[object], provider["diagnostics"]).insert(
+        0,
+        FailureDiagnostic(
+            FailureCategory.LOOKUP_CONSTRUCTION,
+            FailureComponent.PROVIDER,
+            FailureStage.LOOKUP,
+            retryable=False,
+        ).to_data(),
+    )
+
+
+def _rungs(value: int) -> Callable[[dict[str, object]], None]:
+    def mutate(data: dict[str, object]) -> None:
+        _dispatch_record(data)["rungs"] = value
+
+    return mutate
+
+
+def _near_miss(value: int) -> Callable[[dict[str, object]], None]:
+    def mutate(data: dict[str, object]) -> None:
+        _dispatch_record(data)["near_miss_seconds"] = value
+
+    return mutate
+
+
+def _dispatch_base(base: str) -> MetadataReport:
+    if base == "admitted":
+        return _hinted_admission(hints=())
+    if base == "unstated_runtime":
+        return _starved_audible(duration=None)
+    return _starved_audible()
+
+
+@pytest.mark.parametrize(
+    ("base", "mutations", "message"),
+    (
+        ("admitted", (_absent_record,), "provider lane dispatch presence is invalid"),
+        ("starved", (_absent_record,), "provider lane dispatch presence is invalid"),
+        ("admitted", (_off_table,), "provider lane dispatch is invalid"),
+        ("starved", (_unbacked,), "provider lane starvation is unbacked"),
+        ("starved", (_budget_spent,), "provider lane starvation is unbacked"),
+        (
+            "starved",
+            (_unbacked, _rungs(99)),
+            "provider lane starvation is unbacked",
+        ),
+        (
+            "starved",
+            (_rungs(1), _audnexus),
+            "provider lane rungs provenance is invalid",
+        ),
+        ("starved", (_rungs(0),), "provider lane rungs do not replay"),
+        ("starved", (_rungs(99),), "provider lane rungs do not replay"),
+        ("admitted", (_rungs(2),), "provider lane rungs do not replay"),
+        (
+            "starved",
+            (_rungs(99), _near_miss(600)),
+            "provider lane rungs do not replay",
+        ),
+        (
+            "starved",
+            (_near_miss(1200), _audnexus),
+            "provider lane near-miss provenance is invalid",
+        ),
+        (
+            "unstated_runtime",
+            (_near_miss(1200),),
+            "provider lane near-miss provenance is invalid",
+        ),
+        ("starved", (_near_miss(600),), "provider lane near-miss is inside the loose"),
+        ("starved", (_near_miss(-600),), "provider lane near-miss is inside the loose"),
+        (
+            "starved",
+            (_near_miss(10**9),),
+            "provider lane near-miss exceeds its bound",
+        ),
+    ),
+    ids=(
+        "absent_admitted",
+        "absent_starved",
+        "outcome_off_table",
+        "starved_without_timeout",
+        "starved_beside_a_spent_budget",
+        "backing_before_rungs",
+        "rungs_from_another_provider",
+        "starved_without_a_rung",
+        "starved_past_the_ladder",
+        "admitted_past_its_rung",
+        "rungs_before_near_miss",
+        "near_miss_from_another_provider",
+        "near_miss_without_a_runtime",
+        "near_miss_inside_the_band_above",
+        "near_miss_inside_the_band_below",
+        "near_miss_past_its_bound",
+    ),
+)
+def test_a_report_replays_its_lane_dispatch_records_in_precedence_order(
+    base: str,
+    mutations: tuple[Callable[[dict[str, object]], None], ...],
+    message: str,
+) -> None:
+    report = _dispatch_base(base)
+    assert report == MetadataReport.from_json(report.to_json())
+    data = cast(dict[str, object], json.loads(report.to_json()))
+    for mutate in mutations:
+        mutate(data)
+    with pytest.raises(ReportValueError, match=message):
+        MetadataReport.from_json(_readdressed(data))
+
+
+@pytest.mark.parametrize(
+    "changes",
+    (
+        {"rungs": 1},
+        {"near_miss_seconds": -1200},
+        {"rungs": 1, "near_miss_seconds": 900},
+    ),
+    ids=("rungs", "near_miss", "both"),
+)
+def test_a_starved_lane_states_the_rungs_and_near_miss_it_reached(
+    changes: dict[str, int],
+) -> None:
+    data = cast(dict[str, object], json.loads(_starved_audible().to_json()))
+    _dispatch_record(data).update(changes)
+
+    report = MetadataReport.from_json(_readdressed(data))
+
+    dispatch = report.providers[0].lanes[0].dispatch
+    assert dispatch is not None and dispatch.outcome.value == "starved"
+    assert changes == {key: getattr(dispatch, key) for key in changes}
+
+
+def test_report_replay_reasserts_a_tampered_lane_outcome() -> None:
+    """A lane changed after construction is held to the table again."""
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+    )
+
+    report = _starved_audible()
+    object.__setattr__(
+        report.providers[0].lanes[0],
+        "dispatch",
+        ProviderLaneDispatch(DispatchOutcome.OVERFLOW),
+    )
+    with pytest.raises(ReportValueError, match="provider lane dispatch is invalid"):
+        replace(report)

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Each audiobook report now records why every provider lane ended: admitted,
+  empty, refused, overflowing, unavailable, out of time or never sent. It also
+  records how far Audible's search went and the nearest same-title runtime that
+  was too far off. The cold-start report counts these outcomes per provider.
+  Nothing it records changes a request or a decision. Upgrading requires a
+  clean rebuild (#1258).
+
 - An audiobook whose exact recording is unresolved now also offers its series,
   series position and a cleaned-up title from matched book evidence. A
   description or genre choice that only trims or extends the current value stays

@@ -1,5 +1,12 @@
 # Pre-release compatibility policy
 
+#1258 advances the report to `metadata-report-v56`: every audiobook provider
+lane carries a required dispatch record and every ebook lane a `null` one.
+**Clean rebuild required** for every predecessor application database; startup
+refuses v55 reports before mutation. No migration, adoption, conversion, import
+or downgrade is supplied; F19a/F20/F46 records are displaced with their
+permission sets unchanged.
+
 #1253 advances the proposal policy to `fixed-conservative-v35`: an unresolved
 recording's book-level review also offers series and title, and immaterial
 description and genre alternatives carry a new reason. **Clean rebuild
@@ -66,7 +73,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v55` plus `proposal-set-v8` under
+  `metadata-report-v56` plus `proposal-set-v8` under
   `fixed-conservative-v35`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
@@ -432,3 +439,15 @@ SQLite discriminator requires a **clean rebuild** under ADR-0013, and decision
 policy v22 refuses v21 outcomes. Prior stores are refused before mutation. No
 migration, adoption or relabelling is supplied. `audio-inspection-v4`,
 `review-case-v2` and shadow-review packet envelopes are unchanged.
+
+## Dispatch classification (#1258)
+
+Report `metadata-report-v56` adds one required field to every provider lane:
+`dispatch`, an object of `outcome`, `rungs` and `near_miss_seconds` on an
+audiobook lane and `null` on an ebook lane. A v55 document has no such key, so
+the exact SQLite discriminator requires a **clean rebuild** under ADR-0013.
+Prior stores are refused before mutation. No migration, adoption or relabelling
+is supplied. Proposal, shadow-decision and review envelopes are unchanged, and
+the record changes no request, admission or decision. The cold-start report
+moves to `cold-start-report-v3`, and the closed stage-timing vocabulary gains
+`cover`, `proposal` and `persistence` with `stage-timings-v1` unchanged.

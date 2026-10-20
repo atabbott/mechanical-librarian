@@ -11,7 +11,9 @@ from typing import Any
 
 from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
+    ProviderResult,
     qualify_provider_observation,
+    with_lane_dispatch,
 )
 from mechanical_librarian.domain import human_decision
 from mechanical_librarian.domain.audio_inspection import AudioChapter
@@ -53,6 +55,7 @@ __all__ = [
     "audio_local_claims",
     "audio_target_fields",
     "audiobook_candidate",
+    "recorded_dispatch",
     "manual_audiobook_observation",
     "qualified_audiobook",
     "recording_lookup_hint_report",
@@ -234,6 +237,19 @@ def manual_audiobook_observation(
     )
 
 
+def recorded_dispatch(observation: ProviderObservation) -> ProviderObservation:
+    """Record each audiobook lane's dispatch the way preparation does (#1258).
+
+    For a fixture that assembles a report from lane results or a bare adapter
+    observation rather than through `observe_provider`, which states no
+    process-local evidence, so no lane here is starved. A lane that already
+    carries its record keeps it.
+    """
+    if all(lane.dispatch is not None for lane in observation.lanes):
+        return observation
+    return with_lane_dispatch(observation, ProviderResult(observation), audio=True)
+
+
 def admitted_audiobook_report(
     local_claims: tuple[LocalClaim, ...] | None = None,
     *,
@@ -260,7 +276,10 @@ def admitted_audiobook_report(
         local_reasons=("embedded_tag_duration",),
         providers=tuple(
             sorted(
-                (qualified_audiobook(claims), *additional_providers),
+                (
+                    qualified_audiobook(claims),
+                    *(recorded_dispatch(value) for value in additional_providers),
+                ),
                 key=lambda value: value.provider,
             )
         ),
@@ -531,7 +550,7 @@ def chapter_runtime_report(
         file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
         local_claims=claims,
         local_reasons=("embedded_tag_duration",),
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=single_track_audio_facts(
             chapters=chapters, chapter_rows_omitted=chapter_rows_omitted
         ),
@@ -571,16 +590,18 @@ def recording_lookup_report(
         local_claims=local,
         local_reasons=("embedded_tag_title",),
         providers=(
-            provider_observation(
-                provider,
-                (
-                    ProviderLaneResult(
-                        plan.lanes[0],
-                        ProviderStatus.NO_MATCH,
-                        recording_lookup_candidates=candidates,
+            recorded_dispatch(
+                provider_observation(
+                    provider,
+                    (
+                        ProviderLaneResult(
+                            plan.lanes[0],
+                            ProviderStatus.NO_MATCH,
+                            recording_lookup_candidates=candidates,
+                        ),
                     ),
-                ),
-                authority="audnexus",
+                    authority="audnexus",
+                )
             ),
         ),
         audio=single_track_audio_facts(),
@@ -627,31 +648,33 @@ def recording_lookup_hint_report(
         local_claims=local,
         local_reasons=("embedded_tag_duration",),
         providers=(
-            provider_observation(
-                provider,
-                (
-                    ProviderLaneResult(
-                        plan.lanes[0],
-                        ProviderStatus.NO_MATCH,
-                        diagnostics=diagnostics,
-                        recording_lookup_candidates=tuple(
-                            audiobook_candidate(
-                                local,
-                                provider=provider,
-                                identity=f"recording-{asin}",
-                                asin=asin,
-                            )
-                            for asin in lookup_asins
-                        ),
-                        exhausted_dispatch=ladder,
-                        recording_lookup_hints=tuple(
-                            RecordingLookupHint(asin, 58_200, ladder[0])
-                            for asin in hint_asins
+            recorded_dispatch(
+                provider_observation(
+                    provider,
+                    (
+                        ProviderLaneResult(
+                            plan.lanes[0],
+                            ProviderStatus.NO_MATCH,
+                            diagnostics=diagnostics,
+                            recording_lookup_candidates=tuple(
+                                audiobook_candidate(
+                                    local,
+                                    provider=provider,
+                                    identity=f"recording-{asin}",
+                                    asin=asin,
+                                )
+                                for asin in lookup_asins
+                            ),
+                            exhausted_dispatch=ladder,
+                            recording_lookup_hints=tuple(
+                                RecordingLookupHint(asin, 58_200, ladder[0])
+                                for asin in hint_asins
+                            ),
                         ),
                     ),
+                    authority=authority,
+                    diagnostics=diagnostics,
                 ),
-                authority=authority,
-                diagnostics=diagnostics,
             ),
         ),
         audio=single_track_audio_facts(),
@@ -784,7 +807,7 @@ def synthetic_audiobook_bibliographic_report(
         file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
         local_claims=claims,
         local_reasons=("target_metadata_title",),
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=audio,
     )
     return MetadataReport.from_json(report.to_json())

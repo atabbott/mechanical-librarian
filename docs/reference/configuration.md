@@ -372,7 +372,11 @@ checkpoint is recovered on restart.
 `diagnostic_timings_enabled` is false by default. When explicitly enabled, the
 container retains at most 256 local stage-duration and wait-class records in
 its private data area. They contain no work values and are advisory diagnostics,
-not durable audit truth.
+not durable audit truth. Cover acquisition and the proposal stage are their own
+stages (#1258), and so is `persistence`: the currentness re-check (a target read
+and, for an audiobook, a re-digest of its tracks), the durable write and the
+read-back, recorded with wait class `none` although it contains that target
+I/O.
 
 `cover_reviewer_profile_file` is deployment authority. Store-mode bootstrap
 uses the image-generated `/opt/mechanical-librarian/reviewer/profile.json` when

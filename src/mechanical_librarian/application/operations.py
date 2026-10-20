@@ -23,6 +23,12 @@ STAGES = (
     "apply",
     "verification",
     "reconciliation",
+    # #1258 splits cover acquisition, proposal and the durable report write out
+    # of the stages that used to fold them in. Admission and projection stay
+    # policy evaluation.
+    "cover",
+    "proposal",
+    "persistence",
 )
 WAIT_CLASSES = ("none", "owner", "provider", "target", "recovery")
 KINDS = (

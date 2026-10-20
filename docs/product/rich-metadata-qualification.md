@@ -89,6 +89,20 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Dispatch classification successor (#1258)
+
+The current F19a, F20 and F46 records move to semantic revision 56 over
+predecessor `e7cf0afb`, whose record bytes the archive index keeps. Their
+runtime digests join the prior-manifest histories with their frozen permission
+sets, so decisions minted under them stay readable without current authority.
+Report v56 binds the new semantics; **clean rebuild required**. Operation
+membership and historical measurements are unchanged, and focused synthetic
+proof is not library scoring.
+
+Each audiobook provider lane records how its dispatch ended. The record is pure
+observation: it changes no request, admission or decision, so no qualified
+operation gains or loses authority from it.
+
 ## Work-level series and title successor (#1253)
 
 The current F19a, F20 and F46 records move to semantic revision 55 over
