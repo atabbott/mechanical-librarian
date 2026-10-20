@@ -1913,20 +1913,25 @@ provider, parser, model, egress or write capability is introduced.
 #1250 widens the vocabulary without opening it. Structured credit lines (one to
 six segments, each a role verb with "by" and names, a bare role verb with "by",
 a role label with ":", a format word, a length, or a publisher or release-date
-label, with at least one credit; one to six people of one to five letter
-tokens, where only a ripper or tagger credit's tokens may hold digits or `_`;
-at most 240 characters, with a closed prose-word list that keeps sentences
-out), closed format words and "unabridged" cut to four or more letters,
-numbered chapter, track, part, section, disc, CD or side markers, markup with
-no text, two closed encoder watermarks, and `n/a`, `none`, `unknown` or `tbd`
-are recognized whole, by shape and never by length alone. Markup with no text
-is the only tag-bearing incumbent this admits, and only for replacement; any
-tag-bearing incumbent holding text still abstains as unusable. This widens `replace_safe_plain_text` replacement of such an
-incumbent and narrows automatic fills, since a candidate matching the floor is
-refused with `description_quality_floor_not_met`; ebooks are unchanged. The
-same release treats an audiobook genre list of format words alone as empty, as
-an unknown language is: under the default `fill_empty` option a qualified
-candidate now fills such an incumbent automatically, a format-only candidate is
+label, with at least one credit; one to six people of one to five letter tokens,
+where only a ripper or tagger credit's tokens may hold digits or `_`; at most
+240 characters, with a closed prose-word list that keeps sentences out), closed
+format words and "unabridged" cut to four or more letters, numbered chapter,
+track, part, section, disc, CD or side markers, markup with no text, two closed
+encoder watermarks, and `n/a`, `none`, `unknown` or `tbd` are recognized whole,
+by shape and never by length alone. A name after a comma has at most three
+tokens; casefolded text still cannot tell a short tagline such as "Narrated by
+X, Y faces Z" from a credit, and the effect of that ambiguity is bounded to
+replacement by an admitted provider synopsis. Markup with no text, read as real
+tag syntax over a closed set of formatting elements or comments, is the only
+tag-bearing incumbent this admits, and only for replacement; any tag-bearing
+incumbent holding text still abstains as unusable. This widens
+`replace_safe_plain_text` replacement of such an incumbent and narrows automatic
+fills, since a candidate matching the floor is refused with
+`description_quality_floor_not_met`; ebooks are unchanged. The same release
+treats an audiobook genre list of format words alone as empty, as an unknown
+language is: under the default `fill_empty` option a qualified candidate now
+fills such an incumbent automatically, a format-only candidate is
 `no_candidate`, and any list naming a real genre is still preserved. The F46
 identity registry and permission set are unchanged; only their records rotate.
 Every write keeps the consent, backup, currentness, optimistic, read-back and

@@ -170,16 +170,16 @@ Text length, wording, opaque alternative hashes and provider vote counts do not
 rank them. Unsafe relevant sources and competing text within one source record
 still refuse automatic selection; ebook description rules are unchanged.
 A synopsis that is only a structured credit line (narrator, reader, ripper or
-tagger credits, optionally with format words, a length, a publisher or a
-release date), a format word such as "Unabridged" or a cut form of it, a
-numbered chapter, track, part, section, disc or side marker, an encoder
-watermark, markup with no text, or `n/a`, `none`, `unknown` or `tbd` describes
-nothing: under "Replace safe plain
-text" such an incumbent is replaceable, and such a candidate never fills
-automatically (#1250). A genre list holding only format words such as
-"Audiobook" counts as empty for an audiobook, so "Fill when empty" may fill it
-and a format-only candidate is no candidate; a list naming any real genre is
-kept. Ebook genres are unchanged.
+tagger credits, optionally with format words, a length, a publisher or a release
+date), a format word such as "Unabridged" or a cut form of it, a numbered
+chapter, track, part, section, disc, CD or side marker, an encoder watermark,
+markup with no text, or `n/a`, `none`, `unknown` or `tbd` describes nothing:
+under "Replace safe plain text" such an incumbent is replaceable, and such a
+candidate never fills automatically (#1250). A genre list holding only format
+words such as "Audiobook" counts as empty for an audiobook, so "Fill when empty"
+may fill it and a format-only candidate is no candidate; adding a genre beside a
+format-only list is recorded as a fill (`genres:add:audiobook_genres_fill`); a
+list naming any real genre is kept. Ebook genres are unchanged.
 Compatible complete explicit tag lists may form a source-bound union
 for fill/Add, preserving owner members and all contributing references. Tags
 remain off by default. Tag replacement retains its separate election and never
