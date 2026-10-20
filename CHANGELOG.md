@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Activity loads again after a verified write of a long value such as a book
+  description; the confirmation now reads "Matches the new value" (#1278).
+
 - An audiobook whose exact recording is unresolved now also offers its series,
   series position and a cleaned-up title from matched book evidence. A
   description or genre choice that only trims or extends the current value stays

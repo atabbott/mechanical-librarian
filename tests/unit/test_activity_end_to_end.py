@@ -482,7 +482,7 @@ def test_only_a_verified_write_claims_audiobookshelf_confirmed_it(
     for event in writes:
         confirmation = _facts(event)["Confirmed in Audiobookshelf"]
         assert confirmation == (
-            "Confirmed as Paper Moons over Larkspur Station"
+            "Matches the new value"
             if event["state"] == "verified"
             else "Not confirmed yet"
         )

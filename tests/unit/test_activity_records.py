@@ -7,6 +7,8 @@ reading the current catalogue fails here rather than in a screenshot.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from mechanical_librarian.domain.activity_records import (
@@ -31,6 +33,7 @@ from mechanical_librarian.domain.readable_activity import (
     AUTOMATIC_AUTHORITY_UNAVAILABLE,
     CHANGE_LIMIT,
     EVIDENCE_LIMIT,
+    ISBN_REFUSAL_REASONS,
     destination_label,
     keep_change,
     set_change,
@@ -393,7 +396,7 @@ def test_a_no_change_decision_says_the_value_already_matched() -> None:
     (
         ("planned", "Not confirmed yet"),
         ("applying", "Not confirmed yet"),
-        ("verified", "Confirmed as Earthsea Cycle"),
+        ("verified", "Matches the new value"),
     ),
     ids=("planned", "applying", "verified"),
 )
@@ -611,3 +614,193 @@ def test_an_unrecognised_record_is_bounded_rather_than_guessed() -> None:
     assert event["category"] == "recovery"
     assert event["change"] == "Recorded"
     assert _facts(event) == {"Chosen by": "Not recorded"}
+
+
+# --- every fact fits the column the API bounds it to (#1278) -----------------
+
+_MAXIMUM = "A synthetic description well past any evidence bound. " * 40
+_MAXIMUM_MODEL = "m" * 256  # the description-advice model bound
+
+
+def _bounded_records() -> list[tuple[dict[str, object], MetadataReport | None]]:
+    report = _with(TargetDestination.DESCRIPTION, _MAXIMUM)
+    pinned = report.target.fingerprint
+    write = {"pre_value": _MAXIMUM, "desired_value": _MAXIMUM[::-1]}
+    selected = {"kind": "text", "value": _MAXIMUM[::-1]}
+    records: list[tuple[dict[str, object], MetadataReport | None]] = [
+        ({"state": state, "record": {"source_kind": "field_effect", **write}}, None)
+        for state in ("planned", "applying", "reconciling", "verified")
+    ]
+    records += [
+        (
+            {
+                "state": state,
+                "record": {"source_kind": "field_effect", **write, "failure": failure},
+            },
+            None,
+        )
+        for state, failure in (
+            ("retryable", "target_changed"),
+            ("stale", "target_changed"),
+            ("abandoned", "owner_abandoned"),
+        )
+    ]
+    records += [
+        (
+            {
+                "destination": "title",
+                "state": state,
+                "record": {
+                    "source_kind": "field_effect",
+                    **write,
+                    "subtitle_companion": dict(write),
+                },
+            },
+            None,
+        )
+        for state in ("planned", "reconciling", "verified")
+    ]
+    records += [
+        (
+            {
+                "state": state,
+                "record": {
+                    "source_kind": "human_decision",
+                    "target_fingerprint": pinned,
+                    "selected_value": selected if state == "accept" else None,
+                },
+            },
+            report,
+        )
+        for state in ("accept", "keep_current", "reject")
+    ]
+    records += [
+        (
+            {
+                "state": state,
+                "record": {
+                    "source_kind": "automatic_decision",
+                    "target_fingerprint": pinned,
+                    "outcome": state,
+                    "selected_value": selected if state == "candidate" else None,
+                    "policy_category": "description",
+                    "policy_option": "longest",
+                    "policy_generation": 4,
+                },
+            },
+            report,
+        )
+        for state in ("candidate", "keep_current")
+    ]
+    records += [
+        (
+            {
+                "state": state,
+                "record": {"source_kind": "description_preparation"},
+            },
+            None,
+        )
+        for state in ("requested", "running", "succeeded", "failed", "interrupted")
+    ]
+    records += [
+        (
+            {
+                "state": "selected",
+                "record": {
+                    "source_kind": "description_decision",
+                    "selected_value": selected,
+                    "advised": True,
+                    "engine": "openrouter",
+                    "model": _MAXIMUM_MODEL,
+                },
+            },
+            None,
+        ),
+        (
+            {
+                "state": "no_change_required",
+                "record": {
+                    "source_kind": "field_effect_no_change",
+                    "target_fingerprint": pinned,
+                },
+            },
+            report,
+        ),
+        (
+            {
+                "state": "completed",
+                "record": {
+                    "source_kind": "policy_transition",
+                    "generation": 4,
+                    "policy_changes": [],
+                },
+            },
+            None,
+        ),
+        (
+            {
+                "state": "candidate",
+                "record": {
+                    "source_kind": "degraded",
+                    "degraded_reason": AUTOMATIC_AUTHORITY_UNAVAILABLE,
+                },
+            },
+            None,
+        ),
+        ({"record": None}, None),
+    ]
+    records += [
+        (
+            {
+                "destination": "cover",
+                "state": state,
+                "record": {"source_kind": "cover_safeguard", "kind": state},
+            },
+            None,
+        )
+        for state in ("selected", "kept_incumbent", "unavailable", "stale")
+    ]
+    records += [
+        ({"record": {"source_kind": "isbn_refusal", "reason_code": reason}}, None)
+        for reason in ISBN_REFUSAL_REASONS
+    ]
+    return records
+
+
+def test_every_fact_fits_the_evidence_bound_for_a_maximum_length_value() -> None:
+    """No fact may outgrow the 512-character bound the Activity API enforces.
+
+    A verified write once restated its bounded value behind a prefix, and the
+    response model rejected the whole ledger (#1278). Every source kind and
+    every state it projects is driven here with a value far past the bound.
+    """
+    projected = [
+        _project(_event(**{"destination": "description", **overrides}), report)
+        for overrides, report in _bounded_records()
+    ]
+    kinds = {
+        cast(dict[str, object], overrides["record"] or {}).get("source_kind")
+        for overrides, _ in _bounded_records()
+    }
+    assert kinds == {
+        "field_effect",
+        "human_decision",
+        "description_preparation",
+        "description_decision",
+        "automatic_decision",
+        "isbn_refusal",
+        "field_effect_no_change",
+        "cover_safeguard",
+        "policy_transition",
+        "degraded",
+        None,
+    }
+    oversized = [
+        (event["change"], fact)
+        for event in projected
+        for fact in cast(list[dict[str, str]], event["evidence"])
+        if len(fact["value"]) > EVIDENCE_LIMIT or len(fact["label"]) > 64
+    ]
+    assert oversized == []
+    verified = _facts(projected[3])
+    assert verified["Confirmed in Audiobookshelf"] == "Matches the new value"

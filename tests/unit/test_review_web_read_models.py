@@ -52,6 +52,7 @@ from mechanical_librarian.application.review_web import (
     _provider_label,
 )
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.audio_health import (
     AUDIO_HEALTH_BOUNDS,
     MAX_HEALTH_OBSERVATIONS,
@@ -687,6 +688,57 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     assert [item["library"] for item in revoked.json()["enabled_libraries"]] == [
         "history"
     ]
+
+
+def test_activity_loads_after_a_verified_write_of_a_long_value(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """A verified description longer than the evidence bound keeps Activity up.
+
+    The confirmation once restated the bounded value behind a prefix, so the
+    response model refused the whole ledger and the page answered 500 (#1278).
+    """
+    application = FakeActivityApplication()
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+            field_application=application,
+        ),
+        base_url="https://review.test",
+    )
+    web.login()
+    history = application.activity()
+    written: dict[str, object] = {
+        "destination": "description",
+        "event_type": "metadata",
+        "origin": "human",
+        "state": "verified",
+        "record": {
+            "source_kind": "field_effect",
+            "pre_value": None,
+            "desired_value": "A long synthetic description. " * 70,
+        },
+    }
+    readable_activity_event(written, None)
+    events = [{**history["events"][0], **written}, *history["events"][1:]]
+    with patch.object(
+        application, "activity", return_value={**history, "events": events}
+    ):
+        response = web.client.get("/api/v1/activity")
+    assert response.status_code == 200, response.text
+    assert {
+        "label": "Confirmed in Audiobookshelf",
+        "value": "Matches the new value",
+    } in response.json()["events"][0]["evidence"]
 
 
 def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
