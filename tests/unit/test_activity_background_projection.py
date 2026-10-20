@@ -1166,6 +1166,9 @@ def test_the_projector_steps_as_background_work(
     activity = repository._field_effect_activity
     admission = repository.operation_admission
     assert admission is not None
+    # A step already entered before the patch could read past the commit
+    # below and settle it unobserved, so the projector starts idle.
+    assert _settled(repository)
     step = activity._activity_fact_step
     classes: list[object] = []
 
