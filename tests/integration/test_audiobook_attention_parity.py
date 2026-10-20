@@ -9,6 +9,7 @@ settled fill still stays choosable in its case, because only the queue moved.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -102,22 +103,27 @@ def _safety_refusal(
     )
 
 
-# Each condition, and the fields it asks about. The policy Ask check names
-# series and never narrators or ASIN, so that condition asks about series.
-_CONDITIONS = {
+_Condition = Callable[[SQLiteMetadataReportRepository, str, tuple[str, ...]], object]
+
+
+def _policy_ask(key: str) -> _Condition:
+    return lambda repository, case_id, targets: repository._connection.execute(
+        "UPDATE metadata_policy_resolutions SET document=json_set(document,"
+        f"'$.destinations.{key}','ask')"
+    )
+
+
+# Each condition, and the fields it asks about. The policy Ask check never
+# names ASIN; narrators asks under the "Authors and narrators" key.
+_CONDITIONS: dict[str, tuple[tuple[str, ...], _Condition]] = {
     "unresolved_choice": (
         ("asin", "narrators"),
         lambda repository, case_id, targets: _field_facts(
             repository, case_id, targets, "unresolved_choice=1"
         ),
     ),
-    "policy_ask": (
-        ("series",),
-        lambda repository, case_id, targets: repository._connection.execute(
-            "UPDATE metadata_policy_resolutions SET document=json_set(document,"
-            "'$.destinations.series','ask')"
-        ),
-    ),
+    "policy_ask": (("series",), _policy_ask("series")),
+    "policy_ask_narrators": (("narrators",), _policy_ask("contributor_names")),
     "abstention": (
         ("asin", "narrators"),
         lambda repository, case_id, targets: _shadow_outcome(
@@ -142,9 +148,12 @@ def _condition_facts(
     """Facts before and after one condition, on one medium of one recording."""
     directory.mkdir(mode=0o700)
     with closing(open_repository(directory / "application.sqlite3")) as repository:
-        # Series goes to Automatic so that nothing asks before the condition.
+        # Series, authors and narrators go to Automatic so that nothing asks
+        # before the condition.
         case_id, _ = publish_audiobook_preview(
-            repository, corroborated_audiobook_report(), ("series",)
+            repository,
+            corroborated_audiobook_report(),
+            ("series", "contributor_names"),
         )
         connection = repository._connection
         # The conditions write the rows a real projection would, without the
@@ -216,7 +225,9 @@ def test_a_settled_asin_fill_leaves_the_queue_and_stays_choosable(
         attention = browser.attention(search=None, limit=50, cursor=None)
         items = attention["items"]
         assert type(items) is list
-        assert "asin" not in {item["destination"] for item in items}
+        # Only the recording's narrators ask, under "Authors and narrators".
+        asking = {"narrators"} if medium == "m4b" else set()
+        assert {item["destination"] for item in items} == asking
         rows = browser.library(lens="all", search=None, limit=50, cursor=None)["items"]
         assert type(rows) is list
         (row,) = rows
@@ -226,8 +237,7 @@ def test_a_settled_asin_fill_leaves_the_queue_and_stays_choosable(
         asin = next(f for f in detail["fields"] if f["destination"] == "asin")
         assert asin["deterministic_disposition"] == "propose_change"
         assert asin["decision_actions"] == ["keep_current", "accept"]
-        assert attention["total"] == 0
-        assert row["attention_state"] == "no_attention_needed"
+        assert attention["total"] == len(asking)
         # The case page keeps a recording's undecided field the owner's: the
         # stated gap between that page and its Library row (#1249). An
         # ebook's waits for its policy exactly as before.
@@ -260,3 +270,22 @@ def test_a_policy_decided_asin_fill_has_no_fact_on_either_medium(
         _as_medium(repository, case_id, "epub")
         assert "asin" not in {row[4] for row in _facts(connection)}
         connection.rollback()
+
+
+@pytest.mark.parametrize("destination", ("ask", "automatic", "ignore"))
+def test_a_recordings_narrators_ask_only_under_authors_and_narrators_ask(
+    tmp_path: Path, destination: str
+) -> None:
+    """Narrators follow the Policy control they share with authors (#1249)."""
+    with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
+        # Activation needs one Automatic option; isbn forms no field here.
+        publish_audiobook_preview(
+            repository,
+            admitted_audiobook_report(),
+            ("isbn_form",),
+            selected_destinations={"contributor_names": destination},
+        )
+        destinations = {row[4] for row in _facts(repository._connection)}
+
+    assert ("narrators" in destinations) is (destination == "ask")
+    assert "asin" not in destinations

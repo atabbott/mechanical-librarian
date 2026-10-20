@@ -67,9 +67,17 @@ _PARENTS = {
     ),
 }
 _OPERATIONS = ("insert", "update", "delete")
-# The fact source as main held it before #1249 removed the audiobook clause,
-# pinned by digest so the oracle cannot drift with the live text.
+# The fact source as main held it before #1249 removed the audiobook clause
+# and let narrators ask under the authors' policy key, pinned by digest so the
+# oracle cannot drift with the live text.
+_AUTHORS_ASK = (
+    "(result.destination='authors' AND json_extract(policy_resolution.document,"
+    "'$.destinations.contributor_names')='ask') OR "
+)
+_NARRATORS_ASK = _AUTHORS_ASK.replace("'authors'", "'narrators'")
 _PRE_1249_ATTENTION_FACT_SOURCE_SQL = _ATTENTION_FACT_SOURCE_SQL.replace(
+    _NARRATORS_ASK, "", 1
+).replace(
     "OR result.manual_bibliographic_attention=1",
     "OR facts.format <> 'epub' OR result.manual_bibliographic_attention=1",
     1,
@@ -982,8 +990,14 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
         hashlib.sha256(_PRE_1249_ATTENTION_FACT_SOURCE_SQL.encode()).hexdigest()
         == "1513216e8213975ceedf17f5ddd01cf7f3ba4c8ab6c68678f9013399bc7b9d86"
     )
+    # Exactly two edits: the audiobook clause leaves, and narrators asks
+    # beside authors.
+    assert _ATTENTION_FACT_SOURCE_SQL.count(_NARRATORS_ASK) == 1
+    assert _PRE_1249_ATTENTION_FACT_SOURCE_SQL.count(_AUTHORS_ASK) == 1
     assert (
-        _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace("OR facts.format <> 'epub' ", "", 1)
+        _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace(
+            "OR facts.format <> 'epub' ", "", 1
+        ).replace(_AUTHORS_ASK, _AUTHORS_ASK + _NARRATORS_ASK, 1)
         == _ATTENTION_FACT_SOURCE_SQL
     )
 

@@ -28,6 +28,8 @@ _CURRENT_LIBRARY_FROM_SQL = (
 )
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = "result.manual_bibliographic_attention=1"
 # Original case-bound policy only: automatic projection must not become Ask.
+# "Authors and narrators" is one Policy control, so narrators asks under the
+# key authors does; an EPUB never reaches it (#1249).
 _POLICY_ASK_ATTENTION_SQL = (
     "EXISTS (SELECT 1 FROM proposal_sets policy_proposal "
     "JOIN metadata_policy_resolutions policy_resolution ON "
@@ -38,6 +40,8 @@ _POLICY_ASK_ATTENTION_SQL = (
     "(result.destination='title' AND "
     "json_extract(policy_resolution.document,'$.destinations.title_layout')='ask') OR "
     "(result.destination='authors' AND "
+    "json_extract(policy_resolution.document,'$.destinations.contributor_names')='ask') OR "
+    "(result.destination='narrators' AND "
     "json_extract(policy_resolution.document,'$.destinations.contributor_names')='ask') OR "
     "(result.destination='series' AND "
     "json_extract(policy_resolution.document,'$.destinations.series')='ask') OR "
