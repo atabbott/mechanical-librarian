@@ -46,6 +46,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ProviderResult,
     QualifiedLaneObservation,
+    WorkLadderFacts,
     alternative_work_lane_permitted,
     merge_provider_cover_descriptors,
     observe_work_ladder,
@@ -58,6 +59,7 @@ from mechanical_librarian.application.provider_evidence import (
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     local_claim_runtime_seconds,
+    loose_band_near_miss,
     loose_band_survivors,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -231,6 +233,10 @@ class AudibleCatalogMetadataProvider:
         self._schema_rejections = 0
         self._pacer = pacer
         self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        # Per-lane diagnostic state for #1258: the asserted lane's nearest
+        # loose-band near-miss so far, reset as each lane starts.
+        self._work_ladders: list[WorkLadderFacts] = []
+        self._near_miss: int | None = None
 
     @property
     def marketplaces(self) -> tuple[str, ...]:
@@ -282,7 +288,10 @@ class AudibleCatalogMetadataProvider:
         if failure is not None:
             snapshot.raise_from(failure)
         return ProviderResult(
-            observation, snapshot.cover_descriptors, snapshot.evidence
+            observation,
+            snapshot.cover_descriptors,
+            snapshot.evidence,
+            tuple(self._work_ladders),
         )
 
     def _observe(
@@ -352,9 +361,14 @@ class AudibleCatalogMetadataProvider:
                     )
                     continue
                 self._cover_descriptors = ()
+                self._near_miss = None
                 lookup = _lane_lookup(lane, plan)
                 qualified = self._resolve(ledger, lane, lookup, deadline=deadline)
                 observation = qualified.observation
+                if lane.kind is ProviderQueryKind.WORK:
+                    self._work_ladders.append(
+                        WorkLadderFacts(lane.identity, qualified.rungs, self._near_miss)
+                    )
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -558,6 +572,26 @@ class AudibleCatalogMetadataProvider:
             RecursionError,
         ):
             return self._result(lookup, ProviderStatus.MALFORMED)
+        if lookup.audio is not None and lookup.title_basis is None:
+            # Diagnostic only (#1258): the whole parsed page, before any
+            # narrowing, and kept whatever a later rung does.
+            self._near_miss = min(
+                (
+                    value
+                    for value in (
+                        self._near_miss,
+                        loose_band_near_miss(
+                            candidates,
+                            lookup.local_claims,
+                            lookup.title or "",
+                            lookup.authors,
+                        ),
+                    )
+                    if value is not None
+                ),
+                key=lambda value: (abs(value), value),
+                default=None,
+            )
         if narrowed and len(candidates) > _MAX_RESULTS:
             # The whole page parsed first, so a malformed or duplicated product
             # out of band still failed it above. The gate guarantees a local

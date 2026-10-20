@@ -5,10 +5,15 @@ distance at work scope, and the closed reason vocabulary each rule states.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from mechanical_librarian.domain import audiobook_corroboration, metadata_report
-from mechanical_librarian.domain.audio_inspection import AudioChapter
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_DURATION_MILLISECONDS,
+    AudioChapter,
+)
 from mechanical_librarian.domain.audiobook_corroboration import (
     CHAPTER_DURATION_TOLERANCE_SECONDS,
     COVER_PERCEPTUAL_HASH_DISTANCE,
@@ -21,8 +26,10 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationValueError,
     chapter_vector_agreement,
     cover_hash_agreement,
+    lane_band,
     local_chapter_durations_seconds,
     local_runtime_seconds,
+    loose_band_near_miss,
     loose_band_survivors,
     recording_lookup_hints,
     runtime_agreement,
@@ -48,7 +55,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     work_query_ladder,
 )
-from tests.support.audiobook_reports import chapter_runtime_report
+from tests.support.audiobook_reports import audiobook_candidate, chapter_runtime_report
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
@@ -248,6 +255,139 @@ def test_loose_band_narrowing_needs_one_local_runtime() -> None:
         loose_band_survivors([candidates[0]], ())  # type: ignore[arg-type]
     with pytest.raises(CorroborationValueError):
         loose_band_survivors(("a",), ())  # type: ignore[arg-type]
+
+
+def _titled(
+    identity: str, seconds: int, title: str = "Project Hail Mary"
+) -> ProviderCandidate:
+    """One product the asserted lane's exact admission accepts, at a runtime."""
+    return audiobook_candidate(
+        (), identity=identity, duration=f"{seconds}.000", title=title
+    )
+
+
+_NEAR_LOCAL = (_runtime_claim("36000.000"),)
+_NEAR_WORK = ("Project Hail Mary", ("Andy Weir",))
+
+
+@pytest.mark.parametrize(
+    ("runtimes", "expected"),
+    (
+        ((37_200,), 1_200),
+        ((34_800,), -1_200),
+        ((36_900, 35_100), -900),
+        ((35_100, 36_900), -900),
+        ((38_000, 36_700, 33_000), 700),
+        ((36_000 + RUNTIME_BAND_LOOSE_SECONDS,), None),
+        ((36_000 - RUNTIME_BAND_LOOSE_SECONDS,), None),
+        ((36_000 + RUNTIME_BAND_LOOSE_SECONDS + 1,), RUNTIME_BAND_LOOSE_SECONDS + 1),
+        ((36_000 + RUNTIME_BAND_LOOSE_SECONDS, 39_000), 3_000),
+        ((), None),
+    ),
+    ids=(
+        "longer_is_positive",
+        "shorter_is_negative",
+        "tie_picks_the_shorter",
+        "tie_regardless_of_order",
+        "smallest_magnitude",
+        "loose_edge_above_is_in_band",
+        "loose_edge_below_is_in_band",
+        "just_past_the_loose_edge",
+        "in_band_products_never_count",
+        "empty_page",
+    ),
+)
+def test_the_near_miss_is_the_closest_contradicted_title_match(
+    runtimes: tuple[int, ...], expected: int | None
+) -> None:
+    products = tuple(
+        _titled(f"product-{index}", seconds) for index, seconds in enumerate(runtimes)
+    )
+
+    assert expected == loose_band_near_miss(products, _NEAR_LOCAL, *_NEAR_WORK)
+
+
+def test_the_near_miss_counts_only_products_exact_admission_accepts() -> None:
+    """A same-runtime product of another title or author set is not this work."""
+    products = (
+        _titled("other-title", 37_200, title="A Different Book"),
+        _titled("matching", 38_000),
+    )
+
+    assert 2_000 == loose_band_near_miss(products, _NEAR_LOCAL, *_NEAR_WORK)
+    assert (
+        loose_band_near_miss(
+            products, _NEAR_LOCAL, "Project Hail Mary", ("Andy Weir", "Second Author")
+        )
+        is None
+    )
+    assert (
+        loose_band_near_miss(
+            products, _NEAR_LOCAL, "Project Hail Mary", ("Another Author",)
+        )
+        is None
+    )
+
+
+def test_the_near_miss_needs_one_local_runtime_and_a_stated_one() -> None:
+    products = (_titled("matching", 38_000), _stating("silent", None))
+
+    assert loose_band_near_miss(products, (), *_NEAR_WORK) is None
+    disagreeing = (_runtime_claim("36000.000"), _runtime_claim("35000.000"))
+    assert loose_band_near_miss(products, disagreeing, *_NEAR_WORK) is None
+    assert loose_band_near_miss(products[1:], _NEAR_LOCAL, *_NEAR_WORK) is None
+    with pytest.raises(CorroborationValueError):
+        loose_band_near_miss([products[0]], _NEAR_LOCAL, *_NEAR_WORK)  # type: ignore[arg-type]
+
+
+def test_the_near_miss_is_bounded_by_the_longest_runtime_a_claim_states() -> None:
+    """A provider runtime past the duration bound states nothing to miss by."""
+    bound = MAX_DURATION_MILLISECONDS // 1000
+    local = (_runtime_claim("1.000"),)
+    longest = _titled("longest", bound)
+
+    assert bound - 1 == loose_band_near_miss((longest,), local, *_NEAR_WORK)
+    assert (
+        loose_band_near_miss(
+            (_stating("past", f"{bound + 1}.000"),), local, *_NEAR_WORK
+        )
+        is None
+    )
+
+
+def _banded(local: int | None, *runtimes: int, status: str = "candidates") -> str:
+    from types import SimpleNamespace
+
+    products = tuple(
+        _titled(f"product-{index}", seconds) for index, seconds in enumerate(runtimes)
+    )
+    lane = SimpleNamespace(
+        status=metadata_report.ProviderStatus(status),
+        candidates=tuple(
+            SimpleNamespace(edition_identity=value.identity) for value in products
+        ),
+    )
+    return lane_band(
+        cast(Any, SimpleNamespace(candidates=products)), cast(Any, lane), local
+    )
+
+
+@pytest.mark.parametrize(
+    ("local", "runtimes", "status", "band"),
+    (
+        (36_000, (36_000 + RUNTIME_BAND_TIGHT_SECONDS, 40_000), "candidates", "tight"),
+        (36_000, (36_000 + RUNTIME_BAND_LOOSE_SECONDS, 40_000), "candidates", "loose"),
+        (36_000, (40_000,), "candidates", "outside"),
+        (None, (36_000,), "candidates", "unstated"),
+        (36_000, (), "no_match", "none"),
+        (36_000, (), "candidate_limit_exceeded", "none"),
+    ),
+    ids=("tight", "loose", "outside", "unstated", "no_match", "overflow"),
+)
+def test_a_lane_band_is_the_best_band_its_retained_candidates_reach(
+    local: int | None, runtimes: tuple[int, ...], status: str, band: str
+) -> None:
+    assert band == _banded(local, *runtimes, status=status)
 
 
 _RUNG = WorkDispatchLineage.from_query(

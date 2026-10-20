@@ -25,6 +25,7 @@ from mechanical_librarian.application.failure_diagnostics import (
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.provider_evidence import (
+    ProviderIncompleteCause,
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.audio_inspection import (
@@ -71,6 +72,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     DateLinkConfidence,
+    DispatchOutcome,
     EditionEnrichmentOverflow,
     FieldState,
     FileFacts,
@@ -80,6 +82,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidenceKind,
     ProviderLaneCandidate,
+    ProviderLaneDispatch,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
@@ -101,6 +104,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     discovery_lane_identity,
     isbn_family,
+    lane_dispatch_outcome,
     normalize_title,
     provider_candidate_exact_work_identity_admission,
     provider_candidate_set_exact_work_identity_admission,
@@ -108,6 +112,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_work_identity_contradiction,
     provider_lane_candidate_reference,
     recording_variant_conflict,
+    starvation_backed,
     surviving_discovery_titles,
     validate_provider_access_time,
     work_discovery_lane_payloads,
@@ -472,6 +477,8 @@ class ProviderLaneResult:
     recording_lookup_candidates: tuple[ProviderCandidate, ...] = ()
     exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
     recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
+    # Set only by a retry successor carrying a lane's persisted record over.
+    dispatch: ProviderLaneDispatch | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -578,6 +585,11 @@ class ProviderLaneResult:
                     )
                 )
             )
+        ):
+            raise MetadataReportError("provider lane result is invalid")
+        if (
+            self.dispatch is not None
+            and type(self.dispatch) is not ProviderLaneDispatch
         ):
             raise MetadataReportError("provider lane result is invalid")
         if self.accessed_at is not None:
@@ -1097,6 +1109,18 @@ def provider_observation(
                         if aggregate_failure is ProviderStatus.MALFORMED
                         else result.diagnostics
                     ),
+                    dispatch=(
+                        None
+                        if result.dispatch is None
+                        else replace(
+                            result.dispatch,
+                            outcome=(
+                                DispatchOutcome.UNAVAILABLE
+                                if aggregate_failure is ProviderStatus.MALFORMED
+                                else DispatchOutcome.OVERFLOW
+                            ),
+                        )
+                    ),
                 )
                 if result.status is ProviderStatus.CANDIDATES
                 else result
@@ -1158,6 +1182,7 @@ def provider_observation(
                     for hint in result.recording_lookup_hints
                     if hint.asin not in retained_asins
                 ),
+                result.dispatch,
             )
         )
 
@@ -1276,10 +1301,24 @@ class ProviderCoverDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkLadderFacts:
+    """One WORK lane's ladder depth and near-miss, as its adapter walked it.
+
+    Process-local like the operational evidence beside it: `with_lane_dispatch`
+    copies both onto the lane's persisted dispatch record (#1258).
+    """
+
+    lane_identity: str
+    rungs: int
+    near_miss_seconds: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderResult:
     observation: ProviderObservation
     cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
     evidence: ProviderOperationalEvidence = ProviderOperationalEvidence()
+    work_ladders: tuple[WorkLadderFacts, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1589,12 +1628,59 @@ def observe_provider(
         raise MetadataReportError("provider result is invalid")
     return replace(
         result,
-        observation=replace(
-            observation,
-            authority=authority,
-            diagnostics=provider_result_diagnostics(observation, result.evidence),
+        observation=with_lane_dispatch(
+            replace(
+                observation,
+                authority=authority,
+                diagnostics=provider_result_diagnostics(observation, result.evidence),
+            ),
+            result,
+            audio=plan.audio is not None,
         ),
     )
+
+
+def with_lane_dispatch(
+    observation: ProviderObservation, result: ProviderResult, *, audio: bool
+) -> ProviderObservation:
+    """Record how each lane of one audiobook observation was dispatched (#1258).
+
+    `observation` carries the diagnostics the report will persist, which is
+    what a starved lane is held to; `result` carries the adapter's
+    process-local evidence. An incomplete lane is starved only when every
+    undispatched request was stopped by the deadline and those diagnostics
+    back it; a request that was sent and then ran out of time is an
+    unavailable lane, never a starved one. An ebook observation is returned
+    unchanged.
+    """
+    if not audio:
+        return observation
+    causes = result.evidence.incomplete_causes or ()
+    deadline_only = bool(causes) and all(
+        record.cause is ProviderIncompleteCause.DEADLINE for record in causes
+    )
+    ladders = {value.lane_identity: value for value in result.work_ladders}
+    lanes = []
+    for lane in observation.lanes:
+        facts = ladders.get(lane.identity)
+        lanes.append(
+            replace(
+                lane,
+                dispatch=ProviderLaneDispatch(
+                    cast(
+                        "DispatchOutcome",
+                        lane_dispatch_outcome(
+                            lane,
+                            starved=deadline_only
+                            and starvation_backed(observation, lane),
+                        ),
+                    ),
+                    None if facts is None else facts.rungs,
+                    None if facts is None else facts.near_miss_seconds,
+                ),
+            )
+        )
+    return replace(observation, lanes=tuple(lanes))
 
 
 def usable_isbn_families(local_claims: tuple[LocalClaim, ...]) -> frozenset[str]:
@@ -1952,6 +2038,7 @@ class QualifiedLaneObservation:
     exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
     diagnostics: tuple[FailureDiagnostic, ...] = ()
     recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
+    rungs: int = 0
 
 
 def observe_work_ladder(
@@ -1976,6 +2063,9 @@ def observe_work_ladder(
     qualification did not keep. They survive an exhausted ladder and an
     admitted rung, never a terminal failure, and at most
     `MAX_RECORDING_LOOKUP_HINTS` are kept, earliest rung first.
+
+    Every result counts the rungs the walk attempted, the last one included
+    however it ended (#1258).
     """
     exhausted: list[WorkDispatchLineage] = []
     empty_rungs = 0
@@ -2016,20 +2106,22 @@ def observe_work_ladder(
             return QualifiedLaneObservation(
                 observation,
                 recording_lookup_hints=_bounded_lookup_hints(tight, observation),
+                rungs=len(exhausted) + 1,
             )
         else:
-            return QualifiedLaneObservation(observation)
+            return QualifiedLaneObservation(observation, rungs=len(exhausted) + 1)
         exhausted.append(WorkDispatchLineage.from_query(query))
     if observation is None:
         raise MetadataReportError("work query ladder is empty")
     if lookup.audio is None:
-        return QualifiedLaneObservation(observation)
+        return QualifiedLaneObservation(observation, rungs=len(exhausted))
     observation = replace(observation, recording_lookup_candidates=hints)
     return QualifiedLaneObservation(
         observation,
         tuple(exhausted),
         work_ladder_diagnostics(empty_rungs, refused_products),
         _bounded_lookup_hints(tight, observation),
+        len(exhausted),
     )
 
 
@@ -2525,13 +2617,14 @@ class GenerateMetadataReport:
         plan = metadata_discovery_plan(initial, combined_claims)
         cover_aggregate_deadline = time.monotonic() + 60.0
         try:
-            current_sources = (
-                local.cover_sources
-                if self._cover_observer is None
-                else self._cover_observer.observe_current(
-                    initial, local.cover_sources, cover_aggregate_deadline
+            with self._timing.measure("cover", "target"):
+                current_sources = (
+                    local.cover_sources
+                    if self._cover_observer is None
+                    else self._cover_observer.observe_current(
+                        initial, local.cover_sources, cover_aggregate_deadline
+                    )
                 )
-            )
         except BaseException as error:
             # Acquisition owns no publication; preserve cancellation and the
             # original failure while releasing the already-open repository.
@@ -2549,17 +2642,18 @@ class GenerateMetadataReport:
             )
         )
         try:
-            cover_sources = (
-                local.cover_sources
-                if self._cover_observer is None
-                else self._cover_observer.observe(
-                    initial,
-                    tuple(observations),
-                    current_sources,
-                    tuple(descriptors),
-                    cover_aggregate_deadline,
+            with self._timing.measure("cover", "provider"):
+                cover_sources = (
+                    local.cover_sources
+                    if self._cover_observer is None
+                    else self._cover_observer.observe(
+                        initial,
+                        tuple(observations),
+                        current_sources,
+                        tuple(descriptors),
+                        cover_aggregate_deadline,
+                    )
                 )
-            )
             report = MetadataReport.create(
                 target=TargetFacts(
                     self._connection.name,
@@ -2635,6 +2729,11 @@ class GenerateMetadataReport:
                         ProviderStatus.DISABLED,
                         lane.input_references,
                         lane.matched_family,
+                        dispatch=(
+                            None
+                            if plan.audio is None
+                            else ProviderLaneDispatch(DispatchOutcome.NOT_DISPATCHED)
+                        ),
                     )
                     for lane in plan.lanes
                     if lane.title_basis is None
@@ -2742,21 +2841,22 @@ class GenerateMetadataReport:
                     audio_inspector=self._audio_inspector,
                 )
 
-            persisted = (
-                repository.publish(report, currentness, expected_current)
-                if self._publication_receipt is None
-                else repository.publish(
-                    report,
-                    currentness,
-                    expected_current,
-                    self._publication_receipt,
+            with self._timing.measure("persistence", "none"):
+                persisted = (
+                    repository.publish(report, currentness, expected_current)
+                    if self._publication_receipt is None
+                    else repository.publish(
+                        report,
+                        currentness,
+                        expected_current,
+                        self._publication_receipt,
+                    )
                 )
-            )
-            if (
-                persisted != report.to_json()
-                or repository.get(report.report_id) != persisted
-            ):
-                raise MetadataReportError("persisted report readback failed")
+                if (
+                    persisted != report.to_json()
+                    or repository.get(report.report_id) != persisted
+                ):
+                    raise MetadataReportError("persisted report readback failed")
             return persisted
         except TargetConnectionError:
             raise
@@ -2835,13 +2935,14 @@ class GenerateMetadataReport:
         plan = audiobook_discovery_plan(initial, combined_claims, audio=facts)
         cover_aggregate_deadline = time.monotonic() + 60.0
         try:
-            current_sources = (
-                ()
-                if self._cover_observer is None
-                else self._cover_observer.observe_current(
-                    initial, (), cover_aggregate_deadline
+            with self._timing.measure("cover", "target"):
+                current_sources = (
+                    ()
+                    if self._cover_observer is None
+                    else self._cover_observer.observe_current(
+                        initial, (), cover_aggregate_deadline
+                    )
                 )
-            )
         except BaseException as error:
             # Acquisition owns no publication; preserve cancellation and the
             # original failure while releasing the already-open repository.
@@ -2874,17 +2975,18 @@ class GenerateMetadataReport:
             # An audiobook has no locally extracted cover: its embedded art is
             # recorded as presence inside ``audio`` and never decoded, so the
             # observer starts from an empty local set.
-            cover_sources = (
-                ()
-                if self._cover_observer is None
-                else self._cover_observer.observe(
-                    initial,
-                    tuple(observations),
-                    current_sources,
-                    tuple(descriptors),
-                    cover_aggregate_deadline,
+            with self._timing.measure("cover", "provider"):
+                cover_sources = (
+                    ()
+                    if self._cover_observer is None
+                    else self._cover_observer.observe(
+                        initial,
+                        tuple(observations),
+                        current_sources,
+                        tuple(descriptors),
+                        cover_aggregate_deadline,
+                    )
                 )
-            )
             report = MetadataReport.create(
                 target=TargetFacts(
                     self._connection.name,
@@ -3139,6 +3241,7 @@ __all__ = [
     "ProviderObservationInterrupted",
     "ProviderLaneResult",
     "QualifiedLaneObservation",
+    "WorkLadderFacts",
     "ReportRepository",
     "ReportNotFoundError",
     "TargetFile",
@@ -3156,6 +3259,7 @@ __all__ = [
     "metadata_discovery_plan",
     "metadata_lookup",
     "observe_work_ladder",
+    "with_lane_dispatch",
     "promoted_asins",
     "provider_isbn_applicability",
     "provider_observation",

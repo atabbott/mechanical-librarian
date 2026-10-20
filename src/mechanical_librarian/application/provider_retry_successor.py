@@ -40,6 +40,7 @@ from mechanical_librarian.application.metadata_report import (
     metadata_discovery_plan,
     provider_observation,
     require_report_current,
+    with_lane_dispatch,
 )
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
@@ -280,7 +281,11 @@ class GenerateProviderRetrySuccessor:
                 )
             self._heartbeat()
             replacement, retry_after, evidence = self._observe(
-                live_provider, plan, selected, deadline=time.monotonic() + 60.0
+                live_provider,
+                plan,
+                selected,
+                original,
+                deadline=time.monotonic() + 60.0,
             )
             self._heartbeat()
             # A shared provider condition is not evidence for a successor.
@@ -556,6 +561,7 @@ class GenerateProviderRetrySuccessor:
         provider: ConfiguredProviderRetry,
         plan: MetadataDiscoveryPlan,
         selected: tuple[MetadataDiscoveryLane, ...],
+        original: ProviderObservation,
         *,
         deadline: float,
     ) -> tuple[ProviderObservation, int | None, RecoveryAttemptEvidence]:
@@ -601,9 +607,21 @@ class GenerateProviderRetrySuccessor:
                     "provider retry result is invalid",
                     evidence=replace(evidence, outcome="terminal_response"),
                 )
+            diagnostics = provider_result_diagnostics(observation, result.evidence)
+            # A replacement lane is starved only where the merged successor's
+            # diagnostics, which keep the original's, still back it (#1258).
             observation = replace(
-                observation,
-                diagnostics=provider_result_diagnostics(observation, result.evidence),
+                with_lane_dispatch(
+                    replace(
+                        observation,
+                        diagnostics=merge_provider_diagnostics(
+                            original.diagnostics, diagnostics
+                        ),
+                    ),
+                    result,
+                    audio=plan.audio is not None,
+                ),
+                diagnostics=diagnostics,
             )
             return observation, self._retry_after(result.evidence), evidence
         except ProviderRetrySuccessorError:
@@ -684,6 +702,7 @@ class GenerateProviderRetrySuccessor:
                 observation.transformation_lineage,
                 exhausted_dispatch=observation.exhausted_dispatch,
                 recording_lookup_hints=observation.recording_lookup_hints,
+                dispatch=observation.dispatch,
             )
 
         # Merge over the observed lanes only: retrying an asserted lane that

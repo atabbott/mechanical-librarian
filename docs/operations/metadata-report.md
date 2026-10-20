@@ -105,7 +105,7 @@ private-path, credential-shaped, or otherwise invalid non-title input remains
 slashes (`</p>`, `<br />`) and U+2028 line separators and keeps its exact text.
 Text whose only defect is C1 control characters is refused by the validator with
 its own reason, but the report and UI still show that field only as `malformed`
-(#1251). The report is `metadata-report-v55` (#1250). For the title specifically, a
+(#1251). The report is `metadata-report-v56` (#1258). For the title specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
 oversized title or a missing, null, empty, unloaded, or non-string title instead
@@ -265,6 +265,19 @@ grant nothing themselves. A fed ASIN the item did not name admits only when the
 answer passes exact work-identity admission and the tight band, so never without
 a title and authors; an answer naming another work keeps only its ASIN and
 leaves no proposal. Every other lane serializes `[]`.
+
+Every lane of an audiobook report also records `dispatch` (#1258): an
+`outcome` of `admitted`, `empty`, `refused`, `overflow`, `unavailable`,
+`starved`, `not_dispatched` or `empty_or_refused`, and two integers or `null`.
+`rungs` counts the Audible WORK rungs the lane walked. `near_miss_seconds` is
+stated only on Audible's asserted lane: the stated runtime of the nearest
+title-matching product the loose band ruled out, minus the recording's, read
+from the whole page before narrowing and never sent for. A lane is starved only
+when the deadline alone stopped it before it sent the request it was about to
+send; earlier rungs or attempts may have been sent. Hardcover and Open Library
+keep no ladder, so their unmatched work lanes are `empty_or_refused`.
+Report validation re-derives each outcome from the lane and replays the rungs
+and near-miss. The record grants nothing. Ebook lanes serialize `null`.
 
 Those decisions are applied through the same guarded path an ebook's take
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).

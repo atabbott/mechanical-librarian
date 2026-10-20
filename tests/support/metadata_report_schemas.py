@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
+    ProviderLaneDispatch,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -35,8 +36,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    _provider_lane_from_data,
     canonical_json,
     default_target_fields,
+    lane_dispatch_outcome,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -228,17 +231,28 @@ def retained_report_as_current(document: str) -> MetadataReport:
     ones a v49 producer could state), and readdresses it. v52 changed what an
     Audible overflow or empty rung means, v54 what an incumbent description
     admits and v55 what an audio description, language or ASIN claim means;
-    none added a field. Nothing is migrated: the copy is never written back.
+    none added a field. v56 added each lane's dispatch record: null on an
+    ebook lane, and on an audiobook lane the outcome its status and ladder
+    allow, never starved, with no ladder depth or near-miss, since a v49
+    producer kept no cause or depth. Nothing is migrated: the copy is never
+    written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v55"
+    data["schema_version"] = "metadata-report-v56"
     for provider in data["providers"]:
         for lane in provider["lanes"]:
             lane["exhausted_dispatch"] = []
             lane["recording_lookup_hints"] = []
+            lane["dispatch"] = None
+            if data.get("audio") is not None:
+                outcome = lane_dispatch_outcome(
+                    _provider_lane_from_data(lane), starved=False
+                )
+                assert outcome is not None
+                lane["dispatch"] = ProviderLaneDispatch(outcome).to_data()
     if data.get("audio") is not None:
         data["audio"]["discovery_titles"] = []
     data.pop("report_id")
@@ -260,7 +274,7 @@ PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v55'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v56'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -279,10 +293,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v55'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v56'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v55'", f"= '{version}'"
+            "= 'metadata-report-v56'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

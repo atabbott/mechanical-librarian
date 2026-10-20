@@ -1545,6 +1545,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="work-series-title-predecessor-f46",
         ),
+        pytest.param(
+            "9c83027210f955edd873bc923e90b25f974e07adb70e5397e6cb83e0b86d0ad5",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="dispatch-classification-predecessor-f19a",
+        ),
+        pytest.param(
+            "85d20b64a8bc32f4abc01d6e421cce071af204b926c672abd44cc4c0b9482822",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="dispatch-classification-predecessor-f20",
+        ),
+        pytest.param(
+            "2a32e6a6d843b23932fe7fef5540de44bd9b14c9405f9941a0cf311b84182f06",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="dispatch-classification-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

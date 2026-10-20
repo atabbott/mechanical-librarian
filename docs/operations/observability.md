@@ -43,7 +43,14 @@ Timing is disabled by default. Set the documented
 `review.diagnostic_timings_enabled` configuration field to retain at most 256
 stage duration/wait-class records in the owner-private data area. The closed
 stages are extraction, provider search, policy evaluation, human wait, apply,
-verification and reconciliation. Timing is advisory and never audit authority.
+verification, reconciliation, cover, proposal and persistence: cover
+acquisition and the proposal stage are measured on their own (#1258), and
+`persistence` covers report publication: the currentness re-check (a target
+read and, for an audiobook, a re-digest of its tracks), the durable write and
+the read-back. Its wait class is `none` although it contains that target I/O.
+With no cover observer configured, the cover stage is still recorded, at close
+to 0 ms. The ring keeps the newest 256, so a long run keeps only its
+tail. Timing is advisory and never audit authority.
 Timing-store failure cannot change a preparation, decision or field-effect
 outcome; unreadable advisory evidence produces a bounded authenticated 503.
 

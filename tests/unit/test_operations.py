@@ -382,6 +382,27 @@ def test_opt_in_timings_are_bounded_private_and_survive_reopen() -> None:
         assert not path.with_suffix(".tmp").exists()
 
 
+def test_split_preparation_stages_keep_the_timing_file_and_its_bound() -> None:
+    """Cover, proposal and persistence widen the vocabulary only (#1258)."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "private" / "timings.json"
+        store = LocalTimingStore(path, enabled=True)
+        split = (
+            StageTiming("cover", 3, "target", 1),
+            StageTiming("cover", 4, "provider", 2),
+            StageTiming("proposal", 5, "none", 3),
+            StageTiming("persistence", 6, "none", 4),
+        )
+        for value in split:
+            store.append(value)
+        assert split == LocalTimingStore(path, enabled=True).list()
+        assert json.loads(path.read_text())["schema_version"] == "stage-timings-v1"
+    assert 256 == MAX_TIMINGS
+    for stage in ("covers", "proposals", "policy", "write"):
+        with pytest.raises(OperationsError, match="invalid_timing"):
+            StageTiming(stage, 1, "none", 1)
+
+
 def test_timing_failure_cannot_change_measured_authority_and_private_roots_reject_links() -> (
     None
 ):

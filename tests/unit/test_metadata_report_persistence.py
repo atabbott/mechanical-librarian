@@ -14,6 +14,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -201,7 +202,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v6",
             ),
         ),
@@ -367,17 +368,24 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v54",
+            "previous v54",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v54",
             ),
         ),
         (
-            "previous proposal policy v3",
+            "immediate previous v55",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v55",
+            ),
+        ),
+        (
+            "previous proposal policy v3",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v56",
                 "fixed-conservative-v3",
             ),
         ),
@@ -385,7 +393,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v4",
             ),
         ),
@@ -393,7 +401,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v5",
             ),
         ),
@@ -401,7 +409,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v7",
             ),
         ),
@@ -557,7 +565,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v55",)
+        assert schema_version == ("metadata-report-v56",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -741,7 +749,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v55'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v56'", "= 'metadata-report-v49'"
             ),
         )
         # Reconstruct the frozen producer's reviewer table too; never update
@@ -1979,7 +1987,7 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v55"
+        assert restored.schema_version == "metadata-report-v56"
     finally:
         reopened.close()
 
@@ -2108,7 +2116,7 @@ def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> Non
 
     published = _current_audio_report()
     current = json.loads(published.to_json())
-    assert current["schema_version"] == "metadata-report-v55"
+    assert current["schema_version"] == "metadata-report-v56"
     assert MetadataReport.from_json(published.to_json()) == published
 
     previous = json.loads(json.dumps(current))
@@ -2300,7 +2308,7 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
             Path(__file__).parents[1] / "fixtures/metadata-report-v46/report-v46.json"
         ).read_text()
     )
-    document["schema_version"] = "metadata-report-v55"
+    document["schema_version"] = "metadata-report-v56"
     document.pop("report_id")
     document["report_id"] = (
         "report_" + hashlib.sha256(canonical_json(document).encode()).hexdigest()
@@ -2465,7 +2473,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v55'",
+                "= 'metadata-report-v56'",
                 "= 'metadata-report-v54'"
                 if current_scaffolding
                 else "= 'metadata-report-v49'",
@@ -2622,3 +2630,99 @@ def test_discovery_titles_survive_publication_and_reopen(tmp_path: Path) -> None
     del previous["audio"]["discovery_titles"]
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(json.dumps(previous))
+
+
+def _walked_audible_report() -> MetadataReport:
+    """A refused asserted Audible lane with its ladder depth and near-miss."""
+    from dataclasses import replace as _replace
+
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+    )
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    base = recording_lookup_hint_report()
+    (provider,) = base.providers
+    (lane,) = provider.lanes
+    walked = _replace(
+        lane,
+        dispatch=ProviderLaneDispatch(
+            DispatchOutcome.REFUSED, len(lane.exhausted_dispatch), -1200
+        ),
+    )
+    return MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(_replace(provider, lanes=(walked,)),),
+        audio=base.audio,
+    )
+
+
+def test_lane_dispatch_records_survive_publication_and_reopen(tmp_path: Path) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        DispatchOutcome,
+        ProviderLaneDispatch,
+    )
+
+    report = _walked_audible_report()
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    repository.publish(report, lambda: True)
+    repository.close()
+    reopened = open_repository(path, create=False)
+    try:
+        restored = MetadataReport.from_json(reopened.get(report.report_id))
+    finally:
+        reopened.close()
+
+    assert restored == report
+    (lane,) = restored.providers[0].lanes
+    assert lane.dispatch == ProviderLaneDispatch(
+        DispatchOutcome.REFUSED, len(lane.exhausted_dispatch), -1200
+    )
+
+
+def _lanes_of(data: dict[str, Any]) -> list[dict[str, Any]]:
+    return [lane for provider in data["providers"] for lane in provider["lanes"]]
+
+
+def _forged_without_dispatch(data: dict[str, Any]) -> None:
+    for lane in _lanes_of(data):
+        del lane["dispatch"]
+
+
+def _forged_null_audio_dispatch(data: dict[str, Any]) -> None:
+    for lane in _lanes_of(data):
+        lane["dispatch"] = None
+
+
+@pytest.mark.parametrize(
+    ("forge", "message"),
+    (
+        (_forged_without_dispatch, "report object is malformed"),
+        (_forged_null_audio_dispatch, "provider lane dispatch presence is invalid"),
+    ),
+    ids=("missing_record", "null_audio_record"),
+)
+def test_a_current_document_with_a_forged_dispatch_record_is_refused(
+    forge: Callable[[dict[str, Any]], None], message: str
+) -> None:
+    """Every audio lane states its record; an ebook lane's is proved beside
+    the lane table in the discovery tests."""
+    from mechanical_librarian.domain.metadata_report import (
+        ReportValueError,
+        canonical_json,
+    )
+
+    data = json.loads(_walked_audible_report().to_json())
+    assert data["schema_version"] == "metadata-report-v56"
+    forge(data)
+    identity = {key: value for key, value in data.items() if key != "report_id"}
+    data["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+    )
+    with pytest.raises(ReportValueError, match=message):
+        MetadataReport.from_json(canonical_json(data))

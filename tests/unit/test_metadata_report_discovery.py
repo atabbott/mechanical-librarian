@@ -129,7 +129,10 @@ from tests.support.audiobook_reports import (
 from tests.support.audiobook_reports import (
     qualified_audiobook as _qualified_audiobook,
 )
-from tests.support.audiobook_reports import recording_lookup_hint_report
+from tests.support.audiobook_reports import (
+    recorded_dispatch,
+    recording_lookup_hint_report,
+)
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
@@ -1127,7 +1130,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v55" == report.schema_version
+    assert "metadata-report-v56" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -1174,15 +1177,17 @@ def _exhausted_report(
         local_claims=(target_title_claim(_REFUSED_TITLE),),
         local_reasons=("target_metadata_title",),
         providers=(
-            ProviderObservation(
-                "audible",
-                ProviderStatus.NO_MATCH,
-                lane.input_references,
-                query_kind=ProviderQueryKind.WORK,
-                authority="audible_catalog",
-                lanes=(lane,),
-                accessed_at="2023-11-14T22:13:20.000000Z",
-                diagnostics=lane.diagnostics,
+            (recorded_dispatch if audio else lambda value: value)(
+                ProviderObservation(
+                    "audible",
+                    ProviderStatus.NO_MATCH,
+                    lane.input_references,
+                    query_kind=ProviderQueryKind.WORK,
+                    authority="audible_catalog",
+                    lanes=(lane,),
+                    accessed_at="2023-11-14T22:13:20.000000Z",
+                    diagnostics=lane.diagnostics,
+                )
             ),
         ),
         audio=single_track_audio_facts() if audio else None,
@@ -1235,6 +1240,255 @@ def test_a_lane_states_an_exhausted_ladder_only_with_consistent_counts(
 def test_a_refusal_is_stated_only_by_a_lane_that_walked_its_ladder() -> None:
     with pytest.raises(ReportValueError, match="provider lane refusal is invalid"):
         _exhausted_lane(exhausted_dispatch=())
+
+
+_LANE_CANDIDATE = ProviderLaneCandidate("lane_candidate_" + "2" * 64, "e", "w")
+_EMPTY_LADDER = work_ladder_diagnostics(len(_REFUSED_LADDER), 0)
+# One lane per row of the dispatch table (#1258): its status, and the ladder a
+# no-match WORK lane states, decide which outcome it may carry.
+_DISPATCH_LANES: dict[str, dict[str, object]] = {
+    "admitted": {
+        "status": ProviderStatus.CANDIDATES,
+        "candidates": (_LANE_CANDIDATE,),
+        "diagnostics": (),
+        "exhausted_dispatch": (),
+    },
+    "refused_ladder": {},
+    "empty_ladder": {"diagnostics": _EMPTY_LADDER},
+    "no_ladder": {"diagnostics": (), "exhausted_dispatch": ()},
+    "asin": {
+        "kind": ProviderQueryKind.ASIN,
+        "diagnostics": (),
+        "exhausted_dispatch": (),
+    },
+    **{
+        status.value: {"status": status, "diagnostics": (), "exhausted_dispatch": ()}
+        for status in (
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            ProviderStatus.INCOMPLETE,
+            ProviderStatus.UNAVAILABLE,
+            ProviderStatus.RATE_LIMITED,
+            ProviderStatus.AUTHENTICATION,
+            ProviderStatus.AUTHORIZATION,
+            ProviderStatus.MALFORMED,
+            ProviderStatus.OVERSIZED,
+            ProviderStatus.INSUFFICIENT_INPUT,
+            ProviderStatus.DISABLED,
+        )
+    },
+}
+_O = dom.DispatchOutcome
+_DISPATCH_TABLE = (
+    ("admitted", _O.ADMITTED),
+    ("refused_ladder", _O.REFUSED),
+    ("empty_ladder", _O.EMPTY),
+    ("no_ladder", _O.EMPTY_OR_REFUSED),
+    ("asin", _O.EMPTY),
+    ("candidate_limit_exceeded", _O.OVERFLOW),
+    ("incomplete", _O.STARVED),
+    ("incomplete", _O.UNAVAILABLE),
+    *(
+        (status, _O.UNAVAILABLE)
+        for status in (
+            "unavailable",
+            "rate_limited",
+            "authentication",
+            "authorization",
+            "malformed",
+            "oversized",
+        )
+    ),
+    ("insufficient_input", _O.NOT_DISPATCHED),
+    ("disabled", _O.NOT_DISPATCHED),
+)
+# One outcome per row the table does not allow.
+_OFF_TABLE = (
+    ("admitted", _O.OVERFLOW),
+    ("refused_ladder", _O.EMPTY),
+    ("empty_ladder", _O.REFUSED),
+    ("no_ladder", _O.EMPTY),
+    ("asin", _O.EMPTY_OR_REFUSED),
+    ("candidate_limit_exceeded", _O.ADMITTED),
+    ("incomplete", _O.NOT_DISPATCHED),
+    *(
+        (status, _O.STARVED)
+        for status in (
+            "unavailable",
+            "rate_limited",
+            "authentication",
+            "authorization",
+            "malformed",
+            "oversized",
+        )
+    ),
+    ("insufficient_input", _O.UNAVAILABLE),
+    ("disabled", _O.EMPTY),
+)
+
+
+def _dispatch_lane(
+    row: str, dispatch: dom.ProviderLaneDispatch | None
+) -> ProviderLaneObservation:
+    return _exhausted_lane(**_DISPATCH_LANES[row], dispatch=dispatch)
+
+
+@pytest.mark.parametrize(
+    ("row", "outcome"), _DISPATCH_TABLE, ids=[row for row, _ in _DISPATCH_TABLE]
+)
+def test_every_dispatch_table_row_is_accepted_and_round_trips(
+    row: str, outcome: dom.DispatchOutcome
+) -> None:
+    lane = _dispatch_lane(row, dom.ProviderLaneDispatch(outcome))
+    data = lane.to_data()
+
+    assert {"near_miss_seconds": None, "outcome": outcome.value, "rungs": None} == (
+        data["dispatch"]
+    )
+    assert lane == dom._provider_lane_from_data(data)
+    assert outcome is dom.lane_dispatch_outcome(
+        lane, starved=outcome is dom.DispatchOutcome.STARVED
+    )
+
+
+@pytest.mark.parametrize(
+    ("row", "outcome"), _OFF_TABLE, ids=[row for row, _ in _OFF_TABLE]
+)
+def test_a_lane_refuses_every_outcome_its_row_does_not_allow(
+    row: str, outcome: dom.DispatchOutcome
+) -> None:
+    with pytest.raises(ReportValueError, match="provider lane dispatch is invalid"):
+        _dispatch_lane(row, dom.ProviderLaneDispatch(outcome))
+
+
+def test_only_an_audiobook_report_states_lane_dispatch_records() -> None:
+    record = dom.ProviderLaneDispatch(_O.EMPTY_OR_REFUSED)
+    assert (record,) == tuple(
+        lane.dispatch
+        for lane in _exhausted_report(_dispatch_lane("no_ladder", record))
+        .providers[0]
+        .lanes
+    )
+    assert (None,) == tuple(
+        lane.dispatch
+        for lane in _exhausted_report(_dispatch_lane("no_ladder", None), audio=False)
+        .providers[0]
+        .lanes
+    )
+    with pytest.raises(
+        ReportValueError, match="provider lane dispatch presence is invalid"
+    ):
+        _exhausted_report(_dispatch_lane("no_ladder", record), audio=False)
+
+
+@pytest.mark.parametrize(
+    ("status", "outcomes", "expected"),
+    (
+        ("candidates", (_O.ADMITTED, _O.REFUSED), _O.ADMITTED),
+        ("no_match", (_O.EMPTY_OR_REFUSED, _O.EMPTY, _O.REFUSED), _O.REFUSED),
+        ("no_match", (_O.EMPTY_OR_REFUSED, _O.EMPTY), _O.EMPTY),
+        ("no_match", (_O.EMPTY_OR_REFUSED,), _O.EMPTY_OR_REFUSED),
+        ("incomplete", (_O.UNAVAILABLE, _O.STARVED), _O.STARVED),
+        ("incomplete", (_O.UNAVAILABLE,), _O.UNAVAILABLE),
+        ("candidate_limit_exceeded", (_O.OVERFLOW,), _O.OVERFLOW),
+        ("unavailable", (_O.UNAVAILABLE,), _O.UNAVAILABLE),
+        ("malformed", (_O.UNAVAILABLE,), _O.UNAVAILABLE),
+        ("query_limit_exceeded", (), _O.NOT_DISPATCHED),
+        ("insufficient_input", (), _O.NOT_DISPATCHED),
+        ("disabled", (_O.NOT_DISPATCHED,), _O.NOT_DISPATCHED),
+    ),
+    ids=(
+        "admitted",
+        "refusal_first",
+        "empty_before_unknown",
+        "empty_or_refused",
+        "one_starved_lane",
+        "unavailable",
+        "overflow",
+        "unavailable_status",
+        "malformed",
+        "query_limit",
+        "insufficient_input",
+        "disabled",
+    ),
+)
+def test_a_provider_dispatch_class_follows_its_status_and_lane_outcomes(
+    status: str,
+    outcomes: tuple[dom.DispatchOutcome, ...],
+    expected: dom.DispatchOutcome,
+) -> None:
+    observation = SimpleNamespace(
+        status=ProviderStatus(status),
+        lanes=tuple(
+            SimpleNamespace(dispatch=dom.ProviderLaneDispatch(value))
+            for value in outcomes
+        ),
+    )
+    assert expected is dom.provider_dispatch_class(cast(Any, observation))
+
+
+def test_only_a_work_lane_states_ladder_depth_or_a_near_miss() -> None:
+    work = _dispatch_lane(
+        "refused_ladder", dom.ProviderLaneDispatch(_O.REFUSED, 2, 900)
+    )
+    assert dom.ProviderLaneDispatch(_O.REFUSED, 2, 900) == work.dispatch
+    for dispatch in (
+        dom.ProviderLaneDispatch(_O.EMPTY, rungs=1),
+        dom.ProviderLaneDispatch(_O.EMPTY, near_miss_seconds=900),
+    ):
+        with pytest.raises(ReportValueError, match="provider lane dispatch is invalid"):
+            _dispatch_lane("asin", dispatch)
+
+
+@pytest.mark.parametrize(
+    "values",
+    (
+        ("refused", None, None),
+        (_O.REFUSED, True, None),
+        (_O.REFUSED, -1, None),
+        (_O.REFUSED, 1.0, None),
+        (_O.REFUSED, "1", None),
+        (_O.REFUSED, None, True),
+        (_O.REFUSED, None, 900.0),
+        (_O.REFUSED, None, "900"),
+    ),
+    ids=(
+        "text_outcome",
+        "bool_rungs",
+        "negative_rungs",
+        "float_rungs",
+        "text_rungs",
+        "bool_near_miss",
+        "float_near_miss",
+        "text_near_miss",
+    ),
+)
+def test_a_dispatch_record_holds_a_closed_outcome_and_exact_integers(
+    values: tuple[object, object, object],
+) -> None:
+    with pytest.raises(ReportValueError, match="provider lane dispatch is invalid"):
+        dom.ProviderLaneDispatch(*cast(Any, values))
+
+
+@pytest.mark.parametrize(
+    "dispatch",
+    (
+        {"near_miss_seconds": None, "outcome": "refused", "rungs": 2, "text": "x"},
+        {"outcome": "refused", "rungs": 2},
+        {"near_miss_seconds": None, "outcome": "unknown", "rungs": None},
+        {"near_miss_seconds": None, "outcome": "refused", "rungs": False},
+        "refused",
+    ),
+    ids=("unknown_key", "missing_key", "unknown_outcome", "bool_rungs", "not_object"),
+)
+def test_a_dispatch_record_is_read_back_only_in_its_closed_shape(
+    dispatch: object,
+) -> None:
+    data = _dispatch_lane(
+        "refused_ladder", dom.ProviderLaneDispatch(_O.REFUSED, 2)
+    ).to_data()
+    data["dispatch"] = dispatch
+    with pytest.raises((ReportValueError, ValueError)):
+        dom._provider_lane_from_data(data)
 
 
 @pytest.mark.parametrize(
@@ -3719,13 +3973,15 @@ def test_a_report_replays_the_collapse_of_a_title_with_no_query_rung() -> None:
             local_claims=claims,
             local_reasons=("target_metadata_title",),
             providers=(
-                ProviderObservation(
-                    "audible",
-                    ProviderStatus.UNAVAILABLE,
-                    lane.input_references,
-                    query_kind=ProviderQueryKind.WORK,
-                    authority="audible_catalog",
-                    lanes=(lane,),
+                recorded_dispatch(
+                    ProviderObservation(
+                        "audible",
+                        ProviderStatus.UNAVAILABLE,
+                        lane.input_references,
+                        query_kind=ProviderQueryKind.WORK,
+                        authority="audible_catalog",
+                        lanes=(lane,),
+                    )
                 ),
             ),
             audio=_discovery_audio(_LEAF),

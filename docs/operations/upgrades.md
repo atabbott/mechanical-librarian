@@ -1,5 +1,13 @@
 # Upgrades and compatibility
 
+#1258 advances the report to `metadata-report-v56`: every audiobook provider
+lane records why its dispatch ended, how many Audible rungs it walked, and the
+nearest title-matching product the loose band ruled out. Ebook lanes record
+`null`. **Clean rebuild required** for every predecessor application database;
+startup refuses v55 reports before mutation. No migration, adoption,
+conversion, import or downgrade is supplied; F19a/F20/F46 records are displaced
+to revision 56 with their permission sets unchanged.
+
 #1253 advances the proposal policy to `fixed-conservative-v35`: an audiobook
 whose recording is unresolved also offers witnessed series and title choices,
 and a book-level description or genre choice that only trims or extends the
@@ -94,7 +102,7 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v55`, `proposal-set-v8` under
+The current build uses `metadata-report-v56`, `proposal-set-v8` under
 `fixed-conservative-v35`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
 and `deterministic-shadow-decision-policy-v22`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**

@@ -120,6 +120,7 @@ def _v26_document(
                 lane.pop("transformation_lineage")
                 lane.pop("exhausted_dispatch")
                 lane.pop("recording_lookup_hints")
+                lane.pop("dispatch")
     for provider in providers:
         provider.pop("recording_lookup_candidates")
     data["providers"] = providers
@@ -275,7 +276,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v55"
+    assert report.schema_version == "metadata-report-v56"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     for table in (
@@ -1317,7 +1318,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         report = MetadataReport.from_json(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
-    assert report.schema_version == "metadata-report-v55"
+    assert report.schema_version == "metadata-report-v56"
 
 
 def test_a_bridged_lane_gains_every_lane_field_its_source_predates(
@@ -1340,6 +1341,7 @@ def test_a_bridged_lane_gains_every_lane_field_its_source_predates(
         connection.close()
     (lane,) = report.providers[0].lanes
     assert () == lane.exhausted_dispatch
+    assert lane.dispatch is None
     assert () == lane.recording_lookup_hints
 
 
