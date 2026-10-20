@@ -448,9 +448,9 @@ F46 identities. Narrator changes require `contributor_names:canonical`;
 choosing Preserve does not qualify narrator writes.
 
 Two qualified replacements narrow per case and grant nothing (#1252). A title
-replacement that deletes a series label (leading or trailing text, set apart
-by a separator or an enclosure, in which the series grammar reads a label or
-one of the case's own series names appears) asks the owner
+replacement that deletes a series label (text on either side of the kept
+title, set apart by a separator or an enclosure, in which the series grammar
+reads a label or one of the case's own series names appears) asks the owner
 unless the series is already populated, the same outcome set fills it
 automatically, or the same outcome set's automatic subtitle split carries the
 removed segment. A narrator

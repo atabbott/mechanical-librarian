@@ -4624,33 +4624,43 @@ def title_strip_series_label(
 ) -> str | None:
     """Name the series label a scalar title replacement deletes, if it deletes one.
 
-    `desired` must be `current` less one leading or trailing run of text that a
-    separator (a colon, a spaced dash, a comma or a semicolon) or an enclosure
-    (parentheses or brackets) sets apart, compared under `title_identity_key`.
-    That run deletes a series label when `_series_label_text` reads one in it.
-    Any other strip, every non-contiguous rewrite and every blank or unkeyable
-    part names nothing, so the predicate never raises on a valid title (#1252).
+    `current` splits into ordered segments at each separator (a colon, a spaced
+    dash, a comma or a semicolon) and each enclosure (parentheses or brackets).
+    `desired` must equal, under `title_identity_key`, one contiguous run of
+    those segments; the text before and the text after that run are removed,
+    and each deletes a series label when `_series_label_text` reads one in it.
+    The first such removed text in title order is named. Every non-contiguous
+    rewrite and every blank or unkeyable part names nothing, so the predicate
+    never raises on a valid title and never names text a caller cannot key
+    (#1252).
     """
     if type(current) is not str or type(desired) is not str:
         return None
     wanted = _part_key(desired, title_identity_key)
     if not wanted:
         return None
-    removed: list[str] = []
-    for boundary in _TITLE_PART_BOUNDARY.finditer(current):
-        mark = boundary.group()
-        if mark not in ")]" and _part_key(
-            current[: boundary.start()], title_identity_key
-        ) == (wanted):
-            removed.append(
-                current[boundary.start() if mark in "([" else boundary.end() :]
-            )
-        if mark not in "([" and _part_key(
-            current[boundary.end() :], title_identity_key
-        ) == (wanted):
-            removed.append(
-                current[: boundary.end() if mark in ")]" else boundary.start()]
-            )
+    # Each break is the span a segment boundary drops: a separator itself, or
+    # nothing before an opening and after a closing enclosure mark.
+    breaks = [
+        (0, 0),
+        *(
+            (boundary.start(), boundary.start())
+            if boundary.group() in "(["
+            else (boundary.end(), boundary.end())
+            if boundary.group() in ")]"
+            else boundary.span()
+            for boundary in _TITLE_PART_BOUNDARY.finditer(current)
+        ),
+        (len(current), len(current)),
+    ]
+    removed = [
+        side
+        for first in range(len(breaks) - 1)
+        for last in range(first + 1, len(breaks))
+        if _part_key(current[breaks[first][1] : breaks[last][0]], title_identity_key)
+        == wanted
+        for side in (current[: breaks[first][0]], current[breaks[last][1] :])
+    ]
     keys = {
         key
         for name in series_names

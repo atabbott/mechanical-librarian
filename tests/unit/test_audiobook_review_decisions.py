@@ -2097,6 +2097,37 @@ _SERIES_STRIP: dict[str, Any] = {
         ("Saltmarsh - \\Book 1", "Saltmarsh", (), None),
         # A leading enclosure is a boundary like a trailing one.
         ("(Book 1) Saltmarsh", "Saltmarsh", (), "Book 1"),
+        # A strip on both sides of the kept title reads each removed side.
+        (
+            "Saltmarsh Chronicles, Book 1 - Saltmarsh (Unabridged)",
+            "Saltmarsh",
+            (),
+            "Saltmarsh Chronicles, Book 1",
+        ),
+        (
+            "Saltmarsh Chronicles, Book 1 - Saltmarsh (Unabridged)",
+            "Saltmarsh",
+            ("Saltmarsh Chronicles",),
+            "Saltmarsh Chronicles, Book 1",
+        ),
+        (
+            "Ember Chronicles, Book 1: Ember (Dramatized Adaptation)",
+            "Ember",
+            (),
+            "Ember Chronicles, Book 1",
+        ),
+        (
+            "Ember Chronicles, Book 1 - Ember - A Novel",
+            "Ember",
+            (),
+            "Ember Chronicles, Book 1",
+        ),
+        (
+            "A Novel: Saltmarsh (Unabridged)",
+            "Saltmarsh",
+            ("Saltmarsh Chronicles",),
+            None,
+        ),
         # A label nested in the removed text, or a case series named inside it.
         (
             "Saltmarsh: Saltmarsh Chronicles, Book 1 (Unabridged)",
@@ -2129,6 +2160,21 @@ def test_title_strip_series_label_reads_exactly_one_removed_segment(
     current, desired, series_names, removed
 ):
     assert title_strip_series_label(current, desired, series_names) == removed
+
+
+def test_a_two_sided_series_losing_strip_is_asked(monkeypatch):
+    report = synthetic_audiobook_bibliographic_report(
+        title="Saltmarsh Chronicles, Book 1 - Saltmarsh (Unabridged)",
+        source_title="Saltmarsh",
+        source_subtitle=None,
+    )
+    title = _recording_outcomes(report, ("title_layout",))["title"]
+    assert _routing(title) == ("ask", "manual", "title_and_subtitle")
+    # Without the guard the same strip is the qualified automatic replacement.
+    monkeypatch.setattr(shadow_outcome, "title_strip_series_label", lambda *_args: None)
+    assert _routing(_recording_outcomes(report, ("title_layout",))["title"]) == (
+        _REPLACED_TITLE
+    )
 
 
 @pytest.mark.parametrize(

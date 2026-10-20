@@ -106,7 +106,7 @@ _RULE_TABLE = {
     "audiobook_title_series_strip": {
         "identity": "audiobook_title_replace",
         "label_carried_by": "elected_automatic_subtitle_split",
-        "removed_segment": "one_leading_or_trailing_separated_or_enclosed",
+        "removed_segment": "either_side_of_one_contiguous_kept_run",
         "series_label": [
             "closed_series_grammar_in_any_part",
             "case_series_name_in_any_part",
