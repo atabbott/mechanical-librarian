@@ -583,7 +583,7 @@
     "tests/fixtures/title-conflict-v18.json": "760e900d08d9d867ce399c2c3e7e784c246627432e514058ccf80e0085cdea65",
     "tests/fixtures/title-preservation-v19.json": "835fa9807b3f1c90b614404fc03a09f9b30bfe6d19f663494233321a81275b08",
     "tests/installed/test_continuous_review_scale.py": "30494fc83e2ef44e26efc4a44527e10d64265d57e3fc45f9c343447a64e408b2",
-    "tests/integration/test_audiobook_provider_activation.py": "33e1c850513a6574926e1b3be348df70c595c137cf73e96b0e11e5863f59379c",
+    "tests/integration/test_audiobook_provider_activation.py": "3e16c2d5d92e2840dcda796fc8c8616f80d0c6c5efbdcce1cd7e7d89721ea7fd",
     "tests/integration/test_continuous_review_scale.py": "a3700a28f38289a898ea75b9693efd304974ba6a41dcc1ad3ee9ce80ff757e23",
     "tests/integration/test_database_crash_recovery.py": "285eb4cb629482f192426f61b11f306c352f53a8b40fbdea9d2b1452041619f0",
     "tests/integration/test_owner_responsiveness.py": "b042de2a5a4ee195ca5790a303125fe096ede1c4545de955294804afa7928282",
