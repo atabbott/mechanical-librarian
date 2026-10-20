@@ -285,18 +285,20 @@ and 83 distinct queries.
 
 ## Description bound and oversized claims (#1250)
 
-A description fact holds at most 512 characters, the claim type's own width,
-and the bound is not raised. A longer description is validated whole first,
+A description fact holds at most 512 characters, the claim type's own width, and
+the bound is not raised. Whitespace normalization runs first, as it does for
+every audio value, so a control it folds (a tab, a line break, NEL, U+2028 or
+U+2029) is already a space. A longer description is then validated whole,
 against the configured tag width and the shared projection rule, so a
-credential, path, control or lone surrogate anywhere in it still refuses the
-value. Only then is it cut to its first 512 code points, with no canonical
-form, in the existing `oversized` state. That state is the truncation record:
-`audio-inspection-v4` already admits it, so neither the protocol nor the
-observation vocabulary changes, and the fact now refuses `oversized` for any
-other field. The prefix is evidence that a description exists. It is never a
-proposal, an automatic value or a written value, because the proposal set
-admits only valid claims with a canonical value. NFO and CUE lines over 512
-characters still never match their grammars.
+credential, path, lone surrogate or any other forbidden character anywhere in it
+still refuses the value. Only then is it cut to its first 512 code points, with
+no canonical form, in the existing `oversized` state. That state is the
+truncation record: `audio-inspection-v4` already admits it, so neither the
+protocol nor the observation vocabulary changes, and the fact now refuses
+`oversized` for any other field. The prefix is evidence that a description
+exists. It is never a proposal, an automatic value or a written value, because
+the proposal set admits only valid claims with a canonical value. NFO and CUE
+lines over 512 characters still never match their grammars.
 
 ISO 639-2's `und`, `mul`, `mis` and `zxx`, and the literal `xxx`, name no
 language, so no audio surface yields a language claim for one. The child's

@@ -1116,6 +1116,27 @@ def test_a_value_is_validated_whole_before_it_is_cut(hidden: str) -> None:
     assert _descriptions(interpretation) == []
 
 
+def test_folded_controls_past_the_bound_become_spaces_before_the_cut() -> None:
+    """Whitespace normalization folds these before validation (#1250)."""
+    description = "D" * 600 + " a\nb\x85c\u2028d"
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
+                "metadata.json",
+                json.dumps({"description": description}),
+            ),
+        ),
+    )
+
+    [(observed, canonical, state, _)] = _descriptions(interpretation)
+    assert (observed, canonical, state) == ("D" * 512, None, "oversized")
+    assert audio_local.bounded_description(description, _LIMITS) == ("D" * 512, "oversized")
+    assert not any(character in observed for character in "\n\x85\u2028")
+    assert audio_local.bounded_description("D" * 600 + " a\x9bb", _LIMITS) is None
+
+
 def test_a_description_past_the_tag_width_is_no_claim() -> None:
     limits = AudioInspectionLimits(tag_value_characters=1024)
     description = "D" * 1025

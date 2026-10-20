@@ -416,8 +416,10 @@ def bounded_description(
     """Return the description text a fact may carry, and the state it carries it in.
 
     A description within the 512-character bound is returned whole and
-    ``valid``.  A longer one is validated whole first -- so a credential, a
-    path or a forbidden codepoint anywhere in it still refuses the value rather
+    ``valid``.  Whitespace normalization runs first, so a control it folds --
+    a tab, a line break, NEL, U+2028 or U+2029 -- is already a space.  A
+    longer value is then validated whole -- so a credential, a path or any
+    other forbidden codepoint anywhere in it still refuses the value rather
     than being cut off -- and only then reduced to its first 512 code points,
     in the ``oversized`` state.  That state is the record of the cut: the
     prefix is evidence that a description exists, never a value to propose or

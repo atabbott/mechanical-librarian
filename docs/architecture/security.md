@@ -353,8 +353,10 @@ a library-wide provider barrier.
   materializing an unbounded directory. Path evidence reads bare name
   components only, never a joined path.
   A description over the 512-character fact bound is validated whole, against
-  the tag width and the projection rule, before it is cut, so a credential,
-  path, control or lone surrogate placed past character 512 still refuses the
+  the tag width and the projection rule, before it is cut. Controls that
+  whitespace normalization folds (tab, line break, NEL, U+2028, U+2029) become
+  spaces first, as for every audio value; a credential, path, lone surrogate or
+  any other forbidden character placed past character 512 still refuses the
   value rather than being cut off unseen. The kept first 512 code points carry
   no canonical value and the `oversized` state, which only a description may
   hold; the proposal set admits only valid claims with a canonical value, so
