@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- Audiobooks now enter the attention queue under the same conditions as ebooks,
-  so a settled fill that no policy routes to Ask, such as tags, ASIN or
-  narrators, no longer counts as needing attention. Its case still offers
-  keeping the current value or choosing a proposed one, as an optional choice
-  that is not counted. Upgrading requires a clean rebuild (#1249).
+- Audiobooks now enter the attention queue under the same conditions as ebooks:
+  tag and ASIN fills never count as needing attention on their own, and
+  narrators do only under "Authors and narrators: Ask me". An uncounted fill
+  stays in its case as an optional choice to keep the current value or choose a
+  proposed one. Upgrading requires a clean rebuild (#1249).
 
 - Library descriptions containing HTML closing tags such as `</p>` or Unicode
   line separators are now read and compared instead of being marked malformed,
