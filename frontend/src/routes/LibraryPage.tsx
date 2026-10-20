@@ -49,7 +49,12 @@ import {
   normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
-import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
+import {
+  actionable,
+  choiceAvailable,
+  requestKey,
+  useReviewDecisionController,
+} from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
@@ -506,6 +511,9 @@ const decisionValue = (field: ReviewField) => {
     ? field.currentValue
     : displayValue(selected.value)
 }
+// A recording's settled fill stays choosable without asking for review (#1249).
+const optionalChoice = (field: ReviewField) =>
+  field.classification === 'owner_choosable' && choiceAvailable(field)
 const fieldState = (field: ReviewField) =>
   field.humanDecision
     ? 'Owner decision recorded'
@@ -513,7 +521,9 @@ const fieldState = (field: ReviewField) =>
       ? 'Resolved automatically'
       : actionable(field)
         ? 'Needs review'
-        : 'No eligible change'
+        : optionalChoice(field)
+          ? 'Optional choice'
+          : 'No eligible change'
 const fieldReason = (field: ReviewField) =>
   bounded(
     field.humanDecision
@@ -3355,8 +3365,11 @@ export default function LibraryPage({
     selectedRecorded &&
     selected.editable &&
     selected.decisionActions.length > 0
+  const selectedOptional =
+    selected !== undefined && !selectedActionable && !selectedRecorded && optionalChoice(selected)
   const selectedAdvice = selected?.destination === 'description' ? selected.descriptionAdvice : null
-  const selectedChoiceMode = selectedActionable || selectedRevisitable || Boolean(selectedAdvice)
+  const selectedChoiceMode =
+    selectedActionable || selectedRevisitable || selectedOptional || Boolean(selectedAdvice)
   const selectedCoverPreparation =
     selected?.destination === 'cover' &&
     selected.coverConsideration?.current !== true &&
@@ -4037,6 +4050,8 @@ export default function LibraryPage({
                           The recorded outcome is marked below. You can select another eligible
                           value.
                         </p>
+                      ) : selectedOptional ? (
+                        <p>{fieldReason(selected)}</p>
                       ) : null}
                       {selected.automaticWithheldReason ? (
                         <p className="automatic-withheld-reason">
@@ -4079,7 +4094,9 @@ export default function LibraryPage({
                         aria-label={
                           selectedActionable
                             ? decisionQuestion(selected.destination)
-                            : `${fieldLabel(selected.destination)} recorded choices`
+                            : selectedOptional
+                              ? `${fieldLabel(selected.destination)} choices`
+                              : `${fieldLabel(selected.destination)} recorded choices`
                         }
                       >
                         {selectedRevisitable ? (

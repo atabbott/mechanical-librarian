@@ -927,6 +927,19 @@ describe('ReviewApiClient', () => {
 
     expect(mapCaseDetail(response([field()])).fields[0]?.currentValue).toBe('A Book')
     expect(mapCaseDetail(response([field()])).fields[0]?.automaticWithheldReason).toBeNull()
+    // A recording's optional choice maps; a state the server never states does not.
+    expect(
+      mapCaseDetail(
+        response([
+          field({
+            classification: 'owner_choosable',
+            needs_attention: false,
+            navigation_role: 'inspect',
+          }),
+        ]),
+      ).fields[0]?.classification,
+    ).toBe('owner_choosable')
+    expect(() => mapCaseDetail(response([field({ classification: 'queued' })]))).toThrow(ApiError)
     expect(
       mapCaseDetail(response([field({ automatic_withheld_reason: null })])).fields[0]
         ?.automaticWithheldReason,

@@ -2106,13 +2106,14 @@ const decisionAction = (value: unknown): DecisionAction => {
   return value
 }
 const classificationValue = (value: unknown) => {
-  const allowed = [
+  const allowed: readonly string[] = [
     'needs_attention',
     'manual_fallback',
     'automatic_recorded',
     'human_recorded',
     'unsupported',
-  ]
+    'owner_choosable',
+  ] satisfies readonly Schema<'_ReviewField'>['classification'][]
   if (typeof value !== 'string' || !allowed.includes(value))
     throw new ApiError(502, 'invalid_classification')
   return value

@@ -5212,6 +5212,126 @@ describe('Library route', () => {
     expect(document.activeElement).toHaveClass('review-complete')
   })
 
+  describe("a recording's optional choice (#1249)", () => {
+    const title = detail.fields[0]
+    if (!title) throw new Error('optional choice fixture requires a title field')
+    const asin = {
+      ...title,
+      destination: 'asin',
+      classification: 'owner_choosable' as const,
+      classificationReason:
+        'No review is needed. You can still keep the current value or choose a proposed one.',
+      needsAttention: false,
+      navigationRole: 'inspect' as const,
+      editable: true,
+      currentValue: 'Unavailable',
+      currentRaw: null,
+      proposedValues: [{ kind: 'text' as const, value: 'B0CW1KL2QD' }],
+      proposalId: 'proposal-asin',
+    }
+    const recording: CaseDetailView = { ...detail, fields: [title, asin] }
+    const settle = (field: typeof title, outcome: 'accept' | 'keep_current') => {
+      const decision = {
+        actor: 'owner',
+        application: 'apply' as const,
+        decision_id: `decision-${field.destination}`,
+        destination: field.destination,
+        occurred_at: 1,
+        outcome,
+        proposal_id: field.proposalId,
+        review_case_id: 'case-1',
+        selected_value: outcome === 'accept' ? (field.proposedValues[0] ?? null) : null,
+        target_fingerprint: field.targetFingerprint,
+      }
+      const settled: CaseDetailView = {
+        ...recording,
+        fields: recording.fields.map((value) =>
+          value.destination === field.destination
+            ? {
+                ...value,
+                classification: 'human_recorded' as const,
+                needsAttention: false,
+                navigationRole: 'inspect' as const,
+                humanDecision: decision,
+              }
+            : value,
+        ),
+      }
+      return { decision, settled }
+    }
+
+    it('is offered without counting it or naming it for review', async () => {
+      const user = userEvent.setup()
+      const { decision, settled } = settle(asin, 'accept')
+      let current = recording
+      const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+        current = settled
+        return {
+          confirmation: { status: 'confirmed' as const, case: current },
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          ...decision,
+        }
+      })
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => current),
+        recordDecision,
+      })
+
+      expect(
+        await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+      ).toBeVisible()
+      expect(screen.getByText('Needs review').nextElementSibling).toHaveTextContent('1')
+      expect(screen.getByText('1 remaining · field 1 of 2')).toBeVisible()
+      const rail = screen.getByRole('button', { name: /^Asin/u })
+      const glyph = within(rail).getByLabelText('Optional choice')
+      expect(glyph).toHaveTextContent('✓')
+
+      await user.click(rail)
+      const choices = await screen.findByRole('region', { name: 'Asin choices' })
+      expect(
+        within(choices).getByRole('button', { name: 'Choose current value: Unavailable' }),
+      ).toBeEnabled()
+      const accept = within(choices).getByRole('button', {
+        name: 'Choose proposed value: B0CW1KL2QD',
+      })
+      expect(accept).toBeEnabled()
+      expect(screen.queryByText('Queue position')).toBeNull()
+      const canvas = document.querySelector('.decision-canvas')
+      expect(canvas?.textContent).not.toMatch(/needs (?:your )?review/iu)
+
+      await user.click(accept)
+      await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(1))
+      expect(recordDecision.mock.calls[0]?.[1].destination).toBe('asin')
+    })
+
+    it('is skipped when the field that needed review is decided', async () => {
+      const user = userEvent.setup()
+      const { decision, settled } = settle(title, 'keep_current')
+      let current = recording
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => current),
+        recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
+          current = settled
+          return {
+            confirmation: { status: 'confirmed' as const, case: current },
+            invalidation_sequences: [],
+            schema_version: 'review-decision-v1' as const,
+            ...decision,
+          }
+        }),
+      })
+
+      await user.click(
+        await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+      )
+      expect(await screen.findByRole('heading', { name: 'Review complete' })).toBeVisible()
+      expect(screen.queryByRole('region', { name: 'Asin choices' })).toBeNull()
+    })
+  })
+
   it('clears a stale attempt before reopening its actionable current field', async () => {
     const user = userEvent.setup()
     const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
