@@ -11,7 +11,8 @@ uv run python scripts/cold_start_report.py \
     --database /copy/application.sqlite3 \
     --catalogue /copy/catalogue.sqlite3 \
     --mount-root books=/host/path/to/mount \
-    --stage-timings /copy/stage-timings.json
+    --stage-timings /copy/stage-timings.json \
+    --recovery-database /copy/provider-recovery.sqlite
 ```
 
 It writes nothing and prints one `cold-start-report-v3` JSON document. It can
@@ -19,6 +20,8 @@ run at any point during or after preparation, repeatedly. `--mount-root`
 remaps a configured mount name to a host path for the extension census,
 because the configuration records container paths. `--stage-timings` is
 optional and names a copy of the diagnostic stage-timing file.
+`--recovery-database` is optional and names a copy of the provider recovery
+database; it is opened read-only like the others.
 
 The report is aggregate-only by construction. It contains connection, library,
 provider, and mount names from the operator's own configuration, destination
@@ -71,6 +74,37 @@ runtime band a retained candidate reaches (`tight`, `loose`, `outside`,
 counts the recorded Audible near-misses by sign and magnitude bucket
 (`600-900`, `900-1800`, `1800-3600`, `3600+` seconds, each closed on its upper
 bound). An ebook-only library reports zero reports and empty lists.
+
+Over the same audiobook reports, `audiobook_outcomes` splits each library's
+`reports` by the case its evidence earns. `recording_admitted` is a report
+whose recording identity is admitted and `work_only` one whose book evidence
+alone opens a work-level case, both read from the product's own review scope
+rather than re-derived. Every other report is `evidence_only`, with a `total`
+and a count for each of four reasons, judged by the best runtime band each
+audiobook-authority lane reaches, as `band` reports it:
+`no_retained_recording_candidate` when no such lane retained a candidate,
+`tight_band_candidate_but_not_admitted` when one reached the tight band,
+`runtime_contradiction` when every one is `outside`, and
+`runtime_near_miss_only_or_mixed` for any other mix of `loose`, `outside` and
+`unstated`. `audiobook_cover_reads` counts the Audiobookshelf cover read each
+report records by `state` and, for a `timeout`, its `timeout_scope`
+(`attempted`, or `not_started_due_to_aggregate_deadline` when the window had
+already closed); `without_read` counts reports with no such read, as when
+cover evidence is switched off.
+
+Each library also carries `dispatches`, over every current item of any media
+kind, `report_only` packages included, read from each provider's persisted
+request accounting: the `items` counted, the `initial` and `retry` dispatch
+totals, their `mean_per_item` (`null` with no items), `per_item` counting
+items by the dispatches they spent (`0`, `1`, `2`, `3-5`, `6-10`, `11-20`,
+`21+`, each closed on its upper bound), and per-provider `initial` and
+`retry` totals.
+
+With `--recovery-database`, the top-level `recovery_jobs` block counts the
+recovery database's jobs: a total `jobs` and one group per provider
+connection, adapter, target connection, library and state. Without the
+option it is `null`; a named file that does not exist or cannot be read as a
+recovery database stops the report.
 
 Top-level totals give the quiet fraction — the headline first-boot attention
 rate is its complement and includes only libraries still present in the loaded

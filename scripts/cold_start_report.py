@@ -18,8 +18,13 @@ instead of guessing that its cover fields are quiet.
 Each library also carries an ``audiobook_dispatch`` census of how every
 current audiobook report's provider lanes ended (#1258): counts per lane
 outcome, provider class, Audible ladder depth, runtime band and near-miss
-bucket, over every current audiobook including report-only ones. An optional
-stage-timing file adds the retained tail's per-stage percentiles.
+bucket, over every current audiobook including report-only ones. Beside it,
+``audiobook_outcomes`` splits those reports into a recording-admitted case, a
+work-only case and evidence only by its runtime reason, ``audiobook_cover_reads``
+counts their Audiobookshelf cover-read states, and ``dispatches`` counts every
+current item's initial and retry provider dispatches. An optional stage-timing
+file adds the retained tail's per-stage percentiles, and an optional provider
+recovery database adds its job counts.
 
 Usage:
     uv run python scripts/cold_start_report.py \
@@ -27,7 +32,8 @@ Usage:
         --database /copy/application.sqlite3 \
         --catalogue /copy/catalogue.sqlite3 \
         [--mount-root books=/host/path/to/mount ...] \
-        [--stage-timings /copy/stage-timings.json]
+        [--stage-timings /copy/stage-timings.json] \
+        [--recovery-database /copy/provider-recovery.sqlite]
 
 ``--mount-root`` remaps a configured mount name to a host path for the
 extension census, because the configuration records container paths.
@@ -61,13 +67,19 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     lane_band,
     local_claim_runtime_seconds,
 )
+from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.metadata_report import (
+    AUDIOBOOK_PROVIDER_AUTHORITIES,
     AudioFacts,
     MetadataReport,
     ProviderLaneDispatch,
     ProviderQueryKind,
     provider_dispatch_class,
     work_discovery_lane_payloads,
+)
+from mechanical_librarian.domain.proposal_set import (
+    AudiobookReviewScope,
+    audiobook_review_scope,
 )
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
@@ -126,6 +138,17 @@ _AUDIO_REPORTS_SQL = (
     "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
     "WHERE json_extract(mr.document,'$.audio') IS NOT NULL"
+)
+# Every current item, report-only ones included: each one spent its dispatches.
+_DISPATCH_ROWS_SQL = (
+    "SELECT ml.connection_name,ml.library_name,"
+    "json_extract(mr.document,'$.providers') "
+    "FROM current_review_packages ml "
+    "JOIN metadata_reports mr ON mr.report_id=ml.report_id"
+)
+_RECOVERY_JOBS_SQL = (
+    "SELECT connection,adapter,target_connection,library,state,count(*) "
+    "FROM provider_recovery_jobs GROUP BY 1,2,3,4,5 ORDER BY 1,2,3,4,5"
 )
 _UNMATCHED_WORKS_SQL = (
     "SELECT ml.connection_name,ml.library_name,count(*) "
@@ -248,6 +271,20 @@ _ABSENCE_REASONS = frozenset(
 _SAFETY_CAUSE = "automatic_safety_suspended"
 # Upper bounds, inclusive, of the near-miss magnitude buckets past the loose band.
 _NEAR_MISS_RANGES = ((900, "600-900"), (1800, "900-1800"), (3600, "1800-3600"))
+_DISPATCH_RANGES = (
+    (0, "0"),
+    (1, "1"),
+    (2, "2"),
+    (5, "3-5"),
+    (10, "6-10"),
+    (20, "11-20"),
+)
+_EVIDENCE_ONLY_REASONS = (
+    "no_retained_recording_candidate",
+    "runtime_contradiction",
+    "runtime_near_miss_only_or_mixed",
+    "tight_band_candidate_but_not_admitted",
+)
 _MAX_MOUNT_WALK_FILES = 1_000_000
 
 
@@ -331,13 +368,30 @@ def _provider_lane_rows(connection: sqlite3.Connection) -> list[tuple[object, ..
     return rows
 
 
-def _audiobook_dispatch_rows(
+def _evidence_only_reason(bands: frozenset[str]) -> str:
+    """Name why an unadmitted, work-quiet audiobook stayed evidence only.
+
+    `bands` holds the best runtime band of each audiobook-authority lane that
+    retained a candidate, so an empty set means no lane retained one.
+    """
+    if not bands:
+        return "no_retained_recording_candidate"
+    if "tight" in bands:
+        return "tight_band_candidate_but_not_admitted"
+    if bands == {"outside"}:
+        return "runtime_contradiction"
+    return "runtime_near_miss_only_or_mixed"
+
+
+def _audiobook_rows(
     connection: sqlite3.Connection,
 ) -> list[tuple[object, ...]]:
-    """One row per current audiobook report: its providers' dispatch facts.
+    """One row per current audiobook report: its dispatch, outcome and cover.
 
     Each provider is (provider, class, lanes) and each lane is (lane kind,
-    outcome, rungs, near-miss, band): closed vocabulary and integers only.
+    outcome, rungs, near-miss, band). The outcome is the report's review scope
+    or its evidence-only reason, and each Audiobookshelf cover read is (state,
+    timeout scope): closed vocabulary and integers only.
     """
     rows: list[tuple[object, ...]] = []
     for connection_name, library_name, document in connection.execute(
@@ -377,7 +431,57 @@ def _audiobook_dispatch_rows(
                     tuple(lanes),
                 )
             )
-        rows.append((connection_name, library_name, tuple(providers)))
+        scope = audiobook_review_scope(report)
+        outcome = (
+            "recording_admitted"
+            if scope is AudiobookReviewScope.RECORDING
+            else "work_only"
+            if scope is AudiobookReviewScope.WORK
+            else _evidence_only_reason(
+                frozenset(
+                    lane_band(provider, lane, local)
+                    for provider in report.providers
+                    if provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+                    for lane in provider.lanes
+                )
+                - {"none"}
+            )
+        )
+        cover_reads = tuple(
+            (source.state.value, source.timeout_scope)
+            for source in report.cover_sources
+            if source.kind is CoverSourceKind.ABS
+        )
+        rows.append(
+            (connection_name, library_name, tuple(providers), outcome, cover_reads)
+        )
+    return rows
+
+
+def _dispatch_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
+    """One row per current item: (connection, library, provider dispatches).
+
+    Each provider is (provider, initial dispatches, retry dispatches), read
+    from its persisted request accounting.
+    """
+    rows: list[tuple[object, ...]] = []
+    for connection_name, library_name, providers in connection.execute(
+        _DISPATCH_ROWS_SQL
+    ).fetchall():
+        rows.append(
+            (
+                connection_name,
+                library_name,
+                tuple(
+                    (
+                        provider["provider"],
+                        provider["request_accounting"]["initial_dispatches"],
+                        provider["request_accounting"]["retry_dispatches"],
+                    )
+                    for provider in json.loads(providers)
+                ),
+            )
+        )
     return rows
 
 
@@ -506,7 +610,8 @@ def cold_start_snapshot(connection: sqlite3.Connection) -> dict[str, object]:
             "absences": _rows(connection, _ABSENCE_COUNTS_SQL),
             "duplicates": _duplicate_groups(connection),
             "agreement": _agreement_rows(connection),
-            "audiobook_dispatch": _audiobook_dispatch_rows(connection),
+            "audiobooks": _audiobook_rows(connection),
+            "dispatches": _dispatch_rows(connection),
         }
     finally:
         connection.execute("COMMIT")
@@ -655,6 +760,89 @@ def _audiobook_dispatch(rows: list[tuple[object, ...]]) -> dict[str, object]:
     }
 
 
+def _audiobook_outcomes(rows: list[tuple[object, ...]]) -> dict[str, object]:
+    """Split one library's audiobook reports by the case their evidence earns."""
+    counts = Counter(cast("str", row[3]) for row in rows)
+    return {
+        "reports": len(rows),
+        "recording_admitted": counts["recording_admitted"],
+        "work_only": counts["work_only"],
+        "evidence_only": {
+            "total": sum(counts[reason] for reason in _EVIDENCE_ONLY_REASONS),
+            **{reason: counts[reason] for reason in _EVIDENCE_ONLY_REASONS},
+        },
+    }
+
+
+def _audiobook_cover_reads(rows: list[tuple[object, ...]]) -> dict[str, object]:
+    """Count one library's Audiobookshelf cover reads by state and timeout scope."""
+    states: Counter[tuple[str, str]] = Counter()
+    for row in rows:
+        for state, scope in cast("tuple[tuple[str, str | None], ...]", row[4]):
+            states[(state, scope or "")] += 1
+    return {
+        "reports": len(rows),
+        "without_read": sum(1 for row in rows if not row[4]),
+        "states": [
+            {"state": state, "timeout_scope": scope or None, "count": count}
+            for (state, scope), count in sorted(states.items())
+        ],
+    }
+
+
+def _dispatches(rows: list[tuple[object, ...]]) -> dict[str, object]:
+    """Count one library's initial and retry provider dispatches per item."""
+    initial: Counter[str] = Counter()
+    retry: Counter[str] = Counter()
+    per_item: Counter[str] = Counter()
+    for row in rows:
+        spent = 0
+        for provider, first, again in cast("tuple[tuple[str, int, int], ...]", row[2]):
+            initial[provider] += first
+            retry[provider] += again
+            spent += first + again
+        per_item[
+            next((name for bound, name in _DISPATCH_RANGES if spent <= bound), "21+")
+        ] += 1
+    total = sum(initial.values()) + sum(retry.values())
+    return {
+        "items": len(rows),
+        "initial": sum(initial.values()),
+        "retry": sum(retry.values()),
+        "mean_per_item": round(total / len(rows), 2) if rows else None,
+        "per_item": [
+            {"range": name, "items": per_item[name]}
+            for name in (*(name for _, name in _DISPATCH_RANGES), "21+")
+        ],
+        "providers": [
+            {
+                "provider": provider,
+                "initial": initial[provider],
+                "retry": retry[provider],
+            }
+            for provider in sorted(initial)
+        ],
+    }
+
+
+def _recovery_jobs(rows: list[tuple[object, ...]]) -> dict[str, object]:
+    """Count provider recovery jobs by provider, library and state."""
+    return {
+        "jobs": sum(int(cast("int", row[5])) for row in rows),
+        "groups": [
+            {
+                "provider": provider,
+                "adapter": adapter,
+                "connection": target,
+                "library": library,
+                "state": state,
+                "count": count,
+            }
+            for provider, adapter, target, library, state, count in rows
+        ],
+    }
+
+
 def _stage_timings(values: tuple[StageTiming, ...]) -> dict[str, object]:
     """Nearest-rank percentiles per stage over the retained timing tail."""
     durations: dict[tuple[str, str], list[int]] = {}
@@ -701,6 +889,7 @@ def assemble_cold_start_report(
     mount_files: dict[str, dict[str, int] | None],
     generated_at: int,
     stage_timings: tuple[StageTiming, ...] | None = None,
+    recovery_jobs: list[tuple[object, ...]] | None = None,
 ) -> dict[str, object]:
     """Build the ``cold-start-report-v3`` document from persisted aggregates.
 
@@ -792,8 +981,11 @@ def assemble_cold_start_report(
             _bucket(len(correlations & provider_identities))
         ] += 1
 
+    audiobook_rows: dict[tuple[object, object], list[tuple[object, ...]]] = {}
+    for row in cast("list[tuple[object, ...]]", snapshot["audiobooks"]):
+        audiobook_rows.setdefault((row[0], row[1]), []).append(row)
     dispatch_rows: dict[tuple[object, object], list[tuple[object, ...]]] = {}
-    for row in cast("list[tuple[object, ...]]", snapshot["audiobook_dispatch"]):
+    for row in cast("list[tuple[object, ...]]", snapshot["dispatches"]):
         dispatch_rows.setdefault((row[0], row[1]), []).append(row)
 
     catalogue_generation: int | None = None
@@ -960,7 +1152,12 @@ def assemble_cold_start_report(
                 "automatic_decision_corroboration": dict(
                     sorted(agreement.get(key, Counter()).items())
                 ),
-                "audiobook_dispatch": _audiobook_dispatch(dispatch_rows.get(key, [])),
+                "audiobook_dispatch": _audiobook_dispatch(audiobook_rows.get(key, [])),
+                "audiobook_outcomes": _audiobook_outcomes(audiobook_rows.get(key, [])),
+                "audiobook_cover_reads": _audiobook_cover_reads(
+                    audiobook_rows.get(key, [])
+                ),
+                "dispatches": _dispatches(dispatch_rows.get(key, [])),
             }
         )
 
@@ -1004,6 +1201,9 @@ def assemble_cold_start_report(
         "stage_timings": (
             None if stage_timings is None else _stage_timings(stage_timings)
         ),
+        "recovery_jobs": (
+            None if recovery_jobs is None else _recovery_jobs(recovery_jobs)
+        ),
     }
 
 
@@ -1019,6 +1219,19 @@ def _read_stage_timings(path: Path) -> tuple[StageTiming, ...]:
         return LocalTimingStore(path, enabled=True).list()
     except OperationsError as error:
         raise SystemExit("--stage-timings file is unreadable") from error
+
+
+def _read_recovery_jobs(path: Path) -> list[tuple[object, ...]]:
+    """Read a provider recovery database's job counts, read-only."""
+    if not path.is_file():
+        raise SystemExit("--recovery-database names no recovery database")
+    connection = _open_read_only(path)
+    try:
+        return _rows(connection, _RECOVERY_JOBS_SQL)
+    except sqlite3.Error as error:
+        raise SystemExit("--recovery-database is unreadable") from error
+    finally:
+        connection.close()
 
 
 def _mount_roots(values: list[str]) -> dict[str, Path]:
@@ -1049,6 +1262,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
         metavar="PATH",
         help="a stage-timings-v1 file whose retained tail is summarized",
     )
+    parser.add_argument(
+        "--recovery-database",
+        type=Path,
+        metavar="PATH",
+        help="a provider recovery database whose job counts are summarized",
+    )
     arguments = parser.parse_args(argv)
     output = sys.stdout if stdout is None else stdout
 
@@ -1057,6 +1276,11 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
         None
         if arguments.stage_timings is None
         else _read_stage_timings(arguments.stage_timings)
+    )
+    recovery = (
+        None
+        if arguments.recovery_database is None
+        else _read_recovery_jobs(arguments.recovery_database)
     )
     configuration = load_configuration_file(arguments.config)
     connection = _open_read_only(arguments.database)
@@ -1072,7 +1296,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
         for mount in configuration.mounts
     }
     report = assemble_cold_start_report(
-        configuration, snapshot, counts, mount_files, int(time.time()), timings
+        configuration,
+        snapshot,
+        counts,
+        mount_files,
+        int(time.time()),
+        timings,
+        recovery,
     )
     output.write(
         json.dumps(report, ensure_ascii=False, sort_keys=True, indent=1) + "\n"
