@@ -29,7 +29,11 @@ from mechanical_librarian.application.review_web import (
     _case_and_report,
     _decision_projection,
 )
-from mechanical_librarian.domain import audiobook_decision_qualification, shadow_outcome
+from mechanical_librarian.domain import (
+    audiobook_decision_qualification,
+    proposal_set,
+    shadow_outcome,
+)
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
     narrator_cast_disjoint,
@@ -2160,6 +2164,30 @@ def test_title_strip_series_label_reads_exactly_one_removed_segment(
     current, desired, series_names, removed
 ):
     assert title_strip_series_label(current, desired, series_names) == removed
+
+
+@pytest.mark.parametrize("desired", ("Saltmarsh", "a"))
+@pytest.mark.parametrize(
+    "current", ("a:" * 256, "x()" * 170), ids=("separators", "enclosures")
+)
+def test_a_crafted_title_is_keyed_near_linearly_in_its_breaks(
+    current, desired, monkeypatch
+):
+    keyed = {"count": 0}
+
+    def counted(key: Any) -> Any:
+        def wrapper(value: str) -> str:
+            keyed["count"] += 1
+            return cast(str, key(value))
+
+        return wrapper
+
+    for name in ("title_identity_key", "series_name_equivalence_key"):
+        monkeypatch.setattr(proposal_set, name, counted(getattr(proposal_set, name)))
+    breaks = len(proposal_set._TITLE_PART_BOUNDARY.findall(current))
+    assert title_strip_series_label(current, desired, ("Ember Saga",)) is None
+    # Keying every pair of breaks would cost about breaks * breaks / 2 keys.
+    assert 0 < keyed["count"] <= 8 * breaks
 
 
 def test_a_two_sided_series_losing_strip_is_asked(monkeypatch):

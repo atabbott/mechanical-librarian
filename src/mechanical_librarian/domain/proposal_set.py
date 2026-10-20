@@ -4581,13 +4581,15 @@ def _part_key(text: str, key: Callable[[str], str]) -> str | None:
         return None
 
 
-def _series_label_text(segment: str, keys: set[str]) -> bool:
+def _series_label_text(segment: str, keys: set[str], seen: dict[str, bool]) -> bool:
     """Whether removed title text is, or holds, a series label.
 
     It does when it, its enclosure-free form, an enclosure's content or any one
     part between separators and enclosures reads as a label by the closed
     series grammar or names a case series less any trailing position, or when
-    its words hold a case series name's words as one contiguous run.
+    its words hold a case series name's words as one contiguous run. `seen`
+    holds one call's verdict per part, so a part repeated across many removed
+    texts of a crafted title is read once.
     """
     parts = [
         segment,
@@ -4595,18 +4597,23 @@ def _series_label_text(segment: str, keys: set[str]) -> bool:
         *(inner or other for inner, other in _TITLE_ENCLOSURE.findall(segment)),
         *_TITLE_PART_BOUNDARY.split(segment),
     ]
-    if any(
-        part.strip()
-        and (
-            series_label_segment(part)
-            or _part_key(
-                _TRAILING_SERIES_POSITION.sub("", part), series_name_equivalence_key
+    for part in parts:
+        if part not in seen:
+            seen[part] = bool(part.strip()) and (
+                series_label_segment(part)
+                or (
+                    bool(keys)
+                    and _part_key(
+                        _TRAILING_SERIES_POSITION.sub("", part),
+                        series_name_equivalence_key,
+                    )
+                    in keys
+                )
             )
-            in keys
-        )
-        for part in parts
-    ):
-        return True
+        if seen[part]:
+            return True
+    if not keys:
+        return False
     folded = _part_key(
         segment, lambda text: _comparison(TargetDestination.SERIES, text)
     )
@@ -4629,10 +4636,13 @@ def title_strip_series_label(
     `desired` must equal, under `title_identity_key`, one contiguous run of
     those segments; the text before and the text after that run are removed,
     and each deletes a series label when `_series_label_text` reads one in it.
-    The first such removed text in title order is named. Every non-contiguous
+    The first such removed text is named, taking runs in order of their first
+    then last segment and each run's left side before its right. Every
+    non-contiguous
     rewrite and every blank or unkeyable part names nothing, so the predicate
     never raises on a valid title and never names text a caller cannot key
-    (#1252).
+    (#1252). A run stops growing once its normalized text outgrows the desired
+    key, so keying stays near linear in the breaks of a crafted title.
     """
     if type(current) is not str or type(desired) is not str:
         return None
@@ -4653,19 +4663,24 @@ def title_strip_series_label(
         ),
         (len(current), len(current)),
     ]
-    removed = [
-        side
-        for first in range(len(breaks) - 1)
-        for last in range(first + 1, len(breaks))
-        if _part_key(current[breaks[first][1] : breaks[last][0]], title_identity_key)
-        == wanted
-        for side in (current[: breaks[first][0]], current[breaks[last][1] :])
-    ]
+    removed: list[str] = []
+    for first in range(len(breaks) - 1):
+        for last in range(first + 1, len(breaks)):
+            run = current[breaks[first][1] : breaks[last][0]]
+            # Normalization and casefolding never shorten a run, and extending
+            # it never shortens it either, so a longer run cannot match.
+            if len(" ".join(unicodedata.normalize("NFC", run).split())) > len(wanted):
+                break
+            if _part_key(run, title_identity_key) == wanted:
+                removed.extend(
+                    (current[: breaks[first][0]], current[breaks[last][1] :])
+                )
     keys = {
         key
         for name in series_names
         if (key := _part_key(name, series_name_equivalence_key))
     }
+    seen: dict[str, bool] = {}
     for segment in removed:
         text = segment.strip()
         whole = _TITLE_ENCLOSURE.fullmatch(text)
@@ -4674,7 +4689,7 @@ def title_strip_series_label(
         if (
             text
             and _part_key(named, title_identity_key) is not None
-            and _series_label_text(text, keys)
+            and _series_label_text(text, keys, seen)
         ):
             return named
     return None
