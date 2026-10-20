@@ -1,5 +1,13 @@
 # Upgrades and compatibility
 
+#1249 removes the audiobook-only reason from the persisted attention facts, so
+a recording joins the attention queue under exactly an ebook's conditions. The
+trigger that maintains the facts changes text and no version moves. **Clean
+rebuild required** for every predecessor application database; startup refuses
+it before mutation. No migration, adoption, conversion, import or downgrade is
+supplied; F19a/F20/F46 records are displaced to revision 52 with their
+permission sets unchanged.
+
 #1251 advances the report to `metadata-report-v54`, which adds no field but
 reads an incumbent description holding an attribute-free HTML tag slash or
 U+2028 as its exact value instead of `malformed`. **Clean rebuild required** for

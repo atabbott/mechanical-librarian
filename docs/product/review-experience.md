@@ -427,10 +427,19 @@ locked until a later authoritative current-case read proves a safe state.
 Every field exposes one closed server-owned interaction classification. Owner
 attention and automatic abstention are queued; an ordinary automatic outcome is
 inspectable and may be deliberately overridden but is not ordinary next work.
-A recording reads the same way. Until an F46 record qualifies an audiobook
-identity every field on it is the owner's; a field a record did decide states
-its candidate, the authorities behind it and the gate that admitted it, and
-leaves the attention queue like any other settled field.
+A recording reads the same way, and joins the attention queue under exactly
+an ebook's conditions (#1249). Until an F46 record qualifies an audiobook
+identity every field on it with a choice to offer stays choosable in its case,
+but a settled fill that does not queue counts toward neither the queue nor its
+Library row: tag and ASIN fills never queue on their own, and narrators queue
+only under "Authors and narrators: Ask me". Such a field reads as an optional choice: its case offers
+keeping the current value or choosing a proposed one without marking it as
+needing review or counting it, and moving to the next field skips it, so the
+case page, its Library row and the queue agree. A recording's fields with
+no alternative now sit with the contextual fields, as an ebook's do. A
+field a record did decide states its candidate, the authorities behind it and
+the gate that admitted it, and leaves the attention queue like any other
+settled field.
 Policy discloses audiobook availability for each actual operation: filling an
 empty field does not qualify replacing a populated one. The existing fill-only
 choices preserve populated descriptions and series; explicit replacement or

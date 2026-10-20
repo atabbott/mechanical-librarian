@@ -68,6 +68,11 @@ reduced to the stored part.
   proves every other table's rows unchanged. Ordinary startup still accepts
   only absent or exact-current state. #1245's report schema change retired the
   plan and the command; under ADR-0013 earlier state needs a clean rebuild.
+- **Medium.** No reason in the definition is medium-specific. #1249 removed the
+  audiobook clause that made every owner-actionable recording field ask, so the
+  definition, and with it the refresh trigger's text, changed; ADR-0013's exact
+  schema comparison refuses a store built before it, which needs a clean
+  rebuild. EPUB facts are unchanged.
 
 ## Consequences
 

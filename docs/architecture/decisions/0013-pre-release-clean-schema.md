@@ -153,3 +153,9 @@ field, but an incumbent description holding an attribute-free HTML tag slash or
 U+2028 was `malformed` in v53 and is a `value` now, so a v53 document cannot be
 read as current. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
+
+Issue #1249 also takes the clean-rebuild branch. Removing the audiobook clause
+from ADR-0084's attention definition changes the text of the trigger that
+maintains the facts, so the exact schema comparison rejects every earlier
+application database before mutation. No version moves and no adoption is
+supplied.

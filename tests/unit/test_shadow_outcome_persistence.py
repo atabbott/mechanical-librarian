@@ -7727,10 +7727,13 @@ def test_a_manual_shadow_disposition_keeps_a_recording_on_the_attention_page(
 
     With one record active the ASIN is decided durably and the SQL membership
     predicate excludes it. Every other audiobook destination the owner routed
-    to Automatic is withdrawn to `ask` and projected `manual`, and those rows
-    are counted. A lens that re-read that disposition as if it were a durable
-    decision would drop them and page short of its own total, so this pins
-    page length against `total` on a stored recording (#967).
+    to Automatic is withdrawn to `ask` and projected `manual`. The narrators
+    fill has no shared reason to ask -- the policy Ask check never names it --
+    so it leaves the queue as an ebook's would (#1249), while the series fill
+    the policy routes to Ask stays counted. A lens that re-read the `manual`
+    disposition as if it were a durable decision would drop that row and page
+    short of its own total, so this pins page length against `total` on a
+    stored recording (#967).
     """
     monkeypatch.setattr(
         audiobook_decision_qualification,
@@ -7771,10 +7774,12 @@ def test_a_manual_shadow_disposition_keeps_a_recording_on_the_attention_page(
             items = page["items"]
             assert type(items) is list
 
-            assert "narrators" in {str(row[2]) for row in snapshot.rows}
+            listed = {str(row[2]) for row in snapshot.rows}
+            assert "series" in listed
+            assert "narrators" not in listed
             assert counted == snapshot.total == len(snapshot.rows)
             assert counted == page["total"] == len(items)
-            assert "narrators" in {str(item["destination"]) for item in items}
+            assert {str(item["destination"]) for item in items} == listed
         finally:
             repository.close()
 

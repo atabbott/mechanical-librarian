@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from unittest.mock import patch
 
 import pytest
@@ -84,6 +85,18 @@ def attention_documents():
             False,
             False,
         ),
+        (
+            {
+                "attention_candidate": False,
+                "automatic_outcome": None,
+                "has_human_decision": False,
+                "suspended": False,
+                "owner_choosable": True,
+            },
+            "owner_choosable",
+            False,
+            True,
+        ),
     ),
     ids=(
         "needs_attention",
@@ -91,6 +104,7 @@ def attention_documents():
         "automatic_recorded",
         "human_recorded",
         "unsupported",
+        "owner_choosable",
     ),
 )
 def test_closed_matrix_keeps_attention_and_recorded_states_distinct(
@@ -105,6 +119,73 @@ def test_closed_matrix_keeps_attention_and_recorded_states_distinct(
     assert value.needs_attention == attention
     assert value.editable == editable
     assert value.preservation_only
+
+
+_BASE_INPUTS: dict[str, object] = {
+    "attention_candidate": False,
+    "automatic_outcome": None,
+    "has_human_decision": False,
+    "suspended": False,
+    "cause": None,
+}
+
+
+@pytest.mark.parametrize(
+    ("higher", "state"),
+    (
+        ({"attention_candidate": True}, "needs_attention"),
+        ({"automatic_outcome": "abstention"}, "manual_fallback"),
+        ({"automatic_outcome": "candidate"}, "automatic_recorded"),
+        ({"has_human_decision": True}, "human_recorded"),
+        (
+            {"suspended": True, "cause": "external_field_failure"},
+            "unsupported",
+        ),
+        ({"cause": "automatic_safety_suspended"}, "needs_attention"),
+        ({"cause": "unsupported"}, "unsupported"),
+    ),
+    ids=(
+        "attention",
+        "abstention",
+        "candidate",
+        "human",
+        "suspended",
+        "safety",
+        "unsupported",
+    ),
+)
+def test_every_other_input_decides_before_owner_choosable(
+    higher: dict[str, object], state: str
+) -> None:
+    """An optional choice is only what is left when nothing else applies."""
+    inputs = {**_BASE_INPUTS, **higher}
+    plain = classify_review_field(
+        **inputs, current_value="Title", proposed_values=("Other",)
+    )
+    choosable = classify_review_field(
+        **inputs,
+        current_value="Title",
+        proposed_values=("Other",),
+        owner_choosable=True,
+    )
+
+    assert plain.state == choosable.state == state
+    assert plain == choosable
+
+
+def test_owner_choosable_is_an_uncounted_inspectable_choice() -> None:
+    value = classify_review_field(
+        **_BASE_INPUTS,
+        current_value="Title",
+        proposed_values=("Other",),
+        owner_choosable=True,
+    )
+
+    assert value.navigation_role == "inspect"
+    assert value.recorded is False
+    assert value.preservation_only is False
+    # The browser's needs-review filter must never read this reason.
+    assert not re.search(r"needs (?:your )?review", value.reason, re.IGNORECASE)
 
 
 @pytest.mark.parametrize(

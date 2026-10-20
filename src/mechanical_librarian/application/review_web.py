@@ -764,29 +764,42 @@ class InspectCurrentReviewCase:
             )
             if authored_selection is not None:
                 automatic_decision = None
+            cover_admits = (
+                destination != "cover"
+                or snapshot.cover_consideration_document is None
+                or (
+                    cover_is_current
+                    and current_cover_consideration is not None
+                    and current_cover_consideration["ready"] is True
+                )
+                or (
+                    cover_refresh_required
+                    and result["outcome"] == "unresolved_choice"
+                    and cover_undecided
+                )
+            )
+            cover_preparation_available = (
+                destination == "cover"
+                and self._cover_considerations is not None
+                and not cover_is_current
+                and (
+                    snapshot.cover_consideration_document is None
+                    or (
+                        cover_refresh_required
+                        and result["outcome"] == "unresolved_choice"
+                        and cover_undecided
+                    )
+                )
+            )
+            actions = () if cover_preparation_available else decision_actions(proposal)
             classification = classify_review_field(
                 attention_candidate=(
                     (
-                        (
-                            destination != "cover"
-                            or snapshot.cover_consideration_document is None
-                            or (
-                                cover_is_current
-                                and current_cover_consideration is not None
-                                and current_cover_consideration["ready"] is True
-                            )
-                            or (
-                                cover_refresh_required
-                                and result["outcome"] == "unresolved_choice"
-                                and cover_undecided
-                            )
-                        )
+                        cover_admits
                         and _needs_attention(
                             proposal,
                             snapshot.automatic_attention_destinations,
                             policy_attention_destinations=snapshot.policy_attention_destinations,
-                            owner_only=case.media_kind == "audiobook"
-                            and automatic_decision is None,
                         )
                     )
                     or (
@@ -837,21 +850,13 @@ class InspectCurrentReviewCase:
                 proposed_values=tuple(
                     alternative["value"] for alternative in alternatives
                 ),
+                # A recording's undecided fill stays the owner's to choose in
+                # its case without joining the queue (#1249).
+                owner_choosable=cover_admits
+                and case.media_kind == "audiobook"
+                and automatic_decision is None
+                and bool(actions),
             )
-            cover_preparation_available = (
-                destination == "cover"
-                and self._cover_considerations is not None
-                and not cover_is_current
-                and (
-                    snapshot.cover_consideration_document is None
-                    or (
-                        cover_refresh_required
-                        and result["outcome"] == "unresolved_choice"
-                        and cover_undecided
-                    )
-                )
-            )
-            actions = () if cover_preparation_available else decision_actions(proposal)
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
             # action list is context-only, never an implied choice envelope.
@@ -2555,25 +2560,21 @@ def _needs_attention(
     proposal: dict[str, object],
     automatic_attention_destinations: tuple[str, ...] = (),
     *,
-    owner_only: bool = False,
     policy_attention_destinations: tuple[str, ...] = (),
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
-    A settled `propose_change` waits unless its bound policy routes it to Ask.
-    On a recording an undecided field has nothing to wait for, so it is the
-    owner's; a field an F46 record did decide leaves the attention lens
-    because the membership query excludes it, and reads exactly as an ebook's
-    does elsewhere. The action list beside this decides whether a choice
-    exists at all (#966, #967).
+    A settled `propose_change` waits unless its bound policy routes it to Ask,
+    on a recording exactly as on an ebook: the attention queue, its lens and
+    the case detail hold no medium-specific reason (#1249). The action list
+    beside this decides whether a choice exists at all (#967).
     """
     result = proposal["result"]
     assert type(result) is dict
     reasons = result["reasons"]
     assert type(reasons) is list
     return (
-        owner_only
-        or proposal["destination"] in policy_attention_destinations
+        proposal["destination"] in policy_attention_destinations
         or proposal["destination"] in automatic_attention_destinations
         or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
         or result["outcome"] == "unresolved_choice"
@@ -3096,12 +3097,12 @@ def _attention_item(
     classification = classify_review_field(
         attention_candidate=(
             # The lens mirrors the query rather than second-guessing it: the
-            # membership predicate already excludes every field a durable
-            # automatic decision settled, so a row that reached here has none
-            # and a recording's proposal is the owner's. Re-deciding that here
-            # from a shadow disposition would page short of the count the same
-            # query reports (#966, #967).
-            _needs_attention(proposal, owner_only=case.media_kind == "audiobook")
+            # membership predicate holds the same reasons on every medium, so
+            # a recording's settled proposal is no more the owner's here than
+            # an ebook's (#1249). Re-deciding membership from a shadow
+            # disposition would page short of the count the same query
+            # reports (#967).
+            _needs_attention(proposal)
             or policy_attention
             or cause == "automatic_safety_suspended"
             or (destination == "cover" and work_attention_count > 0)

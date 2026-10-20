@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from typing import Any, cast
 
 import pytest
 
@@ -647,9 +648,10 @@ def test_an_epub_narrator_decision_now_becomes_a_plannable_value() -> None:
 def test_the_attention_lens_lists_the_field_the_library_row_counted() -> None:
     """P1-3: the lens and the count answer the same question.
 
-    A recording's ASIN is a settled `propose_change` -- an ebook's would be
-    waiting for the automatic lane -- so a lens that asked the automatic
-    question would drop a field its own row reports and page short.
+    A recording's ASIN is a settled `propose_change`, and the membership query
+    holds no medium-specific reason, so the lens leaves it out exactly as it
+    would an ebook's (#1249). When a shared reason does put it on the page --
+    here a policy Ask -- the lens lists the field its own row counted.
     """
     report = admitted_audiobook_report()
     case = _case(report)
@@ -661,16 +663,16 @@ def test_the_attention_lens_lists_the_field_the_library_row_counted() -> None:
     result = asin["result"]
     assert type(result) is dict
     assert "propose_change" == result["outcome"]
+    facts = _case_and_report(case.to_json(), report.to_json())
 
+    assert _attention_item(*facts, TargetDestination.ASIN.value, 1) is None
     item = _attention_item(
-        *_case_and_report(case.to_json(), report.to_json()),
-        TargetDestination.ASIN.value,
-        2,
+        *facts, TargetDestination.ASIN.value, 1, policy_attention=True
     )
 
     assert item is not None
     assert TargetDestination.ASIN.value == item["destination"]
-    assert 2 == item["work_attention_count"]
+    assert 1 == item["work_attention_count"]
     assert "m4b" == item["media_kind"]
 
 
@@ -680,17 +682,17 @@ def test_a_shadow_disposition_never_drops_a_recording_from_the_attention_lens() 
     `automatic_outcome` here is the latest shadow disposition the projection
     wrote, not a durable decision: it carries `manual`, `ignore`,
     `unsupported`, `keep_current`, `candidate` or `abstention`. The query that
-    selected this row already excluded every field a durable automatic
-    decision settled, so none of those dispositions may remove a recording's
-    field from the page -- doing so would report a total the page is shorter
-    than (#967).
+    selected this row -- a series fill its policy routes to Ask -- already
+    excluded every field a durable automatic decision settled, so none of
+    those dispositions may remove the recording's field from the page --
+    doing so would report a total the page is shorter than (#967).
     """
     report = corroborated_audiobook_report()
     case = _case(report)
-    destination = TargetDestination.ASIN.value
+    destination = TargetDestination.SERIES.value
 
     facts = _case_and_report(case.to_json(), report.to_json())
-    assert _attention_item(*facts, destination, 2) is not None
+    assert _attention_item(*facts, destination, 1, policy_attention=True) is not None
     for disposition in (
         "abstention",
         "candidate",
@@ -703,8 +705,9 @@ def test_a_shadow_disposition_never_drops_a_recording_from_the_attention_lens() 
             _attention_item(
                 *facts,
                 destination,
-                2,
+                1,
                 automatic_outcome=disposition,
+                policy_attention=True,
             )
             is not None
         ), disposition
@@ -1940,3 +1943,40 @@ def test_final_author_target_precedes_lookup_and_normalization_authority(
             )
             is None
         )
+
+
+def test_a_recording_cover_with_only_preparation_reads_as_an_ebooks_does(
+    tmp_path,
+) -> None:
+    """Cover preparation alone is no owner choice, on either medium (#1249).
+
+    With a cover service bound and nothing prepared, a recording's cover has
+    no keep or accept action, so it is neither an optional choice nor
+    attention: it reads `unsupported`, as an ebook's identical cover does.
+    """
+    from contextlib import closing
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.audiobook_reports import publish_audiobook_preview
+
+    class _NothingPrepared:
+        def project_for_review(self, *_: object) -> tuple[None, str]:
+            return None, "inactive"
+
+    with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository, admitted_audiobook_report(), ("isbn_form",)
+        )
+        detail = InspectCurrentReviewCase(
+            repository, cast(Any, _NothingPrepared())
+        ).run(case_id)
+    cover = next(f for f in detail["fields"] if f["destination"] == "cover")
+
+    assert (cover["classification"], cover["needs_attention"], cover["editable"]) == (
+        "unsupported",
+        False,
+        False,
+    )

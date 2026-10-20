@@ -456,8 +456,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "genres",
           "state": "missing",
@@ -469,14 +469,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
@@ -502,8 +502,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "publishedDate",
           "state": "missing",
@@ -515,14 +515,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
@@ -548,8 +548,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "publisher",
           "state": "missing",
@@ -561,14 +561,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
@@ -594,8 +594,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "description",
           "state": "missing",
@@ -607,14 +607,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
@@ -686,8 +686,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "language",
           "state": "missing",
@@ -699,14 +699,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
@@ -732,8 +732,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "explicit",
           "state": "missing",
@@ -745,14 +745,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
@@ -778,8 +778,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "tags",
           "state": "missing",
@@ -791,14 +791,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
@@ -824,8 +824,8 @@
         "description_advice": null
       },
       {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
+        "classification": "unsupported",
+        "classification_reason": "There is no owner decision available for this field.",
         "current": {
           "destination": "cover",
           "state": "missing",
@@ -837,14 +837,14 @@
         "editable": false,
         "effect_capability": "unavailable",
         "human_decision": null,
-        "inventory_role": "primary",
+        "inventory_role": "contextual",
         "automatic_decision": null,
         "automatic_withheld_reason": null,
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
         "needs_attention": false,
-        "navigation_role": "attention",
+        "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [

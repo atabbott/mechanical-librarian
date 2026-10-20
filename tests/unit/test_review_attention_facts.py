@@ -12,6 +12,7 @@ VM-step cost of the maintenance and the reads that use it.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import re
 import shutil
@@ -32,6 +33,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    publish_audiobook_preview,
+)
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_browse_attention_statements import (
     _automatic_decision,
@@ -62,6 +67,21 @@ _PARENTS = {
     ),
 }
 _OPERATIONS = ("insert", "update", "delete")
+# The fact source as main held it before #1249 removed the audiobook clause
+# and let narrators ask under the authors' policy key, pinned by digest so the
+# oracle cannot drift with the live text.
+_AUTHORS_ASK = (
+    "(result.destination='authors' AND json_extract(policy_resolution.document,"
+    "'$.destinations.contributor_names')='ask') OR "
+)
+_NARRATORS_ASK = _AUTHORS_ASK.replace("'authors'", "'narrators'")
+_PRE_1249_ATTENTION_FACT_SOURCE_SQL = _ATTENTION_FACT_SOURCE_SQL.replace(
+    _NARRATORS_ASK, "", 1
+).replace(
+    "OR result.manual_bibliographic_attention=1",
+    "OR facts.format <> 'epub' OR result.manual_bibliographic_attention=1",
+    1,
+)
 
 
 def _facts(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -183,6 +203,24 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
             (title[2],),
         ),
     )
+
+    def recording(case_id: str, report_id: str) -> None:
+        """A recording's facts differ from an ebook's only through the fields
+        an EPUB omits, so its narrators first ask for the owner (#1249)."""
+        assert (
+            run(
+                "UPDATE review_case_field_facts SET unresolved_choice=1,"
+                "has_owner_decision_actions=1 "
+                "WHERE review_case_id=? AND destination='narrators'",
+                (case_id,),
+            ).rowcount
+            == 1
+        )
+        run(
+            "UPDATE metadata_report_browse_facts SET format='m4b' WHERE report_id=?",
+            (report_id,),
+        )
+
     # Attention reads that package under its case's report, which it no
     # longer names.
     case_report = _one(
@@ -192,11 +230,11 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
     )[0]
     yield (
         "its case's report becomes a recording",
-        (("metadata_report_browse_facts", "update"),),
-        lambda: run(
-            "UPDATE metadata_report_browse_facts SET format='m4b' WHERE report_id=?",
-            (case_report,),
+        (
+            ("review_case_field_facts", "update"),
+            ("metadata_report_browse_facts", "update"),
         ),
+        lambda: recording(title[3], case_report),
     )
     title = _attentive(connection, "title")
     yield (
@@ -239,11 +277,11 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
     )[0]
     yield (
         "report becomes a recording",
-        (("metadata_report_browse_facts", "update"),),
-        lambda: run(
-            "UPDATE metadata_report_browse_facts SET format='m4b' WHERE report_id=?",
-            (report,),
+        (
+            ("review_case_field_facts", "update"),
+            ("metadata_report_browse_facts", "update"),
         ),
+        lambda: recording(quiet, report),
     )
     yield (
         "report facts delete",
@@ -939,3 +977,98 @@ def test_a_write_that_changes_no_read_column_refreshes_no_fact(
         )
         assert connection.total_changes - before > 2
         assert _facts(connection) == _derived(connection) != facts
+
+
+def _predecessor(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
+    return sorted(
+        connection.execute(_PRE_1249_ATTENTION_FACT_SOURCE_SQL).fetchall(), key=repr
+    )
+
+
+def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
+    assert (
+        hashlib.sha256(_PRE_1249_ATTENTION_FACT_SOURCE_SQL.encode()).hexdigest()
+        == "1513216e8213975ceedf17f5ddd01cf7f3ba4c8ab6c68678f9013399bc7b9d86"
+    )
+    # Exactly two edits: the audiobook clause leaves, and narrators asks
+    # beside authors.
+    assert _ATTENTION_FACT_SOURCE_SQL.count(_NARRATORS_ASK) == 1
+    assert _PRE_1249_ATTENTION_FACT_SOURCE_SQL.count(_AUTHORS_ASK) == 1
+    assert (
+        _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace(
+            "OR facts.format <> 'epub' ", "", 1
+        ).replace(_AUTHORS_ASK, _AUTHORS_ASK + _NARRATORS_ASK, 1)
+        == _ATTENTION_FACT_SOURCE_SQL
+    )
+
+
+def test_ebook_facts_equal_the_predecessor_derivation(_state: Path) -> None:
+    """Removing the audiobook clause moves no ebook fact (#1249)."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "state.sqlite3"
+        shutil.copyfile(_state, path)
+        with closing(sqlite3.connect(path)) as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM metadata_report_browse_facts WHERE format<>'epub'"
+            ).fetchone() == (0,)
+            assert _facts(connection) == _derived(connection)
+            assert _derived(connection) == _predecessor(connection)
+            # Negative control: one recording separates the two derivations.
+            report = _one(
+                connection,
+                "SELECT report_id FROM review_cases WHERE review_case_id=?",
+                _quiet(connection, "isbn"),
+            )[0]
+            connection.execute(
+                "UPDATE metadata_report_browse_facts SET format='m4b' "
+                "WHERE report_id=?",
+                (report,),
+            )
+            assert _derived(connection) != _predecessor(connection)
+        connection = _representative_database(path.with_name("r.sqlite3"), works=40)
+        try:
+            assert _derived(connection)
+            assert _derived(connection) == _predecessor(connection)
+        finally:
+            connection.close()
+
+
+def test_open_refuses_a_store_maintained_by_the_predecessor_source(
+    _state: Path, tmp_path: Path
+) -> None:
+    path = tmp_path / "predecessor.sqlite3"
+    shutil.copyfile(_state, path)
+    with closing(sqlite3.connect(path)) as connection:
+        connection.executescript(
+            "DROP TRIGGER review_attention_refresh_apply;"
+            + schema._ATTENTION_REFRESH_SQL.replace(
+                _ATTENTION_FACT_SOURCE_SQL, _PRE_1249_ATTENTION_FACT_SOURCE_SQL, 1
+            )
+            + ";"
+        )
+    before = path.read_bytes()
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ):
+        open_repository(path, create=False)
+    assert path.read_bytes() == before
+
+
+def test_a_recordings_settled_fill_has_no_attention_fact(tmp_path: Path) -> None:
+    """A settled ASIN fill under Ask asks for nothing, as an ebook's would."""
+    with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
+        connection = repository._connection
+        # Activation needs one Automatic option; isbn forms no field here.
+        case_id, _ = publish_audiobook_preview(
+            repository, admitted_audiobook_report(), ("isbn_form",)
+        )
+        assert _one(
+            connection,
+            "SELECT unresolved_choice,has_owner_decision_actions "
+            "FROM review_case_field_facts WHERE review_case_id=? AND destination='asin'",
+            case_id,
+        ) == (0, 1)
+        assert _facts(connection) == _derived(connection)
+        assert "asin" not in {row[4] for row in _facts(connection)}
+        # Control: the predecessor derivation counted it on the format alone.
+        assert "asin" in {row[4] for row in _predecessor(connection)}

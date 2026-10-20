@@ -96,6 +96,7 @@ from mechanical_librarian.domain.owner_settings import (
     SecretWrite,
     SettingsView,
 )
+from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
@@ -478,13 +479,7 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
 
 
 class _ReviewField(_ClosedModel):
-    classification: Literal[
-        "needs_attention",
-        "manual_fallback",
-        "automatic_recorded",
-        "human_recorded",
-        "unsupported",
-    ]
+    classification: ReviewFieldState
     classification_reason: str
     current: _TargetField
     deterministic_disposition: str

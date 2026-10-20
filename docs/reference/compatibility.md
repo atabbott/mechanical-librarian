@@ -385,3 +385,14 @@ field meant the narrower grammar, so the exact SQLite discriminator requires a
 **clean rebuild** under ADR-0013. Prior v53 reports and stores are refused
 before mutation. No migration, adoption or relabelling is supplied.
 `review-case-v2` and shadow-review packet envelopes are unchanged.
+
+## Recording attention parity (#1249)
+
+The persisted attention facts drop the audiobook-only reason, so a recording's
+field asks for the owner only for a reason an ebook's would. EPUB facts are
+unchanged. No report, proposal, outcome or policy version moves, but the
+trigger maintaining the facts changes text, so the exact schema comparison
+requires a **clean rebuild** under ADR-0013. Predecessor stores are refused
+before mutation. No migration, adoption or relabelling is supplied. The
+case-detail field `classification` gains the value `owner_choosable` for such a
+settled fill; `review-case-detail-v5` and stored documents are unchanged.

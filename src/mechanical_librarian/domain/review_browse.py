@@ -200,7 +200,6 @@ class CaseBrowseFacts:
     target: dict[str, object]
     target_fingerprint: str
     file_identity: str
-    media_kind: str
     proposals: tuple[dict[str, object], ...]
 
 
@@ -330,7 +329,6 @@ def case_browse_facts(case: dict[str, object], review_case_id: str) -> CaseBrows
             target,
             cast(str, case["target_fingerprint"]),
             cast(str, case["file_identity"]),
-            proposal["media_kind"],
             tuple(
                 {
                     "destination": result["destination"],
