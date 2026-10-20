@@ -1,5 +1,14 @@
 # Pre-release compatibility policy
 
+#1252 advances the proposal policy to `fixed-conservative-v34` and the shadow
+decision policy to `deterministic-shadow-decision-policy-v21`: a recording's
+reordered authors are a preservation, and series-label title strips and
+narrator casts disjoint from the file's own credits ask the owner. **Clean
+rebuild required** for every predecessor application database; startup refuses
+v33 proposals and v20 outcomes before mutation. No migration, adoption,
+conversion, import or downgrade is supplied; F19a/F20/F46 records are displaced
+with their permission sets unchanged.
+
 #1166 enables source-bound audiobook description/genre owner review without
 recording admission. **Clean rebuild required** for `fixed-conservative-v33`,
 including empty predecessor proposal tables. No migration or historical-document
@@ -42,10 +51,10 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v54` plus `proposal-set-v8` under
-  `fixed-conservative-v33`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v34`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v20`,
+  `deterministic-shadow-decision-policy-v21`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v10`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;

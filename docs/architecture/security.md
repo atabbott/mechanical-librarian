@@ -2116,3 +2116,23 @@ currentness are not database writes, so each read still tests them per request
 over the stored facts. Nothing in `src` or `scripts` writes with `REPLACE`, and
 no table declares a `REPLACE` conflict clause, either of which would skip a
 delete trigger. See [ADR-0084](decisions/0084-persisted-attention-facts.md).
+
+## Audiobook series-label strip and disjoint narrator cast (#1252)
+
+Both guards only withdraw automatic authority from a recording; neither adds an
+identity, permission, operation or input. They read the bound report, proposal
+and outcome set already admitted, run only on the audiobook branch and only for
+a field the owner routed to Automatic, and route a withdrawn field to Ask, never
+to a write. A title replacement that deletes a series label, in a combination
+or not, asks unless the target series is populated, the same outcome set elects
+an automatic series fill, or its automatic subtitle split carries the removed
+segment. The label test is total over valid titles: a blank or unkeyable part
+of a title is no strip, so it never fails a projection. A narrator replacement
+asks when the file's own narrator
+credits and the product's cast share no member; a credit naming several people
+is never split, so it can only make a cast shared, never disjoint. A recording's
+author reorder becomes a keep-current preservation recorded as one durable
+no-change, so it reaches no target, effect guard or write. Ebook outcomes are
+unchanged. Proposal policy v34 and decision policy v21 require a clean rebuild,
+with no migration or adoption; displaced qualification records keep their
+frozen permission sets and grant no current authority.

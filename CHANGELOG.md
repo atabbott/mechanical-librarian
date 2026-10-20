@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Automatic audiobook metadata no longer drops a series from a title unless the
+  series is kept or filled, no longer replaces narrators with a cast that shares
+  nobody with the file's own credits (both now ask you), and records authors in
+  another order as unchanged instead of rewriting them. Upgrading requires a
+  clean rebuild (#1252).
+
 - Audiobooks now enter the attention queue under the same conditions as ebooks:
   tag and ASIN fills never count as needing attention on their own, and
   narrators do only under "Authors and narrators: Ask me". An uncounted fill

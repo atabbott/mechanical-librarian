@@ -288,7 +288,9 @@ Focused work outside the slice sequence uses `Delivery slice: Not applicable`:
 and ladder continuation; #1246 the pre-ADR discovery measurement; #1256
 overflow narrowing; #1247 audiobook dispatch set; #1248 per-provider deadline
 share; #1249 attention clause; #1250 inspector bounds and quality floor; #1251
-incumbent description validator; #1252 decision coherence; #1254 iTunes query
+incumbent description validator; #1252 the audiobook series-label title strip
+and disjoint narrator cast guards, with recording author reorders preserved;
+#1254 iTunes query
 measurement, which removed iTunes from audiobook dispatch; #1258 dispatch classification; #1259 the closing replay and band
 calibration. #990 measures the 0.22.2 targets on the first run after the clean
 rebuild.
