@@ -4403,13 +4403,58 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                 labels = [label.splitlines()[0] for label in rail.all_inner_texts()]
                 assert "Narrators" in labels
                 assert "Asin" in labels
+                # The case page agrees with its row: both fills are optional
+                # choices, so nothing is counted as needing review (#1249).
+                expect(
+                    page.locator("dt", has_text=re.compile("^Needs review$")).locator(
+                        "xpath=following-sibling::dd[1]"
+                    )
+                ).to_have_text("0")
+                expect(page.get_by_text(re.compile("^0 remaining"))).to_be_visible()
+                for name in ("Asin", "Narrators"):
+                    button = page.get_by_role(
+                        "button", name=re.compile(f"^{name}")
+                    ).first
+                    expect(button).not_to_have_accessible_name(
+                        re.compile("Needs review")
+                    )
+                    expect(button).to_have_accessible_name(
+                        re.compile("Optional choice")
+                    )
+                if chapter_runtime:
+                    # The compact layout offers the same optional choices.
+                    page.set_viewport_size({"width": 390, "height": 844})
 
                 page.get_by_role("button", name=re.compile("^Asin")).first.click()
+                canvas = page.locator(".decision-canvas")
+                expect(canvas).to_be_visible()
+                expect(canvas).not_to_contain_text(
+                    re.compile("needs (your )?review", re.IGNORECASE)
+                )
                 accept = page.get_by_role(
                     "button", name=re.compile("^Choose proposed value: ")
                 ).first
                 expect(accept).to_be_visible()
                 accept.click()
+                if chapter_runtime:
+                    expect(
+                        page.get_by_role("heading", name="Review complete")
+                    ).to_be_visible()
+                    page.get_by_role(
+                        "button", name=re.compile("^Narrators")
+                    ).first.click()
+                    keep = page.get_by_role(
+                        "button", name=re.compile("^Choose current value: ")
+                    ).first
+                    expect(keep).to_be_visible()
+                    keep.click()
+                    expect(
+                        page.get_by_role(
+                            "button",
+                            name=re.compile("^Narrators · Current value retained"),
+                        )
+                    ).to_be_visible()
+                    page.set_viewport_size({"width": 1440, "height": 900})
 
                 page.get_by_role("link", name="History").click()
                 expect(
@@ -4508,8 +4553,17 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 )
 
                 # Narrators is named by the same two authorities and has no
-                # record, so it is still a question the owner answers.
+                # record, so under the Ask policy for authors and narrators it is
+                # still a question the owner answers, and is counted as one (#1249).
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("^Narrators Needs review")
+                    ).first
+                ).to_be_visible()
                 page.get_by_role("button", name=re.compile("^Narrators")).first.click()
+                expect(page.locator(".decision-canvas")).to_contain_text(
+                    "needs your review"
+                )
                 narrators = page.locator(".direct-choice").first
                 expect(narrators).to_be_visible()
                 expect(narrators).to_contain_text("Ray Porter")
