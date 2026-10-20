@@ -92,7 +92,11 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
 from tests.support.audiobook_providers import target_title_claim
-from tests.support.audiobook_reports import audio_local_claims, audio_target_fields
+from tests.support.audiobook_reports import (
+    audio_local_claims,
+    audio_target_fields,
+    recorded_dispatch,
+)
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.proposal_evidence import _claim, _provider
 
@@ -1150,7 +1154,7 @@ def test_google_remaining_burst_is_committed_without_renewal(
         ),
         local_claims=claims,
         local_reasons=("no_local_audio_claims",) if audio else ("opening_matter_isbn",),
-        providers=(inherited,),
+        providers=(recorded_dispatch(inherited) if audio else inherited,),
         audio=audio_facts,
     )
     store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
@@ -1358,17 +1362,19 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
         else ("source-a", "source-b")
     )
     observations = tuple(
-        provider_observation(
-            name,
-            (
-                ProviderLaneResult(
-                    lane,
-                    ProviderStatus.NO_MATCH
-                    if scenario != "staged" and name == names[-1]
-                    else ProviderStatus.UNAVAILABLE,
+        recorded_dispatch(
+            provider_observation(
+                name,
+                (
+                    ProviderLaneResult(
+                        lane,
+                        ProviderStatus.NO_MATCH
+                        if scenario != "staged" and name == names[-1]
+                        else ProviderStatus.UNAVAILABLE,
+                    ),
                 ),
-            ),
-            authority="audnexus",
+                authority="audnexus",
+            )
         )
         for name in names
     )
@@ -1484,10 +1490,12 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
             local_reasons=report.local_reasons,
             providers=(
                 *observations[:-1],
-                provider_observation(
-                    names[-1],
-                    (ProviderLaneResult(lane, ProviderStatus.NO_MATCH),),
-                    authority="audnexus",
+                recorded_dispatch(
+                    provider_observation(
+                        names[-1],
+                        (ProviderLaneResult(lane, ProviderStatus.NO_MATCH),),
+                        authority="audnexus",
+                    )
                 ),
             ),
             audio=report.audio,

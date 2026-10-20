@@ -129,7 +129,10 @@ from tests.support.audiobook_reports import (
 from tests.support.audiobook_reports import (
     qualified_audiobook as _qualified_audiobook,
 )
-from tests.support.audiobook_reports import recording_lookup_hint_report
+from tests.support.audiobook_reports import (
+    recorded_dispatch,
+    recording_lookup_hint_report,
+)
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
@@ -1127,7 +1130,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v55" == report.schema_version
+    assert "metadata-report-v56" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -1174,15 +1177,17 @@ def _exhausted_report(
         local_claims=(target_title_claim(_REFUSED_TITLE),),
         local_reasons=("target_metadata_title",),
         providers=(
-            ProviderObservation(
-                "audible",
-                ProviderStatus.NO_MATCH,
-                lane.input_references,
-                query_kind=ProviderQueryKind.WORK,
-                authority="audible_catalog",
-                lanes=(lane,),
-                accessed_at="2023-11-14T22:13:20.000000Z",
-                diagnostics=lane.diagnostics,
+            (recorded_dispatch if audio else lambda value: value)(
+                ProviderObservation(
+                    "audible",
+                    ProviderStatus.NO_MATCH,
+                    lane.input_references,
+                    query_kind=ProviderQueryKind.WORK,
+                    authority="audible_catalog",
+                    lanes=(lane,),
+                    accessed_at="2023-11-14T22:13:20.000000Z",
+                    diagnostics=lane.diagnostics,
+                )
             ),
         ),
         audio=single_track_audio_facts() if audio else None,
@@ -3719,13 +3724,15 @@ def test_a_report_replays_the_collapse_of_a_title_with_no_query_rung() -> None:
             local_claims=claims,
             local_reasons=("target_metadata_title",),
             providers=(
-                ProviderObservation(
-                    "audible",
-                    ProviderStatus.UNAVAILABLE,
-                    lane.input_references,
-                    query_kind=ProviderQueryKind.WORK,
-                    authority="audible_catalog",
-                    lanes=(lane,),
+                recorded_dispatch(
+                    ProviderObservation(
+                        "audible",
+                        ProviderStatus.UNAVAILABLE,
+                        lane.input_references,
+                        query_kind=ProviderQueryKind.WORK,
+                        authority="audible_catalog",
+                        lanes=(lane,),
+                    )
                 ),
             ),
             audio=_discovery_audio(_LEAF),

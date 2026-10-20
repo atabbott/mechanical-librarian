@@ -589,7 +589,10 @@ def test_actual_extraction_and_provider_boundaries_have_separate_timings() -> No
     selected = TargetFile("a" * 64, "book.epub", "epub")
     snapshot = TargetSnapshot("ebook", "Title", (selected,))
     timings = Timings()
-    ticks = iter((0, 2_000_000, 3_000_000, 8_000_000))
+    ticks = iter(
+        (0, 2_000_000, 3_000_000, 4_000_000, 5_000_000, 10_000_000)
+        + (11_000_000, 14_000_000, 15_000_000, 19_000_000)
+    )
     service = GenerateMetadataReport(
         target=FakeTarget([snapshot, snapshot]),
         inspector=FakeInspector(InspectionResult("c" * 64, ())),
@@ -613,7 +616,13 @@ def test_actual_extraction_and_provider_boundaries_have_separate_timings() -> No
     service.run("item-1", 0)
     assert [
         (value.stage, value.wait_class, value.duration_ms) for value in timings.values
-    ] == [("extraction", "none", 2), ("provider_search", "provider", 5)]
+    ] == [
+        ("extraction", "none", 2),
+        ("cover", "target", 1),
+        ("provider_search", "provider", 5),
+        ("cover", "provider", 3),
+        ("persistence", "none", 4),
+    ]
 
 
 def test_provider_factory_credential_failure_binds_public_provider_identity() -> None:

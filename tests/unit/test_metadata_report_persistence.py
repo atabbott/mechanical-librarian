@@ -201,7 +201,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v6",
             ),
         ),
@@ -367,17 +367,24 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v54",
+            "previous v54",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v54",
             ),
         ),
         (
-            "previous proposal policy v3",
+            "immediate previous v55",
             lambda connection: create_prior_schema(
                 connection,
                 "metadata-report-v55",
+            ),
+        ),
+        (
+            "previous proposal policy v3",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v56",
                 "fixed-conservative-v3",
             ),
         ),
@@ -385,7 +392,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v4",
             ),
         ),
@@ -393,7 +400,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v5",
             ),
         ),
@@ -401,7 +408,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v55",
+                "metadata-report-v56",
                 "fixed-conservative-v7",
             ),
         ),
@@ -557,7 +564,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v55",)
+        assert schema_version == ("metadata-report-v56",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -741,7 +748,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v55'", "= 'metadata-report-v49'"
+                "= 'metadata-report-v56'", "= 'metadata-report-v49'"
             ),
         )
         # Reconstruct the frozen producer's reviewer table too; never update
@@ -1979,7 +1986,7 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v55"
+        assert restored.schema_version == "metadata-report-v56"
     finally:
         reopened.close()
 
@@ -2108,7 +2115,7 @@ def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> Non
 
     published = _current_audio_report()
     current = json.loads(published.to_json())
-    assert current["schema_version"] == "metadata-report-v55"
+    assert current["schema_version"] == "metadata-report-v56"
     assert MetadataReport.from_json(published.to_json()) == published
 
     previous = json.loads(json.dumps(current))
@@ -2300,7 +2307,7 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
             Path(__file__).parents[1] / "fixtures/metadata-report-v46/report-v46.json"
         ).read_text()
     )
-    document["schema_version"] = "metadata-report-v55"
+    document["schema_version"] = "metadata-report-v56"
     document.pop("report_id")
     document["report_id"] = (
         "report_" + hashlib.sha256(canonical_json(document).encode()).hexdigest()
@@ -2465,7 +2472,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_REPORTS_SQL",
             persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v55'",
+                "= 'metadata-report-v56'",
                 "= 'metadata-report-v54'"
                 if current_scaffolding
                 else "= 'metadata-report-v49'",

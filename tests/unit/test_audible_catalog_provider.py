@@ -68,6 +68,7 @@ from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asserted_asin_report,
     manual_audiobook_observation,
+    recorded_dispatch,
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
@@ -127,7 +128,7 @@ def test_provider_series_suffix_admission_replays_the_actual_association(
         file=base.file,
         local_claims=plan.local_claims,
         local_reasons=("embedded_tag_duration",),
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=base.audio,
     )
     path = tmp_path / "application.sqlite3"

@@ -106,7 +106,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.work_identity import work_title_has_variant_marker
-from tests.support.audiobook_reports import recording_lookup_report
+from tests.support.audiobook_reports import recorded_dispatch, recording_lookup_report
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
@@ -2304,7 +2304,7 @@ def test_lookup_work_lane_and_sqlite_proposal_roundtrip(tmp_path: Path) -> None:
         file=raw.file,
         local_claims=plan.local_claims,
         local_reasons=raw.local_reasons,
-        providers=(observation,),
+        providers=(recorded_dispatch(observation),),
         audio=raw.audio,
     )
     database = tmp_path / "reports.sqlite"
@@ -2533,6 +2533,7 @@ def _hinted_admission(
         audio_local_claims,
         audio_target_fields,
         audiobook_candidate,
+        recorded_dispatch,
     )
     from tests.support.metadata_report_doubles import single_track_audio_facts
 
@@ -2549,20 +2550,23 @@ def _hinted_admission(
         local_claims=plan.local_claims,
         local_reasons=("embedded_tag_duration",),
         providers=(
-            provider_observation(
-                "audible",
-                (
-                    ProviderLaneResult(
-                        plan.lanes[0],
-                        ProviderStatus.CANDIDATES,
-                        (candidate,),
-                        dispatch_lineage=rung,
-                        recording_lookup_hints=tuple(
-                            RecordingLookupHint(asin, 58_200, rung) for asin in hints
+            recorded_dispatch(
+                provider_observation(
+                    "audible",
+                    (
+                        ProviderLaneResult(
+                            plan.lanes[0],
+                            ProviderStatus.CANDIDATES,
+                            (candidate,),
+                            dispatch_lineage=rung,
+                            recording_lookup_hints=tuple(
+                                RecordingLookupHint(asin, 58_200, rung)
+                                for asin in hints
+                            ),
                         ),
                     ),
-                ),
-                authority="audible_catalog",
+                    authority="audible_catalog",
+                )
             ),
         ),
         audio=single_track_audio_facts(),

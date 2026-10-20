@@ -38,6 +38,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderChapterStructure,
     ProviderClaim,
     ProviderEvidenceKind,
+    ProviderLaneObservation,
+    ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     RecordingLookupHint,
@@ -289,6 +291,80 @@ def loose_band_survivors(
         if runtime_agreement(local, candidate_runtime_seconds(candidate)).outcome
         is not CorroborationOutcome.CONTRADICTED
     )
+
+
+def loose_band_near_miss(
+    products: tuple[ProviderCandidate, ...],
+    local_claims: tuple[LocalClaim, ...],
+    title: str,
+    authors: tuple[str, ...],
+) -> int | None:
+    """Say how far the nearest title-matching contradicted product ran (#1258).
+
+    The loose band rules out a product whose stated runtime is more than
+    `RUNTIME_BAND_LOOSE_SECONDS` from this recording's. Of the products it
+    rules out, only those exact work-identity admission accepts against the
+    lane's own title and full author set are this work, so the nearest of
+    them is the near-miss: provider minus local, in whole seconds, the smaller
+    magnitude first and the shorter product on a tie. It is a measurement and
+    nothing reads it as evidence.
+
+    An item with no single local running time, or a page with no such
+    product, has none.
+    """
+    if type(products) is not tuple or any(
+        type(value) is not ProviderCandidate for value in products
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    local = local_claim_runtime_seconds(local_claims)
+    if local is None:
+        return None
+    return min(
+        (
+            stated - local
+            for product in products
+            if (stated := candidate_runtime_seconds(product)) is not None
+            and runtime_agreement(local, stated).outcome
+            is CorroborationOutcome.CONTRADICTED
+            and provider_candidate_exact_work_identity_admission(
+                product, title, authors, audiobook=True
+            ).admitted
+        ),
+        key=lambda value: (abs(value), value),
+        default=None,
+    )
+
+
+# Best first: the band a lane's closest retained candidate falls in.
+_LANE_BANDS = (
+    (CorroborationOutcome.CORROBORATED, "tight"),
+    (CorroborationOutcome.WEAKLY_CORROBORATED, "loose"),
+    (CorroborationOutcome.CONTRADICTED, "outside"),
+    (CorroborationOutcome.NOT_COMPARABLE, "unstated"),
+)
+
+
+def lane_band(
+    provider: ProviderObservation,
+    lane: ProviderLaneObservation,
+    local_runtime: int | None,
+) -> str:
+    """Name the best runtime band one lane's retained candidates reach (#1258).
+
+    A derived measurement fact, never persisted: tight before loose before
+    outside before unstated, and `none` for a lane that retained nothing.
+    """
+    if lane.status is not ProviderStatus.CANDIDATES:
+        return "none"
+    retained = {candidate.identity: candidate for candidate in provider.candidates}
+    outcomes = {
+        runtime_agreement(
+            local_runtime,
+            candidate_runtime_seconds(retained[value.edition_identity]),
+        ).outcome
+        for value in lane.candidates
+    }
+    return next(band for outcome, band in _LANE_BANDS if outcome in outcomes)
 
 
 def recording_lookup_hints(
@@ -845,9 +921,11 @@ __all__ = [
     "complete_chapter_runtime_agreement",
     "cover_hash_agreement",
     "first_divergent_chapter",
+    "lane_band",
     "local_chapter_durations_seconds",
     "local_claim_runtime_seconds",
     "local_runtime_seconds",
+    "loose_band_near_miss",
     "loose_band_survivors",
     "recording_lookup_hints",
     "runtime_agreement",

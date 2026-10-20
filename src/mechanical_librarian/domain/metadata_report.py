@@ -65,7 +65,11 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
-from mechanical_librarian.domain.validation import bounded_integer, literal
+from mechanical_librarian.domain.validation import (
+    bounded_integer,
+    literal,
+    non_negative_integer,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -85,7 +89,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v55"
+REPORT_SCHEMA = "metadata-report-v56"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -524,6 +528,41 @@ class ProviderStatus(StrEnum):
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
     QUERY_LIMIT_EXCEEDED = "query_limit_exceeded"
+
+
+class DispatchOutcome(StrEnum):
+    """How one audiobook lane's dispatch ended (#1258).
+
+    An outcome rather than a stage, so it never reads as an ADR-0017 diagnostic
+    stage or a stage-timing one. `empty_or_refused` is the honest outcome of a
+    WORK lane whose provider does not record refusals.
+    """
+
+    ADMITTED = "admitted"
+    EMPTY = "empty"
+    REFUSED = "refused"
+    OVERFLOW = "overflow"
+    UNAVAILABLE = "unavailable"
+    STARVED = "starved"
+    NOT_DISPATCHED = "not_dispatched"
+    EMPTY_OR_REFUSED = "empty_or_refused"
+
+
+# The one outcome each lane status allows, beside the two statuses that need
+# more than the status: a no-match lane's ladder and an incomplete lane's cause.
+_DISPATCH_OUTCOMES = {
+    ProviderStatus.CANDIDATES: DispatchOutcome.ADMITTED,
+    ProviderStatus.CANDIDATE_LIMIT_EXCEEDED: DispatchOutcome.OVERFLOW,
+    ProviderStatus.INCOMPLETE: DispatchOutcome.UNAVAILABLE,
+    ProviderStatus.UNAVAILABLE: DispatchOutcome.UNAVAILABLE,
+    ProviderStatus.RATE_LIMITED: DispatchOutcome.UNAVAILABLE,
+    ProviderStatus.AUTHENTICATION: DispatchOutcome.UNAVAILABLE,
+    ProviderStatus.AUTHORIZATION: DispatchOutcome.UNAVAILABLE,
+    ProviderStatus.MALFORMED: DispatchOutcome.UNAVAILABLE,
+    ProviderStatus.OVERSIZED: DispatchOutcome.UNAVAILABLE,
+    ProviderStatus.INSUFFICIENT_INPUT: DispatchOutcome.NOT_DISPATCHED,
+    ProviderStatus.DISABLED: DispatchOutcome.NOT_DISPATCHED,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -2319,6 +2358,126 @@ class RecordingLookupHint:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderLaneDispatch:
+    """One audiobook lane's dispatch outcome, ladder depth and near-miss (#1258).
+
+    Pure observation: it holds a closed outcome and two integers and nothing a
+    decision reads. `rungs` counts the WORK rungs the lane attempted, and
+    `near_miss_seconds` is the provider-minus-local runtime of the nearest
+    title-matching product the loose band contradicted. The report states
+    which lanes may carry each and replays both.
+    """
+
+    outcome: DispatchOutcome
+    rungs: int | None = None
+    near_miss_seconds: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.outcome) is not DispatchOutcome
+            or (self.rungs is not None and not non_negative_integer(self.rungs))
+            or (
+                self.near_miss_seconds is not None
+                and type(self.near_miss_seconds) is not int
+            )
+        ):
+            raise ReportValueError("provider lane dispatch is invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "near_miss_seconds": self.near_miss_seconds,
+            "outcome": self.outcome.value,
+            "rungs": self.rungs,
+        }
+
+
+def lane_dispatch_outcome(
+    lane: ProviderLaneObservation, *, starved: bool
+) -> DispatchOutcome | None:
+    """Map one lane onto the outcome its status, ladder and cause allow.
+
+    Only an incomplete lane can be starved, and whether it was is the caller's
+    fact. A no-match WORK lane is refused or empty only where it walked its
+    whole ladder; a provider that keeps no ladder cannot say which.
+    """
+    if lane.status is ProviderStatus.INCOMPLETE and starved:
+        return DispatchOutcome.STARVED
+    if lane.status is not ProviderStatus.NO_MATCH:
+        return _DISPATCH_OUTCOMES.get(lane.status)
+    if lane.kind is not ProviderQueryKind.WORK:
+        return DispatchOutcome.EMPTY
+    if not lane.exhausted_dispatch:
+        return DispatchOutcome.EMPTY_OR_REFUSED
+    if any(
+        value.category is FailureCategory.WORK_IDENTITY_REFUSED
+        for value in lane.diagnostics
+    ):
+        return DispatchOutcome.REFUSED
+    return DispatchOutcome.EMPTY
+
+
+_STARVATION_DIAGNOSTIC = (FailureCategory.TIMEOUT, FailureStage.REQUEST, False)
+# The diagnostics an aggregate-byte and a dispatch-count cause become.
+_BUDGET_DIAGNOSTICS = frozenset(
+    {
+        (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE, FailureStage.RESPONSE, False),
+        (FailureCategory.LOOKUP_CONSTRUCTION, FailureStage.LOOKUP, False),
+    }
+)
+
+
+def starvation_backed(
+    provider: ProviderObservation, lane: ProviderLaneObservation
+) -> bool:
+    """Say whether the persisted diagnostics can back a starved lane (#1258).
+
+    The deadline's undispatched request is a non-retryable request timeout,
+    stated on the lane by a provider that keeps per-lane causes and on the
+    provider otherwise. A provider that also stopped for its byte or dispatch
+    budget cannot say the deadline alone stopped the lane.
+    """
+    provider_keys = {
+        (value.category, value.stage, value.retryable) for value in provider.diagnostics
+    }
+    lane_keys = {
+        (value.category, value.stage, value.retryable) for value in lane.diagnostics
+    }
+    return _STARVATION_DIAGNOSTIC in provider_keys | lane_keys and not (
+        provider_keys & _BUDGET_DIAGNOSTICS
+    )
+
+
+def provider_dispatch_class(observation: ProviderObservation) -> DispatchOutcome:
+    """Derive one provider's dispatch class from its aggregate status and lanes.
+
+    The aggregate status already ranks the lanes, so this only splits the two
+    statuses a lane outcome refines: a refusal outranks an empty ladder, and
+    one starved lane makes an incomplete provider starved.
+    """
+    outcomes = {
+        lane.dispatch.outcome for lane in observation.lanes if lane.dispatch is not None
+    }
+    if observation.status is ProviderStatus.NO_MATCH:
+        return next(
+            (
+                value
+                for value in (DispatchOutcome.REFUSED, DispatchOutcome.EMPTY)
+                if value in outcomes
+            ),
+            DispatchOutcome.EMPTY_OR_REFUSED,
+        )
+    if observation.status is ProviderStatus.INCOMPLETE:
+        return (
+            DispatchOutcome.STARVED
+            if DispatchOutcome.STARVED in outcomes
+            else DispatchOutcome.UNAVAILABLE
+        )
+    if observation.status is ProviderStatus.QUERY_LIMIT_EXCEEDED:
+        return DispatchOutcome.NOT_DISPATCHED
+    return _DISPATCH_OUTCOMES[observation.status]
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderLaneObservation:
     identity: str
     kind: ProviderQueryKind
@@ -2331,8 +2490,31 @@ class ProviderLaneObservation:
     transformation_lineage: WorkTitleTransformationLineage | None = None
     exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
     recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
+    dispatch: ProviderLaneDispatch | None = None
 
     def __post_init__(self) -> None:
+        self._validate_lane()
+        self._validate_dispatch()
+
+    def _validate_dispatch(self) -> None:
+        """Hold one dispatch record to the outcome its lane allows (#1258)."""
+        dispatch = self.dispatch
+        if dispatch is not None and (
+            type(dispatch) is not ProviderLaneDispatch
+            or dispatch.outcome
+            is not lane_dispatch_outcome(
+                self, starved=dispatch.outcome is DispatchOutcome.STARVED
+            )
+            or (
+                self.kind is not ProviderQueryKind.WORK
+                and (
+                    dispatch.rungs is not None or dispatch.near_miss_seconds is not None
+                )
+            )
+        ):
+            raise ReportValueError("provider lane dispatch is invalid")
+
+    def _validate_lane(self) -> None:
         if (
             _LANE_IDENTITY.fullmatch(self.identity) is None
             or self.kind not in PROVIDER_LANE_KINDS
@@ -2514,6 +2696,7 @@ class ProviderLaneObservation:
             "recording_lookup_hints": [
                 value.to_data() for value in self.recording_lookup_hints
             ],
+            "dispatch": None if self.dispatch is None else self.dispatch.to_data(),
         }
 
 
@@ -4016,6 +4199,7 @@ class MetadataReport:
                 > MAX_RECORDING_LOOKUP_HINTS
             ):
                 raise ReportValueError("recording lookup hints exceed their bound")
+        self._validate_lane_dispatch(planned)
         if (
             type(self.field_results) is not tuple
             or any(type(value) is not FieldResult for value in self.field_results)
@@ -4130,6 +4314,92 @@ class MetadataReport:
             raise ReportValueError("report identity is inconsistent")
         if len(self.to_json().encode("utf-8")) > MAX_REPORT_BYTES:
             raise ReportValueError("report exceeds its byte limit")
+
+    def _validate_lane_dispatch(self, planned: dict[str, WorkLanePayload]) -> None:
+        """Replay every lane's dispatch record, one rule at a time (#1258).
+
+        Each rule runs over every lane before the next starts, so the first
+        rule a report breaks is the one it is refused for.
+        """
+        lanes = tuple(
+            (provider, lane) for provider in self.providers for lane in provider.lanes
+        )
+        if any(
+            (lane.dispatch is None) is (self.audio is not None) for _, lane in lanes
+        ):
+            raise ReportValueError("provider lane dispatch presence is invalid")
+        if self.audio is None:
+            return
+        for _, lane in lanes:
+            lane._validate_dispatch()
+        if any(
+            cast("ProviderLaneDispatch", lane.dispatch).outcome
+            is DispatchOutcome.STARVED
+            and not starvation_backed(provider, lane)
+            for provider, lane in lanes
+        ):
+            raise ReportValueError("provider lane starvation is unbacked")
+        counted = tuple(
+            (provider, lane, cast("ProviderLaneDispatch", lane.dispatch))
+            for provider, lane in lanes
+            if cast("ProviderLaneDispatch", lane.dispatch).rungs is not None
+        )
+        if any(
+            provider.authority != "audible_catalog"
+            or lane.kind is not ProviderQueryKind.WORK
+            or lane.identity not in planned
+            for provider, lane, _ in counted
+        ):
+            raise ReportValueError("provider lane rungs provenance is invalid")
+        for _, lane, dispatch in counted:
+            payload = planned[lane.identity]
+            ladder = tuple(
+                WorkDispatchLineage.from_query(query)
+                for query in work_query_ladder(
+                    payload.title, payload.authors, audiobook=True
+                )
+            )
+            rungs = cast("int", dispatch.rungs)
+            if dispatch.outcome is DispatchOutcome.NOT_DISPATCHED:
+                expected = rungs == 0
+            elif dispatch.outcome in {DispatchOutcome.EMPTY, DispatchOutcome.REFUSED}:
+                expected = rungs == len(lane.exhausted_dispatch)
+            elif dispatch.outcome is DispatchOutcome.ADMITTED:
+                expected = (
+                    lane.dispatch_lineage in ladder
+                    and rungs == ladder.index(lane.dispatch_lineage) + 1
+                )
+            else:
+                expected = 1 <= rungs <= len(ladder)
+            if not expected:
+                raise ReportValueError("provider lane rungs do not replay")
+        # Imported here: the corroboration module imports this one, and it
+        # alone owns the loose band (ADR-0064).
+        from mechanical_librarian.domain.audiobook_corroboration import (
+            RUNTIME_BAND_LOOSE_SECONDS,
+            local_claim_runtime_seconds,
+        )
+
+        local = local_claim_runtime_seconds(self.local_claims)
+        misses = tuple(
+            (provider, lane, lane.dispatch.near_miss_seconds)
+            for provider, lane in lanes
+            if lane.dispatch is not None and lane.dispatch.near_miss_seconds is not None
+        )
+        if any(
+            provider.authority != "audible_catalog"
+            or (asked := planned.get(lane.identity)) is None
+            or asked.title_basis is not None
+            or local is None
+            for provider, lane, _ in misses
+        ):
+            raise ReportValueError("provider lane near-miss provenance is invalid")
+        if any(abs(value) <= RUNTIME_BAND_LOOSE_SECONDS for _, _, value in misses):
+            raise ReportValueError("provider lane near-miss is inside the loose band")
+        if any(
+            abs(value) > MAX_DURATION_MILLISECONDS // 1000 for _, _, value in misses
+        ):
+            raise ReportValueError("provider lane near-miss exceeds its bound")
 
     @classmethod
     def create(
@@ -6229,6 +6499,7 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
         {
             "candidates",
             "diagnostics",
+            "dispatch",
             "exhausted_dispatch",
             "identity",
             "input_references",
@@ -6274,6 +6545,18 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
             _recording_lookup_hint_from_data(value)
             for value in _list(item["recording_lookup_hints"])
         ),
+        (
+            None
+            if item["dispatch"] is None
+            else _provider_lane_dispatch_from_data(item["dispatch"])
+        ),
+    )
+
+
+def _provider_lane_dispatch_from_data(value: object) -> ProviderLaneDispatch:
+    item = _object(value, {"near_miss_seconds", "outcome", "rungs"})
+    return ProviderLaneDispatch(
+        DispatchOutcome(item["outcome"]), item["rungs"], item["near_miss_seconds"]
     )
 
 
@@ -6633,8 +6916,13 @@ __all__ = [
     "PublicationDateRelation",
     "ProviderConvergence",
     "ProviderLaneCandidate",
+    "ProviderLaneDispatch",
     "ProviderLaneObservation",
     "ProviderObservation",
+    "DispatchOutcome",
+    "lane_dispatch_outcome",
+    "provider_dispatch_class",
+    "starvation_backed",
     "RecordingLookupHint",
     "candidate_asins",
     "provider_candidate_exact_work_identity_admission",

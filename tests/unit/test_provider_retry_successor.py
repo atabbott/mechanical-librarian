@@ -111,6 +111,7 @@ from tests.support.audiobook_providers import (
     target_asin_claim,
     target_title_claim,
 )
+from tests.support.audiobook_reports import recorded_dispatch
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.metadata_report_schemas import synthetic_latin_work_report
 
@@ -505,7 +506,13 @@ def test_observe_wrapped_credential_error_remains_authentication_for_recovery(
     )
     service = retry.service(configured)
     with pytest.raises(ProviderRetrySuccessorError) as raised:
-        service._observe(configured, retry.plan, (retry.failed,), deadline=1.0)
+        service._observe(
+            configured,
+            retry.plan,
+            (retry.failed,),
+            retry.report.providers[0],
+            deadline=1.0,
+        )
     cause = raised.value.__cause__
     if declared:
         assert isinstance(cause, ProviderObservationFailure)
@@ -1826,10 +1833,12 @@ def test_an_audio_source_rebuilds_its_asin_plan_and_redispatches() -> None:
     )
     plan = audiobook_discovery_plan(snapshot, (asin,))
     (lane,) = plan.lanes
-    original = provider_observation(
-        "enrichment",
-        (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
-        authority="audnexus",
+    original = recorded_dispatch(
+        provider_observation(
+            "enrichment",
+            (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+            authority="audnexus",
+        )
     )
     report = MetadataReport.create(
         target=TargetFacts("primary", "audio", "item", snapshot.fields),
@@ -1909,10 +1918,12 @@ def test_an_excluded_audiobook_retry_closes_stale_before_any_egress() -> None:
         local_claims=claims,
         local_reasons=("target_metadata_title",),
         providers=(
-            provider_observation(
-                "books",
-                (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
-                authority="google_books",
+            recorded_dispatch(
+                provider_observation(
+                    "books",
+                    (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+                    authority="google_books",
+                )
             ),
         ),
         audio=_RETAINED_AUDIO,
@@ -2032,10 +2043,12 @@ def test_an_audio_source_rebuilds_its_asin_feed_plan_for_a_per_asin_provider() -
     feed = audiobook_asin_feed_plan(snapshot, plan, ())
     assert feed is not None
     (lane,) = feed.lanes
-    original = provider_observation(
-        "enrichment",
-        (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
-        authority="audnexus",
+    original = recorded_dispatch(
+        provider_observation(
+            "enrichment",
+            (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+            authority="audnexus",
+        )
     )
     report = MetadataReport.create(
         target=TargetFacts("primary", "audio", "item", snapshot.fields),
@@ -2091,10 +2104,12 @@ def test_an_unrebuildable_asin_feed_fails_closed_before_any_dispatch() -> None:
         plan.lanes[0].input_references,
         canonical_asin="B0PHANTOM1",
     )
-    original = provider_observation(
-        "enrichment",
-        (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
-        authority="audnexus",
+    original = recorded_dispatch(
+        provider_observation(
+            "enrichment",
+            (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
+            authority="audnexus",
+        )
     )
     report = MetadataReport.create(
         target=TargetFacts("primary", "audio", "item", snapshot.fields),
@@ -2191,12 +2206,15 @@ def test_lookup_hint_retry_reconstructs_identical_context_and_asin_lanes() -> No
     plan = audiobook_discovery_plan(snapshot, source.local_claims, audio=source.audio)
     feed = audiobook_asin_feed_plan(snapshot, plan, source.providers)
     assert feed is not None
-    original = provider_observation(
-        "enrichment",
-        tuple(
-            ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE) for lane in feed.lanes
-        ),
-        authority="audnexus",
+    original = recorded_dispatch(
+        provider_observation(
+            "enrichment",
+            tuple(
+                ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                for lane in feed.lanes
+            ),
+            authority="audnexus",
+        )
     )
     report = MetadataReport.create(
         target=source.target,
@@ -2607,21 +2625,23 @@ def test_a_retry_admitting_a_siblings_hinted_product_still_merges(
             asserted.title or "", asserted.authors, audiobook=True
         )
     )
-    original = provider_observation(
-        "audible",
-        (
-            ProviderLaneResult(
-                asserted,
-                ProviderStatus.NO_MATCH,
-                diagnostics=work_ladder_diagnostics(0, len(ladder)),
-                exhausted_dispatch=ladder,
-                recording_lookup_hints=(
-                    RecordingLookupHint("B000000011", 58_200, ladder[0]),
+    original = recorded_dispatch(
+        provider_observation(
+            "audible",
+            (
+                ProviderLaneResult(
+                    asserted,
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=work_ladder_diagnostics(0, len(ladder)),
+                    exhausted_dispatch=ladder,
+                    recording_lookup_hints=(
+                        RecordingLookupHint("B000000011", 58_200, ladder[0]),
+                    ),
                 ),
+                ProviderLaneResult(alternative, ProviderStatus.UNAVAILABLE),
             ),
-            ProviderLaneResult(alternative, ProviderStatus.UNAVAILABLE),
-        ),
-        authority="audible_catalog",
+            authority="audible_catalog",
+        )
     )
 
     def found(_request: httpx.Request) -> httpx.Response:
@@ -2656,7 +2676,7 @@ def test_a_retry_admitting_a_siblings_hinted_product_still_merges(
     service = retry.service(configured)
     selected = service._selected(plan, original, (alternative.identity,))
     replacement, _delay, _evidence = service._observe(
-        configured, plan, selected, deadline=1_700_000_100.0
+        configured, plan, selected, original, deadline=1_700_000_100.0
     )
     merged = service._merged(plan, original, selected, replacement)
 
@@ -2685,12 +2705,15 @@ def test_a_hint_feed_retry_rebuilds_the_identical_asin_lanes() -> None:
     feed = audiobook_asin_feed_plan(snapshot, plan, source.providers)
     assert feed is not None
     assert {"B000000011", "B000000012"} == {lane.canonical_asin for lane in feed.lanes}
-    original = provider_observation(
-        "enrichment",
-        tuple(
-            ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE) for lane in feed.lanes
-        ),
-        authority="audnexus",
+    original = recorded_dispatch(
+        provider_observation(
+            "enrichment",
+            tuple(
+                ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                for lane in feed.lanes
+            ),
+            authority="audnexus",
+        )
     )
     report = MetadataReport.create(
         target=source.target,
@@ -2795,7 +2818,7 @@ def test_a_faulted_dispatch_records_no_alternative_and_its_retry_succeeds(
     service = retry.service(configured)
     selected = service._selected(plan, initial.observation, (asserted.identity,))
     observation, _delay, _evidence = service._observe(
-        configured, plan, selected, deadline=1_700_000_100.0
+        configured, plan, selected, initial.observation, deadline=1_700_000_100.0
     )
 
     assert [(asserted.identity, ProviderStatus.NO_MATCH)] == [
@@ -2853,7 +2876,7 @@ def test_a_faulted_collapsed_plan_keeps_the_alternative_only_where_it_is_sent(
     service = retry.service(configured)
     selected = service._selected(plan, initial.observation, (alternative.identity,))
     observation, _delay, _evidence = service._observe(
-        configured, plan, selected, deadline=1_700_000_100.0
+        configured, plan, selected, initial.observation, deadline=1_700_000_100.0
     )
 
     assert [(alternative.identity, ProviderStatus.NO_MATCH)] == [

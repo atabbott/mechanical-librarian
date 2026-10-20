@@ -1105,7 +1105,7 @@ class ReviewPreparationPipeline:
         exact_next: bool = False,
     ) -> PipelineAction | None:
         timing = {
-            "proposal": ("policy_evaluation", "none"),
+            "proposal": ("proposal", "none"),
             "admission": ("policy_evaluation", "none"),
             "projection": ("policy_evaluation", "none"),
         }.get(action.stage)
