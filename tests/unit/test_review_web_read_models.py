@@ -9,7 +9,7 @@ import hashlib
 import json
 from collections.abc import Iterator
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, cast, get_args
 from unittest.mock import Mock, patch
 
 import pytest
@@ -92,11 +92,13 @@ from mechanical_librarian.domain.preparation_presentation import PreparationTrig
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.interfaces.web.app import (
     _CaseDetailResponse,
     _CoverOmission,
     _MediaHealthObservation,
     _ReportDetailResponse,
+    _ReviewField,
 )
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
@@ -2512,6 +2514,40 @@ def test_an_audiobook_case_states_its_media_health_beside_its_fields() -> None:
         )["media_health"]
         == []
     )
+
+
+def test_the_field_classification_wire_vocabulary_is_the_domain_vocabulary(
+    tmp_path,
+) -> None:
+    """The wire states exactly the classifications the domain can produce.
+
+    The response model reads the domain's own vocabulary rather than a copy,
+    so a new state, such as a recording's optional choice (#1249), reaches the
+    generated OpenAPI and the browser's types with it, and nothing else does.
+    """
+    from contextlib import closing
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support.audiobook_reports import publish_audiobook_preview
+
+    published = _ReviewField.model_json_schema()["properties"]["classification"]
+    assert set(published["enum"]) == set(get_args(ReviewFieldState))
+    with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository, admitted_audiobook_report(), ("isbn_form",)
+        )
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+    # The application layer adds the field's effect capability on the way out.
+    asin = {
+        **next(f for f in detail["fields"] if f["destination"] == "asin"),
+        "effect_capability": "unavailable",
+    }
+
+    assert _ReviewField.model_validate(asin).classification == "owner_choosable"
+    with pytest.raises(ValidationError):
+        _ReviewField.model_validate({**asin, "classification": "queued"})
 
 
 def test_the_media_health_wire_vocabulary_is_the_closed_domain_vocabulary() -> None:

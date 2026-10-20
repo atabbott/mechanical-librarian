@@ -11,6 +11,7 @@ ReviewFieldState = Literal[
     "automatic_recorded",
     "human_recorded",
     "unsupported",
+    "owner_choosable",
 ]
 ReviewNavigationRole = Literal["attention", "inspect"]
 ReviewFieldCause = Literal[
@@ -57,8 +58,14 @@ def classify_review_field(
     current_value: object,
     proposed_values: tuple[object, ...],
     override_available: bool = True,
+    owner_choosable: bool = False,
 ) -> ReviewFieldClassification:
-    """Classify a field consistently for queue, detail, and navigation use."""
+    """Classify a field consistently for queue, detail, and navigation use.
+
+    `owner_choosable` is a recording's undecided fill that no shared reason
+    queues: it stays editable in its case but is never attention (#1249).
+    Every other input decides first.
+    """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
         for value in proposed_values
@@ -143,6 +150,17 @@ def classify_review_field(
             True,
             False,
             "attention",
+            preservation_only,
+        )
+    if owner_choosable:
+        return ReviewFieldClassification(
+            "owner_choosable",
+            "No review is needed. You can still keep the current value or "
+            "choose a proposed one.",
+            False,
+            True,
+            False,
+            "inspect",
             preservation_only,
         )
     return ReviewFieldClassification(

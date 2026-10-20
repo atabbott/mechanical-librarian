@@ -8478,7 +8478,8 @@
               "manual_fallback",
               "automatic_recorded",
               "human_recorded",
-              "unsupported"
+              "unsupported",
+              "owner_choosable"
             ],
             "title": "Classification",
             "type": "string"

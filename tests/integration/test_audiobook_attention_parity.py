@@ -210,8 +210,9 @@ def test_a_settled_asin_fill_leaves_the_queue_and_stays_choosable(
 ) -> None:
     """Under all-Ask a single-candidate ASIN fill asks for nothing.
 
-    The queue reads alike on both media, yet a recording's case still offers
-    the fill to the owner (#1249).
+    The queue reads alike on both media, and the case page agrees with it: a
+    recording's fill is an optional choice it still offers the owner, not a
+    field needing review (#1249).
     """
     report = admitted_audiobook_report() if medium == "m4b" else _ebook_asin_report()
     with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
@@ -238,11 +239,24 @@ def test_a_settled_asin_fill_leaves_the_queue_and_stays_choosable(
         assert asin["deterministic_disposition"] == "propose_change"
         assert asin["decision_actions"] == ["keep_current", "accept"]
         assert attention["total"] == len(asking)
-        # The case page keeps a recording's undecided field the owner's: the
-        # stated gap between that page and its Library row (#1249). An
-        # ebook's waits for its policy exactly as before.
+        # A recording's fill stays choosable without asking; an ebook's waits
+        # for its policy exactly as before.
+        assert asin["classification"] == (
+            "owner_choosable" if medium == "m4b" else "unsupported"
+        )
+        assert asin["needs_attention"] is False
         assert asin["editable"] is (medium == "m4b")
-        assert asin["needs_attention"] is (medium == "m4b")
+        if medium == "m4b":
+            narrators = next(
+                f for f in detail["fields"] if f["destination"] == "narrators"
+            )
+            assert narrators["classification"] == "needs_attention"
+            assert narrators["needs_attention"] is True
+        # The case page, its Library row and the queue count the same fields.
+        assert (
+            sum(f["needs_attention"] for f in detail["fields"])
+            == row["attention_count"]
+        )
 
 
 def test_a_policy_decided_asin_fill_has_no_fact_on_either_medium(
