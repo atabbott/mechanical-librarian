@@ -157,6 +157,11 @@ exists for an automatic decision to be minted from.
 > that exact audiobook identity. Every destination no record names is still the
 > owner's, by the same abstention.
 
+> Revised by #1249: a field being the owner's no longer puts it in the
+> attention queue. A recording joins the queue under exactly an ebook's
+> conditions, so a settled fill no record decided asks for nothing there,
+> though it stays choosable in its case.
+
 ## Consequences
 
 ### Positive

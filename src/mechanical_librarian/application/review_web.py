@@ -2560,12 +2560,13 @@ def _needs_attention(
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
-    A settled `propose_change` waits unless its bound policy routes it to Ask.
-    On a recording an undecided field has nothing to wait for, so it is the
-    owner's; a field an F46 record did decide leaves the attention lens
-    because the membership query excludes it, and reads exactly as an ebook's
-    does elsewhere. The action list beside this decides whether a choice
-    exists at all (#966, #967).
+    A settled `propose_change` waits unless its bound policy routes it to Ask,
+    on a recording exactly as on an ebook: the attention queue and its lens
+    hold no medium-specific reason (#1249). Only the case detail passes
+    `owner_only`, for a recording field no automatic decision settled, so that
+    field stays choosable in its case although it no longer counts toward the
+    queue. The action list beside this decides whether a choice exists at all
+    (#967).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -3096,12 +3097,12 @@ def _attention_item(
     classification = classify_review_field(
         attention_candidate=(
             # The lens mirrors the query rather than second-guessing it: the
-            # membership predicate already excludes every field a durable
-            # automatic decision settled, so a row that reached here has none
-            # and a recording's proposal is the owner's. Re-deciding that here
-            # from a shadow disposition would page short of the count the same
-            # query reports (#966, #967).
-            _needs_attention(proposal, owner_only=case.media_kind == "audiobook")
+            # membership predicate holds the same reasons on every medium, so
+            # a recording's settled proposal is no more the owner's here than
+            # an ebook's (#1249). Re-deciding membership from a shadow
+            # disposition would page short of the count the same query
+            # reports (#967).
+            _needs_attention(proposal)
             or policy_attention
             or cause == "automatic_safety_suspended"
             or (destination == "cover" and work_attention_count > 0)

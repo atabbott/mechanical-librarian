@@ -71,14 +71,6 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
     "outcome.policy_category='title' "
     "THEN 'title_layout' ELSE outcome.policy_category END)))"
 )
-# No automatic authority reaches a recording: F45 forms the case and F47 owns
-# the writes, so on an audiobook there is nothing for a settled proposal to
-# wait for and every field that still admits a choice is the owner's. The
-# `has_owner_decision_actions` gate above is what decides whether one does
-# (#966).
-_AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL = (
-    "json_extract(mr.document,'$.file.format') <> 'epub'"
-)
 # A case has at most one current cover pointer. The authority admits a cover
 # field when it has none, or when the pointed consideration agrees with the
 # case and report rows (`_STORED`), is manually ready, matches the live policy
@@ -120,7 +112,8 @@ _STORED_COVER_ATTENTION_AUTHORITY_SQL = (
 )
 # A field asks for the owner when one of these reasons holds, the cover
 # authority below admits it, and nothing in `_REVIEW_FIELD_ATTENTION_CLEAR_SQL`
-# has already settled or suspended it.
+# has already settled or suspended it. No reason is medium-specific: a
+# recording joins the queue under exactly an ebook's conditions (#1249).
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
     "OR (result.destination='cover' AND EXISTS (SELECT 1 "
@@ -130,8 +123,6 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "WHERE current_cover.review_case_id=rc.review_case_id "
     "AND json_extract(consideration.currentness_document,'$.manual_ready')=1)) "
     "OR "
-    + _AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL
-    + " OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "
     + _POLICY_ASK_ATTENTION_SQL
@@ -328,7 +319,6 @@ __all__ = [
     "_CURRENT_LIBRARY_FROM_SQL",
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
-    "_AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_POLICY_ASK_ATTENTION_SQL",

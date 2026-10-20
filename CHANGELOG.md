@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Audiobooks now enter the attention queue under the same conditions as ebooks,
+  so a settled ASIN or narrator fill no longer counts as needing attention; it
+  stays choosable in its case. Upgrading requires a clean rebuild (#1249).
+
 - Library descriptions containing HTML closing tags such as `</p>` or Unicode
   line separators are now read and compared instead of being marked malformed,
   for ebooks and audiobooks. Real paths, credentials and controls are still

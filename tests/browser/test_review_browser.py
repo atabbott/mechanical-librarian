@@ -4348,9 +4348,10 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                 ).first
                 expect(row).to_be_visible()
                 # A recording is an ordinary review row, not a failure card,
-                # and no automatic authority reaches it, so both fields that
-                # still admit a choice are the owner's to answer.
-                expect(row).to_contain_text("2 fields need attention")
+                # and it joins the queue under an ebook's conditions: its
+                # settled Narrators and ASIN fills ask for nothing, yet both
+                # stay choosable in the case below (#1249).
+                expect(row).to_contain_text("No attention needed")
                 assert page.locator(".library-work-row.is-terminal").count() == 0
 
                 row.click()
