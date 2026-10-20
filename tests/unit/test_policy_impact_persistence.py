@@ -814,7 +814,7 @@ def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_pat
     "field,active_route,draft_route,available,recording,populated,changed",
     [
         (field, active, draft, available, False, False, changed)
-        for field in ("description_fill", "genres")
+        for field in ("description_fill", "genres", "series")
         for active, draft, available, changed in (
             ("automatic", "ignore", True, True),
             ("ignore", "ask", True, True),
@@ -875,6 +875,11 @@ def test_work_manual_availability_is_policy_impact(
                 if available or field != "genres"
                 else [],
                 **({"runtimeLengthMin": 970} if recording else {}),
+                **(
+                    {"seriesPrimary": {"name": "Example Saga", "position": str(index)}}
+                    if field == "series" and available
+                    else {}
+                ),
             }
             for index, (summary, genre) in enumerate(
                 (

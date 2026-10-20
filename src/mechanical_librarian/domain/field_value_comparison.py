@@ -394,6 +394,69 @@ def plain_audiobook_synopsis(value: object) -> TypeGuard[str]:
     )
 
 
+_WORD: Final = re.compile(r"\w+")
+
+
+def description_alternative_immaterial(current: object, candidate: object) -> bool:
+    """Whether a description alternative only trims or extends a usable incumbent.
+
+    The incumbent must pass the audiobook synopsis floor. Both texts are read
+    with real markup removed, casefolded and split into words, and the
+    alternative is immaterial when one word sequence equals the other or runs
+    inside it contiguously, in either direction. An incumbent below the floor
+    makes every alternative material. Pure, and never raises (#1253).
+    """
+    if (
+        not plain_audiobook_synopsis(current)
+        or recognized_synopsis_placeholder(current)
+        or type(candidate) is not str
+    ):
+        return False
+    shorter, longer = sorted(
+        (_synopsis_words(current), _synopsis_words(candidate)), key=len
+    )
+    return bool(shorter) and any(
+        longer[index : index + len(shorter)] == shorter
+        for index in range(len(longer) - len(shorter) + 1)
+    )
+
+
+def genre_alternative_immaterial(current: object, candidate: object) -> bool:
+    """Whether a genre alternative only trims or extends a usable incumbent list.
+
+    Format words are removed from both lists first, as the audiobook genre
+    floor reads them, and the alternative is immaterial when either remaining
+    set contains the other. An empty or format-only incumbent makes every
+    alternative material. Pure, and never raises (#1253).
+    """
+    if audiobook_format_only_genres(current):
+        return False
+    left = _work_genres(current)
+    right = _work_genres(candidate)
+    if not left or right is None:
+        return False
+    return left <= right or right <= left
+
+
+def _synopsis_words(value: str) -> tuple[str, ...]:
+    return tuple(
+        _WORD.findall(
+            unicodedata.normalize("NFC", SYNOPSIS_MARKUP_TAG.sub(" ", value)).casefold()
+        )
+    )
+
+
+def _work_genres(value: object) -> frozenset[str] | None:
+    members = _text_sequence(value)
+    if members is None:
+        return None
+    try:
+        keys = {canonical_text(TargetDestination.GENRES, member) for member in members}
+    except ValueError:
+        return None
+    return frozenset(key for key in keys if not audiobook_format_word(key))
+
+
 __all__ = [
     "DESCRIPTION_VISIBLE_CUTOFFS",
     "SYNOPSIS_MARKUP_TAG",
@@ -401,6 +464,8 @@ __all__ = [
     "audiobook_format_word",
     "canonical_text",
     "creator_list_reordered",
+    "description_alternative_immaterial",
+    "genre_alternative_immaterial",
     "plain_audiobook_synopsis",
     "recognized_synopsis_placeholder",
     "values_match",

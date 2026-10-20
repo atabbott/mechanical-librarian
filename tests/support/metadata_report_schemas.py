@@ -246,6 +246,17 @@ def retained_report_as_current(document: str) -> MetadataReport:
     return MetadataReport.from_json(canonical_json(data))
 
 
+# Every producer before #1253 counted an immaterial work alternative as an
+# unresolved choice, so its own review-case field-fact trigger lacks the clause.
+PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
+    persistence_schema._REVIEW_CASE_FIELD_FACTS_INSERT_SQL.replace(
+        "AND NOT EXISTS (SELECT 1 FROM json_each(result.value,'$.reasons') reason "
+        "WHERE reason.value='work_alternative_immaterial') ",
+        "",
+    )
+)
+
+
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(

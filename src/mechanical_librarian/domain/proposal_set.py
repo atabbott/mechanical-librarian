@@ -35,6 +35,8 @@ from mechanical_librarian.domain.field_outcomes import (
 from mechanical_librarian.domain.field_value_comparison import (
     canonical_text,
     creator_list_reordered,
+    description_alternative_immaterial,
+    genre_alternative_immaterial,
     title_identity_key,
     values_match,
 )
@@ -101,7 +103,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v34"
+POLICY_VERSION = "fixed-conservative-v35"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -162,6 +164,15 @@ _BIBLIOGRAPHIC_DESTINATIONS = (
     TargetDestination.TITLE,
     TargetDestination.SUBTITLE,
     TargetDestination.SERIES,
+)
+# The fields witnessed book evidence answers while the recording is unresolved.
+_WORK_ROUTE_DESTINATIONS = frozenset(
+    {
+        TargetDestination.DESCRIPTION,
+        TargetDestination.GENRES,
+        TargetDestination.SERIES,
+        TargetDestination.TITLE,
+    }
 )
 
 
@@ -271,6 +282,7 @@ EVIDENCE_LED_TITLE_REASON = "isbn_creator_supported_title"
 VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 RECORDING_ASSOCIATED_ISBN_REASON = "recording_associated_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
+WORK_ALTERNATIVE_IMMATERIAL_REASON = "work_alternative_immaterial"
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
@@ -318,6 +330,8 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ),
             ("populated_subjective_field",),
             ("work_publication_cannot_replace",),
+            ("competing_evidence", WORK_ALTERNATIVE_IMMATERIAL_REASON),
+            ("populated_subjective_field", WORK_ALTERNATIVE_IMMATERIAL_REASON),
         }
     ),
     ProposalOutcome.KEEP: frozenset(
@@ -1159,14 +1173,28 @@ def _supported_work_source(
 
 
 def audiobook_review_scope(report: MetadataReport) -> AudiobookReviewScope | None:
-    """Distinguish useful book evidence from admitted recording identity."""
+    """Distinguish useful book evidence from admitted recording identity.
+
+    Book evidence is a witnessed description, genre list or series, or a
+    witnessed title that does not preserve the current one: a title that only
+    restates the current value gives the owner nothing to decide (#1253).
+    """
     if report.audio is None:
         return None
     if admitted_audiobook_identity(report):
         return AudiobookReviewScope.RECORDING
+    title = canonical_target_fields(report.target.fields)[TargetDestination.TITLE]
     if any(
         _observations(report, destination)
-        for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES)
+        for destination in (
+            TargetDestination.DESCRIPTION,
+            TargetDestination.GENRES,
+            TargetDestination.SERIES,
+        )
+    ) or any(
+        title.state is not TargetFieldState.VALUE
+        or not _matches(TargetDestination.TITLE, title.value, observed.value)
+        for observed in _observations(report, TargetDestination.TITLE)
     ):
         return AudiobookReviewScope.WORK
     return None
@@ -1356,11 +1384,10 @@ def evaluate_report(
         _cover_result(report, targets[TargetDestination.COVER]), ignored
     )
     if report.audio is not None and not admitted_audiobook_identity(report):
+        # Book evidence answers only the book's own fields; the subtitle stays
+        # out because a recording's subtitle is edition evidence (#1253).
         for destination in TargetDestination:
-            if destination not in {
-                TargetDestination.DESCRIPTION,
-                TargetDestination.GENRES,
-            }:
+            if destination not in _WORK_ROUTE_DESTINATIONS:
                 results[destination] = ProposalResult(
                     destination,
                     ProposalOutcome.INELIGIBLE,
@@ -1369,8 +1396,14 @@ def evaluate_report(
                     ("no_supported_evidence",),
                     _dependencies(destination),
                 )
-        observed_by_destination = {}
-        title_associations = {}
+        observed_by_destination = {
+            destination: observed_by_destination[destination]
+            for destination in (TargetDestination.TITLE, TargetDestination.SERIES)
+        }
+        for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES):
+            results[destination] = _bound_immaterial_work_alternatives(
+                results[destination], targets[destination]
+            )
     combinations, unresolved = _bibliographic_combinations(
         targets,
         results,
@@ -1402,6 +1435,41 @@ def evaluate_report(
         media_kind=(
             "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
         ),
+    )
+
+
+def _bound_immaterial_work_alternatives(
+    result: ProposalResult, target: TargetField
+) -> ProposalResult:
+    """Mark a work-route choice whose every alternative only trims or extends.
+
+    The field stays the owner's to choose; the reason only keeps it from
+    counting as a field that needs attention (#1253).
+    """
+    immaterial = (
+        description_alternative_immaterial
+        if result.destination is TargetDestination.DESCRIPTION
+        else genre_alternative_immaterial
+    )
+    if (
+        result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or result.reasons
+        not in {("competing_evidence",), ("populated_subjective_field",)}
+        or target.state is not TargetFieldState.VALUE
+        or not all(
+            immaterial(target.value, alternative.value.value)
+            for alternative in result.alternatives
+            if alternative.assessment is not ProposalAssessment.PRESERVES_TARGET
+        )
+    ):
+        return result
+    return ProposalResult(
+        result.destination,
+        result.outcome,
+        result.alternatives,
+        result.selected_alternative_id,
+        (*result.reasons, WORK_ALTERNATIVE_IMMATERIAL_REASON),
+        result.dependencies,
     )
 
 
@@ -3591,15 +3659,22 @@ def _resolve_series_subset(
 
 
 def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
+    # A recording without admitted identity reads only witnessed book sources,
+    # as `_observations` and `_list_observations` do (#1253).
+    work_only = report.audio is not None and not admitted_audiobook_identity(report)
     values: list[_Observed] = []
     source_claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
-    for basis in tuple(
-        sorted(
-            {
-                claim.basis
-                for claim in report.local_claims
-                if claim.basis != "target_metadata"
-            }
+    for basis in (
+        ()
+        if work_only
+        else tuple(
+            sorted(
+                {
+                    claim.basis
+                    for claim in report.local_claims
+                    if claim.basis != "target_metadata"
+                }
+            )
         )
     ):
         source_claims = tuple(
@@ -3622,6 +3697,8 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
             )
     for provider in report.providers:
         for candidate in provider.candidates:
+            if work_only and not _supported_work_source(report, provider, candidate):
+                continue
             source_claims = tuple(
                 claim
                 for claim in candidate.claims

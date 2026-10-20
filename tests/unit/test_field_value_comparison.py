@@ -2,7 +2,11 @@
 
 import pytest
 
-from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.field_value_comparison import (
+    description_alternative_immaterial,
+    genre_alternative_immaterial,
+    values_match,
+)
 from mechanical_librarian.domain.metadata_report import TargetDestination
 
 
@@ -92,3 +96,88 @@ def test_isbn_comparison_keeps_nonmatching_or_invalid_values_actionable(
     current: str, candidate: str
 ) -> None:
     assert not values_match(TargetDestination.ISBN, current, candidate)
+
+
+_SYNOPSIS = "A voyage reveals a hidden city. The crew must choose who returns home."
+
+
+@pytest.mark.parametrize(
+    ("current", "candidate", "immaterial"),
+    (
+        (_SYNOPSIS, "A voyage reveals a hidden city.", True),
+        ("A voyage reveals a hidden city.", _SYNOPSIS, True),
+        (_SYNOPSIS, "<p>A VOYAGE reveals a hidden   city!</p>", True),
+        (_SYNOPSIS, "The crew must choose who returns home.", True),
+        (_SYNOPSIS, _SYNOPSIS, True),
+        (
+            _SYNOPSIS,
+            "A voyage reveals a hidden city. Nobody returns from the deep.",
+            False,
+        ),
+        (_SYNOPSIS, "A voyage reveals a city.", False),
+        (_SYNOPSIS, "", False),
+        ("Narrated by Example Narrator", "A voyage reveals a hidden city.", False),
+        ("Unabridged", "Unabridged audiobook", False),
+        ("<p>A voyage reveals a hidden city.</p>", "A voyage reveals", False),
+        ("A voyage reveals a hidden city...", "A voyage reveals", False),
+        (None, "A voyage reveals a hidden city.", False),
+        (("A voyage",), "A voyage", False),
+        (_SYNOPSIS, None, False),
+    ),
+    ids=(
+        "trims-trailing-sentence",
+        "extends-incumbent",
+        "markup-case-punctuation",
+        "trims-leading-sentence",
+        "equal",
+        "new-sentence",
+        "drops-inner-word",
+        "no-words",
+        "credit-line-incumbent",
+        "format-word-incumbent",
+        "tag-bearing-incumbent",
+        "visibly-cut-incumbent",
+        "missing-incumbent",
+        "list-incumbent",
+        "non-text-candidate",
+    ),
+)
+def test_description_alternative_is_immaterial_only_by_contiguous_words(
+    current: object, candidate: object, immaterial: bool
+) -> None:
+    assert description_alternative_immaterial(current, candidate) is immaterial
+
+
+@pytest.mark.parametrize(
+    ("current", "candidate", "immaterial"),
+    (
+        (("Fantasy", "Adventure"), ("Fantasy",), True),
+        (("Fantasy",), ("fantasy", "Adventure"), True),
+        (("Fantasy", "Audiobook"), ("Fantasy",), True),
+        (("Fantasy",), ("Fantasy", "Unabridged"), True),
+        (("Fantasy",), ("Audiobook",), True),
+        (("Fantasy", "Adventure"), ("Fantasy", "Mystery"), False),
+        (("Fantasy",), ("Mystery",), False),
+        (("Audiobook",), ("Fantasy",), False),
+        ((), ("Fantasy",), False),
+        (None, ("Fantasy",), False),
+        (("Fantasy",), "Fantasy", False),
+    ),
+    ids=(
+        "subset",
+        "superset",
+        "format-word-incumbent-member",
+        "format-word-candidate-member",
+        "format-only-candidate",
+        "new-genre",
+        "disjoint",
+        "format-only-incumbent",
+        "empty-incumbent",
+        "missing-incumbent",
+        "non-list-candidate",
+    ),
+)
+def test_genre_alternative_is_immaterial_only_by_set_containment(
+    current: object, candidate: object, immaterial: bool
+) -> None:
+    assert genre_alternative_immaterial(current, candidate) is immaterial

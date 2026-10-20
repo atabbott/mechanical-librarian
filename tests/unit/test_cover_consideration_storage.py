@@ -21,6 +21,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from tests.support.cover_retention import retained_cover_case
+from tests.support.metadata_report_schemas import (
+    PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+)
 
 
 def test_real_producer_roundtrip_replay_history_and_restart(tmp_path: Path) -> None:
@@ -150,8 +153,9 @@ def test_actual_embedded_predecessor_refused_without_mutation(
     database = tmp_path / "predecessor.sqlite"
     connection = sqlite3.connect(database)
     support = Path(__file__).parents[1]
-    # The producer also predates #1245's report discriminator, and #1252's
-    # proposal and decision policy literals, which its own DDL carried.
+    # The producer also predates #1245's report discriminator, #1252's proposal
+    # and decision policy literals, which its own DDL carried, and #1253's
+    # field-fact clause.
     with (
         patch.object(
             schema, "_COVER_CONSIDERATIONS_SQL", fixture["cover_considerations_sql"]
@@ -179,6 +183,11 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema._REPORTS_SQL.replace(
                 "= 'metadata-report-v55'", "= 'metadata-report-v49'"
             ),
+        ),
+        patch.object(
+            schema,
+            "_REVIEW_CASE_FIELD_FACTS_INSERT_SQL",
+            PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         ),
     ):
         schema._create_schema(connection)
