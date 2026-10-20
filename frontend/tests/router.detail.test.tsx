@@ -63,6 +63,23 @@ describe('Library review ownership', () => {
     },
   )
 
+  it('states which fields book-level evidence supports for an unresolved recording', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, audiobookReviewScope: 'work' as const })),
+    }
+    renderRoute('/review/case-1?subview=evidence', http)
+
+    const section = await screen.findByRole('region', { name: 'Book-level evidence' })
+    expect(
+      within(section).getByText(
+        'Book-level evidence supports series, title, description and genre choices. The exact recording remains unresolved.',
+      ),
+    ).toBeVisible()
+    expect(within(section).getByText(/^Your choices apply only to these fields\./u)).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
+  })
+
   it('states media health on the case an admitted audiobook opens', async () => {
     // An audiobook's row opens its case, never the recorded-evidence view, so
     // a section that existed only there would be invisible for exactly the

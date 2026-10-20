@@ -2114,12 +2114,19 @@ Shadow policy v20 requires a clean rebuild, with no migration or adoption.
 
 Work-only scope is recomputed from the bound report, never accepted as a client
 permission. Each description/genre source must independently establish the full
-work relationship. Recording remains unresolved; other fields are masked before
+work relationship. Recording remains unresolved; fields other than description,
+genres, series and title (the last two since #1253, below) are masked before
 combinations, and automatic reconstruction, covers and authored-description
 preparation/retry remain unavailable. Explicit owner choices reuse exact-current
 binding, library consent, backup readiness, target comparison, supported service
 writes, read-back verification and durable reconciliation. No provider or reviewer
 receives credentials or write authority through this route.
+
+Series, series position and title (#1253) follow the same per-source witness;
+local tags and lookup-only candidates are never read for them, a title is never
+synthesised, and the subtitle stays masked with the recording fields. The
+`work_alternative_immaterial` reason only withdraws a description or genre choice
+from the attention count; it grants no automatic decision, effect or write.
 
 
 ## Recovery settlement diagnostics (#1157)

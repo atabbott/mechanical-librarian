@@ -9,6 +9,7 @@ import pytest
 from mechanical_librarian.domain import (
     audiobook_decision_qualification,
     automatic_decision,
+    field_value_comparison,
 )
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     F46_SERIES_IDENTITY,
@@ -1529,6 +1530,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="audiobook-local-claims-floor-predecessor-f46",
         ),
+        pytest.param(
+            "7de5af9503d61b19afae81993fe950dc2f128110d652f1d490cbf0e21f39c8d5",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="work-series-title-predecessor-f19a",
+        ),
+        pytest.param(
+            "6e1957dc5ac8bad840c2777c4c6a88d55ee8978639877c655ce1d60ece7788c6",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="work-series-title-predecessor-f20",
+        ),
+        pytest.param(
+            "e32fab8e75b6cf0b519113323482efbad8a597218142f81694a1f12b4a70c5b0",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="work-series-title-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
@@ -1766,10 +1782,7 @@ def test_actual_provider_recovery_base_decisions_remain_historical_only() -> Non
     ),
 )
 def test_format_only_genres_name_only_the_recording_format(values, format_only):
-    assert (
-        audiobook_decision_qualification.audiobook_format_only_genres(values)
-        is format_only
-    )
+    assert field_value_comparison.audiobook_format_only_genres(values) is format_only
 
 
 @pytest.mark.parametrize(

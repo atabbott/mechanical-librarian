@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
@@ -35,6 +36,8 @@ from mechanical_librarian.domain.field_outcomes import (
 from mechanical_librarian.domain.field_value_comparison import (
     canonical_text,
     creator_list_reordered,
+    description_alternative_immaterial,
+    genre_alternative_immaterial,
     title_identity_key,
     values_match,
 )
@@ -101,7 +104,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v34"
+POLICY_VERSION = "fixed-conservative-v35"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -162,6 +165,15 @@ _BIBLIOGRAPHIC_DESTINATIONS = (
     TargetDestination.TITLE,
     TargetDestination.SUBTITLE,
     TargetDestination.SERIES,
+)
+# The fields witnessed book evidence answers while the recording is unresolved.
+_WORK_ROUTE_DESTINATIONS = frozenset(
+    {
+        TargetDestination.DESCRIPTION,
+        TargetDestination.GENRES,
+        TargetDestination.SERIES,
+        TargetDestination.TITLE,
+    }
 )
 
 
@@ -271,6 +283,7 @@ EVIDENCE_LED_TITLE_REASON = "isbn_creator_supported_title"
 VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 RECORDING_ASSOCIATED_ISBN_REASON = "recording_associated_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
+WORK_ALTERNATIVE_IMMATERIAL_REASON = "work_alternative_immaterial"
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
@@ -318,6 +331,8 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ),
             ("populated_subjective_field",),
             ("work_publication_cannot_replace",),
+            ("competing_evidence", WORK_ALTERNATIVE_IMMATERIAL_REASON),
+            ("populated_subjective_field", WORK_ALTERNATIVE_IMMATERIAL_REASON),
         }
     ),
     ProposalOutcome.KEEP: frozenset(
@@ -1159,17 +1174,124 @@ def _supported_work_source(
 
 
 def audiobook_review_scope(report: MetadataReport) -> AudiobookReviewScope | None:
-    """Distinguish useful book evidence from admitted recording identity."""
+    """Distinguish useful book evidence from admitted recording identity.
+
+    Book evidence is a witnessed description, genre list or series, or a
+    witnessed title that cleans up the current one: a title that only restates
+    the current value gives the owner nothing to decide (#1253).
+    """
     if report.audio is None:
         return None
     if admitted_audiobook_identity(report):
         return AudiobookReviewScope.RECORDING
+    title = canonical_target_fields(report.target.fields)[TargetDestination.TITLE]
     if any(
         _observations(report, destination)
-        for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES)
+        for destination in (
+            TargetDestination.DESCRIPTION,
+            TargetDestination.GENRES,
+            TargetDestination.SERIES,
+        )
+    ) or any(
+        _work_title_cleanup(title, observed.value)
+        for observed in _observations(report, TargetDestination.TITLE)
     ):
         return AudiobookReviewScope.WORK
     return None
+
+
+# Typographic quotes and their straight forms; a title differing only in these
+# says nothing new about the work (#1253).
+_STRAIGHT_QUOTES = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+    }
+)
+
+
+def _mark_clusters(text: str) -> list[tuple[str, list[str]]]:
+    """Each NFD base character with the combining marks that follow it."""
+    clusters: list[tuple[str, list[str]]] = []
+    for character in unicodedata.normalize("NFD", text):
+        if not unicodedata.category(character).startswith("M"):
+            lower = character.lower()
+            clusters.append((lower if len(lower) == 1 else character, []))
+        elif clusters:
+            clusters[-1][1].append(character)
+        else:
+            clusters.append(("", [character]))
+    return clusters
+
+
+def _aligned_letters(current: list[str], candidate: list[str]) -> dict[int, int]:
+    blocks = difflib.SequenceMatcher(
+        None, current, candidate, autojunk=False
+    ).get_matching_blocks()
+    return {
+        block.a + offset: block.b + offset
+        for block in blocks
+        for offset in range(block.size)
+    }
+
+
+def _keeps_every_mark(current: str, candidate: str) -> bool:
+    """Whether every mark the current title carries stays on the same letter.
+
+    Letters are paired by aligning the mark-folded titles, as the work
+    admission compares them; a letter the alignment drops, or pairs
+    differently when read from either end, loses its marks.
+    """
+    ours, theirs = _mark_clusters(current), _mark_clusters(candidate)
+    ours_bases = [base for base, _ in ours]
+    theirs_bases = [base for base, _ in theirs]
+    forward = _aligned_letters(ours_bases, theirs_bases)
+    backward = _aligned_letters(ours_bases[::-1], theirs_bases[::-1])
+    for index, (_, marks) in enumerate(ours):
+        if not marks:
+            continue
+        paired = forward.get(index)
+        reverse = backward.get(len(ours) - 1 - index)
+        if paired is None or reverse is None or paired != len(theirs) - 1 - reverse:
+            return False
+        kept = list(theirs[paired][1])
+        for mark in marks:
+            if mark not in kept:
+                return False
+            kept.remove(mark)
+    return True
+
+
+def _work_title_cleanup(target: TargetField, value: ProposalValue) -> bool:
+    """Whether a witnessed work title cleans up the current title (#1253).
+
+    A cleanup fills an absent title, or differs from the current one without
+    removing or moving any combining mark the current title carries and by
+    more than quote form. Anything else preserves the current title on the
+    work route.
+    """
+    if target.state is not TargetFieldState.VALUE:
+        return True
+    current, candidate = target.value, value.value
+    if (
+        type(current) is not str
+        or type(candidate) is not str
+        or _matches(TargetDestination.TITLE, current, value)
+    ):
+        return False
+    if not _keeps_every_mark(current, candidate):
+        return False
+    return not values_match(
+        TargetDestination.TITLE,
+        current.translate(_STRAIGHT_QUOTES),
+        candidate.translate(_STRAIGHT_QUOTES),
+    )
 
 
 def evaluate_report(
@@ -1185,6 +1307,7 @@ def evaluate_report(
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
     title_associations: dict[str, str] = {}
+    work_only = report.audio is not None and not admitted_audiobook_identity(report)
     for destination in TargetDestination:
         if destination in {
             TargetDestination.PUBLISHED_YEAR,
@@ -1193,6 +1316,15 @@ def evaluate_report(
         }:
             continue
         observations = _observations(report, destination)
+        if work_only and destination is TargetDestination.TITLE:
+            # Book evidence offers only a cleanup; any other title it states
+            # is no alternative to the current one (#1253).
+            observations = tuple(
+                value
+                for value in observations
+                if _work_title_cleanup(targets[destination], value.value)
+                or _matches(destination, targets[destination].value, value.value)
+            )
         if destination in _BIBLIOGRAPHIC_DESTINATIONS:
             observed_by_destination[destination] = observations
         result = _evaluate(
@@ -1355,12 +1487,28 @@ def evaluate_report(
     results[TargetDestination.COVER] = _apply_policy_destination(
         _cover_result(report, targets[TargetDestination.COVER]), ignored
     )
-    if report.audio is not None and not admitted_audiobook_identity(report):
+    # A title the evidence keeps lets a same-name series stand beside it, even
+    # where the work route masks that title below (#1253); an ignored title
+    # leaves the current one in place, so it counts as kept.
+    title_kept = (
+        results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+        or TargetDestination.TITLE in ignored
+    )
+    if work_only:
+        # Book evidence answers only the book's own fields; the subtitle stays
+        # out because a recording's subtitle is edition evidence, and a title
+        # or series stays masked unless a witness offers a cleanup or a series
+        # (#1253).
+        cleanup = any(
+            _work_title_cleanup(targets[TargetDestination.TITLE], value.value)
+            for value in observed_by_destination[TargetDestination.TITLE]
+        )
+        series = bool(observed_by_destination[TargetDestination.SERIES])
         for destination in TargetDestination:
-            if destination not in {
-                TargetDestination.DESCRIPTION,
-                TargetDestination.GENRES,
-            }:
+            if destination not in _WORK_ROUTE_DESTINATIONS or (
+                (destination is TargetDestination.TITLE and not cleanup)
+                or (destination is TargetDestination.SERIES and not series)
+            ):
                 results[destination] = ProposalResult(
                     destination,
                     ProposalOutcome.INELIGIBLE,
@@ -1369,13 +1517,24 @@ def evaluate_report(
                     ("no_supported_evidence",),
                     _dependencies(destination),
                 )
-        observed_by_destination = {}
-        title_associations = {}
+        if cleanup or series:
+            observed_by_destination = {
+                destination: observed_by_destination[destination]
+                for destination in (TargetDestination.TITLE, TargetDestination.SERIES)
+            }
+        else:
+            observed_by_destination = {}
+            title_associations = {}
+        for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES):
+            results[destination] = _bound_immaterial_work_alternatives(
+                results[destination], targets[destination]
+            )
     combinations, unresolved = _bibliographic_combinations(
         targets,
         results,
         observed_by_destination,
         title_associations,
+        title_kept,
     )
     for destination in unresolved:
         result = results[destination]
@@ -1402,6 +1561,41 @@ def evaluate_report(
         media_kind=(
             "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
         ),
+    )
+
+
+def _bound_immaterial_work_alternatives(
+    result: ProposalResult, target: TargetField
+) -> ProposalResult:
+    """Mark a work-route choice whose every alternative only trims or extends.
+
+    The field stays the owner's to choose; the reason only keeps it from
+    counting as a field that needs attention (#1253).
+    """
+    immaterial = (
+        description_alternative_immaterial
+        if result.destination is TargetDestination.DESCRIPTION
+        else genre_alternative_immaterial
+    )
+    if (
+        result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or result.reasons
+        not in {("competing_evidence",), ("populated_subjective_field",)}
+        or target.state is not TargetFieldState.VALUE
+        or not all(
+            immaterial(target.value, alternative.value.value)
+            for alternative in result.alternatives
+            if alternative.assessment is not ProposalAssessment.PRESERVES_TARGET
+        )
+    ):
+        return result
+    return ProposalResult(
+        result.destination,
+        result.outcome,
+        result.alternatives,
+        result.selected_alternative_id,
+        (*result.reasons, WORK_ALTERNATIVE_IMMATERIAL_REASON),
+        result.dependencies,
     )
 
 
@@ -3591,15 +3785,22 @@ def _resolve_series_subset(
 
 
 def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
+    # A recording without admitted identity reads only witnessed book sources,
+    # as `_observations` and `_list_observations` do (#1253).
+    work_only = report.audio is not None and not admitted_audiobook_identity(report)
     values: list[_Observed] = []
     source_claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
-    for basis in tuple(
-        sorted(
-            {
-                claim.basis
-                for claim in report.local_claims
-                if claim.basis != "target_metadata"
-            }
+    for basis in (
+        ()
+        if work_only
+        else tuple(
+            sorted(
+                {
+                    claim.basis
+                    for claim in report.local_claims
+                    if claim.basis != "target_metadata"
+                }
+            )
         )
     ):
         source_claims = tuple(
@@ -3622,6 +3823,8 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
             )
     for provider in report.providers:
         for candidate in provider.candidates:
+            if work_only and not _supported_work_source(report, provider, candidate):
+                continue
             source_claims = tuple(
                 claim
                 for claim in candidate.claims
@@ -5135,6 +5338,7 @@ def _bibliographic_combinations(
     results: dict[TargetDestination, ProposalResult],
     observations: dict[TargetDestination, tuple[_Observed, ...]],
     title_associations: Mapping[str, str],
+    title_kept: bool,
 ) -> tuple[
     tuple[BibliographicCombination, ...],
     tuple[TargetDestination, ...],
@@ -5232,6 +5436,7 @@ def _bibliographic_combinations(
                 {representation},
                 targets,
                 results,
+                title_kept,
             )
         elif generic_title_preservation:
             _retain_safe_combination(
@@ -5240,6 +5445,7 @@ def _bibliographic_combinations(
                 {representation},
                 targets,
                 results,
+                title_kept,
             )
 
         component_members: dict[TargetDestination, set[str]] = {
@@ -5273,6 +5479,7 @@ def _bibliographic_combinations(
                     {representation, *independent_sources},
                     targets,
                     results,
+                    title_kept,
                 )
 
     if len(combinations) > MAX_BIBLIOGRAPHIC_COMBINATIONS:
@@ -5337,12 +5544,9 @@ def _retain_safe_combination(
     sources: set[str],
     targets: dict[TargetDestination, TargetField],
     results: dict[TargetDestination, ProposalResult],
+    title_kept: bool,
 ) -> None:
-    if _duplicates_bibliographic_component(
-        selections,
-        targets,
-        results,
-    ):
+    if _duplicates_bibliographic_component(selections, targets, results, title_kept):
         return
     key = tuple(
         (
@@ -5364,6 +5568,7 @@ def _duplicates_bibliographic_component(
     selections: tuple[BibliographicSelection, ...],
     targets: dict[TargetDestination, TargetField],
     results: dict[TargetDestination, ProposalResult],
+    title_kept: bool,
 ) -> bool:
     alternatives = {
         result.destination: {
@@ -5411,8 +5616,7 @@ def _duplicates_bibliographic_component(
                         if (
                             title_selection.kind
                             is BibliographicSelectionKind.PRESERVE_TARGET
-                            and results[TargetDestination.TITLE].outcome
-                            is ProposalOutcome.KEEP
+                            and title_kept
                             and component_selection.kind
                             is BibliographicSelectionKind.CANDIDATE
                             and targets[destination].state

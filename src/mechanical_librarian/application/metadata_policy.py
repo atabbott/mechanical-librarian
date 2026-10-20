@@ -486,7 +486,8 @@ def preview_policy(
                             )
                             or (
                                 audiobook_review_scope(report) == "work"
-                                and before.field in {"description_fill", "genres"}
+                                and before.field
+                                in {"description_fill", "genres", "series"}
                                 and any(
                                     bool(
                                         decision_actions({"result": previous.to_data()})
@@ -505,6 +506,7 @@ def preview_policy(
                                     is {
                                         "description_fill": TargetDestination.DESCRIPTION,
                                         "genres": TargetDestination.GENRES,
+                                        "series": TargetDestination.SERIES,
                                     }[before.field]
                                 )
                             )

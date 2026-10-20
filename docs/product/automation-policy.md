@@ -114,10 +114,13 @@ eligibility. These bounded development examples support no population-accuracy
 or library-wide coverage claim.
 
 Work-only audiobook review (#1166) supports explicit owner choices for description
-and genres. Each source needs its own complete work witness; recording identity
-remains unresolved. Automatic becomes Ask and Ignore remains Ignore. No other
-field, cover, authored-description, or automatic authority follows from this
-scope. Manual choices still require existing consent, currentness and verified
+and genres, and (#1253) for series, series position and a witnessed title
+cleanup. Each source needs its own complete work witness; recording identity
+remains unresolved. Automatic becomes Ask and Ignore remains Ignore. A
+description or genre choice whose alternatives only trim or extend the current
+value stays choosable without being queued unless its policy explicitly asks.
+No subtitle, other field, cover, authored-description, or automatic authority
+follows from this scope. Manual choices still require existing consent, currentness and verified
 supported-service application. The following qualified rules apply within the
 existing recording-admitted route.
 
@@ -502,8 +505,8 @@ generation transition may return its prior result.
 Primary counts describe sampled works and fields whose selected outcome or
 meaningful candidate routing changed because of the edit. A supported
 Ask-to-Automatic candidate counts even when it equals the incumbent. Changes to
-manual description or genre availability for work-only audiobooks also count,
-even when no single value is elected. Unchanged
+manual description, genre or series availability for work-only audiobooks also
+count, even when no single value is elected. Unchanged
 outcomes and projected changes against library values are separate context;
 proposal identities and explanatory wording alone are not impact. Title,
 authors, narrators, date, publisher, language and cover are outside this rich

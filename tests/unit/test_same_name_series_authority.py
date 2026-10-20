@@ -13,7 +13,7 @@ from mechanical_librarian.application.metadata_report import admitted_audiobook_
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.metadata_policy import human_review_destinations
-from mechanical_librarian.domain.metadata_report import TargetFieldState
+from mechanical_librarian.domain.metadata_report import TargetFieldState, TargetSeries
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
@@ -126,16 +126,36 @@ def test_real_series_association_and_title_witness_remain_authoritative(
                 "title_layout": "preserve",
             },
         )
-        # A fed answer under another author keeps only its ASIN (#1257).
+        # A fed answer under another author keeps only its ASIN (#1257); one
+        # under the target's author witnesses the book, so its series is an
+        # owner choice on the work route (#1253).
         if media == "audiobook" and variant in {"no_local_title", "wrong_author"}:
             assert not admitted_audiobook_identity(report)
-            assert case_id is None
             results = {
                 value.destination.value: value
                 for value in evaluate_report(report).results
             }
-            assert results["title"].outcome.value == "ineligible"
-            assert results["series"].outcome.value == "ineligible"
+            assert not results["subtitle"].alternatives
+            if variant == "wrong_author":
+                assert case_id is None
+                assert not results["title"].alternatives
+                assert not results["series"].alternatives
+            else:
+                assert case_id is not None
+                assert results["title"].outcome.value == "ineligible"
+                assert results["series"].outcome.value == "propose_change"
+                assert {
+                    alternative.value.value
+                    for alternative in results["series"].alternatives
+                } == {(TargetSeries("Synthetic Journey", "1"),)}
+                outcomes = ShadowOutcomeSet.from_json(
+                    repository.persist_shadow_outcome(case_id, 4)
+                )
+                assert {
+                    value.destination: value.disposition
+                    for value in outcomes.outcomes
+                    if value.destination in {"title", "series"}
+                } == {"title": "manual", "series": "manual"}
             assert repository._connection.execute(
                 "SELECT count(*) FROM automatic_decisions"
             ).fetchone() == (0,)
@@ -200,7 +220,7 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(media, kind):
     report = retained_report_as_current(
         canonical_json(json.loads((root / f"{media}-{kind}-report.json").read_text()))
     )
-    assert evaluate_report(report).policy_version == "fixed-conservative-v34"
+    assert evaluate_report(report).policy_version == "fixed-conservative-v35"
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(
             canonical_json(
@@ -509,3 +529,36 @@ def test_actual_different_name_base_decisions_remain_history_only(media):
             decision.policy_option,
             decision.qualification_manifest_sha256,
         )
+
+
+@pytest.mark.parametrize("route", ("ebook", "admitted", "work"))
+@pytest.mark.parametrize("name", ("same", "different"))
+def test_an_ignored_title_keeps_the_current_title_beside_its_series(route, name):
+    from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
+
+    report = same_name_series_report(
+        "ebook" if route == "ebook" else "audiobook",
+        name="Different Order" if name == "different" else None,
+        independent_title=route != "work",
+    )
+    assert route == "ebook" or admitted_audiobook_identity(report) is (
+        route == "admitted"
+    )
+
+    def series(title: str) -> object:
+        destinations = dict.fromkeys(OPTION_CATALOGUE, "ask") | {"title_layout": title}
+        proposal = evaluate_report(report, None, destinations)
+        results = {value.destination.value: value for value in proposal.results}
+        if title == "ignore":
+            # The work route masks a title with no cleanup as it did before.
+            assert results["title"].reasons == (
+                ("no_supported_evidence",) if route == "work" else ("policy_ignored",)
+            )
+        return results["series"], len(proposal.bibliographic_combinations)
+
+    # An ignored title leaves the current one in place, as a kept title does,
+    # so the series stands exactly as it does beside the kept title.
+    ignored, asked = series("ignore"), series("ask")
+    assert ignored == asked
+    assert ignored[0].outcome.value == "propose_change"
+    assert ignored[1] == 1

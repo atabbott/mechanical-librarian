@@ -844,7 +844,11 @@ def test_combination_title_lookup_uses_only_surviving_proven_association(binding
     else:
         results[title] = original
     combinations, _ = policy._bibliographic_combinations(
-        targets, results, observations, associations
+        targets,
+        results,
+        observations,
+        associations,
+        results[title].outcome is policy.ProposalOutcome.KEEP,
     )
     assert combinations == ()
     assert (
@@ -940,7 +944,10 @@ def test_same_name_exception_is_confined_to_supported_empty_series_name(mutation
         )
         # Both preserved values intentionally bypass the existing duplicate guard.
         assert not _duplicates_bibliographic_component(
-            tuple(selections), targets, results
+            tuple(selections),
+            targets,
+            results,
+            results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP,
         )
         return
     elif mutation == "series_populated":
@@ -987,6 +994,9 @@ def test_same_name_exception_is_confined_to_supported_empty_series_name(mutation
             alternative_id=title.alternative_id,
             target_field_fingerprint=None,
         )
-    assert _duplicates_bibliographic_component(tuple(selections), targets, results) is (
-        mutation != "none"
-    )
+    assert _duplicates_bibliographic_component(
+        tuple(selections),
+        targets,
+        results,
+        results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP,
+    ) is (mutation != "none")

@@ -14,12 +14,18 @@ from dataclasses import dataclass
 from typing import Final, TypeGuard, cast
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
-    audiobook_format_only_genres,
-    audiobook_format_word,
     identity_for_effect,
     qualified_policy_bases,
 )
-from mechanical_librarian.domain.field_value_comparison import canonical_text, values_match
+from mechanical_librarian.domain.field_value_comparison import (
+    DESCRIPTION_VISIBLE_CUTOFFS,
+    SYNOPSIS_MARKUP_TAG,
+    audiobook_format_only_genres,
+    canonical_text,
+    plain_audiobook_synopsis,
+    recognized_synopsis_placeholder,
+    values_match,
+)
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
@@ -84,7 +90,6 @@ _DESCRIPTION_AUTHORITY_ORDER: Final = (
     "google_books",
     "open_library",
 )
-_DESCRIPTION_VISIBLE_CUTOFFS: Final = ("...", "…", "--")
 
 
 class RichMetadataPreviewError(ValueError):
@@ -427,7 +432,7 @@ def _project(
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
         if proposal.media_kind == "audiobook" and target.state is TargetFieldState.VALUE:
-            if not _plain_audiobook_synopsis(current) and not (
+            if not plain_audiobook_synopsis(current) and not (
                 option == "replace_safe_plain_text" and _markup_only_synopsis(current)
             ):
                 return _abstain(field, option, target, current, "target_state_unusable")
@@ -435,7 +440,7 @@ def _project(
                 refusal = _description_source_refusal(automatic_work, retained_claims)
                 if refusal is not None:
                     return _abstain(field, option, target, current, refusal)
-            if option != "replace_safe_plain_text" or not _recognized_synopsis_placeholder(current):
+            if option != "replace_safe_plain_text" or not recognized_synopsis_placeholder(current):
                 return _preserved(field, option, target, current)
         return _description(
             field,
@@ -1092,110 +1097,6 @@ def _one_typed_candidate(
     return None, "ambiguous_evidence" if len(alternatives) > 1 else "no_candidate"
 
 
-_SYNOPSIS_MARKER: Final = re.compile(
-    r"(?:(?:chapter|track|part|section|disc|cd|side) [0-9]+(?: of [0-9]+)?"
-    r"|no (?:description|synopsis)(?: available)?|(?:description|synopsis) unavailable"
-    r"|n/a|none|unknown|tbd)\.?"
-)
-# A credit segment separator: `;`, `/`, `|`, ` - `, or a full stop that ends a
-# word longer than one letter, so an initial stays inside its name. A comma
-# separates segments too, but may also join the names of one credit.
-_CREDIT_SEPARATOR: Final = re.compile(r"\s*(?:[;/|]|\s-\s|(?<!\b[^\W\d_])\.(?=\s|$))\s*")
-_CREDIT_ROLE: Final = (
-    r"(?:narrated|read|performed|written|translated|adapted|abridged|produced"
-    r"|directed|introduced|edited|recorded|voiced)"
-)
-_CREDIT_BY: Final = re.compile(rf"{_CREDIT_ROLE}(?: (?:and|&) {_CREDIT_ROLE})* by (.+)")
-# A ripper or tagger credit names a handle, which may hold digits and `_`.
-_RIPPER_ROLE: Final = r"(?:tagged|tag|ripped|encoded|created)"
-_RIPPER_BY: Final = re.compile(rf"{_RIPPER_ROLE}(?: (?:and|&) {_RIPPER_ROLE})* by (.+)")
-_CREDIT_BARE: Final = re.compile(
-    rf"(?:{_CREDIT_ROLE}|{_RIPPER_ROLE})(?: (?:and|&) (?:{_CREDIT_ROLE}|{_RIPPER_ROLE}))* by ?:?"
-)
-_DURATION: Final = r"[0-9]+ ?(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)"
-_CREDIT_LENGTH: Final = re.compile(rf"length ?: ?{_DURATION}(?: (?:and )?{_DURATION})*")
-_MONTH: Final = (
-    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?"
-    r"|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
-)
-_DATE: Final = (
-    r"(?:[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?|[0-9]{1,2}[.-][0-9]{1,2}[.-][0-9]{4}"
-    rf"|{_MONTH} [0-9]{{1,2}}(?:st|nd|rd|th)?,? [0-9]{{4}}"
-    rf"|[0-9]{{1,2}}(?:st|nd|rd|th)? {_MONTH},? [0-9]{{4}}|{_MONTH},? [0-9]{{4}})"
-)
-# A publisher or release label runs to the end of its segment, commas included.
-_CREDIT_PUBLISHER: Final = re.compile(r"publisher ?: ?\S.*")
-_CREDIT_RELEASE: Final = re.compile(rf"(?:release date|released) ?: ?{_DATE}")
-_UNABRIDGED: Final = "unabridged"
-_MIN_UNABRIDGED_PREFIX: Final = 4
-# Real tag syntax only: a closed set of formatting elements whose attributes
-# are quoted name=value pairs, or a comment. A bracketed phrase such as
-# "<A story>" or "<1984: a dystopia>" is text, not markup (#1250).
-_MARKUP_TAG: Final = re.compile(
-    r"<(?:/?(?:a|abbr|b|big|blockquote|br|center|cite|code|dd|div|dl|dt|em|font"
-    r"|h[1-6]|hr|i|li|ol|p|pre|q|s|small|span|strike|strong|sub|sup|table|tbody"
-    r"|td|tfoot|th|thead|tr|tt|u|ul)"
-    r"""(?:\s+[a-z][-a-z0-9]*\s*=\s*(?:"[^"<>]*"|'[^'<>]*'))*\s*/?"""
-    r"|!--[^<>]*--)>",
-    re.ASCII | re.IGNORECASE,
-)
-_ENCODER_WATERMARKS: Final = frozenset({"fre:ac - free audio converter"})
-_MARKABLE_WATERMARK: Final = " created by markable"
-_CREDIT_LABEL: Final = re.compile(
-    r"(?:narrators?|reader|authors?|translator|performer|cast) ?: ?(.+)"
-)
-_CREDIT_NAME_JOIN: Final = re.compile(r" (?:and|&) ")
-_CREDIT_NAME_TOKEN: Final = re.compile(r"[^\W\d_](?:[^\W\d_]|[.'’-])*")
-_RIPPER_NAME_TOKEN: Final = re.compile(r"\w(?:\w|[.'’-])*")
-# Words that make a phrase prose rather than a name: "narrated by the ghost of
-# her sister" and "written by a master of suspense" credit nobody.
-_CREDIT_PROSE_WORDS: Final = frozenset({
-    "a", "about", "after", "an", "and", "are", "as", "at", "be", "been",
-    "before", "but", "by", "for", "from", "he", "her", "him", "his", "i",
-    "in", "into", "is", "it", "its", "me", "my", "no", "not", "of", "on",
-    "or", "our", "over", "she", "so", "than", "that", "the", "their", "them",
-    "then", "these", "they", "this", "those", "through", "to", "us", "was",
-    "we", "were", "what", "when", "where", "which", "who", "whom", "whose",
-    "with", "you", "your",
-})
-_MAX_CREDIT_LINE: Final = 240
-_MAX_CREDIT_SEGMENTS: Final = 6
-_MAX_CREDIT_NAMES: Final = 6
-_MAX_CREDIT_NAME_TOKENS: Final = 5
-# A comma continuation is likelier prose than a credit's first name.
-_MAX_CONTINUATION_NAME_TOKENS: Final = 3
-
-
-def _recognized_synopsis_placeholder(value: str) -> bool:
-    """Compare only the closed marker vocabulary; never rewrite retained text.
-
-    A whole value is a placeholder when it is a marker -- a chapter, track,
-    part, section, disc, CD or side number, a "no description" phrase, `n/a`,
-    `none`, `unknown` or `tbd` -- a closed format word, a closed encoder
-    watermark, markup with no text, or a structured credit line (#1250). Each
-    recognizer reads shape, never length alone.
-    """
-    text = canonical_text(TargetDestination.DESCRIPTION, value)
-    return (
-        _SYNOPSIS_MARKER.fullmatch(text) is not None
-        or _synopsis_format_word(text.removesuffix("."))
-        or not _MARKUP_TAG.sub("", text).strip()
-        or text in _ENCODER_WATERMARKS
-        or (
-            text.endswith(_MARKABLE_WATERMARK)
-            and _synopsis_format_word(text.removesuffix(_MARKABLE_WATERMARK))
-        )
-        or _credit_line(text)
-    )
-
-
-def _synopsis_format_word(text: str) -> bool:
-    """A closed format word, or "unabridged" cut to four or more letters."""
-    return audiobook_format_word(text) or (
-        len(text) >= _MIN_UNABRIDGED_PREFIX and _UNABRIDGED.startswith(text)
-    )
-
-
 def _markup_only_synopsis(value: object) -> bool:
     """Whether a valid incumbent holds markup and no text at all (#1250)."""
     if type(value) is not str:
@@ -1204,106 +1105,15 @@ def _markup_only_synopsis(value: object) -> bool:
         text = canonical_text(TargetDestination.DESCRIPTION, value)
     except ValueError:
         return False
-    return not _MARKUP_TAG.sub("", text).strip()
-
-
-def _credit_line(text: str) -> bool:
-    """Read one canonical value as one to six credit or format segments.
-
-    A segment is a role verb (or two joined by "and") followed by "by" and
-    names, a role label followed by ":" and names, a bare role verb and "by", a
-    closed format word, a length, or a publisher or release-date label running
-    to the end of its segment; at least one must be a credit. A credit names one
-    to six people, each one to five letter tokens, joined by "and", "&" or a
-    comma, where a name after a comma has at most three tokens; a ripper or tagger credit's tokens may also hold digits and `_`. A
-    prose word in any name makes the value prose. The whole value is at most
-    240 characters.
-    """
-    if len(text) > _MAX_CREDIT_LINE:
-        return False
-    pieces = _CREDIT_SEPARATOR.split(text)
-    if pieces and not pieces[-1]:
-        pieces.pop()
-    segments = 0
-    credits = 0
-    open_names: int | None = None
-    for piece in pieces:
-        open_names = None
-        parts = piece.split(",")
-        for index, part in enumerate(parts):
-            part = part.strip()
-            rest = ",".join(parts[index:]).strip()
-            tokens = _CREDIT_NAME_TOKEN
-            match = _CREDIT_BY.fullmatch(part) or _CREDIT_LABEL.fullmatch(part)
-            if match is None and (match := _RIPPER_BY.fullmatch(part)) is not None:
-                tokens = _RIPPER_NAME_TOKEN
-            if match is not None:
-                open_names = _credit_names(match.group(1), tokens)
-                if open_names is None:
-                    return False
-                segments += 1
-                credits += 1
-            elif _CREDIT_BARE.fullmatch(part):
-                open_names = None
-                segments += 1
-                credits += 1
-            elif _CREDIT_PUBLISHER.fullmatch(rest) or _CREDIT_RELEASE.fullmatch(rest):
-                segments += 1
-                break
-            elif _synopsis_format_word(part) or _CREDIT_LENGTH.fullmatch(part):
-                open_names = None
-                segments += 1
-            elif open_names is not None and (
-                more := _credit_names(
-                    part, max_tokens=_MAX_CONTINUATION_NAME_TOKENS
-                )
-            ) is not None:
-                open_names += more
-            else:
-                return False
-            if (
-                segments > _MAX_CREDIT_SEGMENTS
-                or (open_names or 0) > _MAX_CREDIT_NAMES
-            ):
-                return False
-    return credits > 0 and segments <= _MAX_CREDIT_SEGMENTS
-
-
-def _credit_names(
-    text: str,
-    token_pattern: re.Pattern[str] = _CREDIT_NAME_TOKEN,
-    *,
-    max_tokens: int = _MAX_CREDIT_NAME_TOKENS,
-) -> int | None:
-    names = _CREDIT_NAME_JOIN.split(text)
-    for name in names:
-        tokens = name.split(" ")
-        if not 1 <= len(tokens) <= max_tokens or any(
-            token_pattern.fullmatch(token) is None
-            or token in _CREDIT_PROSE_WORDS
-            for token in tokens
-        ):
-            return None
-    return len(names)
+    return not SYNOPSIS_MARKUP_TAG.sub("", text).strip()
 
 
 def _eligible_ebook_synopsis(value: object) -> TypeGuard[str]:
     """Automatic-only whole-value catalogue marker rejection; retain source bytes."""
-    return _plain_audiobook_synopsis(value) and re.fullmatch(
+    return plain_audiobook_synopsis(value) and re.fullmatch(
         r"(?:\(duplicate\)|[0-9]+ pages\s*;\s*[0-9]+ cm)",
         canonical_text(TargetDestination.DESCRIPTION, value),
     ) is None
-
-
-def _plain_audiobook_synopsis(value: object) -> TypeGuard[str]:
-    """Admit plain incumbent/candidate text before any replacement comparison."""
-    if type(value) is not str:
-        return False
-    try:
-        canonical_text(TargetDestination.DESCRIPTION, value)
-    except ValueError:
-        return False
-    return "<" not in value and ">" not in value and not value.rstrip().endswith(_DESCRIPTION_VISIBLE_CUTOFFS)
 
 
 def _description_source_refusal(
@@ -1320,7 +1130,7 @@ def _description_source_refusal(
                     claim, source,
                     audiobook_work=type(retained.provider) is ProviderObservation
                     and retained.provider.authority in {"audnexus", "audible_catalog"},
-                ) or (type(claim.value) is str and claim.value.rstrip().endswith(_DESCRIPTION_VISIBLE_CUTOFFS)):
+                ) or (type(claim.value) is str and claim.value.rstrip().endswith(DESCRIPTION_VISIBLE_CUTOFFS)):
                     return "description_quality_floor_not_met"
     for source in evidence.sources:
         descriptions = {canonical_text(TargetDestination.DESCRIPTION, claim.value) for claim in source.claims if claim.kind is ClaimKind.DESCRIPTION and claim.state is FieldState.VALID and type(claim.value) is str}
@@ -1358,9 +1168,9 @@ def _automatic_description_candidate(
             for candidate, references in candidates
             if type(candidate.value.value) is str
             and candidate.value.value.strip()
-            and not _recognized_synopsis_placeholder(candidate.value.value)
+            and not recognized_synopsis_placeholder(candidate.value.value)
             and not candidate.value.value.rstrip().endswith(
-                _DESCRIPTION_VISIBLE_CUTOFFS
+                DESCRIPTION_VISIBLE_CUTOFFS
             )
         ]
         if not candidates:
@@ -1384,7 +1194,7 @@ def _automatic_description_candidate(
         (candidate, references)
         for candidate, references in candidates
         if type(candidate.value.value) is str
-        and not candidate.value.value.rstrip().endswith(_DESCRIPTION_VISIBLE_CUTOFFS)
+        and not candidate.value.value.rstrip().endswith(DESCRIPTION_VISIBLE_CUTOFFS)
     )
     if not qualified:
         return None, (), "description_quality_floor_not_met"
@@ -1982,15 +1792,15 @@ def project_audiobook_automatic_decision_value(
         projected = {"kind": "boolean", "value": True}
     elif field == "description_fill":
         value = candidate_value["value"]
-        if candidate_value["kind"] != "text" or not _plain_audiobook_synopsis(value) or _recognized_synopsis_placeholder(value):
+        if candidate_value["kind"] != "text" or not plain_audiobook_synopsis(value) or recognized_synopsis_placeholder(value):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         if current_value not in (None, "", value) and (
             option != "replace_safe_plain_text"
             or not (
-                _plain_audiobook_synopsis(current_value)
+                plain_audiobook_synopsis(current_value)
                 or _markup_only_synopsis(current_value)
             )
-            or not _recognized_synopsis_placeholder(current_value)
+            or not recognized_synopsis_placeholder(current_value)
         ):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         projected = {"kind": "text", "value": value}

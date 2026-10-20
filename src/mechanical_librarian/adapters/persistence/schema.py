@@ -338,6 +338,8 @@ def _review_case_field_fact_values_sql(case_document: str) -> str:
     return (
         "json_extract(result.value,'$.destination'),"
         "CASE WHEN json_extract(result.value,'$.outcome')='unresolved_choice' "
+        "AND NOT EXISTS (SELECT 1 FROM json_each(result.value,'$.reasons') reason "
+        "WHERE reason.value='work_alternative_immaterial') "
         "THEN 1 ELSE 0 END,CASE WHEN "
         "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
         "AND EXISTS (SELECT 1 FROM json_each("

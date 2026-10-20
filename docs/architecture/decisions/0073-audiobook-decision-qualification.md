@@ -62,8 +62,8 @@ authority ranking. Conflicting work identity, unsafe relevant text and internall
 competing texts within one record remain refusals. Ebook selection is unchanged.
 
 The work-only review route (#1166) does not activate these automatic envelopes.
-It permits explicit owner description/genre choices while recording admission
-remains unresolved. Automatic is routed to Ask, Ignore remains authoritative,
+It permits explicit owner description, genre, series and title choices while
+recording admission remains unresolved (ADR-0069, #1253). Automatic is routed to Ask, Ignore remains authoritative,
 and persisted automatic reconstruction refuses this scope. It cannot invoke
 cover or authored-description preparation. Existing recording-admitted and ebook
 qualification and guarded manual effect contracts remain unchanged.

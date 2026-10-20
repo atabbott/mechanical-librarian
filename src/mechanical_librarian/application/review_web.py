@@ -2567,7 +2567,9 @@ def _needs_attention(
     A settled `propose_change` waits unless its bound policy routes it to Ask,
     on a recording exactly as on an ebook: the attention queue, its lens and
     the case detail hold no medium-specific reason (#1249). The action list
-    beside this decides whether a choice exists at all (#967).
+    beside this decides whether a choice exists at all (#967). A work-route
+    choice whose alternatives only trim or extend the current value stays
+    choosable without asking, as the persisted field facts read it (#1253).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -2577,7 +2579,10 @@ def _needs_attention(
         proposal["destination"] in policy_attention_destinations
         or proposal["destination"] in automatic_attention_destinations
         or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
-        or result["outcome"] == "unresolved_choice"
+        or (
+            result["outcome"] == "unresolved_choice"
+            and "work_alternative_immaterial" not in reasons
+        )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons
     )

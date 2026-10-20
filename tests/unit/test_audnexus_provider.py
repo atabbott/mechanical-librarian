@@ -35,6 +35,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
+    TargetSeries,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -741,7 +742,7 @@ def _series_work_lookup_report(
         (None, "Synthetic Journey", "Example"),
     ],
 )
-def test_complete_asin_work_lookup_has_no_series_authority_without_recording(
+def test_complete_asin_work_lookup_offers_series_only_from_a_witnessed_work(
     sequence: str | None,
     title: str,
     author: str,
@@ -758,9 +759,11 @@ def test_complete_asin_work_lookup_has_no_series_authority_without_recording(
     assert not p.provider_candidate_represents_target_recording(
         report, observation, candidate
     )
-    assert p.provider_candidate_represents_target_work(
-        report, observation, candidate
-    ) == (title == "Synthetic Journey" and author == "Example Author")
+    witnessed = title == "Synthetic Journey" and author == "Example Author"
+    assert (
+        p.provider_candidate_represents_target_work(report, observation, candidate)
+        is witnessed
+    )
     options = dict(MetadataPolicyProfile.builtin().options)
     options["series"] = "replace_qualified"
     destinations = dict(MetadataPolicyProfile.builtin().destinations)
@@ -775,16 +778,24 @@ def test_complete_asin_work_lookup_has_no_series_authority_without_recording(
         for value in compile_rich_metadata_preview(policy, report, proposal).fields
         if value.field == "series"
     )
-    assert (field.outcome, field.reason, field.desired_value) == (
-        "abstain",
-        "no_candidate",
-        None,
-    )
-    assert not next(
+    series = next(
         value
         for value in proposal.results
         if value.destination is TargetDestination.SERIES
-    ).alternatives
+    )
+    # A witnessed book offers its series as work evidence, which the work
+    # route only ever asks about (#1253); nothing else offers one at all.
+    assert p.audiobook_review_scope(report) == ("work" if witnessed else None)
+    assert {alternative.value.value for alternative in series.alternatives} == (
+        {(TargetSeries("Synthetic Cycle", "2"),)} if witnessed else set()
+    )
+    assert (field.outcome, field.reason, field.desired_value) == (
+        ("projected", None, ({"name": "Synthetic Cycle", "sequence": "2"},))
+        if witnessed and sequence is None
+        else ("abstain", "ambiguous_evidence", None)
+        if witnessed
+        else ("abstain", "no_candidate", None)
+    )
 
 
 @pytest.mark.parametrize("sequence", (None, "1"))

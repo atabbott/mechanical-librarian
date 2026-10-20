@@ -39,11 +39,18 @@ carries `application='apply'` on either medium: it plans and applies through
 the one guarded path
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
 When only the book is supported, the same Library/detail view explains that the
-recording is unresolved and offers supported description and genre choices only.
-Sources retain their provenance; Keep and Accept use the existing owner workflow.
+recording is unresolved and offers supported series, title, description and
+genre choices only; the subtitle is never offered. Sources retain their
+provenance; Keep and Accept use the existing owner workflow. A description or
+genre choice that only trims or extends the current value stays choosable
+without counting as needing attention, unless its policy explicitly asks. That
+holds only when the current value passes the audiobook synopsis and genre
+floor: a placeholder, a text holding markup, a visibly cut-off text ending
+"..." or "--", or a format-only genre list keeps every alternative material,
+so the choice counts as usual.
 Automatic, other fields, covers and authored descriptions gain no authority from
 this work-only scope. Consent, stale-source/target refusal, verified application
-and Activity history remain the existing guarded path (#1166).
+and Activity history remain the existing guarded path (#1166, #1253).
 
 Audiobook Automatic requires the exact F46 field, option and actual operation
 identity. Unqualified candidates remain owner decisions. A fill record cannot

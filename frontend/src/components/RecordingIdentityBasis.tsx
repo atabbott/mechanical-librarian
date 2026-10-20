@@ -11,8 +11,8 @@ export function RecordingIdentityBasis({
     return (
       <section className="diagnostic-entry" aria-label="Book-level evidence">
         <p>
-          Book-level evidence supports description and genre choices. The exact recording remains
-          unresolved.
+          Book-level evidence supports series, title, description and genre choices. The exact
+          recording remains unresolved.
         </p>
         <p>
           Your choices apply only to these fields. Recording details, covers and automatic changes

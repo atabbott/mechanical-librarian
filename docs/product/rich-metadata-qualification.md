@@ -89,6 +89,21 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Work-level series and title successor (#1253)
+
+The current F19a, F20 and F46 records move to semantic revision 55 over
+predecessor `b34ece63`, whose record bytes the archive index keeps. Their
+runtime digests join the prior-manifest histories with their frozen permission
+sets, so decisions minted under them stay readable without current authority.
+Proposal policy v35 binds the new semantics; **clean rebuild required**.
+Operation membership and historical measurements are unchanged, and focused
+synthetic proof is not library scoring.
+
+The work-only audiobook route offers series and title choices from witnessed
+book sources and marks description and genre choices that only trim or extend
+the current value. It creates no automatic decision or effect, so no qualified
+operation gains or loses authority from it.
+
 ## Audiobook local claims and quality floor successor (#1250)
 
 The current F19a, F20 and F46 records move to semantic revision 54 over

@@ -51,7 +51,8 @@ source's identity match cannot authorize a candidate's values.
 
 The derived review scope is `recording`, `work`, or absent. Work scope leaves the
 recording unresolved, excludes local-only values and every destination other than
-description and genres before combinations are formed, and preserves existing
+description and genres (and, since #1253, series and title; see below) before
+combinations are formed, and preserves existing
 field safety and election rules. A report without supported work values or an
 admitted recording completes as evidence-only. Ignore can leave no case. Counts
 retain the same ready/recorded/blocked partition.
@@ -64,6 +65,30 @@ This initial route does not qualify work-only automation. Case/report detail v5
 requires nullable scope separately from unchanged recording attribution. Proposal
 policy `fixed-conservative-v33` requires a clean rebuild; report, proposal, case
 and HumanDecision document shapes remain unchanged.
+
+**Work-level series and title (#1253).** Work scope also answers series, series
+position and title, from the same witnessed sources only: local tags and
+lookup-only candidates never supply them, a title cleanup is offered only as a
+witnessed provider title, and subtitle, cover and every recording field stay
+excluded. The duplicate-component and combination checks still run over title,
+subtitle and series. A report opens work scope when a witnessed source states a
+description, genres or a series, or a title that cleans up the current one. A
+cleanup removes or moves no accent or other combining mark the current title
+carries, each mark staying on the same letter of the aligned titles, and differs
+by more than quote form; any other witnessed title is no choice, and without a
+cleanup the title stays masked exactly as before #1253.
+
+A work-scope description or genre choice whose every alternative only trims or
+extends the current value, by contiguous words or by genre-set containment,
+carries `work_alternative_immaterial`. The bound applies only when the current
+value passes the audiobook synopsis and genre floor: a placeholder, a text
+holding markup, a visibly cut-off text ending "..." or "--", or a format-only
+genre list keeps every alternative material. It stays an owner choice but sets no
+`unresolved_choice` fact, so it is not queued unless its policy explicitly asks.
+Work-scope fills follow the same shared attention predicate: one held under an
+Automatic destination is not queued and reads as `owner_choosable`, while an
+explicit Ask queues it. Proposal policy `fixed-conservative-v35` requires a clean
+rebuild; document shapes remain unchanged.
 
 **Explicitly absent provider runtime (#1042).** Existing stated-runtime admission
 runs first and yields no new attribution. Otherwise one canonical non-target local

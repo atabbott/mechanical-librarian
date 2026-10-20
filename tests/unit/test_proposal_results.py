@@ -90,7 +90,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         proposal_set.proposal_set_id
         == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
     )
-    assert "fixed-conservative-v34" == POLICY_VERSION
+    assert "fixed-conservative-v35" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
     assert (
         re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
@@ -788,6 +788,7 @@ def test_multiline_populated_description_never_becomes_fill_empty(
     (
         ("v32", "85cd6578323f6868612697493a0240f603e80008"),
         ("v33", "cd82592055ecaf9fdf727cc2f9c5b607e7f1f92c"),
+        ("v34", "b34ece634b208397c821f2e0fe99492453334e41"),
     ),
 )
 def test_actual_predecessor_producer_is_rejected(version, source_sha):

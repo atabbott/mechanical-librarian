@@ -15,9 +15,11 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.field_value_comparison import (
+    recognized_synopsis_placeholder,
+)
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
-    _recognized_synopsis_placeholder,
     project_audiobook_automatic_decision_value,
 )
 from tests.support.audiobook_reports import publish_audiobook_preview
@@ -44,7 +46,7 @@ from tests.support.genre_reports import audiobook_genre_report
     ],
 )
 def test_closed_placeholder_vocabulary(value):
-    assert _recognized_synopsis_placeholder(value)
+    assert recognized_synopsis_placeholder(value)
 
 
 @pytest.mark.parametrize(
@@ -62,7 +64,7 @@ def test_closed_placeholder_vocabulary(value):
     ],
 )
 def test_near_misses_are_not_placeholders(value):
-    assert not _recognized_synopsis_placeholder(value)
+    assert not recognized_synopsis_placeholder(value)
 
 
 _CREDIT_LINES = (
@@ -179,12 +181,12 @@ _STILL_SYNOPSES = (
 )
 def test_credit_lines_and_short_fragments_are_placeholders(value):
     """Structured credits and format fragments describe nothing (#1250)."""
-    assert _recognized_synopsis_placeholder(value)
+    assert recognized_synopsis_placeholder(value)
 
 
 @pytest.mark.parametrize("value", _STILL_SYNOPSES)
 def test_prose_that_merely_resembles_a_credit_stays_a_synopsis(value):
-    assert not _recognized_synopsis_placeholder(value)
+    assert not recognized_synopsis_placeholder(value)
 
 
 @pytest.mark.parametrize(
@@ -1017,12 +1019,23 @@ def test_current_detail_does_not_offer_unadmitted_audiobook_synopsis(tmp_path, s
     with closing(open_repository(tmp_path / "markers.sqlite")) as repository:
         repository.publish(report, lambda: True)
         proposal = evaluate_report(report)
-        assert not any(result.alternatives for result in proposal.results)
+        # The witnessed title only restates the current one (#1253).
+        assert all(
+            alternative.assessment.value == "preserves_target"
+            for result in proposal.results
+            if result.destination.value == "title"
+            for alternative in result.alternatives
+        )
+        assert not any(
+            result.alternatives
+            for result in proposal.results
+            if result.destination.value != "title"
+        )
         repository.publish_proposal(proposal)
         assert json.loads(repository.admit_review_case(proposal))["status"] == "no_case"
 
 
-@pytest.mark.parametrize("destination", ("description", "genres"))
+@pytest.mark.parametrize("destination", ("description", "genres", "series", "title"))
 @pytest.mark.parametrize(
     "guard", (None, "missing_consent", "consent", "target", "source", "readback")
 )
@@ -1032,7 +1045,10 @@ def test_work_owner_choice_uses_persisted_guarded_effect(effects, destination, g
     from mechanical_librarian.domain.audiobook_corroboration import (
         admitted_audiobook_identity,
     )
-    from mechanical_librarian.domain.human_decision import HumanDecision
+    from mechanical_librarian.domain.human_decision import (
+        HumanDecision,
+        decision_actions,
+    )
     from mechanical_librarian.domain.proposal_set import (
         audiobook_review_scope,
         evaluate_report,
@@ -1050,8 +1066,10 @@ def test_work_owner_choice_uses_persisted_guarded_effect(effects, destination, g
                 "authors": [{"name": "Example Author"}],
                 "summary": "A voyage reveals a hidden city.",
                 "genres": [{"type": "genre", "name": "Adventure"}],
+                "seriesPrimary": {"name": "Example Saga", "position": "2"},
             },
-        )
+        ),
+        target_title="Synthetic Journey (Unabridged)",
     )
     assert not admitted_audiobook_identity(report)
     assert audiobook_review_scope(report) == "work"
@@ -1059,7 +1077,14 @@ def test_work_owner_choice_uses_persisted_guarded_effect(effects, destination, g
     assert {r.destination.value for r in proposal.results if r.alternatives} == {
         "description",
         "genres",
+        "series",
+        "title",
     }
+    assert {
+        r.destination.value
+        for r in proposal.results
+        if decision_actions({"result": r.to_data()})
+    } == {"description", "genres", "series", "title"}
     repository = effects.repository
     repository.publish(report, lambda: True)
     repository.publish_proposal(proposal)
@@ -1114,11 +1139,33 @@ def test_work_owner_choice_uses_persisted_guarded_effect(effects, destination, g
     planned = service.plan(decision, **arguments)
     assert planned is not None
     assert planned.plan.authority.origin == "human"
+    assert (
+        planned.plan.desired_value
+        == {
+            "description": "A voyage reveals a hidden city.",
+            "genres": ["Adventure"],
+            "series": [{"name": "Example Saga", "sequence": "2"}],
+            "title": "Synthetic Journey",
+        }[destination]
+    )
+    # Title and series each name the other as a dependency (#1253).
+    assert [
+        value.value
+        for value in next(
+            r for r in proposal.results if r.destination.value == destination
+        ).dependencies
+    ] == {"series": ["title"], "title": ["subtitle", "series"]}.get(destination, [])
+    assert snapshot.dependency_digests == (report.target.fingerprint,)
     effects.target.seed(planned.plan)
     if guard == "target":
         effects.target.drift(
             planned.plan,
-            "Changed by owner" if destination == "description" else ["Different genre"],
+            {
+                "description": "Changed by owner",
+                "genres": ["Different genre"],
+                "series": [{"name": "Other Saga", "sequence": "9"}],
+                "title": "Changed by owner",
+            }[destination],
         )
     elif guard == "consent":
         repository.revoke_field_effect_consent(
@@ -1233,10 +1280,15 @@ def test_work_source_cannot_borrow_another_candidates_identity(identity):
     assert "Supported synopsis." in descriptions
     assert ("Other source synopsis." in descriptions) is (identity == "exact")
     assert bool(fields["genres"].alternatives) is (identity == "exact")
+    # Every witnessed title restates the current one (#1253).
+    assert all(
+        alternative.assessment.value == "preserves_target"
+        for alternative in fields["title"].alternatives
+    )
     assert all(
         not result.alternatives
         for result in proposal.results
-        if result.destination.value not in {"description", "genres"}
+        if result.destination.value not in {"description", "genres", "title"}
     )
 
 
@@ -1292,6 +1344,83 @@ def test_work_policy_has_no_automatic_decisions_or_effects(tmp_path, destination
         assert repository._connection.execute(
             "SELECT count(*) FROM automatic_decisions"
         ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    ("category", "destination"), (("series", "series"), ("title_layout", "title"))
+)
+def test_work_series_and_title_have_no_automatic_decisions_or_effects(
+    tmp_path, category, destination
+):
+    """Built-in Automatic reads as Ask on the work route (#1253)."""
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from mechanical_librarian.domain.proposal_set import (
+        audiobook_review_scope,
+        evaluate_report,
+    )
+    from mechanical_librarian.domain.rich_metadata_preview import (
+        compile_rich_metadata_preview,
+    )
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_product_lookup_report,
+    )
+
+    report = synthetic_audiobook_product_lookup_report(
+        (
+            {
+                "asin": "B000000001",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+                "seriesPrimary": {"name": "Example Saga", "position": "2"},
+            },
+        ),
+        target_title="Synthetic Journey (Unabridged)",
+    )
+    assert audiobook_review_scope(report) == "work"
+    builtin = MetadataPolicyProfile.builtin()
+    assert dict(builtin.destinations)[category] == "automatic"
+    with closing(open_repository(tmp_path / "work.sqlite")) as repository:
+        case_id, policy = publish_audiobook_preview(
+            repository,
+            report,
+            ("series", "title_layout"),
+            selected_options=dict(builtin.options),
+        )
+        assert dict(policy.destinations)[category] == "automatic"
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        field = next(f for f in outcome.outcomes if f.destination == destination)
+        assert (field.policy_destination, field.disposition) == ("ask", "manual")
+        assert repository.get_review_case_decisions(case_id) == ()
+        assert repository.pending_field_effect_decision_documents(100) == ()
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions"
+        ).fetchone() == (0,)
+    if category == "series":
+        asked = resolve_policy(
+            MetadataPolicyProfile.create(
+                "Ask series",
+                dict(builtin.options),
+                {**dict(builtin.destinations), "series": "ask"},
+            ),
+            report.target.library,
+        )
+        previews = tuple(
+            next(
+                value
+                for value in compile_rich_metadata_preview(
+                    resolved, report, evaluate_report(report, resolved.resolved_id)
+                ).fields
+                if value.field == "series"
+            )
+            for resolved in (policy, asked)
+        )
+        assert previews[0] == previews[1]
 
 
 def test_work_scope_blocks_secondary_inputs_before_collaborators(tmp_path):

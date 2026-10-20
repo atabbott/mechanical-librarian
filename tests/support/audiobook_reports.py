@@ -543,6 +543,7 @@ def recording_lookup_report(
     provider: str = "catalogue",
     asins: tuple[str, ...] = ("B000000001", "B000000002"),
     duration: str = "58200.000",
+    series: tuple[str, str] | None = None,
 ) -> MetadataReport:
     from mechanical_librarian.application.metadata_report import (
         ProviderLaneResult,
@@ -560,6 +561,7 @@ def recording_lookup_report(
             identity=f"recording-{i}",
             asin=asin,
             duration=duration,
+            series=series,
         )
         for i, asin in enumerate(asins, 1)
     )
@@ -793,8 +795,16 @@ def synthetic_audiobook_product_lookup_report(
     *,
     unavailable: bool = False,
     recording_runtime: str | None = None,
+    target_title: str = "Synthetic Journey",
+    catalog_title: str = "Synthetic Journey",
 ) -> MetadataReport:
-    """Real discovery and per-product adapters, without independent local ASINs."""
+    """Real discovery and per-product adapters, without independent local ASINs.
+
+    A product dictionary is the per-product answer, so it may carry any field
+    the adapter reads, such as `seriesPrimary`; `target_title` is the library's
+    current title, such as one with a local " (Unabridged)" suffix, and
+    `catalog_title` the title discovery answers with (#1253).
+    """
     import httpx
 
     from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
@@ -814,8 +824,8 @@ def synthetic_audiobook_product_lookup_report(
         target_title_claim,
     )
 
-    target = audio_target("Synthetic Journey", ("Example Author",))
-    claims: tuple[LocalClaim, ...] = (target_title_claim("Synthetic Journey"),)
+    target = audio_target(target_title, ("Example Author",))
+    claims: tuple[LocalClaim, ...] = (target_title_claim(target_title),)
     if recording_runtime is not None:
         claims = (*claims, local_runtime_claim(recording_runtime))
     audio = single_track_audio_facts("b" * 64)
@@ -829,7 +839,7 @@ def synthetic_audiobook_product_lookup_report(
                     "products": [
                         {
                             "asin": product["asin"],
-                            "title": "Synthetic Journey",
+                            "title": catalog_title,
                             "authors": [{"name": "Example Author"}],
                             "narrators": product.get("narrators"),
                             **(

@@ -32,11 +32,13 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     MetadataReport,
 )
+from mechanical_librarian.domain.proposal_set import audiobook_review_scope
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     corroborated_audiobook_report,
     publish_audiobook_preview,
 )
+from tests.support.audiobook_synopsis import synopsis_report
 from tests.support.proposal_evidence import _claim, _provider, _report
 from tests.unit.test_browse_attention_statements import _shadow_outcome
 
@@ -303,3 +305,61 @@ def test_a_recordings_narrators_ask_only_under_authors_and_narrators_ask(
 
     assert ("narrators" in destinations) is (destination == "ask")
     assert "asin" not in destinations
+
+
+_INCUMBENT = "A voyage reveals a hidden city. The crew must choose who returns home."
+
+
+@pytest.mark.parametrize(
+    ("summary", "destination", "counted"),
+    (
+        ("A voyage reveals a hidden city.", "automatic", False),
+        ("A voyage reveals a hidden city.", "ask", True),
+        (
+            "An explorer crosses the sea and discovers an ancient city.",
+            "automatic",
+            True,
+        ),
+    ),
+)
+def test_an_immaterial_work_description_is_choosable_without_asking(
+    tmp_path: Path, summary: str, destination: str, counted: bool
+) -> None:
+    """Only a trimmed or extended description leaves the queue (#1253).
+
+    It stays a choice the owner may make, an explicit Ask still asks about it,
+    and an alternative that says something else still needs review. The case
+    page, the queue and the facts a fresh open derives all agree.
+    """
+    report = synopsis_report(_INCUMBENT, (summary,))
+    assert audiobook_review_scope(report) == "work"
+    database = tmp_path / "application.sqlite3"
+    with closing(open_repository(database)) as repository:
+        # Activation needs one Automatic option; isbn forms no field here.
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("isbn_form",),
+            selected_destinations={"description_fill": destination},
+        )
+    with closing(open_repository(database, create=False)) as repository:
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        field = next(f for f in detail["fields"] if f["destination"] == "description")
+        assert field["deterministic_disposition"] == "unresolved_choice"
+        assert field["decision_actions"]
+        assert field["needs_attention"] is counted
+        assert field["classification"] == (
+            "needs_attention" if counted else "owner_choosable"
+        )
+        attention = BrowseReviewLibrary(repository).attention(
+            search=None, limit=50, cursor=None
+        )
+        items = attention["items"]
+        assert type(items) is list
+        queued = {item["destination"] for item in items}
+        assert ("description" in queued) is counted
+        assert (
+            "description" in {row[4] for row in _facts(repository._connection)}
+        ) is (counted)
+        assert attention["total"] == repository.count_current_attention_fields(None)
+        assert attention["total"] == sum(f["needs_attention"] for f in detail["fields"])
