@@ -2018,12 +2018,18 @@ def _audible_product(
     title: str,
     minutes: int = 970,
     authors: tuple[str, ...] = ("Andy Weir",),
+    series: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, object]:
     return {
         "asin": asin,
         "title": title,
         "authors": [{"name": value} for value in authors],
         "runtime_length_min": minutes,
+        **(
+            {"series": [{"title": name, "sequence": at} for name, at in series]}
+            if series
+            else {}
+        ),
     }
 
 
@@ -2198,6 +2204,8 @@ def test_the_alternative_lanes_refused_tight_product_is_no_hint(
 # 900 outside the 600 s loose band. Every name here is synthetic.
 _BAND_TITLE = "Plain Work (Example Saga)"
 _BAND_AUTHORS = ("Ada Example",)
+# The product's own series, which states the decoration the rung strips.
+_BAND_SERIES = (("Example Saga", "1"),)
 
 
 def _band_flow(
@@ -2227,7 +2235,11 @@ def test_a_decorated_title_admits_its_plain_tight_recording(tmp_path: Path) -> N
 
     report, work, _requests, _rows = _band_flow(
         tmp_path,
-        [_audible_product(_HINT_ASIN, "Plain Work", authors=_BAND_AUTHORS)],
+        [
+            _audible_product(
+                _HINT_ASIN, "Plain Work", authors=_BAND_AUTHORS, series=_BAND_SERIES
+            )
+        ],
     )
 
     (lane,) = (
@@ -2249,7 +2261,7 @@ def test_a_decorated_title_admits_its_plain_tight_recording(tmp_path: Path) -> N
     (
         (_BAND_TITLE, ("Plain Work", 900), False),
         (_BAND_TITLE, ("Wrong Title", 970), True),
-        ("Plain Work (Dramatized)", ("Plain Work", 970), True),
+        ("Plain Work Dramatized (Example Saga)", ("Plain Work Dramatized", 970), True),
     ),
     ids=("out_of_band", "wrong_title_tight", "dramatized"),
 )
@@ -2262,7 +2274,11 @@ def test_a_band_first_refusal_stays_evidence_only(
 
     report, work, requests, rows = _band_flow(
         tmp_path,
-        [_audible_product(_HINT_ASIN, product[0], product[1], _BAND_AUTHORS)],
+        [
+            _audible_product(
+                _HINT_ASIN, product[0], product[1], _BAND_AUTHORS, _BAND_SERIES
+            )
+        ],
         title=title,
     )
 
@@ -2272,6 +2288,28 @@ def test_a_band_first_refusal_stays_evidence_only(
     assert ("complete", "complete", "evidence_only") == work
     assert {"review_cases": 0, "automatic_decisions": 0, "field_effects": 0} == rows
     assert recording_identity_basis(report) is None
+
+
+@pytest.mark.parametrize(
+    "series", ((), (("Another Saga", "1"),)), ids=("no_series", "another_series")
+)
+def test_a_decorated_title_needs_the_product_s_own_series(
+    tmp_path: Path, series: tuple[tuple[str, str], ...]
+) -> None:
+    """The rung's stripped series name is a decoration only if the product says so."""
+    report, work, _requests, rows = _band_flow(
+        tmp_path,
+        [
+            _audible_product(
+                _HINT_ASIN, "Plain Work", authors=_BAND_AUTHORS, series=series
+            )
+        ],
+    )
+
+    assert ProviderStatus.NO_MATCH is _audible(report).status
+    assert not any(lane.transformation_lineage for lane in _audible(report).lanes)
+    assert ("complete", "complete", "evidence_only") == work
+    assert {"review_cases": 0, "automatic_decisions": 0, "field_effects": 0} == rows
 
 
 @pytest.mark.parametrize(

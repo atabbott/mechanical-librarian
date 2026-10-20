@@ -1432,12 +1432,15 @@ def test_series_label_segment_reads_only_the_closed_series_grammar(segment, labe
 # Band-corroborated productions (ADR-0067, #1260).
 
 _BAND_AUTHORS = ("Ada Example",)
+# The product's own series, stating every decoration the band tests strip.
+_BAND_SERIES: tuple[tuple[str, str | None], ...] = (("Example Saga", "2"),)
 
 
 def _band_replay(
     local_title: str,
     provider_title: str,
     *,
+    series: tuple[tuple[str, str | None], ...] = _BAND_SERIES,
     family: WorkTitleTransformationFamily | None = None,
     local_authors: tuple[str, ...] = _BAND_AUTHORS,
     provider_authors: tuple[str, ...] = _BAND_AUTHORS,
@@ -1461,6 +1464,7 @@ def _band_replay(
         provider_authors=provider_authors,
         provider_work_identity="work-1",
         dispatch_lineage=dispatch,
+        provider_series_memberships=series,
         audiobook=audiobook,
         runtime_tight=runtime_tight,
     )
@@ -1492,6 +1496,23 @@ def test_band_title_production_admits_the_shaped_rung_title(
     )
 
 
+_RECORDING_FORMAT_TERMS = (
+    "Dramatized",
+    "Dramatised",
+    "Dramatization",
+    "Dramatisation",
+    "Abridged",
+    "Unabridged",
+    "Abridgement",
+    "Abridgment",
+    "Full Cast",
+    "Full-Cast",
+    "Radio Play",
+    "Radio Drama",
+    "Radio Dramatisation",
+)
+
+
 @pytest.mark.parametrize(
     ("local_title", "provider_title", "kwargs"),
     (
@@ -1517,12 +1538,10 @@ def test_band_title_production_admits_the_shaped_rung_title(
                 "provider_authors": ("Ada Example",),
             },
         ),
-        ("Plain Work (Dramatized)", "Plain Work", {}),
-        ("Plain Work (Dramatised)", "Plain Work", {}),
-        ("Plain Work (Full Cast)", "Plain Work", {}),
-        ("Plain Work (Abridged)", "Plain Work", {}),
-        ("Plain Work (Unabridged Recording)", "Plain Work", {}),
-        ("Plain Work (Radio Play)", "Plain Work", {}),
+        *(
+            (f"Plain Work {term} (Example Saga)", f"Plain Work {term}", {})
+            for term in _RECORDING_FORMAT_TERMS
+        ),
         ("Plain Work (Translated)", "Plain Work", {}),
         ("Plain Work (Example Saga)", "Plain Work: Abridged Edition", {}),
         ("Plain Work (Example Saga)", "Plain Work", {"audiobook": False}),
@@ -1541,12 +1560,7 @@ def test_band_title_production_admits_the_shaped_rung_title(
         "wrong_work_tight",
         "reordered_authors",
         "author_subset",
-        "dramatized",
-        "dramatised",
-        "full_cast",
-        "abridged",
-        "unabridged",
-        "radio",
+        *(f"recording_format_{term}" for term in _RECORDING_FORMAT_TERMS),
         "translated",
         "provider_variant_marker",
         "ebook",
@@ -1557,6 +1571,116 @@ def test_band_title_production_refusals(
     local_title: str, provider_title: str, kwargs: dict[str, object]
 ) -> None:
     assert None is _band_replay(local_title, provider_title, **kwargs)  # type: ignore[arg-type]  # reason: parametrized keyword overrides
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title", "series", "production"),
+    (
+        (
+            "Henry Example, Part II",
+            "Henry Example",
+            (("Henry Example", "2"),),
+            "band_trailing_series_sequence",
+        ),
+        (
+            "Plain Work, Book 2",
+            "Plain Work",
+            (("Another Saga", "2.0"),),
+            "band_trailing_series_sequence",
+        ),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            (("Other Saga", "1"), ("example saga", None)),
+            "band_parenthesized_series_name",
+        ),
+        (
+            "Example Saga Book 2 - Plain Work",
+            "Plain Work",
+            (("Example Saga", "02"),),
+            "band_order_inverted_series_prefix",
+        ),
+        (
+            "The Dramatist (Example Saga)",
+            "The Dramatist",
+            _BAND_SERIES,
+            "band_parenthesized_series_name",
+        ),
+        (
+            "Radio Days (Example Saga)",
+            "Radio Days",
+            _BAND_SERIES,
+            "band_parenthesized_series_name",
+        ),
+        (
+            "The Abridger (Example Saga)",
+            "The Abridger",
+            _BAND_SERIES,
+            "band_parenthesized_series_name",
+        ),
+    ),
+    ids=(
+        "roman_part_matches_series_position",
+        "trailing_position_numerically_equal",
+        "parenthesized_name_among_memberships",
+        "inverted_name_and_position",
+        "dramatist_is_no_dramatisation",
+        "radio_alone_is_no_format",
+        "abridger_is_no_abridgement",
+    ),
+)
+def test_band_title_production_admits_with_the_product_s_own_series(
+    local_title: str,
+    provider_title: str,
+    series: tuple[tuple[str, str | None], ...],
+    production: str,
+) -> None:
+    assert production == _band_replay(local_title, provider_title, series=series)
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title", "series"),
+    (
+        ("Henry Example, Part II", "Henry Example", ()),
+        ("Henry Example, Part 2", "Henry Example", ()),
+        ("Henry Example, Part II", "Henry Example", (("Collected Plays", "5"),)),
+        ("Henry Example, Part 2", "Henry Example", (("Collected Plays", "5"),)),
+        ("Henry Example, Part II", "Henry Example", (("Henry Example", "1"),)),
+        ("Henry Example, Part II", "Henry Example", (("Henry Example", None),)),
+        ("Plain Work (Example Saga)", "Plain Work", ()),
+        ("Plain Work (Example Saga)", "Plain Work", (("Other Saga", "2"),)),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            (("Example Saga Collection", None),),
+        ),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Example Saga", "3"),)),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Example Saga", None),)),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Other Saga", "2"),)),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Example Saga", "two"),)),
+    ),
+    ids=(
+        "roman_part_without_series",
+        "arabic_part_without_series",
+        "roman_part_beside_an_unrelated_series",
+        "arabic_part_beside_an_unrelated_series",
+        "roman_part_at_another_position",
+        "roman_part_without_a_position",
+        "parenthesized_without_series",
+        "parenthesized_with_another_series_name",
+        "parenthesized_with_a_longer_series_name",
+        "inverted_at_another_position",
+        "inverted_without_a_position",
+        "inverted_with_another_series_name",
+        "inverted_with_a_non_numeric_position",
+    ),
+)
+def test_band_title_production_refuses_without_the_product_s_own_series(
+    local_title: str,
+    provider_title: str,
+    series: tuple[tuple[str, str | None], ...],
+) -> None:
+    assert None is _band_replay(local_title, provider_title, series=series)
 
 
 def test_band_title_production_never_composes_with_another_production() -> None:
@@ -1576,6 +1700,15 @@ def test_band_title_production_never_composes_with_another_production() -> None:
         ("J.K. Example", "J K Example", ("local",)),
         ("Ada B. Example", "Ada B Example", ("local",)),
         ("Ada B Example", "Ada B. Example", ("provider",)),
+        # No-break and thin spaces are whitespace to the closed comparison, so
+        # they separate the initials from the name exactly as a space does.
+        ("J.R.R.\N{NO-BREAK SPACE}Example", "J. R. R. Example", ("local", "provider")),
+        ("J.R.R.\N{THIN SPACE}Example", "J R R Example", ("local",)),
+        (
+            "J R R Example",
+            "J.\N{THIN SPACE}R.\N{THIN SPACE}R.\N{NO-BREAK SPACE}Example",
+            ("provider",),
+        ),
     ),
 )
 def test_initials_fold_admits_closed_equal_title_inside_the_band(

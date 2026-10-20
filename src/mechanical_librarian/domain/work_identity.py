@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 
 from mechanical_librarian.domain.audio_inspection import MAX_OBSERVED_CHARACTERS
@@ -526,7 +527,9 @@ _ASCII_SPACE = re.compile(r"[\t\n\r\f\v ]+")
 # A recording-format term in the local title keeps a band-first title
 # production from admitting, alongside the `_VARIANT` vocabulary (#1260).
 _RECORDING_FORMAT = re.compile(
-    r"\b(?:(?:un)?abridg|dramati[sz]|full[- ]cast\b|radio\b)", re.IGNORECASE
+    r"\b(?:dramati[sz](?:ed|ation)|(?:un)?abridged|abridge?ment|full[- ]cast"
+    r"|radio[\t\n\r\f\v ]+(?:play|drama|dramati[sz]ation))\b",
+    re.IGNORECASE,
 )
 # A whitespace token of single letters, each followed by a full stop.
 _DOTTED_INITIALS = re.compile(r"(?:[^\W\d_]\.)+")
@@ -546,12 +549,13 @@ _PAREN = re.compile(r"[\t\n\r\f\v ]*\(([^()]*)\)[\t\n\r\f\v ]*$")
 _SERIES_MARKER = re.compile(
     r"[\t\n\r\f\v ]*(?:[-,:][\t\n\r\f\v ]*)?"
     r"(?:book|volume|vol\.?|part)[\t\n\r\f\v ]*#?[\t\n\r\f\v ]*"
-    r"(?:\d+(?:\.\d+)?|[ivxlcdm]+)[\t\n\r\f\v ]*$",
+    r"(?P<sequence>\d+(?:\.\d+)?|[ivxlcdm]+)[\t\n\r\f\v ]*$",
     re.IGNORECASE,
 )
 _INVERTED_SERIES = re.compile(
-    r"^.+?\b(?:book|volume|vol\.?|part|#)[\t\n\r\f\v ]*\d+(?:\.\d+)?"
-    r"[\t\n\r\f\v ]+[-–—][\t\n\r\f\v ]+(.+)$",
+    r"^(?P<series>.+?)\b(?:book|volume|vol\.?|part|#)[\t\n\r\f\v ]*"
+    r"(?P<sequence>\d+(?:\.\d+)?)"
+    r"[\t\n\r\f\v ]+[-–—][\t\n\r\f\v ]+(?P<title>.+)$",
     re.IGNORECASE,
 )
 # A leading position token: "3. Title", "Book 2: Title", "#4 - Title".  At
@@ -928,6 +932,7 @@ def replay_provider_work_identity_admission(
     dispatch_lineage: WorkDispatchLineage | None,
     variant_excluded: bool = False,
     provider_series: tuple[tuple[str, str], ...] = (),
+    provider_series_memberships: tuple[tuple[str, str | None], ...] = (),
     audiobook: bool = False,
     runtime_tight: bool = False,
 ) -> WorkIdentityAdmission:
@@ -935,7 +940,9 @@ def replay_provider_work_identity_admission(
 
     `runtime_tight` enables the band-corroborated productions (#1260); the
     caller passes it only for a tight candidate on an audiobook plan's asserted
-    lane from an audiobook authority.
+    lane from an audiobook authority. A band title production also needs one
+    of `provider_series_memberships`, the product's own stated series names and
+    positions, to state the series the rung stripped.
     """
     admission = admit_provider_work_identity(
         local_title=local_title,
@@ -996,6 +1003,11 @@ def replay_provider_work_identity_admission(
         and dispatch_lineage.transformations[0] in _BAND_TITLE_FAMILIES
         and not work_title_has_variant_marker(local_title)
         and _RECORDING_FORMAT.search(local_title) is None
+        and _band_decoration_corroborated(
+            dispatch_lineage.transformations[0],
+            local_title,
+            provider_series_memberships,
+        )
     ):
         # The rung's own shaped title is what this band-first production
         # compares: exactly one ladder decoration away from the local title.
@@ -1147,7 +1159,7 @@ def apply_work_title_transformation(
         return _clean(_SERIES_MARKER.sub("", title))
     if family is WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX:
         match = _INVERTED_SERIES.fullmatch(title)
-        return _clean(match.group(1)) if match is not None else title
+        return _clean(match.group("title")) if match is not None else title
     if family is WorkTitleTransformationFamily.LEADING_SEQUENCE_TOKEN:
         match = _LEADING_SEQUENCE.fullmatch(title)
         rest = "" if match is None else _clean(match.group("rest"))
@@ -1284,7 +1296,7 @@ def series_label_segment(segment: str) -> bool:
     return (
         _SERIES_MARKER.search(text) is not None
         or _POSITION_NUMBER.search(text) is not None
-        or (inverted is not None and inverted.group(1) == "x")
+        or (inverted is not None and inverted.group("title") == "x")
         or (leading is not None and leading.group("rest") == "x")
     )
 
@@ -1698,14 +1710,74 @@ def _latin_admission_lineage(
     )
 
 
+def _band_decoration_corroborated(
+    family: WorkTitleTransformationFamily,
+    local_title: str,
+    memberships: tuple[tuple[str, str | None], ...],
+) -> bool:
+    """Whether the product's own series states what the rung stripped (#1260).
+
+    A stripped series name must closed-equal a stated series name, and a
+    stripped position must equal that membership's position numerically. A
+    trailing sequence strips a position alone, so any stated membership at
+    that position corroborates it.
+    """
+    title = _normalized_query_text(local_title)
+    name: str | None = None
+    sequence: str | None = None
+    if family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME:
+        match = _PAREN.search(title)
+        name = None if match is None else _clean(match.group(1))
+    elif family is WorkTitleTransformationFamily.TRAILING_SERIES_SEQUENCE:
+        match = _SERIES_MARKER.search(title)
+        sequence = None if match is None else match.group("sequence")
+    else:
+        match = _INVERTED_SERIES.fullmatch(title)
+        if match is not None:
+            name, sequence = _clean(match.group("series")), match.group("sequence")
+    position = None if sequence is None else _series_position(sequence)
+    if not name and position is None:
+        return False
+    return any(
+        (name is None or _closed_equal(stated_name, name))
+        and (
+            position is None
+            or stated_sequence is not None
+            and _series_position(stated_sequence) == position
+        )
+        for stated_name, stated_sequence in memberships
+    )
+
+
+def _series_position(value: str) -> Decimal | None:
+    """Read a series position as a number: decimal digits or a Roman numeral."""
+    text = value.strip()
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", text):
+        return Decimal(text)
+    if not text or _ROMAN_NUMERAL.fullmatch(text) is None:
+        return None
+    digits = [_ROMAN_VALUES[letter] for letter in text.casefold()]
+    return Decimal(
+        sum(
+            -digit if digit < following else digit
+            for digit, following in zip(digits, [*digits[1:], 0], strict=True)
+        )
+    )
+
+
+_ROMAN_VALUES = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
+
+
 def _initials_fold(value: str) -> str:
     """Fold each token of dotted single letters to the letters, space-separated.
 
-    "J.R.R." and "J. R. R." both become "J R R"; "JRR" and "St." are unchanged.
+    Tokens split on the whitespace `_closed_equal` collapses, no-break and
+    thin spaces included. "J.R.R." and "J. R. R." both become "j r r"; "JRR"
+    and "St." are unchanged but for case.
     """
     return " ".join(
         " ".join(token[::2]) if _DOTTED_INITIALS.fullmatch(token) else token
-        for token in _ASCII_SPACE.split(value.strip())
+        for token in _comparison_text(value).split(" ")
         if token
     )
 

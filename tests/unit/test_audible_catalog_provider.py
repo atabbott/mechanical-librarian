@@ -2370,11 +2370,14 @@ def _band_product(
     *,
     authors: tuple[str, ...] = _BAND_AUTHORS,
     minutes: int | None = 970,
+    series: tuple[tuple[str, str], ...] = (("Example Saga", "2"),),
 ) -> dict[str, Any]:
+    """One Audible product, by default in the series every band title strips."""
     product: dict[str, Any] = {
         "asin": asin,
         "title": title,
         "authors": [{"name": value} for value in authors],
+        "series": [{"title": name, "sequence": position} for name, position in series],
     }
     if minutes is not None:
         product["runtime_length_min"] = minutes
@@ -2478,6 +2481,37 @@ def test_a_tight_product_equal_to_the_shaped_rung_admits_as_a_recording(
     (provider,) = report.providers
     assert p.provider_candidate_represents_target_work(
         report, provider, provider.candidates[0]
+    )
+
+
+@pytest.mark.parametrize(
+    ("series", "admitted"),
+    (
+        ((("Henry Example", "2"),), True),
+        ((), False),
+        ((("Collected Plays", "5"),), False),
+        ((("Henry Example", "1"),), False),
+    ),
+    ids=("its_own_series_position", "no_series", "unrelated_series", "part_one"),
+)
+def test_a_stripped_part_admits_only_what_the_product_s_series_states(
+    series: tuple[tuple[str, str], ...], admitted: bool
+) -> None:
+    """A trailing "Part II" is a decoration only where the product says so."""
+    title = "Henry Example, Part II"
+    plan = _band_plan(title=title)
+    observation, asked = _band_observation(
+        lambda _title: [_band_product("B000000001", "Henry Example", series=series)],
+        plan,
+    )
+    _band_report(observation, plan, title=title)
+
+    assert "Henry Example" == asked[0]
+    assert admitted is (ProviderStatus.CANDIDATES is observation.status)
+    assert (("band_trailing_series_sequence",) if admitted else ()) == tuple(
+        lane.transformation_lineage.production
+        for lane in observation.lanes
+        if lane.transformation_lineage is not None
     )
 
 

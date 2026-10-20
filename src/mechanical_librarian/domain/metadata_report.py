@@ -3187,6 +3187,22 @@ def provider_candidate_work_identity_admission(
     ):
         return WorkIdentityAdmission(True)
     ordered = tuple(sorted(candidate.claims, key=lambda claim: claim.raw_order))
+    # Each stated series name with the position claim that directly follows
+    # it, `None` where that position is not a valid value.
+    memberships = tuple(
+        (
+            name.value,
+            sequence.value if sequence.state is FieldState.VALID else None,
+        )
+        for name, sequence in zip(ordered, ordered[1:], strict=False)
+        if name.kind is ClaimKind.SERIES
+        and sequence.kind is ClaimKind.SERIES_SEQUENCE
+        and name.scope is ClaimScope.WORK
+        and sequence.scope is ClaimScope.WORK
+        and name.state is FieldState.VALID
+        and name.value is not None
+        and sequence.raw_order == name.raw_order + 1
+    )
     admission = replay_provider_work_identity_admission(
         local_title=local_title,
         local_authors=local_authors,
@@ -3196,28 +3212,21 @@ def provider_candidate_work_identity_admission(
         dispatch_lineage=dispatch_lineage,
         variant_excluded=variant_excluded,
         provider_series=tuple(
-            (name.value, sequence.value)
-            for name, sequence in zip(ordered, ordered[1:], strict=False)
-            if name.kind is ClaimKind.SERIES
-            and sequence.kind is ClaimKind.SERIES_SEQUENCE
-            and name.scope is ClaimScope.WORK
-            and sequence.scope is ClaimScope.WORK
-            and name.state is FieldState.VALID
-            and sequence.state is FieldState.VALID
-            and name.value is not None
-            and sequence.value is not None
-            and sequence.raw_order == name.raw_order + 1
+            (name, sequence)
+            for name, sequence in memberships
+            if sequence is not None
             and sum(claim.kind is ClaimKind.SERIES for claim in ordered) == 1
             and not any(
                 claim.kind is ClaimKind.SUBTITLE
                 and claim.state is not FieldState.ABSENT
                 and not (
                     claim.state is FieldState.VALID
-                    and claim.value == f"{name.value}, Book {sequence.value}"
+                    and claim.value == f"{name}, Book {sequence}"
                 )
                 for claim in ordered
             )
         ),
+        provider_series_memberships=memberships,
         audiobook=audiobook,
         runtime_tight=runtime_tight,
     )
