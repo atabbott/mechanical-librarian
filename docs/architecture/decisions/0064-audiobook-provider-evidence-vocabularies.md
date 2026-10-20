@@ -363,8 +363,12 @@ not dispatched. Every request failure (`unavailable`, `rate_limited`,
 An `incomplete` lane is starved only when every incomplete cause the adapter
 recorded is the deadline, the persisted non-retryable request timeout
 diagnostic backs it, and the provider states no byte or dispatch-count budget
-diagnostic. Any other incomplete lane is unavailable, and so is a request that
-was sent and then ran out of time. A `no_match` ASIN lane is empty. A `no_match`
+diagnostic. The deadline must have stopped the request the lane was about to
+send; earlier rungs or attempts may have been sent, so a lane can send its
+first rung, find nothing and be starved at its second, and a pacer that blocks
+a retry past the deadline starves it the same way. Any other incomplete lane is
+unavailable, and so is a request that was sent and then ran out of time. A
+`no_match` ASIN lane is empty. A `no_match`
 WORK lane is refused when it walked its whole ladder and the
 `work_identity_refused` diagnostic is present, and empty when it walked the
 ladder without one. A provider that keeps no ladder, which is Hardcover and
@@ -405,6 +409,17 @@ report breaks is the one it is refused for:
 
 A retry successor keeps an unselected lane's record byte-identical and
 recomputes the record of the lane it retries.
+
+Starvation is under-counted, never over-counted. The request timeout diagnostic
+that backs it is emitted only when the provider's aggregate status is
+`incomplete`, so a deadline-starved lane whose sibling lane's status outranks
+`incomplete` (`candidates`, `rate_limited`, `malformed`, `oversized`,
+`candidate_limit_exceeded`, `authentication` or `authorization`) has no backing
+diagnostic and is recorded `unavailable`. This affects Audible, Audnexus,
+AudioSilo and Open Library; Hardcover is unaffected, because its lane
+diagnostics carry the cause. The budget-diagnostic exclusion is over-inclusive
+for the same reason: it reads the provider's diagnostics, not the lane's. The
+diagnostics themselves are unchanged.
 
 The record holds enum values and integers only, with no provider text, title
 or ASIN. No new ADR-0017 category or stage is added: a starved lane is backed

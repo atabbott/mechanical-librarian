@@ -273,8 +273,9 @@ Every lane of an audiobook report also records `dispatch` (#1258): an
 stated only on Audible's asserted lane: the stated runtime of the nearest
 title-matching product the loose band ruled out, minus the recording's, read
 from the whole page before narrowing and never sent for. A lane is starved only
-when the deadline alone stopped it before it sent a request; Hardcover and Open
-Library keep no ladder, so their unmatched work lanes are `empty_or_refused`.
+when the deadline alone stopped it before it sent the request it was about to
+send; earlier rungs or attempts may have been sent. Hardcover and Open Library
+keep no ladder, so their unmatched work lanes are `empty_or_refused`.
 Report validation re-derives each outcome from the lane and replays the rungs
 and near-miss. The record grants nothing. Ebook lanes serialize `null`.
 

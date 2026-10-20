@@ -74,6 +74,9 @@ runtime band a retained candidate reaches (`tight`, `loose`, `outside`,
 counts the recorded Audible near-misses by sign and magnitude bucket
 (`600-900`, `900-1800`, `1800-3600`, `3600+` seconds, each closed on its upper
 bound). An ebook-only library reports zero reports and empty lists.
+`starved` is a lower bound: a deadline-starved lane whose provider has a
+sibling lane with a status that outranks `incomplete` carries no backing
+timeout diagnostic and is counted `unavailable` (ADR-0064).
 
 Over the same audiobook reports, `audiobook_outcomes` splits each library's
 `reports` by the case its evidence earns. `recording_admitted` is a report
@@ -124,8 +127,13 @@ by default, so it cannot support throughput claims. What the ring can show is
 where one item's preparation time goes, so with `--stage-timings` the document
 adds a `stage_timings` block over the retained tail only: its record count,
 first and last recording times, and per stage and wait class the sample count
-and nearest-rank p50, p95 and maximum duration in milliseconds. At 11 to 14
-records per audiobook item the tail covers roughly the last 18 to 23 items.
+and nearest-rank p50, p95 and maximum duration in milliseconds. An audiobook
+item writes roughly 14 to 17 records (about 11 to 14 before #1258 split out the
+two cover reads and the report publication), so the tail covers roughly its
+last 15 to 18 items. The cover stages are recorded at close to 0 ms when no
+cover observer is configured, which pulls their p50 toward zero. The copied
+timing file must be mode 0600 inside a 0700 directory owned by the user
+running the report, or the product's reader refuses it.
 Without the option the block is `null`; a named file that does not exist or
 that the product's own reader refuses stops the report rather than reading as
 an empty tail. When a repeated scan has
