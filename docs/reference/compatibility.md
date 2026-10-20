@@ -1,5 +1,12 @@
 # Pre-release compatibility policy
 
+#1260 advances the report to `metadata-report-v57`: an audiobook's asserted
+lane may admit a product through a band-corroborated production. **Clean
+rebuild required** for every predecessor application database; startup refuses
+v56 reports before mutation. No migration, adoption, conversion, import or
+downgrade is supplied; F19a/F20/F46 records are displaced with their permission
+sets unchanged.
+
 #1258 advances the report to `metadata-report-v56`: every audiobook provider
 lane carries a required dispatch record and every ebook lane a `null` one.
 **Clean rebuild required** for every predecessor application database; startup
@@ -73,7 +80,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v56` plus `proposal-set-v8` under
+  `metadata-report-v57` plus `proposal-set-v8` under
   `fixed-conservative-v35`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
@@ -451,3 +458,15 @@ is supplied. Proposal, shadow-decision and review envelopes are unchanged, and
 the record changes no request, admission or decision. The cold-start report
 moves to `cold-start-report-v3`, and the closed stage-timing vocabulary gains
 `cover`, `proposal` and `persistence` with `stage-timings-v1` unchanged.
+
+## Band-corroborated admission (#1260)
+
+Report `metadata-report-v57` adds no field. A lane's `transformation_lineage`
+may now name `band_parenthesized_series_name`, `band_trailing_series_sequence`,
+`band_order_inverted_series_prefix` or `band_initials_fold`, and an application
+may name the `initials_fold` family; the lineage shape is unchanged. A v56
+lane refused products v57 admits, so the exact SQLite discriminator requires a
+**clean rebuild** under ADR-0013. Prior stores are refused before mutation. No
+migration, adoption or relabelling is supplied. The comparison version, the
+proposal and decision policies and the proposal, packet, outcome and review
+envelopes are unchanged.

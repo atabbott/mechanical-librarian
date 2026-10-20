@@ -175,3 +175,10 @@ required `dispatch` record to every provider lane, `null` on an ebook lane, so
 a v55 document has no field the current reader requires and cannot be read as
 current. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
+
+Issue #1260 also takes the clean-rebuild branch. `metadata-report-v57` adds no
+field, but a band-corroborated production now admits an audiobook product a
+v56 lane refused, and its lineage names productions and the `initials_fold`
+family a v56 reader does not know, so a v56 document cannot be read as current.
+Every earlier application database is rejected before mutation and needs a
+clean rebuild; no adoption is supplied.

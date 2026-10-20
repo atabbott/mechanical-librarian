@@ -105,7 +105,7 @@ private-path, credential-shaped, or otherwise invalid non-title input remains
 slashes (`</p>`, `<br />`) and U+2028 line separators and keeps its exact text.
 Text whose only defect is C1 control characters is refused by the validator with
 its own reason, but the report and UI still show that field only as `malformed`
-(#1251). The report is `metadata-report-v56` (#1258). For the title specifically, a
+(#1251). The report is `metadata-report-v57` (#1260). For the title specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
 oversized title or a missing, null, empty, unloaded, or non-string title instead
@@ -561,6 +561,7 @@ inheriting query authority:
 | order-inverted series prefix | normalized | query-only |
 | colon or spaced-dash subtitle segment | subtitle-stripped | query-only |
 | broad punctuation and ampersand folding | punctuation-folded | query-only |
+| dotted initials folded to spaced letters (audiobook only) | none | none |
 
 Every table row stays query-only. Admission comes only from a closed compound
 production that names an ordered composition of rows and is reviewed as one
@@ -570,21 +571,42 @@ of its constituent rows alone:
 | Production | Ordered families | Side | Admission |
 | --- | --- | --- | --- |
 | `author_prefix_then_underscores` | complete first-author filename prefix, then filename underscores | local | admission-enabled |
+| `band_parenthesized_series_name` | parenthesized series name, as the rung's only decoration | local title | tight band only |
+| `band_trailing_series_sequence` | trailing series or sequence marker, as the rung's only decoration | local title | tight band only |
+| `band_order_inverted_series_prefix` | order-inverted series prefix, as the rung's only decoration | local title | tight band only |
+| `band_initials_fold` | dotted initials folded to spaced letters | local or provider authors | tight band only |
 
-An admitted compound records its ordered lineage in the persisted report beside
+An admitted production records its applications in the persisted report beside
 the base dispatch lineage:
 
 ```json
 {
-  "families": ["filename_author_title_prefix", "filename_underscores"],
-  "production": "author_prefix_then_underscores",
-  "side": "local"
+  "applications": [
+    {"family": "parenthesized_series_name", "field": "title", "ordinal": null, "side": "local"}
+  ],
+  "production": "band_parenthesized_series_name"
 }
 ```
 
-Replay recomputes the admission and rejects any persisted lineage whose ordered
-families are not an admission-enabled production, whose `production` name does
-not derive from those families, or whose side is not `local`.
+Replay recomputes the admission and rejects any persisted lineage whose
+applications are not an admission-enabled production, or whose `production`
+name does not derive from them.
+
+The band-corroborated productions (#1260, ADR-0067) admit only on an audiobook
+plan's asserted WORK lane at an audiobook authority, for a candidate inside
+the 90-second tight band of the item's single local runtime with no recording
+language or format conflict. A title production needs the lane's dispatch
+lineage to be the normalized rung with exactly its one family, and the provider
+title and ordered authors to admit exactly against that rung's shaped title;
+a local title with a variant marker or a recording-format term (abridged,
+unabridged, dramatised, full cast, radio) never admits, and neither does a
+product the asserted title explicitly contradicts. `band_initials_fold` needs
+closed-equal titles and ordered authors, each pair equal or equal once dotted
+initials fold, with a name that keeps a token longer than one letter, and
+records one application per changed side and author ordinal. Set admission
+runs without the band first, so a set admitted before keeps its candidates and
+lineage. Report validation and the proposal set replay it from the report's
+own claims on the asserted lane only.
 
 The filename-prefix query grammar requires the complete prefix token sequence
 to equal the complete first ordered author. It permits no inversion, initial
