@@ -1098,7 +1098,17 @@ _CREDIT_PUBLISHER: Final = re.compile(r"publisher ?: ?\S.*")
 _CREDIT_RELEASE: Final = re.compile(rf"(?:release date|released) ?: ?{_DATE}")
 _UNABRIDGED: Final = "unabridged"
 _MIN_UNABRIDGED_PREFIX: Final = 4
-_MARKUP_TAG: Final = re.compile(r"<[^<>]*>")
+# Real tag syntax only: a closed set of formatting elements whose attributes
+# are quoted name=value pairs, or a comment. A bracketed phrase such as
+# "<A story>" or "<1984: a dystopia>" is text, not markup (#1250).
+_MARKUP_TAG: Final = re.compile(
+    r"<(?:/?(?:a|abbr|b|big|blockquote|br|center|cite|code|dd|div|dl|dt|em|font"
+    r"|h[1-6]|hr|i|li|ol|p|pre|q|s|small|span|strike|strong|sub|sup|table|tbody"
+    r"|td|tfoot|th|thead|tr|tt|u|ul)"
+    r"""(?:\s+[a-z][-a-z0-9]*\s*=\s*(?:"[^"<>]*"|'[^'<>]*'))*\s*/?"""
+    r"|!--[^<>]*--)>",
+    re.ASCII | re.IGNORECASE,
+)
 _ENCODER_WATERMARKS: Final = frozenset({"fre:ac - free audio converter"})
 _MARKABLE_WATERMARK: Final = " created by markable"
 _CREDIT_LABEL: Final = re.compile(
@@ -1122,6 +1132,8 @@ _MAX_CREDIT_LINE: Final = 240
 _MAX_CREDIT_SEGMENTS: Final = 6
 _MAX_CREDIT_NAMES: Final = 6
 _MAX_CREDIT_NAME_TOKENS: Final = 5
+# A comma continuation is likelier prose than a credit's first name.
+_MAX_CONTINUATION_NAME_TOKENS: Final = 3
 
 
 def _recognized_synopsis_placeholder(value: str) -> bool:
@@ -1173,7 +1185,7 @@ def _credit_line(text: str) -> bool:
     closed format word, a length, or a publisher or release-date label running
     to the end of its segment; at least one must be a credit. A credit names one
     to six people, each one to five letter tokens, joined by "and", "&" or a
-    comma; a ripper or tagger credit's tokens may also hold digits and `_`. A
+    comma, where a name after a comma has at most three tokens; a ripper or tagger credit's tokens may also hold digits and `_`. A
     prose word in any name makes the value prose. The whole value is at most
     240 characters.
     """
@@ -1211,7 +1223,11 @@ def _credit_line(text: str) -> bool:
             elif _synopsis_format_word(part) or _CREDIT_LENGTH.fullmatch(part):
                 open_names = None
                 segments += 1
-            elif open_names is not None and (more := _credit_names(part)) is not None:
+            elif open_names is not None and (
+                more := _credit_names(
+                    part, max_tokens=_MAX_CONTINUATION_NAME_TOKENS
+                )
+            ) is not None:
                 open_names += more
             else:
                 return False
@@ -1224,12 +1240,15 @@ def _credit_line(text: str) -> bool:
 
 
 def _credit_names(
-    text: str, token_pattern: re.Pattern[str] = _CREDIT_NAME_TOKEN
+    text: str,
+    token_pattern: re.Pattern[str] = _CREDIT_NAME_TOKEN,
+    *,
+    max_tokens: int = _MAX_CREDIT_NAME_TOKENS,
 ) -> int | None:
     names = _CREDIT_NAME_JOIN.split(text)
     for name in names:
         tokens = name.split(" ")
-        if not 1 <= len(tokens) <= _MAX_CREDIT_NAME_TOKENS or any(
+        if not 1 <= len(tokens) <= max_tokens or any(
             token_pattern.fullmatch(token) is None
             or token in _CREDIT_PROSE_WORDS
             for token in tokens

@@ -120,6 +120,8 @@ _CREDIT_LINE_EXTENSIONS = (
     "Narrated by; Unabridged",
     "<p></p>",
     "<p><br/></p>",
+    '<p class="synopsis"></p>',
+    "<!-- no description -->",
     "Section 3",
     "Section 2 of 9.",
     "Audiobook created by Markable",
@@ -157,6 +159,16 @@ _STILL_SYNOPSES = (
     "Example created by Markable",
     "fre:ac",
     "<p>A story of loss.</p>",
+    "< A story >",
+    "<1984: a dystopia>",
+    "<A thrilling story of love and loss>",
+    # Each published bound decides one row: over 240 characters with four
+    # five-or-fewer-token names, seven segments, and a six-token name.
+    "Narrated by " + " and ".join(f"{'Long' * 12} Example" for _ in range(4)),
+    "Narrated by Ann Example; Unabridged; Abridged; Audiobook; Audio CD; MP3 CD;"
+    " Audiobooks",
+    "Narrated by Ann Bea Cy Dee Eve Example",
+    "Narrated by Ann Example, Bob loses everything tonight",
     "Narrated by Example Narrator. Set in 1920, a voyage reveals a hidden city"
     " beneath the ice, and an archivist must decide what to keep.",
 )
