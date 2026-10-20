@@ -1911,12 +1911,17 @@ qualification bindings require a clean rebuild of prior derived stores; no new
 provider, parser, model, egress or write capability is introduced.
 
 #1250 widens the vocabulary without opening it. Structured credit lines (one to
-six segments, each a role verb with "by", a role label with ":" or a format
-word, naming one to six people of one to five letter tokens, at most 240
-characters, with a closed prose-word list that keeps sentences out), closed
-format words, numbered chapter, track, part, disc, CD or side markers, and
-`n/a`, `none`, `unknown` or `tbd` are recognized whole, by shape and never by
-length alone. This widens `replace_safe_plain_text` replacement of such an
+six segments, each a role verb with "by" and names, a bare role verb with "by",
+a role label with ":", a format word, a length, or a publisher or release-date
+label, with at least one credit; one to six people of one to five letter
+tokens, where only a ripper or tagger credit's tokens may hold digits or `_`;
+at most 240 characters, with a closed prose-word list that keeps sentences
+out), closed format words and "unabridged" cut to four or more letters,
+numbered chapter, track, part, section, disc, CD or side markers, markup with
+no text, two closed encoder watermarks, and `n/a`, `none`, `unknown` or `tbd`
+are recognized whole, by shape and never by length alone. Markup with no text
+is the only tag-bearing incumbent this admits, and only for replacement; any
+tag-bearing incumbent holding text still abstains as unusable. This widens `replace_safe_plain_text` replacement of such an
 incumbent and narrows automatic fills, since a candidate matching the floor is
 refused with `description_quality_floor_not_met`; ebooks are unchanged. The
 same release treats an audiobook genre list of format words alone as empty, as

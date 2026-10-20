@@ -303,6 +303,4 @@ language, so no audio surface yields a language claim for one. The child's
 builder skips them and the parent's fact validation refuses them, each on its
 own. The MP4 `prID` atom is an Audible product id, not an ASIN, and no longer
 maps to one. Claims mean something different, so `metadata-report-v55` requires
-a clean rebuild under ADR-0013. On the retained #1086 data this restores 38
-description claims and removes 114 placeholder language claims and 37 malformed
-ASIN claims.
+a clean rebuild under ADR-0013.

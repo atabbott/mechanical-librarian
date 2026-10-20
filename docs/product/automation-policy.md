@@ -169,9 +169,12 @@ without claiming one is more authoritative. Other descriptions remain available.
 Text length, wording, opaque alternative hashes and provider vote counts do not
 rank them. Unsafe relevant sources and competing text within one source record
 still refuse automatic selection; ebook description rules are unchanged.
-A synopsis that is only a structured credit line, a format word such as
-"Unabridged", a numbered chapter, track, part, disc or side marker, or
-`n/a`, `none`, `unknown` or `tbd` describes nothing: under "Replace safe plain
+A synopsis that is only a structured credit line (narrator, reader, ripper or
+tagger credits, optionally with format words, a length, a publisher or a
+release date), a format word such as "Unabridged" or a cut form of it, a
+numbered chapter, track, part, section, disc or side marker, an encoder
+watermark, markup with no text, or `n/a`, `none`, `unknown` or `tbd` describes
+nothing: under "Replace safe plain
 text" such an incumbent is replaceable, and such a candidate never fills
 automatically (#1250). A genre list holding only format words such as
 "Audiobook" counts as empty for an audiobook, so "Fill when empty" may fill it
