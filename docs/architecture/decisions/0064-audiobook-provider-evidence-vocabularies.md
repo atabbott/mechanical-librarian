@@ -434,11 +434,14 @@ Earlier reports have no `dispatch` key, so the report advances to
 
 The owner confirmed both runtime bands on 2026-10-20: the tight band stays at
 90 seconds and the loose band at 600. The basis is a replay at main d62bb26e
-over retained responses with zero requests: the #1086 snapshot, 51 earlier
+over retained inputs, sending zero requests: the #1086 snapshot, 51 earlier
 probe bodies and #1246's Audible bodies. The regression floor held: 91 of 91
 case-bearing admissions with none on chapter basis, 238 of 238 duration claims
 equal to their track sums, and the band refusing the same 21 of 108
-candidate-bearing items.
+candidate-bearing items. The loose band keeps 600 seconds on #1258's near-miss
+evidence: both lanes with a near-miss differ from the item's runtime by more
+than 900 seconds. This settles the runtime bands that the Consequences and
+Validation sections leave provisional.
 
 | Tight band | 60 s | 90 s | 120 s |
 | --- | --- | --- | --- |
@@ -446,12 +449,12 @@ candidate-bearing items.
 | Band refusals, of 108 | 30 | 21 | 19 |
 | Admissions without case support | 0 | 0 | 2 |
 | Replay: corroborated items | 24 | 25 | 25 |
-| Wrong-work products within the band, #1246's bodies | 10 of 256 | 11 of 256 | 12 of 256 |
+| Title-refused wrong-work products within the band, #1246's bodies | 10 of 256 | 11 of 256 | 12 of 256 |
 
 A 120-second tight band was considered and rejected. It corroborates no further
 item in replay. It adds two snapshot admissions without case support, whose
 duration claims the 90-second claim link would not link, and one more
-wrong-work product inside the band.
+title-refused wrong-work product inside the band on #1246's bodies.
 
 Reopen the tight band if #1294's full audiobook library run, or later
 measurement under #990 or #1238, finds title-admitted items whose runtime
@@ -459,9 +462,9 @@ differs by between 90 and 120 seconds at a material rate with independent
 corroboration such as narrator agreement, or if #1260's delivered rules show
 their own in-band wrong-work rate rising.
 
-The per-chapter tolerance and strong-agreement floor keep their earlier
-measured basis, but this replay did not exercise them: no snapshot candidate
-met the chapter predicates. The 64-bit cover-hash distance of 10 stays
+The per-chapter tolerance and strong-agreement floor keep the measured basis
+stated in clause 5, but this replay did not exercise them: no snapshot
+admission was on chapter basis. The 64-bit cover-hash distance of 10 stays
 provisional, and it cannot be exercised while only one audiobook cover
 authority is dispatched. `DURATION_AGREEMENT_BAND_SECONDS` stays a separate
 parameter, unchanged at 90. No constant changes, so the report version is
