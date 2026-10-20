@@ -5300,6 +5300,11 @@ describe('Library route', () => {
       expect(screen.queryByText('Queue position')).toBeNull()
       const canvas = document.querySelector('.decision-canvas')
       expect(canvas?.textContent).not.toMatch(/needs (?:your )?review/iu)
+      expect(
+        within(canvas as HTMLElement).getByText(
+          'No review is needed. You can still keep the current value or choose a proposed one.',
+        ),
+      ).toBeVisible()
 
       await user.click(accept)
       await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(1))
