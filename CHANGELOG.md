@@ -6,7 +6,8 @@
   series position and a cleaned-up title from matched book evidence. A
   description or genre choice that only trims or extends the current value stays
   choosable without counting as needing attention, unless that field is set to
-  Ask. Upgrading requires a clean rebuild (#1253).
+  Ask. A series named like a title set to Ignore is no longer refused.
+  Upgrading requires a clean rebuild (#1253).
 
 - Audiobook descriptions over 512 characters now show as oversized instead of
   missing, placeholder languages such as `und` and the `prID` tag no longer

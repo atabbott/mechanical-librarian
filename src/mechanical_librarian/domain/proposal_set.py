@@ -1488,8 +1488,12 @@ def evaluate_report(
         _cover_result(report, targets[TargetDestination.COVER]), ignored
     )
     # A title the evidence keeps lets a same-name series stand beside it, even
-    # where the work route masks that title below (#1253).
-    title_kept = results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+    # where the work route masks that title below (#1253); an ignored title
+    # leaves the current one in place, so it counts as kept.
+    title_kept = (
+        results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+        or TargetDestination.TITLE in ignored
+    )
     if work_only:
         # Book evidence answers only the book's own fields; the subtitle stays
         # out because a recording's subtitle is edition evidence, and a title

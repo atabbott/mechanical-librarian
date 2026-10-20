@@ -529,3 +529,36 @@ def test_actual_different_name_base_decisions_remain_history_only(media):
             decision.policy_option,
             decision.qualification_manifest_sha256,
         )
+
+
+@pytest.mark.parametrize("route", ("ebook", "admitted", "work"))
+@pytest.mark.parametrize("name", ("same", "different"))
+def test_an_ignored_title_keeps_the_current_title_beside_its_series(route, name):
+    from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
+
+    report = same_name_series_report(
+        "ebook" if route == "ebook" else "audiobook",
+        name="Different Order" if name == "different" else None,
+        independent_title=route != "work",
+    )
+    assert route == "ebook" or admitted_audiobook_identity(report) is (
+        route == "admitted"
+    )
+
+    def series(title: str) -> object:
+        destinations = dict.fromkeys(OPTION_CATALOGUE, "ask") | {"title_layout": title}
+        proposal = evaluate_report(report, None, destinations)
+        results = {value.destination.value: value for value in proposal.results}
+        if title == "ignore":
+            # The work route masks a title with no cleanup as it did before.
+            assert results["title"].reasons == (
+                ("no_supported_evidence",) if route == "work" else ("policy_ignored",)
+            )
+        return results["series"], len(proposal.bibliographic_combinations)
+
+    # An ignored title leaves the current one in place, as a kept title does,
+    # so the series stands exactly as it does beside the kept title.
+    ignored, asked = series("ignore"), series("ask")
+    assert ignored == asked
+    assert ignored[0].outcome.value == "propose_change"
+    assert ignored[1] == 1
