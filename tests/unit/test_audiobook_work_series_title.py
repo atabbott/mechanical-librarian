@@ -31,6 +31,10 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
     ProposalResult,
     ProposalSet,
+    ProposalValue,
+    ProposalValueKind,
+    _observations,
+    _work_title_cleanup,
     audiobook_review_scope,
     evaluate_report,
 )
@@ -230,15 +234,75 @@ def test_a_witnessed_title_restores_missing_diacritics():
     assert audiobook_review_scope(report) == "work"
 
 
-def test_a_case_only_title_difference_is_kept():
-    report = _report(_product(), target_title="synthetic journey")
-    title = _results(evaluate_report(report))["title"]
-    assert title.outcome is ProposalOutcome.KEEP
-    assert all(
-        alternative.assessment.value == "preserves_target"
-        for alternative in title.alternatives
+_MASKED_TITLE = ProposalResult(
+    TargetDestination.TITLE,
+    ProposalOutcome.INELIGIBLE,
+    (),
+    None,
+    ("no_supported_evidence",),
+    (TargetDestination.SUBTITLE, TargetDestination.SERIES),
+)
+
+
+@pytest.mark.parametrize(
+    ("current", "candidate", "cleanup"),
+    (
+        ("Synthetic Journey (Unabridged)", "Synthetic Journey", True),
+        ("Synthetic_Journey", "Synthetic Journey", True),
+        ("Synthetic Journey", "Synthétic Journey", True),
+        ("Synthétic Journey", "Synthetic Journey", False),
+        ("Synthétic Journey (Unabridged)", "Synthetic Journey", False),
+        ("Synthétic Journey (Unabridged)", "Synthétic Journey", True),
+        ("Synthetic \u201cJourney\u201d", 'Synthetic "Journey"', False),
+        ("Synthetic Journey\u2019s", "Synthetic Journey's", False),
+        ("Synthetic Journey's", "Synthetic Journey\u2019s", False),
+        ("synthetic journey", "Synthetic Journey", False),
+    ),
+)
+def test_a_title_cleanup_keeps_every_mark_and_more_than_quote_form(
+    current, candidate, cleanup
+):
+    target = TargetField(TargetDestination.TITLE, TargetFieldState.VALUE, current)
+    value = ProposalValue(ProposalValueKind.TEXT, candidate)
+    assert _work_title_cleanup(target, value) is cleanup
+
+
+@pytest.mark.parametrize(
+    ("current", "provider_title"),
+    (
+        ("synthetic journey", "Synthetic Journey"),
+        ("Synthétic Journey", "Synthetic Journey"),
+        ("Synthetic \u201cJourney\u201d", 'Synthetic "Journey"'),
+        ('Synthetic "Journey"', "Synthetic \u201cJourney\u201d"),
+    ),
+    ids=("case", "accent-strip", "straight-quotes", "typographic-quotes"),
+)
+def test_a_witnessed_title_that_is_no_cleanup_stays_masked(current, provider_title):
+    report = synthetic_audiobook_product_lookup_report(
+        (_product(title=provider_title),), target_title=current, catalog_title=current
     )
+    assert provider_title in {
+        value.value.value for value in _observations(report, TargetDestination.TITLE)
+    }
     assert audiobook_review_scope(report) is None
+    assert _results(evaluate_report(report))["title"] == _MASKED_TITLE
+
+
+def test_a_description_only_work_case_leaves_title_as_base():
+    report = _report(_product(summary="A voyage reveals a hidden city."))
+    assert audiobook_review_scope(report) == "work"
+    results = _results(evaluate_report(report))
+    assert results["description"].alternatives
+    assert results["title"] == _MASKED_TITLE
+    assert not results["series"].alternatives
+
+
+def test_a_series_witness_keeps_a_preserving_title_masked():
+    proposal = evaluate_report(_report(_product(seriesPrimary=_SAGA)))
+    results = _results(proposal)
+    assert results["title"] == _MASKED_TITLE
+    assert results["series"].outcome is ProposalOutcome.PROPOSE_CHANGE
+    assert len(proposal.bibliographic_combinations) == 1
 
 
 @pytest.mark.parametrize(
@@ -260,18 +324,6 @@ def test_a_decorated_or_variant_title_is_never_offered(provider_title):
 def test_a_series_witness_alone_opens_work_review():
     report = _report(_product(seriesPrimary=_SAGA))
     assert audiobook_review_scope(report) == "work"
-
-
-def test_a_preserving_title_witness_alone_stays_evidence_only():
-    report = _report(_product())
-    assert audiobook_review_scope(report) is None
-    results = _results(evaluate_report(report))
-    assert results["title"].outcome is ProposalOutcome.KEEP
-    assert not any(
-        result.alternatives
-        for destination, result in results.items()
-        if destination != "title"
-    )
 
 
 def test_a_title_cleanup_alone_opens_work_review():

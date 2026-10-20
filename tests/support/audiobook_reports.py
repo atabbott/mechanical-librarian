@@ -796,12 +796,14 @@ def synthetic_audiobook_product_lookup_report(
     unavailable: bool = False,
     recording_runtime: str | None = None,
     target_title: str = "Synthetic Journey",
+    catalog_title: str = "Synthetic Journey",
 ) -> MetadataReport:
     """Real discovery and per-product adapters, without independent local ASINs.
 
     A product dictionary is the per-product answer, so it may carry any field
     the adapter reads, such as `seriesPrimary`; `target_title` is the library's
-    current title, such as one with a local " (Unabridged)" suffix (#1253).
+    current title, such as one with a local " (Unabridged)" suffix, and
+    `catalog_title` the title discovery answers with (#1253).
     """
     import httpx
 
@@ -837,7 +839,7 @@ def synthetic_audiobook_product_lookup_report(
                     "products": [
                         {
                             "asin": product["asin"],
-                            "title": "Synthetic Journey",
+                            "title": catalog_title,
                             "authors": [{"name": "Example Author"}],
                             "narrators": product.get("narrators"),
                             **(

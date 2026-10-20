@@ -1176,8 +1176,8 @@ def audiobook_review_scope(report: MetadataReport) -> AudiobookReviewScope | Non
     """Distinguish useful book evidence from admitted recording identity.
 
     Book evidence is a witnessed description, genre list or series, or a
-    witnessed title that does not preserve the current one: a title that only
-    restates the current value gives the owner nothing to decide (#1253).
+    witnessed title that cleans up the current one: a title that only restates
+    the current value gives the owner nothing to decide (#1253).
     """
     if report.audio is None:
         return None
@@ -1192,12 +1192,56 @@ def audiobook_review_scope(report: MetadataReport) -> AudiobookReviewScope | Non
             TargetDestination.SERIES,
         )
     ) or any(
-        title.state is not TargetFieldState.VALUE
-        or not _matches(TargetDestination.TITLE, title.value, observed.value)
+        _work_title_cleanup(title, observed.value)
         for observed in _observations(report, TargetDestination.TITLE)
     ):
         return AudiobookReviewScope.WORK
     return None
+
+
+# Typographic quotes and their straight forms; a title differing only in these
+# says nothing new about the work (#1253).
+_STRAIGHT_QUOTES = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201a": "'",
+        "\u201b": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u201e": '"',
+        "\u201f": '"',
+    }
+)
+
+
+def _work_title_cleanup(target: TargetField, value: ProposalValue) -> bool:
+    """Whether a witnessed work title cleans up the current title (#1253).
+
+    A cleanup fills an absent title, or differs from the current one without
+    removing any combining mark the current title carries and by more than
+    quote form. Anything else preserves the current title on the work route.
+    """
+    if target.state is not TargetFieldState.VALUE:
+        return True
+    current, candidate = target.value, value.value
+    if (
+        type(current) is not str
+        or type(candidate) is not str
+        or _matches(TargetDestination.TITLE, current, value)
+    ):
+        return False
+    kept = list(unicodedata.normalize("NFD", candidate))
+    for mark in unicodedata.normalize("NFD", current):
+        if unicodedata.combining(mark):
+            if mark not in kept:
+                return False
+            kept.remove(mark)
+    return not values_match(
+        TargetDestination.TITLE,
+        current.translate(_STRAIGHT_QUOTES),
+        candidate.translate(_STRAIGHT_QUOTES),
+    )
 
 
 def evaluate_report(
@@ -1213,6 +1257,7 @@ def evaluate_report(
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
     title_associations: dict[str, str] = {}
+    work_only = report.audio is not None and not admitted_audiobook_identity(report)
     for destination in TargetDestination:
         if destination in {
             TargetDestination.PUBLISHED_YEAR,
@@ -1221,6 +1266,15 @@ def evaluate_report(
         }:
             continue
         observations = _observations(report, destination)
+        if work_only and destination is TargetDestination.TITLE:
+            # Book evidence offers only a cleanup; any other title it states
+            # is no alternative to the current one (#1253).
+            observations = tuple(
+                value
+                for value in observations
+                if _work_title_cleanup(targets[destination], value.value)
+                or _matches(destination, targets[destination].value, value.value)
+            )
         if destination in _BIBLIOGRAPHIC_DESTINATIONS:
             observed_by_destination[destination] = observations
         result = _evaluate(
@@ -1383,11 +1437,24 @@ def evaluate_report(
     results[TargetDestination.COVER] = _apply_policy_destination(
         _cover_result(report, targets[TargetDestination.COVER]), ignored
     )
-    if report.audio is not None and not admitted_audiobook_identity(report):
+    # A title the evidence keeps lets a same-name series stand beside it, even
+    # where the work route masks that title below (#1253).
+    title_kept = results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+    if work_only:
         # Book evidence answers only the book's own fields; the subtitle stays
-        # out because a recording's subtitle is edition evidence (#1253).
+        # out because a recording's subtitle is edition evidence, and a title
+        # or series stays masked unless a witness offers a cleanup or a series
+        # (#1253).
+        cleanup = any(
+            _work_title_cleanup(targets[TargetDestination.TITLE], value.value)
+            for value in observed_by_destination[TargetDestination.TITLE]
+        )
+        series = bool(observed_by_destination[TargetDestination.SERIES])
         for destination in TargetDestination:
-            if destination not in _WORK_ROUTE_DESTINATIONS:
+            if destination not in _WORK_ROUTE_DESTINATIONS or (
+                (destination is TargetDestination.TITLE and not cleanup)
+                or (destination is TargetDestination.SERIES and not series)
+            ):
                 results[destination] = ProposalResult(
                     destination,
                     ProposalOutcome.INELIGIBLE,
@@ -1396,10 +1463,14 @@ def evaluate_report(
                     ("no_supported_evidence",),
                     _dependencies(destination),
                 )
-        observed_by_destination = {
-            destination: observed_by_destination[destination]
-            for destination in (TargetDestination.TITLE, TargetDestination.SERIES)
-        }
+        if cleanup or series:
+            observed_by_destination = {
+                destination: observed_by_destination[destination]
+                for destination in (TargetDestination.TITLE, TargetDestination.SERIES)
+            }
+        else:
+            observed_by_destination = {}
+            title_associations = {}
         for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES):
             results[destination] = _bound_immaterial_work_alternatives(
                 results[destination], targets[destination]
@@ -1409,6 +1480,7 @@ def evaluate_report(
         results,
         observed_by_destination,
         title_associations,
+        title_kept,
     )
     for destination in unresolved:
         result = results[destination]
@@ -5212,6 +5284,7 @@ def _bibliographic_combinations(
     results: dict[TargetDestination, ProposalResult],
     observations: dict[TargetDestination, tuple[_Observed, ...]],
     title_associations: Mapping[str, str],
+    title_kept: bool,
 ) -> tuple[
     tuple[BibliographicCombination, ...],
     tuple[TargetDestination, ...],
@@ -5309,6 +5382,7 @@ def _bibliographic_combinations(
                 {representation},
                 targets,
                 results,
+                title_kept,
             )
         elif generic_title_preservation:
             _retain_safe_combination(
@@ -5317,6 +5391,7 @@ def _bibliographic_combinations(
                 {representation},
                 targets,
                 results,
+                title_kept,
             )
 
         component_members: dict[TargetDestination, set[str]] = {
@@ -5350,6 +5425,7 @@ def _bibliographic_combinations(
                     {representation, *independent_sources},
                     targets,
                     results,
+                    title_kept,
                 )
 
     if len(combinations) > MAX_BIBLIOGRAPHIC_COMBINATIONS:
@@ -5414,12 +5490,9 @@ def _retain_safe_combination(
     sources: set[str],
     targets: dict[TargetDestination, TargetField],
     results: dict[TargetDestination, ProposalResult],
+    title_kept: bool,
 ) -> None:
-    if _duplicates_bibliographic_component(
-        selections,
-        targets,
-        results,
-    ):
+    if _duplicates_bibliographic_component(selections, targets, results, title_kept):
         return
     key = tuple(
         (
@@ -5441,6 +5514,7 @@ def _duplicates_bibliographic_component(
     selections: tuple[BibliographicSelection, ...],
     targets: dict[TargetDestination, TargetField],
     results: dict[TargetDestination, ProposalResult],
+    title_kept: bool,
 ) -> bool:
     alternatives = {
         result.destination: {
@@ -5488,8 +5562,7 @@ def _duplicates_bibliographic_component(
                         if (
                             title_selection.kind
                             is BibliographicSelectionKind.PRESERVE_TARGET
-                            and results[TargetDestination.TITLE].outcome
-                            is ProposalOutcome.KEEP
+                            and title_kept
                             and component_selection.kind
                             is BibliographicSelectionKind.CANDIDATE
                             and targets[destination].state

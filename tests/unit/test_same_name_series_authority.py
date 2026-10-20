@@ -142,7 +142,7 @@ def test_real_series_association_and_title_witness_remain_authoritative(
                 assert not results["series"].alternatives
             else:
                 assert case_id is not None
-                assert results["title"].outcome.value == "keep"
+                assert results["title"].outcome.value == "ineligible"
                 assert results["series"].outcome.value == "propose_change"
                 assert {
                     alternative.value.value
