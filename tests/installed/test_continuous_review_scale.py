@@ -242,6 +242,9 @@ def test_current_authority_and_predecessor_refusal_without_history(
     from types import SimpleNamespace
 
     from tests.support.automatic_decisions import _automatic_decisions
+    from tests.support.metadata_report_schemas import (
+        PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+    )
 
     from mechanical_librarian.adapters.persistence import schema
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
@@ -286,6 +289,11 @@ def test_current_authority_and_predecessor_refusal_without_history(
         )
         old_schema.setattr(
             schema, "_PROPOSAL_SETS_SQL", proposal_fixture["proposal_sets_ddl"]
+        )
+        old_schema.setattr(
+            schema,
+            "_REVIEW_CASE_FIELD_FACTS_INSERT_SQL",
+            PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         )
         # The producer predates #1245's report discriminator.
         old_schema.setattr(
