@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- An audiobook whose exact recording is unresolved now also offers its series,
+  series position and a cleaned-up title from matched book evidence. A
+  description or genre choice that only trims or extends the current value stays
+  choosable without counting as needing attention, unless that field is set to
+  Ask. Upgrading requires a clean rebuild (#1253).
+
 - Audiobook descriptions over 512 characters now show as oversized instead of
   missing, placeholder languages such as `und` and the `prID` tag no longer
   count as evidence, and credit lines, format words and genre lists such as

@@ -65,6 +65,24 @@ requires nullable scope separately from unchanged recording attribution. Proposa
 policy `fixed-conservative-v33` requires a clean rebuild; report, proposal, case
 and HumanDecision document shapes remain unchanged.
 
+**Work-level series and title (#1253).** Work scope also answers series, series
+position and title, from the same witnessed sources only: local tags and
+lookup-only candidates never supply them, a title cleanup is offered only as a
+witnessed provider title, and subtitle, cover and every recording field stay
+excluded. The duplicate-component and combination checks still run over title,
+subtitle and series. A report opens work scope when a witnessed source states a
+description, genres or a series, or a title that does not preserve the current
+one; a title that only restates the current value leaves it evidence-only.
+
+A work-scope description or genre choice whose every alternative only trims or
+extends the current value, by contiguous words or by genre-set containment,
+carries `work_alternative_immaterial`. It stays an owner choice but sets no
+`unresolved_choice` fact, so it is not queued unless its policy explicitly asks.
+Work-scope fills follow the same shared attention predicate: one held under an
+Automatic destination is not queued and reads as `owner_choosable`, while an
+explicit Ask queues it. Proposal policy `fixed-conservative-v35` requires a clean
+rebuild; document shapes remain unchanged.
+
 **Explicitly absent provider runtime (#1042).** Existing stated-runtime admission
 runs first and yields no new attribution. Otherwise one canonical non-target local
 ASIN, its retained matched-ASIN evidence, usable local runtime and complete strong

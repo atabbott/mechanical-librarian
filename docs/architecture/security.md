@@ -2121,6 +2121,12 @@ binding, library consent, backup readiness, target comparison, supported service
 writes, read-back verification and durable reconciliation. No provider or reviewer
 receives credentials or write authority through this route.
 
+Series, series position and title (#1253) follow the same per-source witness;
+local tags and lookup-only candidates are never read for them, a title is never
+synthesised, and the subtitle stays masked with the recording fields. The
+`work_alternative_immaterial` reason only withdraws a description or genre choice
+from the attention count; it grants no automatic decision, effect or write.
+
 
 ## Recovery settlement diagnostics (#1157)
 

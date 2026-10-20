@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1253 advances the proposal policy to `fixed-conservative-v35`: an unresolved
+recording's book-level review also offers series and title, and immaterial
+description and genre alternatives carry a new reason. **Clean rebuild
+required** for every predecessor application database; startup refuses v34
+proposals before mutation. No migration, adoption, conversion, import or
+downgrade is supplied; F19a/F20/F46 records are displaced with their permission
+sets unchanged.
+
 #1250 advances the report to `metadata-report-v55` and the shadow decision
 policy to `deterministic-shadow-decision-policy-v22`: audiobook description,
 language and ASIN claims mean something different, and the audiobook synopsis
@@ -59,7 +67,7 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v55` plus `proposal-set-v8` under
-  `fixed-conservative-v34`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v35`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v22`,

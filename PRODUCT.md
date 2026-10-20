@@ -79,9 +79,9 @@ guarded work, history, and recovery.
   media mounts, and one web port.
 - The installed discovery and review pipeline supports Audiobookshelf ebook
   and audiobook libraries. Recording-admitted audiobooks retain their qualified
-  field behavior; supported book-level descriptions and genres also permit owner
-  review while the recording remains unresolved. That work-only route grants no
-  automatic, cover or other-field authority. Application metadata and cover
+  field behavior; supported book-level descriptions, genres, series and titles
+  also permit owner review while the recording remains unresolved. That
+  work-only route grants no automatic, cover or other-field authority. Application metadata and cover
   effects use supported service APIs only.
 - Metadata work is field-local, target-shaped, persisted before execution, and
   idempotent. Automatic outcomes must be qualified, deterministic, and visible
