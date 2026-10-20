@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Activity loads again after a verified write of a long value such as a book
+  description; the confirmation now reads "Matches the new value" (#1278).
+
 - Each audiobook report now records why every provider lane ended: admitted,
   empty, refused, overflowing, unavailable, out of time or never sent. It also
   records how far Audible's search went and the nearest same-title runtime that
