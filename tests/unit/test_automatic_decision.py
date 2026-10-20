@@ -1560,6 +1560,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="dispatch-classification-predecessor-f46",
         ),
+        pytest.param(
+            "c8b2c6aada8fbafed802b20fc61fd9b3da21d718ce8487fb84ec5369ebd5b300",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="band-corroborated-admission-predecessor-f19a",
+        ),
+        pytest.param(
+            "423a6dfda4317930963e0e7b2bcf296f95fc155ea8e5c0757de31aabb7e1948c",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="band-corroborated-admission-predecessor-f20",
+        ),
+        pytest.param(
+            "dc1a0898f0220e4777b8969ac67769c8fce503da3025c2ef45404177d819100b",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="band-corroborated-admission-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
