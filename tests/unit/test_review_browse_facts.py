@@ -49,7 +49,6 @@ from mechanical_librarian.domain.review_browse import (
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
-    proposal_media_kind,
 )
 from tests.support.audiobook_reports import corroborated_audiobook_report
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
@@ -121,7 +120,6 @@ def _canonical_pair(
             case.target,
             case.target_fingerprint,
             case.file_identity,
-            proposal_media_kind(case.proposal_document),
             tuple(
                 {key: value for key, value in proposal.items() if key != "proposal_id"}
                 for proposal in case.proposals
