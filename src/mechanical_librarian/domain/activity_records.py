@@ -301,10 +301,7 @@ def _write_facts(
     ]
     if state == "verified":
         facts.append(
-            {
-                "label": "Confirmed in Audiobookshelf",
-                "value": f"Confirmed as {value_text(destination, desired)}",
-            }
+            {"label": "Confirmed in Audiobookshelf", "value": "Matches the new value"}
         )
     elif state in _UNSETTLED:
         facts.append(

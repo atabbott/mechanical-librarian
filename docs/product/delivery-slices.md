@@ -304,6 +304,26 @@ credential, transcription (#24), audiobook dispatch beyond the five-provider
 audiobook dispatch set (#962, #1247), series+sequence query (#1262), or
 cover-question suppression is included.
 
+## Delivery checkpoint 0.22.3: owner trust and control
+
+The owner can trust what the interface says and stays in control of what it
+does. This checkpoint is shaped from the 2026-10-20 frontend audit of a fresh
+deployment writing to a throwaway Audiobookshelf. It holds no new functional
+slice: every unit is focused work with `Delivery slice: Not applicable`.
+
+| Order | Issues | Outcome |
+| --- | --- | --- |
+| 1 | #1278 | Activity loads after a verified write of any length. It records this checkpoint and is its first unit; as focused work it may land before 0.22.2 closes. |
+| 2 | #1018, #1279, #1280, #1281, #1282, #1284, in any order | CSRF resend for every unsafe request; a write-permission review that survives refocus; a policy preview that evaluates every field it reports; a ledger that leads with changes rather than no-op records; library-level provider throttling, retry, scan and pause; and counts, search and Attention that agree across surfaces. |
+| 3 | #1283 | Degraded candidates are no longer presented as improvements, after the investigation records their cause. |
+| 4 | #1285 | Owner-entered values, changeable decisions and genre subsets. A planned feature that must be promoted to a slice designation before it starts. |
+
+No release, tag, deployment, production-library operation, new provider or
+credential, change to consent semantics, or cover-question suppression is
+included. Exit requires every in-scope issue merged or reconciled as CLEAN on
+current `main`, #1285 delivered or explicitly deferred, and Project, issue,
+dependency and milestone tracking read back.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
