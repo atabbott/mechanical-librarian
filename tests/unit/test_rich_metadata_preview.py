@@ -53,6 +53,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
     compile_rich_metadata_preview,
+    project_audiobook_automatic_decision_value,
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
@@ -3859,6 +3860,67 @@ def test_a_format_only_audiobook_genre_candidate_is_no_candidate(
     assert (genres.outcome, genres.reason, genres.desired_value) == (
         "abstain",
         "no_candidate",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "pair", ((("Audiobook",), ("Fantasy",)), (("Fantasy",), ("Unabridged",)))
+)
+def test_a_format_only_genre_alternative_does_not_make_a_real_one_ambiguous(
+    pair,
+) -> None:
+    """A format-only list is no candidate, so it cannot compete (#1250)."""
+    _, fields = _target_work_preview(audiobook_genre_report(None, *pair))
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.desired_value) == ("projected", ("Fantasy",))
+    assert project_audiobook_automatic_decision_value(
+        "genres",
+        "genres",
+        "fill_empty:audiobook_genres_fill",
+        {"kind": "list", "value": ["Fantasy"]},
+        None,
+    ) == {"kind": "list", "value": ["Fantasy"]}
+
+
+def test_two_real_audiobook_genre_lists_are_still_ambiguous() -> None:
+    _, fields = _target_work_preview(
+        audiobook_genre_report(None, ("Fantasy",), ("Mystery",))
+    )
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.reason, genres.desired_value) == (
+        "abstain",
+        "ambiguous_evidence",
+        None,
+    )
+
+
+def test_an_ebook_format_only_genre_alternative_still_competes() -> None:
+    from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope
+    from tests.support.genre_reports import genre_report
+    from tests.support.proposal_evidence import _claim, _provider
+
+    other = _provider(
+        "other-catalogue",
+        "edition-2",
+        (
+            _claim(
+                "other-catalogue",
+                "edition-2",
+                ClaimKind.GENRE,
+                "Audiobook",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+    )
+    _, fields = _target_work_preview(genre_report(genres=("Fantasy",), extra=(other,)))
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.reason, genres.desired_value) == (
+        "abstain",
+        "ambiguous_evidence",
         None,
     )
 

@@ -1132,7 +1132,10 @@ def test_folded_controls_past_the_bound_become_spaces_before_the_cut() -> None:
 
     [(observed, canonical, state, _)] = _descriptions(interpretation)
     assert (observed, canonical, state) == ("D" * 512, None, "oversized")
-    assert audio_local.bounded_description(description, _LIMITS) == ("D" * 512, "oversized")
+    assert audio_local.bounded_description(description, _LIMITS) == (
+        "D" * 512,
+        "oversized",
+    )
     assert not any(character in observed for character in "\n\x85\u2028")
     assert audio_local.bounded_description("D" * 600 + " a\x9bb", _LIMITS) is None
 

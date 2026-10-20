@@ -22,6 +22,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 from mechanical_librarian.domain.field_value_comparison import canonical_text, values_match
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     MAX_TAGS,
     ClaimKind,
     ClaimScope,
@@ -274,7 +275,18 @@ def select_automatic_taxonomy_candidate(
         if field == "tags" and report.audio is not None and option in {"fill_empty", "add"}
         else _nested_audiobook_tags(evidence, retained)
         if field == "tags" and report.audio is not None
-        else _one_list_candidate(result, evidence.alternatives)
+        else _one_list_candidate(
+            result,
+            # A format-only audiobook genre list is no candidate (#1250), so it
+            # neither elects nor makes a real genre list ambiguous.
+            tuple(
+                alternative
+                for alternative in evidence.alternatives
+                if not audiobook_format_only_genres(alternative.value.value)
+            )
+            if field == "genres" and report.file.format in AUDIO_FILE_FORMATS
+            else evidence.alternatives,
+        )
     )
     return candidate, evidence
 
@@ -495,7 +507,25 @@ def _project(
         if reason is not None:
             return _abstain(field, option, target, current, reason)
     if candidate is None:
-        reason = _candidate_reason(result)
+        lists = (
+            ()
+            if automatic_work is None
+            else tuple(
+                alternative.value.value
+                for alternative in automatic_work.alternatives
+                if alternative.value.kind is ProposalValueKind.LIST
+            )
+        )
+        # Only format-only audiobook genre lists: each is no candidate (#1250).
+        reason = (
+            "no_candidate"
+            if field == "genres"
+            and destination == "automatic"
+            and proposal.media_kind == "audiobook"
+            and lists
+            and all(audiobook_format_only_genres(value) for value in lists)
+            else _candidate_reason(result)
+        )
         return RichFieldPreview(
             field, option, target.state.value, current, "abstain", None, reason
         )

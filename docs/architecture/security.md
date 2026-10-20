@@ -1933,12 +1933,13 @@ fills, since a candidate matching the floor is refused with
 `description_quality_floor_not_met`; ebooks are unchanged. The same release
 treats an audiobook genre list of format words alone as empty, as an unknown
 language is: under the default `fill_empty` option a qualified candidate now
-fills such an incumbent automatically, a format-only candidate is
-`no_candidate`, and any list naming a real genre is still preserved. The F46
-identity registry and permission set are unchanged; only their records rotate.
-Every write keeps the consent, backup, currentness, optimistic, read-back and
-audit gates, and persisted authority reconstructs the same floor. The cut
-description prefix from the inspector is never a candidate.
+fills such an incumbent automatically, a format-only candidate is `no_candidate`
+and never makes a real genre candidate ambiguous, and any list naming a real
+genre is still preserved. The F46 identity registry and permission set are
+unchanged; only their records rotate. Every write keeps the consent, backup,
+currentness, optimistic, read-back and audit gates, and persisted authority
+reconstructs the same floor. The cut description prefix from the inspector is
+never a candidate.
 
 ## Ebook synopsis authority (#1076)
 

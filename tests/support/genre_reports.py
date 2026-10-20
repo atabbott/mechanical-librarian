@@ -215,9 +215,14 @@ def inventaire_genre_report(
 
 
 def audiobook_genre_report(
-    current: tuple[str, ...] | None, genres: tuple[str, ...]
+    current: tuple[str, ...] | None,
+    genres: tuple[str, ...],
+    second: tuple[str, ...] | None = None,
 ) -> MetadataReport:
-    """A recording-admitted audiobook whose two products state these genres."""
+    """A recording-admitted audiobook whose two products state these genres.
+
+    The second product states `second` instead when it is given.
+    """
     base = synthetic_audiobook_product_lookup_report(
         tuple(
             {
@@ -226,7 +231,10 @@ def audiobook_genre_report(
                 "title": "Synthetic Journey",
                 "authors": [{"name": "Example Author"}],
                 "summary": "A voyage reveals a hidden city.",
-                "genres": [{"type": "genre", "name": name} for name in genres],
+                "genres": [
+                    {"type": "genre", "name": name}
+                    for name in (genres if index == 1 or second is None else second)
+                ],
             }
             for index in (1, 2)
         ),

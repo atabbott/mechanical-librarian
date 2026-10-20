@@ -177,9 +177,10 @@ markup with no text, or `n/a`, `none`, `unknown` or `tbd` describes nothing:
 under "Replace safe plain text" such an incumbent is replaceable, and such a
 candidate never fills automatically (#1250). A genre list holding only format
 words such as "Audiobook" counts as empty for an audiobook, so "Fill when empty"
-may fill it and a format-only candidate is no candidate; adding a genre beside a
-format-only list is recorded as a fill (`genres:add:audiobook_genres_fill`); a
-list naming any real genre is kept. Ebook genres are unchanged.
+may fill it and a format-only candidate is no candidate and never makes a real
+genre list ambiguous; adding a genre beside a format-only list is recorded as a
+fill (`genres:add:audiobook_genres_fill`); a list naming any real genre is kept.
+Ebook genres are unchanged.
 Compatible complete explicit tag lists may form a source-bound union
 for fill/Add, preserving owner members and all contributing references. Tags
 remain off by default. Tag replacement retains its separate election and never
