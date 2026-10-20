@@ -9,7 +9,6 @@ candidate values or private evidence.
 from __future__ import annotations
 
 import re
-import unicodedata
 from types import MappingProxyType
 from typing import Final, Mapping, Sequence, cast
 
@@ -18,6 +17,7 @@ from mechanical_librarian.domain.field_outcomes import (
     language_is_unknown,
 )
 from mechanical_librarian.domain.field_value_comparison import (
+    audiobook_format_only_genres,
     canonical_text,
     values_match,
 )
@@ -63,44 +63,6 @@ _FIELD_OPTIONS: Final = {
     "explicit": ("explicit", ("adult_product",)),
     "cover": ("cover_order", ("fixed_source_order", "replace_if_strictly_better")),
 }
-
-
-# The closed words an audiobook's genre list or synopsis may hold in place of
-# anything about the work: they name the recording's format, and nothing else.
-# Matched whole against NFC, whitespace-collapsed, casefolded text, optionally
-# in parentheses (#1250).
-_FORMAT_WORD: Final = re.compile(
-    r"(?P<open>\()?"
-    r"(?:(?:un)?abridged(?: audio ?book)?|audible audio ?book|audio ?books?"
-    r"|audio cd|mp3 cd)"
-    r"(?(open)\))"
-)
-
-
-def audiobook_format_word(text: str) -> bool:
-    """Whether one already-canonical text is only a closed format word."""
-    return _FORMAT_WORD.fullmatch(text) is not None
-
-
-def audiobook_format_only_genres(values: object) -> bool:
-    """Whether every member of one genre list names only the recording's format.
-
-    Such a list says nothing about the work, so an audiobook treats it as
-    empty: an incumbent holding one is filled rather than preserved, and a
-    candidate holding one is no candidate. An empty list is not format-only;
-    it is already empty. Pure, and never raises (#1250).
-    """
-    return (
-        type(values) in {list, tuple}
-        and bool(values)
-        and all(
-            type(value) is str
-            and audiobook_format_word(
-                " ".join(unicodedata.normalize("NFC", value).split()).casefold()
-            )
-            for value in cast(Sequence[object], values)
-        )
-    )
 
 
 def _operations(destination: str, option: str) -> tuple[str, ...]:
@@ -438,8 +400,6 @@ __all__ = [
     "F46_QUALIFICATION_MANIFEST_SHA256",
     "F46_SERIES_IDENTITY",
     "AudiobookQualificationError",
-    "audiobook_format_only_genres",
-    "audiobook_format_word",
     "audiobook_identity",
     "identity_for_effect",
     "narrator_cast_disjoint",

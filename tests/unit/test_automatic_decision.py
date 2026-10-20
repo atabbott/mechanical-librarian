@@ -9,6 +9,7 @@ import pytest
 from mechanical_librarian.domain import (
     audiobook_decision_qualification,
     automatic_decision,
+    field_value_comparison,
 )
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     F46_SERIES_IDENTITY,
@@ -1766,10 +1767,7 @@ def test_actual_provider_recovery_base_decisions_remain_historical_only() -> Non
     ),
 )
 def test_format_only_genres_name_only_the_recording_format(values, format_only):
-    assert (
-        audiobook_decision_qualification.audiobook_format_only_genres(values)
-        is format_only
-    )
+    assert field_value_comparison.audiobook_format_only_genres(values) is format_only
 
 
 @pytest.mark.parametrize(

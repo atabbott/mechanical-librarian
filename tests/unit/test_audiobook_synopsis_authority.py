@@ -15,9 +15,11 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.field_value_comparison import (
+    recognized_synopsis_placeholder,
+)
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
-    _recognized_synopsis_placeholder,
     project_audiobook_automatic_decision_value,
 )
 from tests.support.audiobook_reports import publish_audiobook_preview
@@ -44,7 +46,7 @@ from tests.support.genre_reports import audiobook_genre_report
     ],
 )
 def test_closed_placeholder_vocabulary(value):
-    assert _recognized_synopsis_placeholder(value)
+    assert recognized_synopsis_placeholder(value)
 
 
 @pytest.mark.parametrize(
@@ -62,7 +64,7 @@ def test_closed_placeholder_vocabulary(value):
     ],
 )
 def test_near_misses_are_not_placeholders(value):
-    assert not _recognized_synopsis_placeholder(value)
+    assert not recognized_synopsis_placeholder(value)
 
 
 _CREDIT_LINES = (
@@ -179,12 +181,12 @@ _STILL_SYNOPSES = (
 )
 def test_credit_lines_and_short_fragments_are_placeholders(value):
     """Structured credits and format fragments describe nothing (#1250)."""
-    assert _recognized_synopsis_placeholder(value)
+    assert recognized_synopsis_placeholder(value)
 
 
 @pytest.mark.parametrize("value", _STILL_SYNOPSES)
 def test_prose_that_merely_resembles_a_credit_stays_a_synopsis(value):
-    assert not _recognized_synopsis_placeholder(value)
+    assert not recognized_synopsis_placeholder(value)
 
 
 @pytest.mark.parametrize(
