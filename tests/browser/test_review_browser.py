@@ -372,6 +372,7 @@ def _server(
     refusal_fixture: bool = False,
     synopsis_fixture: str | None = None,
     work_review_fixture: bool = False,
+    work_series_title: bool = False,
     synopsis_destination: str = "automatic",
     ebook_synopsis: bool = False,
     isbn_fixture: bool = False,
@@ -816,6 +817,11 @@ def _server(
                             "Exploration",
                         )
                     ],
+                    **(
+                        {"seriesPrimary": {"name": "Example Saga", "position": "2"}}
+                        if work_series_title
+                        else {}
+                    ),
                 }
                 for index, summary in enumerate(
                     (
@@ -829,7 +835,10 @@ def _server(
                     ),
                     1,
                 )
-            )
+            ),
+            target_title="Synthetic Journey (Unabridged)"
+            if work_series_title
+            else "Synthetic Journey",
         )
         assert audiobook_review_scope(report) == "work"
         assert (
@@ -7860,6 +7869,116 @@ def test_audiobook_work_owner_journey():
                 .filter(has_text="Description")
             ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
+def test_audiobook_work_series_title_owner_journey():
+    """Book-level series and title choices for an unresolved recording (#1253)."""
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash(_PASSWORD))
+        password.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "work.sqlite",
+                hash_path=password,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                work_review_fixture=True,
+                work_series_title=True,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
+            expect(
+                page.get_by_role("region", name="Book-level evidence")
+            ).to_contain_text(
+                "Book-level evidence supports series, title, description and genre "
+                "choices. The exact recording remains unresolved."
+            )
+            series = page.get_by_role(
+                "button", name=re.compile(r"^Choose proposed value: Example Saga")
+            )
+            series.focus()
+            series.press("Space")
+            expect(series).to_have_attribute("aria-pressed", "true")
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+            title = page.get_by_role(
+                "button", name="Choose proposed value: Synthetic Journey", exact=True
+            )
+            title.focus()
+            title.press("Enter")
+            expect(title).to_have_attribute("aria-pressed", "true")
+            page.reload()
+            expect(title).to_have_attribute("aria-pressed", "true")
+            # Only the book's own fields are offered; the subtitle, cover and
+            # recording rows stay out.
+            expect(page.get_by_text("field 2 of 4", exact=False)).to_be_visible()
+            for field, count in (
+                ("Description", 1),
+                ("Title", 1),
+                ("Series", 1),
+                ("Genres", 1),
+                ("Subtitle", 0),
+                ("Cover", 0),
+                ("Narrators", 0),
+                ("ASIN", 0),
+            ):
+                expect(
+                    page.get_by_role("button", name=re.compile(rf"^{field}\b"))
+                ).to_have_count(count)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
+            expect(series).to_have_attribute("aria-pressed", "true")
+            page.get_by_role("link", name="Evidence", exact=True).click()
+            expect(
+                page.get_by_role("heading", name="Series", exact=True)
+            ).to_be_visible()
+            expect(
+                page.get_by_text("Series membership: Example Saga", exact=False).first
+            ).to_be_visible()
+            expect(
+                page.get_by_text("Audnexus · External corroboration").first
+            ).to_be_visible()
+            expect(
+                page.get_by_role("region", name="Book-level evidence")
+            ).to_be_visible()
+            expect(
+                page.get_by_role("region", name="Recording identity evidence")
+            ).to_have_count(0)
+            page.get_by_role("link", name="History", exact=True).click()
+            expect(page.get_by_text("To Example Saga", exact=False)).to_be_visible()
+            expect(page.get_by_text("To Synthetic Journey", exact=True)).to_be_visible()
+            page.get_by_role("link", name="Activity", exact=True).click()
+            page.get_by_role(
+                "heading", name="Activity and recovery", exact=True
+            ).wait_for()
+            for field in ("Series", "Title"):
+                expect(
+                    page.get_by_role("article")
+                    .filter(has_text="Owner choice")
+                    .filter(has_text=field)
+                    .first
+                ).to_be_visible()
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+            expect(title).to_have_attribute("aria-pressed", "true")
+            for width in (390, 320):
+                page.set_viewport_size({"width": width, "height": 844})
+                for scheme in ("light", "dark"):
+                    page.emulate_media(color_scheme=scheme)
+                    expect(title).to_be_visible()
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth"
+                        " <= document.documentElement.clientWidth"
+                    ), (width, scheme)
         browser.close()
 
 
