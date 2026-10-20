@@ -1514,6 +1514,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="series-strip-guard-predecessor-f46",
         ),
+        pytest.param(
+            "4c23aa21173826d67d6c4034c72aa69010ee5c4e5ff4ceea2edf43b5ad0f15b4",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="audiobook-local-claims-floor-predecessor-f19a",
+        ),
+        pytest.param(
+            "dfc7982dffed272a2c52883ab28f0139648fe4395f2eb9e398088c1d8c930094",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="audiobook-local-claims-floor-predecessor-f20",
+        ),
+        pytest.param(
+            "bbae030808173e0c81f51c3b7191098c78369b44c8a81c37a3129f0d21764cac",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="audiobook-local-claims-floor-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
