@@ -22,6 +22,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from tests.support.audiobook_reports import synthetic_audiobook_product_lookup_report
 from tests.support.proposal_evidence import (
     _claim,
     _target_work_candidate,
@@ -211,3 +212,53 @@ def inventaire_genre_report(
         providers=(result.observation,),
     )
     return report, requests
+
+
+def audiobook_genre_report(
+    current: tuple[str, ...] | None,
+    genres: tuple[str, ...],
+    second: tuple[str, ...] | None = None,
+) -> MetadataReport:
+    """A recording-admitted audiobook whose two products state these genres.
+
+    The second product states `second` instead when it is given.
+    """
+    base = synthetic_audiobook_product_lookup_report(
+        tuple(
+            {
+                "asin": f"B00000000{index}",
+                "runtimeLengthMin": 970,
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+                "summary": "A voyage reveals a hidden city.",
+                "genres": [
+                    {"type": "genre", "name": name}
+                    for name in (genres if index == 1 or second is None else second)
+                ],
+            }
+            for index in (1, 2)
+        ),
+        recording_runtime="58200.000",
+    )
+    return MetadataReport.create(
+        target=replace(
+            base.target,
+            fields=tuple(
+                TargetField(
+                    field.destination,
+                    TargetFieldState.MISSING
+                    if current is None
+                    else TargetFieldState.VALUE,
+                    current,
+                )
+                if field.destination is TargetDestination.GENRES
+                else field
+                for field in base.target.fields
+            ),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+    )

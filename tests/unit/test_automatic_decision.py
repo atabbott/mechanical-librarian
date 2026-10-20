@@ -1514,6 +1514,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="series-strip-guard-predecessor-f46",
         ),
+        pytest.param(
+            "4c23aa21173826d67d6c4034c72aa69010ee5c4e5ff4ceea2edf43b5ad0f15b4",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="audiobook-local-claims-floor-predecessor-f19a",
+        ),
+        pytest.param(
+            "dfc7982dffed272a2c52883ab28f0139648fe4395f2eb9e398088c1d8c930094",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="audiobook-local-claims-floor-predecessor-f20",
+        ),
+        pytest.param(
+            "bbae030808173e0c81f51c3b7191098c78369b44c8a81c37a3129f0d21764cac",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="audiobook-local-claims-floor-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
@@ -1733,3 +1748,108 @@ def test_actual_provider_recovery_base_decisions_remain_historical_only() -> Non
         )
         with pytest.raises(AutomaticDecisionError):
             AutomaticDecision.create(**decision._core(), occurred_at=2)
+
+
+@pytest.mark.parametrize(
+    ("values", "format_only"),
+    (
+        (["Audiobook"], True),
+        (("Unabridged", "(Audio Book)", " AUDIOBOOKS "), True),
+        (["Audible Audiobook", "MP3 CD"], True),
+        (["Audiobook", "Fantasy"], False),
+        (["Audiobook of the year"], False),
+        (["(Audiobook"], False),
+        ([], False),
+        (None, False),
+        ("Audiobook", False),
+        ([1], False),
+    ),
+)
+def test_format_only_genres_name_only_the_recording_format(values, format_only):
+    assert (
+        audiobook_decision_qualification.audiobook_format_only_genres(values)
+        is format_only
+    )
+
+
+@pytest.mark.parametrize(
+    ("option", "current", "desired", "identity"),
+    (
+        (
+            "fill_empty",
+            ["Audiobook"],
+            ["Fantasy"],
+            "genres:fill_empty:audiobook_genres_fill",
+        ),
+        ("fill_empty", ["Audiobook", "Fantasy"], ["Fantasy"], None),
+        (
+            "fill_empty",
+            ["Audiobook"],
+            ["Audiobook"],
+            "genres:fill_empty:audiobook_genres_preserve",
+        ),
+        (
+            "add",
+            ["Audiobook"],
+            ["Audiobook", "Fantasy"],
+            "genres:add:audiobook_genres_fill",
+        ),
+        (
+            "replace",
+            ["Unabridged"],
+            ["Fantasy"],
+            "genres:replace:audiobook_genres_fill",
+        ),
+        (
+            "replace",
+            ["Mystery"],
+            ["Fantasy"],
+            "genres:replace:audiobook_genres_replace",
+        ),
+    ),
+)
+def test_a_format_only_genre_incumbent_is_filled_like_an_empty_one(
+    option, current, desired, identity
+):
+    """The `language_is_unknown` precedent, applied to genres (#1250)."""
+    assert (
+        audiobook_decision_qualification.identity_for_effect(
+            "genres", "genres", option, current, desired
+        )
+        == identity
+    )
+
+
+def test_persisted_genre_reconstruction_fills_a_format_only_incumbent():
+    from mechanical_librarian.domain.rich_metadata_preview import (
+        RichMetadataPreviewError,
+        project_audiobook_automatic_decision_value,
+    )
+
+    candidate = {"kind": "list", "value": ["Fantasy"]}
+    assert (
+        project_audiobook_automatic_decision_value(
+            "genres",
+            "genres",
+            "fill_empty:audiobook_genres_fill",
+            candidate,
+            ["Audiobook"],
+        )
+        == candidate
+    )
+    with pytest.raises(RichMetadataPreviewError, match="unqualified"):
+        project_audiobook_automatic_decision_value(
+            "genres",
+            "genres",
+            "fill_empty:audiobook_genres_fill",
+            candidate,
+            ["Audiobook", "Mystery"],
+        )
+    with pytest.raises(RichMetadataPreviewError, match="invalid"):
+        project_audiobook_automatic_decision_value(
+            "genres",
+            "genres",
+            "fill_empty:audiobook_genres_fill",
+            {"kind": "list", "value": ["Unabridged", "Audiobook"]},
+            None,
+        )

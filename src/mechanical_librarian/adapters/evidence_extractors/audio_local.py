@@ -18,6 +18,7 @@ from mechanical_librarian.domain.audio_inspection import (
     MAX_DESCRIPTION_CHARACTERS,
     MAX_DURATION_MILLISECONDS,
     MAX_OBSERVED_CHARACTERS,
+    NON_LINGUISTIC_LANGUAGE_CODES,
     AudioChapter,
     AudioContainerFacts,
     AudioEmbeddedCover,
@@ -113,7 +114,6 @@ _TAG_FIELDS: dict[str, AudioInspectionField] = {
     "asin": AudioInspectionField.ASIN,
     "audible_asin": AudioInspectionField.ASIN,
     "cdek": AudioInspectionField.ASIN,
-    "prid": AudioInspectionField.ASIN,
     "narrator": AudioInspectionField.CONTRIBUTOR,
     "narrators": AudioInspectionField.CONTRIBUTOR,
     "narrated_by": AudioInspectionField.CONTRIBUTOR,
@@ -265,7 +265,7 @@ def interpret(
     ):
         return AudioInterpretation(AudioInspectionOutcome.UNSUPPORTED_FORMAT)
 
-    builder = _Builder(source)
+    builder = _Builder(source, limits)
     tag_surface = _tag_surface_for(container)
     builder.duration(container.get("duration"))
     builder.stream_language(streams)
@@ -275,7 +275,7 @@ def interpret(
     builder.bracketed(path)
     chapters, truncated, omitted = _chapters(probe.get("chapters"), limits)
     cover = _embedded_cover(streams)
-    facts = builder.result(limits)
+    facts = builder.result()
     outcome = (
         AudioInspectionOutcome.SUCCESS
         if facts or chapters or cover.present
@@ -296,9 +296,10 @@ def interpret(
 class _Builder:
     """Collect facts in one deterministic order without duplicating a surface."""
 
-    def __init__(self, source: Fingerprint) -> None:
+    def __init__(self, source: Fingerprint, limits: AudioInspectionLimits) -> None:
         self._source = source
-        self._seen: set[tuple[str, str, str, str | None]] = set()
+        self._limits = limits
+        self._seen: set[tuple[str, str, str, str | None, str]] = set()
         self._facts: list[AudioInspectionFact] = []
 
     def add(
@@ -314,10 +315,21 @@ class _Builder:
         text = _clean(observed)
         if text is None:
             return
+        state = "valid"
+        if field is AudioInspectionField.LANGUAGE and (
+            text.casefold() in NON_LINGUISTIC_LANGUAGE_CODES
+        ):
+            return
+        if field is AudioInspectionField.DESCRIPTION:
+            bounded = bounded_description(text, self._limits)
+            if bounded is None:
+                return
+            text, state = bounded
         support = text if key is None else _support(key, text, _text_bound(field))
         resolved: str | None = canonical if canonical is not None else text
-        state = "valid"
-        if field is AudioInspectionField.ASIN:
+        if state == "oversized":
+            resolved = None
+        elif field is AudioInspectionField.ASIN:
             # Every surface that can carry an ASIN arrives here, so the shape
             # is checked once.  A value that is not one is still what the file
             # said: it is kept, marked malformed, and given no canonical form
@@ -327,7 +339,7 @@ class _Builder:
             else:
                 # ASCII by construction above, so this cannot change a length.
                 resolved = text.upper()
-        identity = (field.value, surface.value, text, role)
+        identity = (field.value, surface.value, text, role, state)
         if identity in self._seen:
             return
         try:
@@ -394,8 +406,38 @@ class _Builder:
             canonical=canonical,
         )
 
-    def result(self, limits: AudioInspectionLimits) -> tuple[AudioInspectionFact, ...]:
-        return tuple(self._facts[: limits.MAX_FACTS])
+    def result(self) -> tuple[AudioInspectionFact, ...]:
+        return tuple(self._facts[: self._limits.MAX_FACTS])
+
+
+def bounded_description(
+    value: object, limits: AudioInspectionLimits
+) -> tuple[str, str] | None:
+    """Return the description text a fact may carry, and the state it carries it in.
+
+    A description within the 512-character bound is returned whole and
+    ``valid``.  Whitespace normalization runs first, so a control it folds --
+    a tab, a line break, NEL, U+2028 or U+2029 -- is already a space.  A
+    longer value is then validated whole -- so a credential, a path or any
+    other forbidden codepoint anywhere in it still refuses the value rather
+    than being cut off -- and only then reduced to its first 512 code points,
+    in the ``oversized`` state.  That state is the record of the cut: the
+    prefix is evidence that a description exists, never a value to propose or
+    write, which is why it carries no canonical form (#1250).  A value past
+    the configured tag width, or one that fails validation, is ``None``.
+
+    Pure, so the same rule is reachable without a probe document.
+    """
+    text = _clean(value)
+    if text is None or len(text) <= MAX_DESCRIPTION_CHARACTERS:
+        return None if text is None else (text, "valid")
+    if len(text) > limits.tag_value_characters:
+        return None
+    try:
+        validate_projection_text(text, "audio description", limits.tag_value_characters)
+    except EvidenceValueError:
+        return None
+    return text[:MAX_DESCRIPTION_CHARACTERS].rstrip(), "oversized"
 
 
 def _text_bound(field: AudioInspectionField) -> int:
@@ -544,7 +586,7 @@ def _surface_for(
 
     For MP4, a key outside ffmpeg's mapping is an atom it has no name for, and
     ``-export_all`` exported it verbatim.  A raw ilst atom is a four-character
-    type -- ``CDEK``, ``prID`` -- so a longer unmapped key can only have come
+    type -- ``CDEK`` -- so a longer unmapped key can only have come
     from a ``----`` freeform atom.  Which writer emitted it is a separate
     question: only an explicit ``com.pilabor.tone`` mean answers it, so a
     freeform atom under any other mean, or under none the export spelled out,
@@ -914,6 +956,7 @@ __all__ = [
     "AudioInterpretation",
     "AudioPathContext",
     "AudioSidecar",
+    "bounded_description",
     "interpret",
     "sidecar_surface",
 ]

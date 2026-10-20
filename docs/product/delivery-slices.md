@@ -287,7 +287,9 @@ Focused work outside the slice sequence uses `Delivery slice: Not applicable`:
 #1244 records this checkpoint and is its first unit; #1245 refusal diagnostic
 and ladder continuation; #1246 the pre-ADR discovery measurement; #1256
 overflow narrowing; #1247 audiobook dispatch set; #1248 per-provider deadline
-share; #1249 attention clause; #1250 inspector bounds and quality floor; #1251
+share; #1249 attention clause; #1250 the oversized description prefix, no
+placeholder language or `prID` claims, and the audiobook credit, format-word and
+format-only genre floor; #1251
 incumbent description validator; #1252 the audiobook series-label title strip
 and disjoint narrator cast guards, with recording author reorders preserved;
 #1254 iTunes query

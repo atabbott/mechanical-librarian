@@ -159,3 +159,13 @@ from ADR-0084's attention definition changes the text of the trigger that
 maintains the facts, so the exact schema comparison rejects every earlier
 application database before mutation. No version moves and no adoption is
 supplied.
+
+Issue #1250 also takes the clean-rebuild branch. `metadata-report-v55` adds no
+field, but a v54 audio description over 512 characters was absent and is now an
+`oversized` claim, a placeholder language code was a valid claim and is now
+none, and a `prID` atom was a malformed ASIN claim and is now none, so a v54
+document cannot be read as current. The decision policy moves to
+`deterministic-shadow-decision-policy-v22` with the wider audiobook synopsis
+and genre floor, so v21 decisions are refused too. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.

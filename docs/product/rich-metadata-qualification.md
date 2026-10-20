@@ -89,6 +89,24 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Audiobook local claims and quality floor successor (#1250)
+
+The current F19a, F20 and F46 records move to semantic revision 54 over
+predecessor `4012ed61`, whose record bytes the archive index keeps. Their
+runtime digests join the prior-manifest histories with their frozen permission
+sets, so decisions minted under them stay readable without current authority.
+Shadow decision policy v22 and report v55 bind the new semantics; **clean
+rebuild required**. Operation membership and historical measurements are
+unchanged, and focused synthetic proof is not library scoring.
+
+An audiobook synopsis that is only a credit line, a format word, a numbered
+marker, an encoder watermark or markup with no text is a placeholder incumbent
+and fails the candidate quality floor. An audiobook genre list naming only the recording's format is
+empty-equivalent: its fill is a fill operation, and a candidate list of that
+shape is no candidate for an Automatic destination. A description longer than
+512 characters reaches the report as an oversized claim with no canonical value,
+which no proposal admits. Ebook descriptions and genres are unchanged.
+
 ## Historical ebook synopsis successor (#1076)
 
 [F19a v37](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v37.json),

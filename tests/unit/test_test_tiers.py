@@ -1755,9 +1755,9 @@ def test_slow_partition_covers_the_actual_full_inventory() -> None:
     full = set(inventories["slow"])
     owner = set(inventories["slow-owner-browser"])
     remaining = set(inventories["slow-remaining"])
-    assert len(full) == 31
+    assert len(full) == 32
     assert len(owner) == 1
-    assert len(remaining) == 30
+    assert len(remaining) == 31
     assert owner.isdisjoint(remaining)
     assert owner | remaining == full
     assert all("test_owner_browser_responsiveness" in name for name in owner)

@@ -9,6 +9,7 @@ candidate values or private evidence.
 from __future__ import annotations
 
 import re
+import unicodedata
 from types import MappingProxyType
 from typing import Final, Mapping, Sequence, cast
 
@@ -30,7 +31,7 @@ from mechanical_librarian.domain.work_identity import closed_creator_display_pos
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "bbae030808173e0c81f51c3b7191098c78369b44c8a81c37a3129f0d21764cac"
+    "e32fab8e75b6cf0b519113323482efbad8a597218142f81694a1f12b4a70c5b0"
 )
 
 _FIELD_OPTIONS: Final = {
@@ -62,6 +63,44 @@ _FIELD_OPTIONS: Final = {
     "explicit": ("explicit", ("adult_product",)),
     "cover": ("cover_order", ("fixed_source_order", "replace_if_strictly_better")),
 }
+
+
+# The closed words an audiobook's genre list or synopsis may hold in place of
+# anything about the work: they name the recording's format, and nothing else.
+# Matched whole against NFC, whitespace-collapsed, casefolded text, optionally
+# in parentheses (#1250).
+_FORMAT_WORD: Final = re.compile(
+    r"(?P<open>\()?"
+    r"(?:(?:un)?abridged(?: audio ?book)?|audible audio ?book|audio ?books?"
+    r"|audio cd|mp3 cd)"
+    r"(?(open)\))"
+)
+
+
+def audiobook_format_word(text: str) -> bool:
+    """Whether one already-canonical text is only a closed format word."""
+    return _FORMAT_WORD.fullmatch(text) is not None
+
+
+def audiobook_format_only_genres(values: object) -> bool:
+    """Whether every member of one genre list names only the recording's format.
+
+    Such a list says nothing about the work, so an audiobook treats it as
+    empty: an incumbent holding one is filled rather than preserved, and a
+    candidate holding one is no candidate. An empty list is not format-only;
+    it is already empty. Pure, and never raises (#1250).
+    """
+    return (
+        type(values) in {list, tuple}
+        and bool(values)
+        and all(
+            type(value) is str
+            and audiobook_format_word(
+                " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+            )
+            for value in cast(Sequence[object], values)
+        )
+    )
 
 
 def _operations(destination: str, option: str) -> tuple[str, ...]:
@@ -153,10 +192,14 @@ def identity_for_effect(
         == list(cast(Sequence[object], desired))
     ):
         operation = "preserve"
-    elif current in (None, "", [], ()) or (
-        destination == "language"
-        and type(current) is str
-        and language_is_unknown(current)
+    elif (
+        current in (None, "", [], ())
+        or (
+            destination == "language"
+            and type(current) is str
+            and language_is_unknown(current)
+        )
+        or (destination == "genres" and audiobook_format_only_genres(current))
     ):
         operation = "fill"
     elif (
@@ -395,6 +438,8 @@ __all__ = [
     "F46_QUALIFICATION_MANIFEST_SHA256",
     "F46_SERIES_IDENTITY",
     "AudiobookQualificationError",
+    "audiobook_format_only_genres",
+    "audiobook_format_word",
     "audiobook_identity",
     "identity_for_effect",
     "narrator_cast_disjoint",

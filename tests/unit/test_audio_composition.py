@@ -783,3 +783,56 @@ def test_generated_per_track_chapters_do_not_inherit_embedded_omission() -> None
     )
     assert result.composition is AudioChapterComposition.PER_TRACK
     assert result.chapter_rows_omitted is False
+
+
+def _oversized_description(ordinal: int, prefix: str) -> AudioInspectionFact:
+    return AudioInspectionFact(
+        AudioInspectionField.DESCRIPTION,
+        _source(ordinal),
+        prefix,
+        None,
+        prefix,
+        AudioEvidenceSurface.MP4_ILST,
+        "oversized",
+    )
+
+
+def test_identical_oversized_descriptions_compose_to_one_claim() -> None:
+    tracks = tuple(
+        _track(
+            ordinal,
+            (_duration(ordinal, 1_000), _oversized_description(ordinal, "L" * 512)),
+        )
+        for ordinal in (1, 2)
+    )
+
+    composed = compose_audio_inspections(tracks)
+
+    assert [
+        (fact.state, fact.canonical_value, ordinals)
+        for fact, ordinals in zip(composed.facts, composed.provenance, strict=True)
+        if fact.field is AudioInspectionField.DESCRIPTION
+    ] == [("oversized", None, (1, 2))]
+    assert AudioObservationKind.TAG_DISAGREES_ACROSS_TRACKS not in {
+        value.kind for value in composed.observations
+    }
+
+
+def test_differing_oversized_descriptions_are_a_cross_track_disagreement() -> None:
+    tracks = (
+        _track(1, (_duration(1, 1_000), _oversized_description(1, "L" * 512))),
+        _track(2, (_duration(2, 1_000), _oversized_description(2, "M" * 512))),
+    )
+
+    composed = compose_audio_inspections(tracks)
+
+    assert sorted(
+        fact.observed_value[0]
+        for fact in composed.facts
+        if fact.field is AudioInspectionField.DESCRIPTION
+    ) == ["L", "M"]
+    assert [
+        (value.tracks, value.field)
+        for value in composed.observations
+        if value.kind is AudioObservationKind.TAG_DISAGREES_ACROSS_TRACKS
+    ] == [((1, 2), AudioInspectionField.DESCRIPTION)]

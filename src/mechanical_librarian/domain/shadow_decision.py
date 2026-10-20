@@ -23,7 +23,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v21"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v22"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -85,10 +85,50 @@ _RULE_TABLE = {
             "no synopsis",
             "no synopsis available",
             "synopsis unavailable",
+            "chapter_track_part_section_disc_cd_side_ascii_digits_optional_of_ascii_digits",
+            "n/a",
+            "none",
+            "unknown",
+            "tbd",
+            "closed_format_word_optionally_parenthesized",
+            "unabridged_prefix_of_at_least_four_letters",
+            "markup_without_text",
+            "closed_format_word_created_by_markable",
+            "fre:ac - free audio converter",
+            "credit_line_role_by_names_label_colon_names_or_format_word",
+            "credit_line_bare_role_by_optional_colon",
+            "credit_line_ripper_role_by_handles_with_digits_and_underscore",
+            "credit_line_length_duration",
+            "credit_line_publisher_to_segment_end",
+            "credit_line_release_date_or_released_date",
         ],
+        "credit_line_maximum_characters": 240,
+        "credit_line_segments": [1, 6],
+        "credit_line_names": [1, 6],
+        "credit_line_name_tokens": [1, 5],
+        "credit_line_prose_words_refuse": True,
         "optional_final_full_stop": True,
         "preserve_other_safe_plain_incumbents": True,
         "safety_and_identity_precede_comparison": True,
+    },
+    "audiobook_genres": {
+        "execution": "rich_metadata_preview",
+        "format_only_list_is_empty_equivalent": True,
+        "format_words": [
+            "unabridged",
+            "abridged",
+            "audiobook",
+            "audiobooks",
+            "audio book",
+            "audio books",
+            "unabridged audiobook",
+            "abridged audiobook",
+            "audible audiobook",
+            "audio cd",
+            "mp3 cd",
+        ],
+        "format_only_candidate_refusal": "no_candidate",
+        "ebook_unchanged": True,
     },
     "audiobook_recording": {
         "report_derived_candidate_binding": True,

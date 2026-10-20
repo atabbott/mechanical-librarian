@@ -53,12 +53,14 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
     compile_rich_metadata_preview,
+    project_audiobook_automatic_decision_value,
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
 from tests.support.audiobook_reports import synthetic_audiobook_product_lookup_report
 from tests.support.audiobook_synopsis import synopsis_report
 from tests.support.description_advice import _description_candidate
+from tests.support.genre_reports import audiobook_genre_report
 from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
@@ -569,8 +571,9 @@ def _target_work_preview(report: MetadataReport):
             "no_op",
             "target_preserved",
         ),
+        ("<p></p>", "abstain", "target_state_unusable"),
     ),
-    ids=("markup", "line_separator"),
+    ids=("markup", "line_separator", "markup_only_under_fill_only"),
 )
 def test_admitted_markup_incumbent_keeps_no_automatic_authority(
     incumbent: str, outcome: str, reason: str
@@ -3813,4 +3816,175 @@ def test_ebook_mixed_synopses_select_useful_source(summaries, winner_index):
         claim.reference
         for claim in winner.claims
         if claim.kind is ClaimKind.DESCRIPTION
+    )
+
+
+@pytest.mark.parametrize(
+    ("current", "outcome", "reason", "desired"),
+    (
+        (("Audiobook",), "projected", None, ("Fantasy",)),
+        (("Unabridged", "(Audio Book)"), "projected", None, ("Fantasy",)),
+        (
+            ("Audiobook", "Fantasy"),
+            "no_op",
+            "target_preserved",
+            ("Audiobook", "Fantasy"),
+        ),
+        (("Science Fiction",), "no_op", "target_preserved", ("Science Fiction",)),
+    ),
+)
+def test_audiobook_format_only_genres_are_filled_under_fill_empty(
+    current, outcome, reason, desired
+) -> None:
+    """A list naming only the recording's format is empty-equivalent (#1250)."""
+    _, fields = _target_work_preview(audiobook_genre_report(current, ("Fantasy",)))
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.reason, genres.desired_value) == (
+        outcome,
+        reason,
+        desired,
+    )
+
+
+@pytest.mark.parametrize(
+    ("current", "candidate"),
+    ((None, ("Audiobook",)), (("Audiobook",), ("Unabridged", "Audiobooks"))),
+)
+def test_a_format_only_audiobook_genre_candidate_is_no_candidate(
+    current, candidate
+) -> None:
+    _, fields = _target_work_preview(audiobook_genre_report(current, candidate))
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.reason, genres.desired_value) == (
+        "abstain",
+        "no_candidate",
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "pair", ((("Audiobook",), ("Fantasy",)), (("Fantasy",), ("Unabridged",)))
+)
+def test_a_format_only_genre_alternative_does_not_make_a_real_one_ambiguous(
+    pair,
+) -> None:
+    """A format-only list is no candidate, so it cannot compete (#1250)."""
+    _, fields = _target_work_preview(audiobook_genre_report(None, *pair))
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.desired_value) == ("projected", ("Fantasy",))
+    assert project_audiobook_automatic_decision_value(
+        "genres",
+        "genres",
+        "fill_empty:audiobook_genres_fill",
+        {"kind": "list", "value": ["Fantasy"]},
+        None,
+    ) == {"kind": "list", "value": ["Fantasy"]}
+
+
+def test_two_real_audiobook_genre_lists_are_still_ambiguous() -> None:
+    _, fields = _target_work_preview(
+        audiobook_genre_report(None, ("Fantasy",), ("Mystery",))
+    )
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.reason, genres.desired_value) == (
+        "abstain",
+        "ambiguous_evidence",
+        None,
+    )
+
+
+def test_an_ebook_format_only_genre_alternative_still_competes() -> None:
+    from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope
+    from tests.support.genre_reports import genre_report
+    from tests.support.proposal_evidence import _claim, _provider
+
+    other = _provider(
+        "other-catalogue",
+        "edition-2",
+        (
+            _claim(
+                "other-catalogue",
+                "edition-2",
+                ClaimKind.GENRE,
+                "Audiobook",
+                scope=ClaimScope.WORK,
+            ),
+        ),
+    )
+    _, fields = _target_work_preview(genre_report(genres=("Fantasy",), extra=(other,)))
+
+    genres = fields["genres"]
+    assert (genres.outcome, genres.reason, genres.desired_value) == (
+        "abstain",
+        "ambiguous_evidence",
+        None,
+    )
+
+
+def test_an_ebook_format_only_genre_list_is_still_preserved() -> None:
+    """The empty-equivalence is the audiobook's alone."""
+    preview = _list_preview("genres", "fill_empty", ("Audiobook",))
+
+    assert (preview.outcome, preview.reason, preview.desired_value) == (
+        "no_op",
+        "target_preserved",
+        ("Audiobook",),
+    )
+
+
+@pytest.mark.parametrize(
+    "summary",
+    (
+        "Narrated by Example Narrator",
+        "Unabridged - Narrated by Example Narrator",
+        "Audiobook",
+        "Part 1 of 3",
+        "N/A",
+        "Section 2",
+        "Read by Example Narrator; Unabr",
+        "Read by Example Narrator; Length: 10 hrs and 3 mins",
+        "Audiobook created by Markable",
+        "fre:ac - free audio converter",
+    ),
+)
+def test_an_audiobook_credit_or_fragment_candidate_misses_the_floor(
+    regional_synopsis_products, monkeypatch, summary
+) -> None:
+    products = tuple(
+        {**product, "summary": summary} for product in regional_synopsis_products
+    )
+    report = synthetic_audiobook_product_lookup_report(
+        products, recording_runtime="58200.000"
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        | {"description_fill:safe_plain_text:audiobook_description_fill"},
+    )
+    _, fields = _target_work_preview(report)
+
+    field = fields["description_fill"]
+    assert (field.outcome, field.reason, field.desired_value) == (
+        "abstain",
+        "description_quality_floor_not_met",
+        None,
+    )
+
+
+def test_an_ebook_credit_line_candidate_is_not_held_to_the_audiobook_floor() -> None:
+    from tests.support.ebook_synopsis import synopsis_report as ebook_synopsis_report
+
+    _, fields = _target_work_preview(
+        ebook_synopsis_report(summaries=("Narrated by Example Narrator",))
+    )
+
+    field = fields["description_fill"]
+    assert (field.outcome, field.desired_value) == (
+        "projected",
+        "Narrated by Example Narrator",
     )

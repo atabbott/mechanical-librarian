@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Audiobook descriptions over 512 characters now show as oversized instead of
+  missing, placeholder languages such as `und` and the `prID` tag no longer
+  count as evidence, and credit lines, format words and genre lists such as
+  "Audiobook" no longer pass as real audiobook descriptions or genres. Upgrading
+  requires a clean rebuild (#1250).
+
 - Automatic audiobook metadata no longer drops a series from a title unless the
   series is kept or filled, no longer replaces narrators with a cast that shares
   nobody with the file's own credits (both now ask you), and records authors in

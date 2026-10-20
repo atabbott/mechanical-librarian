@@ -75,6 +75,11 @@ MAX_TRACK_SEQUENCE = 100_000
 _FIELD_STATES = frozenset(
     {"valid", "malformed", "oversized", "unsupported", "untyped", "inapplicable"}
 )
+# ISO 639-2's special codes, plus the literal `xxx` taggers write for "none".
+# Each says the recording's language was not stated, or is not one language, so
+# none is a language observation; the child never emits one, and the parent
+# refuses a fact that holds one (#1250).
+NON_LINGUISTIC_LANGUAGE_CODES: Final = frozenset({"und", "mul", "mis", "zxx", "xxx"})
 _DECIMAL_SECONDS = re.compile(r"^\d{1,9}(?:\.\d{1,9})?$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 # The format token the location grammar agreed for a track.  Spelled as a shape
@@ -749,6 +754,18 @@ class AudioInspectionFact:
             raise ValueError("audio contributor fact needs a role")
         if (self.state == "valid") != (self.canonical_value is not None):
             raise ValueError("audio inspection state is inconsistent")
+        # Only a description is ever cut to its bound, so only a description can
+        # be the 512-character prefix an `oversized` fact records (#1250).
+        if (
+            self.state == "oversized"
+            and self.field is not AudioInspectionField.DESCRIPTION
+        ):
+            raise ValueError("audio inspection state is inconsistent")
+        if self.field is AudioInspectionField.LANGUAGE and (
+            self.observed_value.casefold() in NON_LINGUISTIC_LANGUAGE_CODES
+            or (self.canonical_value or "").casefold() in NON_LINGUISTIC_LANGUAGE_CODES
+        ):
+            raise ValueError("audio language fact names no language")
         if self.state != "valid":
             return
         # ``canonical_value`` is a ``str`` on every path below: the guard above
@@ -1042,6 +1059,7 @@ __all__ = [
     "MAX_PUBLIC_REPORT_BYTES",
     "MAX_SIDECAR_NAME_CHARACTERS",
     "MULTI_FILE_WALL_SECONDS",
+    "NON_LINGUISTIC_LANGUAGE_CODES",
     "TrackNameProjection",
     "normalize_duration_seconds",
     "project_track_name",

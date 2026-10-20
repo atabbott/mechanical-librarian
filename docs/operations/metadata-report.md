@@ -105,7 +105,7 @@ private-path, credential-shaped, or otherwise invalid non-title input remains
 slashes (`</p>`, `<br />`) and U+2028 line separators and keeps its exact text.
 Text whose only defect is C1 control characters is refused by the validator with
 its own reason, but the report and UI still show that field only as `malformed`
-(#1251). The report is `metadata-report-v54`. For the title specifically, a
+(#1251). The report is `metadata-report-v55` (#1250). For the title specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
 oversized title or a missing, null, empty, unloaded, or non-string title instead
@@ -186,7 +186,11 @@ chapters, and whether the file carries embedded cover art — each attributed to
 the surface it was read from: an embedded tag, a sidecar document beside the
 file, or the exported file and folder names. Chapters are a bounded structured
 section rather than claims, and the embedded cover is a presence fact that
-grants no cover authority. Every connected provider in the audiobook dispatch
+grants no cover authority. A description over 512 characters is checked whole
+and then kept as its first 512 characters in the `oversized` state, with no
+canonical value, so it shows that a description exists and is never proposed or
+written. The language codes `und`, `mul`, `mis`, `zxx` and `xxx` are no
+language claim, and the MP4 `prID` atom is not read as an ASIN (#1250). Every connected provider in the audiobook dispatch
 set (the Audible catalog, Audnexus, AudioSilo, Hardcover and Open Library) is
 contacted while the report is built, and its observations are retained beside
 the local evidence; Google Books, Inventaire and iTunes Search never are
