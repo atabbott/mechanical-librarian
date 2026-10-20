@@ -135,6 +135,10 @@ def test_revision_three_documents_decode_without_current_authority(family):
             "148ad97f1d40524014f5aa179ca1590466adabfb",
         ),
         (
+            "before-audiobook-series-strip-guard.json",
+            "cd82592055ecaf9fdf727cc2f9c5b607e7f1f92c",
+        ),
+        (
             "before-preparation-diagnostics.json",
             "a3ef9277b620c254a7e2390a276f71dfd8fa5e17",
         ),
