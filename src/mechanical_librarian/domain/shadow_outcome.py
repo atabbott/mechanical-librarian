@@ -19,11 +19,14 @@ from mechanical_librarian.domain.contributor_display_qualification import (
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
     F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
 )
+from mechanical_librarian.domain.field_value_comparison import title_identity_key
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     ResolvedMetadataPolicy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    FieldState,
     MetadataReport,
     TargetDestination,
     TargetFieldState,
@@ -37,7 +40,9 @@ from mechanical_librarian.domain.proposal_set import (
     PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
     canonical_target_fields,
+    case_series_names,
     select_language_representation,
+    title_strip_series_label,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -77,6 +82,7 @@ _POLICY_CATEGORY_BY_DESTINATION = {
 _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY = "title"
 _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION = "replace_target:provider_consensus_noise"
 _DECORATION_TIDY_TITLE_POLICY_OPTION = "replace_target:decoration_tidy"
+_NARRATORS_REPLACE_IDENTITY = "contributor_names:canonical:audiobook_narrators_replace"
 
 
 def _audiobook_policy_options() -> dict[str, tuple[str, ...]]:
@@ -411,6 +417,54 @@ def _audiobook_destination(identity: str | None, policy_destination: str) -> str
     return "automatic" if identity is not None and identity in passing else "ask"
 
 
+def _withdrawn_audiobook_identity(
+    identity: str | None,
+    carried_subtitle: object,
+    current: object,
+    desired: object,
+    report: MetadataReport,
+    proposal: ProposalSet,
+    *,
+    series_preserved: bool,
+) -> bool:
+    """Whether a qualified recording effect must reach the owner instead.
+
+    Both guards only withdraw an identity, so the field is asked and never
+    gains authority: a title replacement, in a combination or not, that deletes
+    a series label while the same outcome set leaves the series unpopulated
+    and unfilled, and a narrator replacement whose cast shares nobody with the
+    recording's own file credits (#1252). The paired layout, whose elected
+    subtitle fill is the removed segment, moves the label and keeps it.
+    """
+    if identity is None:
+        return False
+    if identity.endswith(":audiobook_title_replace"):
+        removed = title_strip_series_label(
+            current, desired, case_series_names(report, proposal)
+        )
+        return not (
+            removed is None
+            or series_preserved
+            or (
+                type(carried_subtitle) is str
+                and title_identity_key(carried_subtitle) == title_identity_key(removed)
+            )
+        )
+    if identity == _NARRATORS_REPLACE_IDENTITY and type(desired) in {list, tuple}:
+        local = tuple(
+            claim.canonical
+            for claim in report.local_claims
+            if claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.role == "narrator"
+            and claim.state is FieldState.VALID
+            and claim.canonical is not None
+        )
+        return audiobook_decision_qualification.narrator_cast_disjoint(
+            local, tuple(cast("list[str]", desired))
+        )
+    return False
+
+
 def _rich_action_id(
     preview: RichFieldPreview, destination: str, proposal_id: str, manifest_sha256: str
 ) -> str:
@@ -709,6 +763,75 @@ class ShadowOutcomeSet:
         rich_destinations = {"series", "genres", "tags", "description", "isbn"}
         if media_kind == "audiobook":
             rich_destinations = rich_destinations | {"asin", "explicit"}
+        rich = {
+            value.field: value
+            for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        }
+        # Each rich destination's routing is settled before any decision is
+        # projected, because a recording's title strip reads whether the same
+        # outcome set elects a series fill (#1252).
+        rich_fields = (
+            ("series", "series"),
+            ("genres", "genres"),
+            ("tags", "tags"),
+            ("description_fill", "description"),
+            ("isbn_form", "isbn"),
+            *(
+                (("asin", "asin"), ("explicit", "explicit"))
+                if media_kind == "audiobook"
+                else ()
+            ),
+        )
+        rich_routes: dict[str, tuple[str, str | None]] = {}
+        for rich_category, rich_field in rich_fields:
+            rich_destination = destinations[rich_category]
+            rich_option: str | None = None
+            if media_kind == "audiobook":
+                identity = _audiobook_policy_identity(
+                    rich_field,
+                    rich_category,
+                    options[rich_category],
+                    current_values[rich_field],
+                    rich[rich_category].desired_value,
+                )
+                rich_destination = _audiobook_destination(
+                    identity if admitted_audiobook_identity(report) else None,
+                    rich_destination,
+                )
+                rich_option = None if identity is None else identity.split(":", 1)[1]
+            rich_routes[rich_category] = (rich_destination, rich_option)
+        series_preserved = bool(current_values["series"]) or (
+            rich_routes["series"][0] == "automatic"
+            and rich["series"].outcome == "projected"
+            and rich["series"].source_candidate_id is not None
+        )
+        # A paired layout moves a stripped title segment into the subtitle fill
+        # the same outcome set elects, so that segment is carried, not deleted.
+        split_subtitle = (
+            rich["subtitle"].desired_value.get("subtitle")
+            if options["subtitle"] == "corroborated_split"
+            and type(rich["subtitle"].desired_value) is dict
+            else rich["subtitle"].desired_value
+        )
+        subtitle_identity = (
+            _audiobook_policy_identity(
+                "subtitle",
+                "subtitle",
+                options["subtitle"],
+                current_values["subtitle"],
+                split_subtitle,
+            )
+            if media_kind == "audiobook"
+            else None
+        )
+        carried_subtitle = (
+            split_subtitle
+            if options["subtitle"] == "corroborated_split"
+            and rich["subtitle"].outcome == "projected"
+            and _audiobook_destination(subtitle_identity, destinations["subtitle"])
+            == "automatic"
+            else None
+        )
         for decision in decisions.decisions:
             if decision.destination in rich_destinations:
                 continue
@@ -776,6 +899,16 @@ class ShadowOutcomeSet:
                 identity = _audiobook_policy_identity(
                     decision.destination, category, policy_option, current, desired
                 )
+                if policy_destination == "automatic" and _withdrawn_audiobook_identity(
+                    identity,
+                    carried_subtitle,
+                    current,
+                    desired,
+                    report,
+                    proposal,
+                    series_preserved=series_preserved,
+                ):
+                    identity = None
                 if identity is not None:
                     category, policy_option = identity.split(":", 1)
                 else:
@@ -853,43 +986,14 @@ class ShadowOutcomeSet:
                 title_layout_subtitle = field_outcome
             else:
                 fields.append(field_outcome)
-        rich = {
-            value.field: value
-            for value in compile_rich_metadata_preview(policy, report, proposal).fields
-        }
         # `ReviewCase.proposals` builds every entry itself, so "proposal_id" is
         # always the `"review_proposal_" + sha256` string it composed.
         proposals = {
             value["destination"]: cast("str", value["proposal_id"])
             for value in case.proposals
         }
-        for category, destination in (
-            ("series", "series"),
-            ("genres", "genres"),
-            ("tags", "tags"),
-            ("description_fill", "description"),
-            ("isbn_form", "isbn"),
-            *(
-                (("asin", "asin"), ("explicit", "explicit"))
-                if media_kind == "audiobook"
-                else ()
-            ),
-        ):
-            rich_destination = destinations[category]
-            rich_option: str | None = None
-            if media_kind == "audiobook":
-                identity = _audiobook_policy_identity(
-                    destination,
-                    category,
-                    options[category],
-                    current_values[destination],
-                    rich[category].desired_value,
-                )
-                rich_destination = _audiobook_destination(
-                    identity if admitted_audiobook_identity(report) else None,
-                    rich_destination,
-                )
-                rich_option = None if identity is None else identity.split(":", 1)[1]
+        for category, destination in rich_fields:
+            rich_destination, rich_option = rich_routes[category]
             fields.append(
                 _rich_field_outcome(
                     rich[category],
@@ -923,43 +1027,16 @@ class ShadowOutcomeSet:
                     destination="subtitle",
                     requested_destination=destinations["subtitle"],
                     policy_destination=_audiobook_destination(
-                        _audiobook_policy_identity(
-                            "subtitle",
-                            "subtitle",
-                            options["subtitle"],
-                            current_values["subtitle"],
-                            (
-                                rich["subtitle"].desired_value.get("subtitle")
-                                if options["subtitle"] == "corroborated_split"
-                                and type(rich["subtitle"].desired_value) is dict
-                                else rich["subtitle"].desired_value
-                            ),
-                        ),
-                        destinations["subtitle"],
+                        subtitle_identity, destinations["subtitle"]
                     )
                     if media_kind == "audiobook"
                     else destinations["subtitle"],
                     proposal_id=proposals["subtitle"],
                     catalogue_sha256=decisions.catalogue_sha256,
                     policy_option=(
-                        identity.split(":", 1)[1]
-                        if media_kind == "audiobook"
-                        and (
-                            identity := _audiobook_policy_identity(
-                                "subtitle",
-                                "subtitle",
-                                options["subtitle"],
-                                current_values["subtitle"],
-                                (
-                                    rich["subtitle"].desired_value.get("subtitle")
-                                    if options["subtitle"] == "corroborated_split"
-                                    and type(rich["subtitle"].desired_value) is dict
-                                    else rich["subtitle"].desired_value
-                                ),
-                            )
-                        )
-                        is not None
-                        else None
+                        None
+                        if subtitle_identity is None
+                        else subtitle_identity.split(":", 1)[1]
                     ),
                 )
             )

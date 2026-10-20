@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v33` policy. It does not construct or contact a metadata or
+`fixed-conservative-v34` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -44,7 +44,7 @@ older same-schema result is historical and receives one current successor.
 Success is exactly one canonical `proposal-set-v8` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v8` documents under `fixed-conservative-v33` and the exact current
+Only `proposal-set-v8` documents under `fixed-conservative-v34` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
@@ -54,9 +54,10 @@ Only `proposal-set-v8` documents under `fixed-conservative-v33` and the exact cu
 `fixed-conservative-v16`, `fixed-conservative-v17`, `fixed-conservative-v18`, or
 `fixed-conservative-v19`, `fixed-conservative-v20`, or
 `fixed-conservative-v21`, `fixed-conservative-v22`, `fixed-conservative-v23`, or
-`fixed-conservative-v24` table shape is
-incompatible and is rejected before mutation. A clean rebuild is required; there is no
-proposal migration, import, conversion, or compatibility parser.
+`fixed-conservative-v24` table shape, or any later one through
+`fixed-conservative-v33`, is incompatible and is rejected before mutation. A clean
+rebuild is required; there is no proposal migration, import, conversion, or
+compatibility parser.
 
 ## Consensus title qualification
 

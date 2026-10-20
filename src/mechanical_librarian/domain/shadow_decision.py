@@ -23,7 +23,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v20"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v21"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -102,6 +102,24 @@ _RULE_TABLE = {
         "equivalent_complete_casts": True,
         "recording_identity_granted": False,
         "selected_manifestation_binding": "associated_work_only",
+    },
+    "audiobook_title_series_strip": {
+        "identity": "audiobook_title_replace",
+        "label_carried_by": "elected_automatic_subtitle_split",
+        "removed_segment": "either_side_of_one_contiguous_kept_run",
+        "series_label": [
+            "closed_series_grammar_in_any_part",
+            "case_series_name_in_any_part",
+            "case_series_name_word_run",
+        ],
+        "series_preserved_by": ["populated_target", "elected_automatic_fill"],
+        "otherwise": "ask",
+    },
+    "audiobook_narrator_cast": {
+        "identity": "audiobook_narrators_replace",
+        "local_cast": "valid_file_narrator_credits",
+        "comparison": "closed_creator_display_or_contained_credit",
+        "disjoint_nonempty_casts": "ask",
     },
     "candidate": {
         "compiler_admission_required": True,

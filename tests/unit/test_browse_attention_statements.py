@@ -48,6 +48,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import CoverReadObservation
+from mechanical_librarian.domain.shadow_decision import (
+    DECISION_POLICY_SHA256,
+    DECISION_POLICY_VERSION,
+)
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_report_browse_facts import _resolve_policies
 
@@ -377,10 +381,8 @@ def _shadow_outcome(
             json.dumps(
                 {
                     "schema_version": "shadow-outcome-set-v10",
-                    "decision_policy_version": "deterministic-shadow-decision-policy-v20",
-                    "decision_policy_sha256": (
-                        "56411876375949a7e7427e1cd34dcd3da318c0b5db83f631457072f6164a6796"
-                    ),
+                    "decision_policy_version": DECISION_POLICY_VERSION,
+                    "decision_policy_sha256": DECISION_POLICY_SHA256,
                     "outcomes": [
                         {
                             "destination": destination,

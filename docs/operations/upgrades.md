@@ -1,5 +1,14 @@
 # Upgrades and compatibility
 
+#1252 advances the proposal policy to `fixed-conservative-v34` and the shadow
+decision policy to `deterministic-shadow-decision-policy-v21`: a recording's
+reordered authors are a preservation, and series-label title strips and
+narrator casts disjoint from the file's own credits ask the owner. **Clean
+rebuild required** for every predecessor application database; startup refuses
+v33 proposals and v20 outcomes before mutation. No migration, adoption,
+conversion, import or downgrade is supplied; F19a/F20/F46 records are displaced
+with their permission sets unchanged.
+
 #1249 removes the audiobook-only reason from the persisted attention facts, so
 a recording joins the attention queue under exactly an ebook's conditions. The
 trigger that maintains the facts changes text and no version moves. **Clean
@@ -67,8 +76,8 @@ decodable history without current authority; no adoption or migration is supplie
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v54`, `proposal-set-v8` under
-`fixed-conservative-v33`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
-and `deterministic-shadow-decision-policy-v20`. #1077 removes only the image
+`fixed-conservative-v34`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
+and `deterministic-shadow-decision-policy-v21`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.
 No migration, adoption, conversion, import or downgrade is supplied. Historical

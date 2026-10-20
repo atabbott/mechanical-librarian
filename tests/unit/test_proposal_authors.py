@@ -5,6 +5,7 @@ package-creator placeholder.
 
 import pytest
 
+from mechanical_librarian.domain.field_value_comparison import creator_list_reordered
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -22,6 +23,7 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalAssessment,
     ProposalOutcome,
     ProposalSet,
     evaluate_report,
@@ -1067,3 +1069,96 @@ def test_complete_author_replacement_counts_independent_authorities(
     )
     assert len(result.alternatives[0].correlations) == (1 if same_authority else count)
     assert result.alternatives[0].value.value == ("Ada Author", "Bea Writer")
+
+
+@pytest.mark.parametrize(
+    "current,candidate,reordered",
+    (
+        (("Ada Author", "Bea Writer"), ("Bea Writer", "Ada Author"), True),
+        (["ada author", "Bea  Writer"], ("Bea Writer", "Ada Author"), True),
+        (("Ada Author", "Bea Writer"), ("Ada Author", "Bea Writer"), False),
+        (("Ada Author",), ("Bea Writer", "Ada Author"), False),
+        (("Ada Author", "Ada Author"), ("Ada Author",), False),
+        (("Ada Author", "Bea Writer"), ("Bea Writer", "Ada Auther"), False),
+        ("Ada Author", ("Ada Author",), False),
+        ((), (), False),
+    ),
+)
+def test_creator_list_reordered_is_the_same_multiset_in_another_order(
+    current: object, candidate: object, reordered: bool
+) -> None:
+    assert creator_list_reordered(current, candidate) is reordered
+
+
+def test_an_ebook_author_reorder_is_still_a_replacement() -> None:
+    providers = tuple(
+        _provider(
+            name,
+            name + "-edition",
+            tuple(
+                _claim(
+                    name,
+                    name + "-edition",
+                    ClaimKind.CREATOR,
+                    author,
+                    scope=ClaimScope.WORK,
+                    role="author",
+                    order=index,
+                )
+                for index, author in enumerate(("Ada Author", "Bea Writer"))
+            ),
+            authority=name,
+        )
+        for name in ("hardcover", "open_library")
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    None,
+                    authors=TargetField(
+                        TargetDestination.AUTHORS,
+                        TargetFieldState.VALUE,
+                        ("Bea Writer", "Ada Author"),
+                    ),
+                ),
+                providers=providers,
+            )
+        ),
+        TargetDestination.AUTHORS,
+    )
+    assert result.outcome is ProposalOutcome.PROPOSE_CHANGE
+    assert [value.assessment for value in result.alternatives] == [
+        ProposalAssessment.REPLACES_TARGET
+    ]
+
+
+@pytest.mark.parametrize(
+    "target,assessment,outcome",
+    (
+        (
+            ("B Writer", "A Writer"),
+            ProposalAssessment.PRESERVES_TARGET,
+            ProposalOutcome.KEEP,
+        ),
+        (("A Writer",), ProposalAssessment.REPLACES_TARGET, None),
+    ),
+)
+def test_a_recordings_author_reorder_preserves_its_target(
+    target: tuple[str, ...],
+    assessment: ProposalAssessment,
+    outcome: ProposalOutcome | None,
+) -> None:
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_bibliographic_report,
+    )
+
+    report = synthetic_audiobook_bibliographic_report(
+        source_authors=("A Writer", "B Writer"), target_authors=target
+    )
+    assert report.audio is not None
+    result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+    assert [value.assessment for value in result.alternatives] == [assessment]
+    assert outcome is None or result.outcome is outcome
+    # The preserving alternative states the target's own order.
+    assert outcome is None or result.alternatives[0].value.value == target

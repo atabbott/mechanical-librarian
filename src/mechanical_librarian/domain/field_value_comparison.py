@@ -73,6 +73,25 @@ def values_match(
     return current == candidate
 
 
+def creator_list_reordered(current: object, candidate: object) -> bool:
+    """Whether two creator lists name the same members in another order.
+
+    Members compare in the evaluator's author form, as a multiset, so a list
+    that adds, drops, repeats or respells a member is not a reorder (#1252).
+    """
+    current_sequence = _text_sequence(current)
+    candidate_sequence = _text_sequence(candidate)
+    if current_sequence is None or candidate_sequence is None:
+        return False
+    left = tuple(
+        canonical_text(TargetDestination.AUTHORS, value) for value in current_sequence
+    )
+    right = tuple(
+        canonical_text(TargetDestination.AUTHORS, value) for value in candidate_sequence
+    )
+    return left != right and sorted(left) == sorted(right)
+
+
 def _isbn_values_match(current: object, candidate: object) -> bool:
     if type(current) is not str or type(candidate) is not str:
         return False
@@ -126,4 +145,4 @@ def _series_values(value: object) -> tuple[tuple[str, str | None], ...] | None:
     return tuple(members)
 
 
-__all__ = ["canonical_text", "values_match"]
+__all__ = ["canonical_text", "creator_list_reordered", "values_match"]

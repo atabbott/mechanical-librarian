@@ -2376,6 +2376,16 @@ def test_owner_cover_predecessor_refuses_without_mutation(tmp_path, name):
             "148ad97f1d40524014f5aa179ca1590466adabfb",
             True,
         ),
+        (
+            "series-strip-guard-v20.json",
+            "cd82592055ecaf9fdf727cc2f9c5b607e7f1f92c",
+            False,
+        ),
+        (
+            "series-strip-guard-v20.json",
+            "cd82592055ecaf9fdf727cc2f9c5b607e7f1f92c",
+            True,
+        ),
     ),
 )
 def test_actual_v18_title_conflict_state_is_rejected_without_change(
@@ -2397,67 +2407,77 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         with pytest.raises(ValueError):
             parser(fixture[key])
     path = tmp_path / "prior-title.sqlite"
+    # The v20 producer's schema is the current one but for its two policy
+    # literals; the earlier producers predate the later schema objects below.
+    current_scaffolding = fixture_name == "series-strip-guard-v20.json"
     predecessor = json.loads(
         (
             Path(__file__).parents[1]
-            / "support/proposal_predecessors/fixed-conservative-v32.json"
+            / "support/proposal_predecessors"
+            / (
+                "fixed-conservative-v33.json"
+                if current_scaffolding
+                else "fixed-conservative-v32.json"
+            )
         ).read_text()
     )
     with monkeypatch.context() as old:
         old.setattr(
-            persistence_schema,
-            "_COVER_CONSIDERATIONS_SQL",
-            json.loads(
-                (
-                    Path(__file__).parents[1]
-                    / "fixtures/cover-consideration-embedded-report.json"
-                ).read_text()
-            )["cover_considerations_sql"],
-        )
-        old.setattr(
             persistence_schema, "_PROPOSAL_SETS_SQL", predecessor["proposal_sets_ddl"]
-        )
-        # The producer predates #1245's report discriminator.
-        old.setattr(
-            persistence_schema,
-            "_REPORTS_SQL",
-            persistence_schema._REPORTS_SQL.replace(
-                "= 'metadata-report-v54'", "= 'metadata-report-v49'"
-            ),
         )
         old.setattr(
             persistence_schema,
             "_SHADOW_DECISION_OUTCOMES_SQL",
             fixture["shadow_decision_outcomes_sql"],
         )
-        with closing(open_repository(path)) as repository:
-            # The producer predates #1199's report browse facts, #1202's
-            # history indexes, #1204's indexes, #1211's case indexes and #1232's
-            # attention facts.
-            repository._connection.executescript(
-                "".join(
-                    f"DROP {kind.upper()} {name};"
-                    for kind, name, _ in reversed(
-                        persistence_schema._ATTENTION_FACT_OBJECTS
-                    )
-                )
-                + "DROP TRIGGER metadata_reports_project_browse_facts;"
-                "DROP TABLE metadata_report_browse_authors;"
-                "DROP TABLE metadata_report_browse_facts;"
-                "DROP TRIGGER proposal_sets_project_browse_facts;"
-                "DROP TABLE proposal_set_browse_facts;"
-                "DROP TABLE browse_fact_identity;"
-                "DROP INDEX human_decisions_case_destination;"
-                "DROP INDEX metadata_policy_resolutions_resolved;"
-                "DROP INDEX field_effects_decision;"
-                "DROP INDEX field_effects_companion_decision;"
-                "DROP INDEX field_effects_ready;"
-                "DROP INDEX field_effects_waiting;"
-                "DROP INDEX field_effects_target;"
-                "DROP INDEX description_decisions_case;"
-                "DROP INDEX current_review_case_lineages_case;"
-                "DROP INDEX current_review_packages_case;"
+        if not current_scaffolding:
+            old.setattr(
+                persistence_schema,
+                "_COVER_CONSIDERATIONS_SQL",
+                json.loads(
+                    (
+                        Path(__file__).parents[1]
+                        / "fixtures/cover-consideration-embedded-report.json"
+                    ).read_text()
+                )["cover_considerations_sql"],
             )
+            # The producer predates #1245's report discriminator.
+            old.setattr(
+                persistence_schema,
+                "_REPORTS_SQL",
+                persistence_schema._REPORTS_SQL.replace(
+                    "= 'metadata-report-v54'", "= 'metadata-report-v49'"
+                ),
+            )
+        with closing(open_repository(path)) as repository:
+            if not current_scaffolding:
+                # The earlier producers predate #1199's report browse facts,
+                # #1202's history indexes, #1204's indexes, #1211's case indexes
+                # and #1232's attention facts.
+                repository._connection.executescript(
+                    "".join(
+                        f"DROP {kind.upper()} {name};"
+                        for kind, name, _ in reversed(
+                            persistence_schema._ATTENTION_FACT_OBJECTS
+                        )
+                    )
+                    + "DROP TRIGGER metadata_reports_project_browse_facts;"
+                    "DROP TABLE metadata_report_browse_authors;"
+                    "DROP TABLE metadata_report_browse_facts;"
+                    "DROP TRIGGER proposal_sets_project_browse_facts;"
+                    "DROP TABLE proposal_set_browse_facts;"
+                    "DROP TABLE browse_fact_identity;"
+                    "DROP INDEX human_decisions_case_destination;"
+                    "DROP INDEX metadata_policy_resolutions_resolved;"
+                    "DROP INDEX field_effects_decision;"
+                    "DROP INDEX field_effects_companion_decision;"
+                    "DROP INDEX field_effects_ready;"
+                    "DROP INDEX field_effects_waiting;"
+                    "DROP INDEX field_effects_target;"
+                    "DROP INDEX description_decisions_case;"
+                    "DROP INDEX current_review_case_lineages_case;"
+                    "DROP INDEX current_review_packages_case;"
+                )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()

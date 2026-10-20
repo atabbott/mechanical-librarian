@@ -8,6 +8,7 @@ candidate values or private evidence.
 
 from __future__ import annotations
 
+import re
 from types import MappingProxyType
 from typing import Final, Mapping, Sequence, cast
 
@@ -15,17 +16,21 @@ from mechanical_librarian.domain.field_outcomes import (
     language_identity,
     language_is_unknown,
 )
-from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.field_value_comparison import (
+    canonical_text,
+    values_match,
+)
 from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     canonical_asin,
     isbn_family,
     normalize_date_value,
 )
+from mechanical_librarian.domain.work_identity import closed_creator_display_possibility
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "cabfc378358e132c203b9a4ceafdaec2f2d2ad1d1422946e4a75f1e106b3a5df"
+    "bbae030808173e0c81f51c3b7191098c78369b44c8a81c37a3129f0d21764cac"
 )
 
 _FIELD_OPTIONS: Final = {
@@ -188,6 +193,39 @@ def identity_for_effect(
         operation = "replace"
     identity = _identity(destination, category, option, operation)
     return identity if identity in F46_AUDIOBOOK_IDENTITIES else None
+
+
+def narrator_cast_disjoint(local: tuple[str, ...], product: tuple[str, ...]) -> bool:
+    """Whether a recording's own narrator credits share no member with a product's.
+
+    Both casts must be non-empty, so a recording without local credits is never
+    disjoint. Members compare pairwise under closed creator display
+    equivalence. One local tag can credit several narrators ("A, B") and no
+    shared splitter reads such a tag, so a name whose words run contiguously
+    inside the other side's credit is shared rather than guessed apart (#1252).
+    """
+    if not local or not product:
+        return False
+    return not any(
+        closed_creator_display_possibility((left,), (right,))
+        or _credit_contains(left, right)
+        or _credit_contains(right, left)
+        for left in local
+        for right in product
+    )
+
+
+def _credit_contains(credit: str, name: str) -> bool:
+    words = _credit_words(credit)
+    wanted = _credit_words(name)
+    return bool(wanted) and any(
+        words[index : index + len(wanted)] == wanted
+        for index in range(len(words) - len(wanted) + 1)
+    )
+
+
+def _credit_words(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"\w+", canonical_text(TargetDestination.NARRATORS, value)))
 
 
 def _language_effect_equivalent(current: object, desired: object) -> bool:
@@ -359,6 +397,7 @@ __all__ = [
     "AudiobookQualificationError",
     "audiobook_identity",
     "identity_for_effect",
+    "narrator_cast_disjoint",
     "public_summary",
     "qualification_manifest_sha256",
     "qualified_policy_bases",

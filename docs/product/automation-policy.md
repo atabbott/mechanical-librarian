@@ -136,10 +136,13 @@ language does not invent a conflict. Bounded complete chapter correspondence may
 support a recording without treating media-health diagnostics as identity votes.
 Narrator agreement can also qualify when every plausible source member supplies
 the same complete cast. A missing or malformed cast cannot be omitted from that
-agreement, and narrator agreement grants no identifier authority.
+agreement, and narrator agreement grants no identifier authority. A narrator
+replacement whose cast shares nobody with the recording's own file credits
+reaches the owner, because it points at another recording.
 
 Title and author preservation records one durable no-change, removes the
-decision from pending application work, and calls no target or effect guards. Supported normalization
+decision from pending application work, and calls no target or effect guards.
+A recording's authors in another order are such a preservation, never an Add. Supported normalization
 and Add remain separate operations. Existing fill-only choices preserve
 populated values. Series Add retains current associations; complete-set
 replacement requires its separate choice and refuses conflicting sequence facts.
@@ -366,7 +369,7 @@ provider evidence.
 | Field or action | Intended automatic behavior | Escalate when |
 | --- | --- | --- |
 | Title | Fill or correct from convincing same-work evidence under the [accepted title and ISBN direction](#accepted-title-and-isbn-direction). Provider subtitle/series decisions do not require extraction from the old title. | Material competing work, author, or title evidence, or consequential edition-sensitive ambiguity. |
-| Author or authors | Fill, normalize, reorder, or correct when identity evidence supports the people and roles. A controlled package creator placeholder remains visible evidence but cannot qualify an authors proposal by itself. | Authorship conflicts, contributor roles cannot be mapped safely, or a collective/pseudonym choice is materially ambiguous. |
+| Author or authors | Fill, normalize, reorder (ebooks only; a recording's reorder is a preservation), or correct when identity evidence supports the people and roles. A controlled package creator placeholder remains visible evidence but cannot qualify an authors proposal by itself. | Authorship conflicts, contributor roles cannot be mapped safely, or a collective/pseudonym choice is materially ambiguous. |
 | Series name | Fill or correct when the work-to-series relationship is supported. | Sources disagree about whether the work belongs to the series or represent different series. |
 | Series index | Fill or correct when numeric, decimal, or labelled order is supported. | Reading order and publication order conflict without a selected policy, or the evidence is internally inconsistent. |
 | Publication date | Fill or correct from applicable embedded edition evidence; use catalogue evidence when edition applicability is credible. | Only work-level dates are available for an edition-specific field or sources materially conflict. |
@@ -442,7 +445,19 @@ small-incumbent/material-improvement operation.
 
 Title and author operations require recording/work evidence under the existing
 F46 identities. Narrator changes require `contributor_names:canonical`;
-choosing Preserve does not qualify narrator writes. Subtitle fill and supported
+choosing Preserve does not qualify narrator writes.
+
+Two qualified replacements narrow per case and grant nothing (#1252). A title
+replacement that deletes a series label (text on either side of the kept
+title, set apart by a separator or an enclosure, in which the series grammar
+reads a label or one of the case's own series names appears) asks the owner
+unless the series is already populated, the same outcome set fills it
+automatically, or the same outcome set's automatic subtitle split carries the
+removed segment. A narrator
+replacement asks the owner when the file's own narrator credits and the
+product's cast share no member under closed display equivalence; a file tag
+crediting several narrators is never split, so any product name inside it is
+shared. Subtitle fill and supported
 promotional-subtitle replacement have separate qualifications.
 
 ### Audiobook publication chapter

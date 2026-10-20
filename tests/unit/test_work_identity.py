@@ -26,6 +26,7 @@ from mechanical_librarian.domain.work_identity import (
     discovery_title_candidate,
     narrowing_work_query,
     replay_provider_work_identity_admission,
+    series_label_segment,
     work_dispatch_lineage_from_data,
     work_query_ladder,
     work_title_election_matches,
@@ -1389,3 +1390,30 @@ def test_discovery_title_candidate_is_bounded_on_adversarial_shapes(
     value = discovery_title_candidate(text)
 
     assert value is None or (len(value) <= 280 and value == " ".join(value.split()))
+
+
+@pytest.mark.parametrize(
+    "segment,label",
+    (
+        ("Saltmarsh Chronicles, Book 1", True),
+        ("Vol. 2", True),
+        ("Saga - Part iii", True),
+        ("The Lantern Cycle #3", True),
+        ("No. 4", True),
+        ("The Lantern Cycle Book 1", True),
+        ("Book 2", True),
+        ("#4", True),
+        ("Unabridged", False),
+        ("A Tale of Courage", False),
+        ("Saltmarsh Chronicles", False),
+        ("1984", False),
+        ("3:10 to Yuma", False),
+        ("Book 2: The Drowned Bell", False),
+        ("Saga Book 1 - The Drowned Bell", False),
+        ("Book", False),
+        ("", False),
+        (" - ", False),
+    ),
+)
+def test_series_label_segment_reads_only_the_closed_series_grammar(segment, label):
+    assert series_label_segment(segment) is label

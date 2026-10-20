@@ -6776,6 +6776,57 @@ def test_provider_consensus_title_persists_the_exact_qualified_automatic_tranche
         repository.close()
 
 
+def test_recording_guards_never_read_an_ebook_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1252's guards belong to the recording branch alone: forcing both to
+    withdraw leaves an ebook's automatic title strip byte-identical."""
+    from mechanical_librarian.domain import shadow_outcome
+    from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
+    from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+
+    local = "Plain Work [retail]"
+    report = _proposal_report(
+        fields=_fields(
+            local,
+            title=TargetField(TargetDestination.TITLE, TargetFieldState.VALUE, local),
+        ),
+        local_claims=(_consensus_local_title(local),),
+        providers=(
+            _consensus_provider_title("open_library", "Plain Work"),
+            _consensus_provider_title("hardcover", "Plain Work"),
+        ),
+    )
+    resolved = resolve_policy(_preview_automatic_profile(), report.target.library)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, dict(resolved.destinations)
+    )
+    case = ReviewCase.create(proposal, report)
+
+    def project() -> ShadowOutcomeSet:
+        return ShadowOutcomeSet.create(
+            case,
+            decide_shadow_packet(ShadowReviewPacket.create(case, proposal, report)),
+            resolved,
+            2,
+            report,
+            proposal,
+            media_kind="ebook",
+        )
+
+    before = project()
+    monkeypatch.setattr(
+        shadow_outcome, "title_strip_series_label", lambda *_args: "Saga, Book 1"
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "narrator_cast_disjoint", lambda *_: True
+    )
+    after = project()
+    assert after.to_json() == before.to_json()
+    title = next(value for value in after.outcomes if value.destination == "title")
+    assert (title.policy_destination, title.disposition) == ("automatic", "candidate")
+
+
 def test_decoration_tidy_title_persists_its_own_qualified_automatic_option() -> None:
     local = "Plain Work [retail]"
     report = _proposal_report(
@@ -9723,8 +9774,11 @@ def test_scalar_audiobook_title_persists_without_suspension_and_reopens(
 
 
 @pytest.mark.parametrize("name", ("rich", "isbn", "ebook-asin"))
-def test_frozen_proposal_refused_but_outcome_remains_readable(name):
+def test_frozen_proposal_and_v20_outcome_are_both_refused(name):
+    """The frozen v20 outcome bytes stay; v21 refuses them as it does the
+    frozen proposal, so the store holding them needs a clean rebuild (#1252)."""
     from mechanical_librarian.domain.proposal_set import ProposalValueError
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeError
 
     frozen = json.loads(
         (
@@ -9735,9 +9789,13 @@ def test_frozen_proposal_refused_but_outcome_remains_readable(name):
     )
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(frozen["proposal"])
-    outcome = ShadowOutcomeSet.from_json(frozen["outcome_row"][-1])
-    assert outcome.to_json() == frozen["outcome_row"][-1]
-    assert outcome.authority == "none"
+    document = json.loads(frozen["outcome_row"][-1])
+    assert document["decision_policy_version"] == (
+        "deterministic-shadow-decision-policy-v20"
+    )
+    assert document["authority"] == "none"
+    with pytest.raises(ShadowOutcomeError):
+        ShadowOutcomeSet.from_json(frozen["outcome_row"][-1])
 
 
 @pytest.fixture
