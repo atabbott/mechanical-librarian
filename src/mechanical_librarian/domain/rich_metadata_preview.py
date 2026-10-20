@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import Final, TypeGuard, cast
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
+    audiobook_format_only_genres,
+    audiobook_format_word,
     identity_for_effect,
     qualified_policy_bases,
 )
@@ -290,6 +292,13 @@ def _project(
     if report.audio is not None and not admitted_audiobook_identity(report) and destination == "automatic":
         destination = "ask"
     current = _data_value(target.value)
+    # An audiobook genre list naming only the recording's format says nothing
+    # about the work, so it is empty-equivalent like an unknown language (#1250).
+    format_only_genres = (
+        field == "genres"
+        and proposal.media_kind == "audiobook"
+        and audiobook_format_only_genres(current)
+    )
     if field == "explicit" and option == "unsupported":
         return RichFieldPreview(
             field,
@@ -355,7 +364,11 @@ def _project(
         )
         or (field == "description_fill" and option != "replace_safe_plain_text" and proposal.media_kind != "audiobook")
         or (field == "asin" and proposal.media_kind != "audiobook")
-        or (field in {"genres", "tags"} and option == "fill_empty")
+        or (
+            field in {"genres", "tags"}
+            and option == "fill_empty"
+            and not format_only_genres
+        )
         or (
             field == "series"
             and destination == "automatic"
@@ -504,7 +517,12 @@ def _project(
         )
     desired = _data_value(candidate.value.value)
     if field in {"genres", "tags"}:
-        if candidate.value.kind is not ProposalValueKind.LIST:
+        if candidate.value.kind is not ProposalValueKind.LIST or (
+            field == "genres"
+            and proposal.media_kind == "audiobook"
+            and destination == "automatic"
+            and audiobook_format_only_genres(candidate.value.value)
+        ):
             return _abstain(field, option, target, current, "no_candidate")
         if option == "add" and target.state is TargetFieldState.VALUE:
             desired = (
@@ -521,7 +539,11 @@ def _project(
                     )
                 )
             )
-        elif option == "fill_empty" and target.state not in _EMPTY:
+        elif (
+            option == "fill_empty"
+            and target.state not in _EMPTY
+            and not format_only_genres
+        ):
             return _preserved(field, option, target, current)
         elif option not in {"fill_empty", "add", "replace"}:
             return _abstain(field, option, target, current, "policy_option_unavailable")
@@ -1038,12 +1060,112 @@ def _one_typed_candidate(
     return None, "ambiguous_evidence" if len(alternatives) > 1 else "no_candidate"
 
 
+_SYNOPSIS_MARKER: Final = re.compile(
+    r"(?:(?:chapter|track|part|disc|cd|side) [0-9]+(?: of [0-9]+)?"
+    r"|no (?:description|synopsis)(?: available)?|(?:description|synopsis) unavailable"
+    r"|n/a|none|unknown|tbd)\.?"
+)
+# A credit segment separator: `;`, `/`, `|`, ` - `, or a full stop that ends a
+# word longer than one letter, so an initial stays inside its name. A comma
+# separates segments too, but may also join the names of one credit.
+_CREDIT_SEPARATOR: Final = re.compile(r"\s*(?:[;/|]|\s-\s|(?<!\b[^\W\d_])\.(?=\s|$))\s*")
+_CREDIT_ROLE: Final = (
+    r"(?:narrated|read|performed|written|translated|adapted|abridged|produced"
+    r"|directed|introduced|edited|recorded|voiced)"
+)
+_CREDIT_BY: Final = re.compile(rf"{_CREDIT_ROLE}(?: (?:and|&) {_CREDIT_ROLE})* by (.+)")
+_CREDIT_LABEL: Final = re.compile(
+    r"(?:narrators?|reader|authors?|translator|performer|cast) ?: ?(.+)"
+)
+_CREDIT_NAME_JOIN: Final = re.compile(r" (?:and|&) ")
+_CREDIT_NAME_TOKEN: Final = re.compile(r"[^\W\d_](?:[^\W\d_]|[.'’-])*")
+# Words that make a phrase prose rather than a name: "narrated by the ghost of
+# her sister" and "written by a master of suspense" credit nobody.
+_CREDIT_PROSE_WORDS: Final = frozenset({
+    "a", "about", "after", "an", "and", "are", "as", "at", "be", "been",
+    "before", "but", "by", "for", "from", "he", "her", "him", "his", "i",
+    "in", "into", "is", "it", "its", "me", "my", "no", "not", "of", "on",
+    "or", "our", "over", "she", "so", "than", "that", "the", "their", "them",
+    "then", "these", "they", "this", "those", "through", "to", "us", "was",
+    "we", "were", "what", "when", "where", "which", "who", "whom", "whose",
+    "with", "you", "your",
+})
+_MAX_CREDIT_LINE: Final = 240
+_MAX_CREDIT_SEGMENTS: Final = 6
+_MAX_CREDIT_NAMES: Final = 6
+_MAX_CREDIT_NAME_TOKENS: Final = 5
+
+
 def _recognized_synopsis_placeholder(value: str) -> bool:
-    """Compare only the closed marker vocabulary; never rewrite retained text."""
-    return re.fullmatch(
-        r"(?:(?:chapter|track) [0-9]+|no (?:description|synopsis)(?: available)?|(?:description|synopsis) unavailable)\.?",
-        canonical_text(TargetDestination.DESCRIPTION, value),
-    ) is not None
+    """Compare only the closed marker vocabulary; never rewrite retained text.
+
+    A whole value is a placeholder when it is a marker -- a chapter, track,
+    part, disc, CD or side number, a "no description" phrase, `n/a`, `none`,
+    `unknown` or `tbd` -- or a closed format word, or a structured credit line
+    (#1250). Each recognizer reads shape, never length alone.
+    """
+    text = canonical_text(TargetDestination.DESCRIPTION, value)
+    return (
+        _SYNOPSIS_MARKER.fullmatch(text) is not None
+        or audiobook_format_word(text.removesuffix("."))
+        or _credit_line(text)
+    )
+
+
+def _credit_line(text: str) -> bool:
+    """Read one canonical value as one to six credit or format segments.
+
+    A segment is a role verb (or two joined by "and") followed by "by" and
+    names, a role label followed by ":" and names, or a closed format word; at
+    least one must be a credit. A credit names one to six people, each one to
+    five letter tokens, joined by "and", "&" or a comma; a prose word in any
+    name makes the value prose. The whole value is at most 240 characters.
+    """
+    if len(text) > _MAX_CREDIT_LINE:
+        return False
+    pieces = _CREDIT_SEPARATOR.split(text)
+    if pieces and not pieces[-1]:
+        pieces.pop()
+    segments = 0
+    credits = 0
+    open_names: int | None = None
+    for piece in pieces:
+        open_names = None
+        for part in piece.split(","):
+            part = part.strip()
+            match = _CREDIT_BY.fullmatch(part) or _CREDIT_LABEL.fullmatch(part)
+            if match is not None:
+                open_names = _credit_names(match.group(1))
+                if open_names is None:
+                    return False
+                segments += 1
+                credits += 1
+            elif audiobook_format_word(part):
+                open_names = None
+                segments += 1
+            elif open_names is not None and (more := _credit_names(part)) is not None:
+                open_names += more
+            else:
+                return False
+            if (
+                segments > _MAX_CREDIT_SEGMENTS
+                or (open_names or 0) > _MAX_CREDIT_NAMES
+            ):
+                return False
+    return credits > 0
+
+
+def _credit_names(text: str) -> int | None:
+    names = _CREDIT_NAME_JOIN.split(text)
+    for name in names:
+        tokens = name.split(" ")
+        if not 1 <= len(tokens) <= _MAX_CREDIT_NAME_TOKENS or any(
+            _CREDIT_NAME_TOKEN.fullmatch(token) is None
+            or token in _CREDIT_PROSE_WORDS
+            for token in tokens
+        ):
+            return None
+    return len(names)
 
 
 def _eligible_ebook_synopsis(value: object) -> TypeGuard[str]:
@@ -1715,6 +1837,8 @@ def project_audiobook_automatic_decision_value(
     """Reconstruct the operation before removing its qualification suffix."""
     option = qualified_option.rsplit(":", 1)[0]
     if type(candidate_value) is not dict or set(candidate_value) != {"kind", "value"}:
+        raise RichMetadataPreviewError("rich automatic projection is invalid")
+    if field == "genres" and audiobook_format_only_genres(candidate_value["value"]):
         raise RichMetadataPreviewError("rich automatic projection is invalid")
     if field == "series" and option in {"add_qualified", "replace_qualified"}:
         values = candidate_value["value"]

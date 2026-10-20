@@ -25,6 +25,7 @@ from tests.support.audiobook_synopsis import (
     recording_synopsis_report as synopsis_report,
 )
 from tests.support.field_effects import effects as effects
+from tests.support.genre_reports import audiobook_genre_report
 
 
 @pytest.mark.parametrize(
@@ -39,6 +40,7 @@ from tests.support.field_effects import effects as effects
         "No synopsis available.",
         "Synopsis unavailable.",
         "CHAPTER\n1.",
+        "n/a",
     ],
 )
 def test_closed_placeholder_vocabulary(value):
@@ -54,7 +56,6 @@ def test_closed_placeholder_vocabulary(value):
         "Chapter I",
         "Chapter one",
         "Chapter ١",
-        "n/a",
         "Short.",
         "One paragraph.\n\nAnother paragraph.",
         "Chapter 1..",
@@ -62,6 +63,140 @@ def test_closed_placeholder_vocabulary(value):
 )
 def test_near_misses_are_not_placeholders(value):
     assert not _recognized_synopsis_placeholder(value)
+
+
+_CREDIT_LINES = (
+    "Narrated by Example Narrator",
+    "Narrated by Example Narrator.",
+    "Read by J. R. Example",
+    "Written and narrated by Ada Example",
+    "Narrated by Ann Example, Bea Example and Cy Example",
+    "Narrator: Example Narrator",
+    "Narrators: Ann Example & Bea Example",
+    "Cast: Ann Example, Bea Example, Cy Example",
+    "Unabridged - Narrated by Example Narrator",
+    "Narrated by Example Narrator; Unabridged.",
+    "Translated by Ann Example | Read by Bea O'Example-Smith",
+    "Written by Ann O’Example. Read by Bea Example.",
+)
+_SHORT_FRAGMENTS = (
+    "Unabridged",
+    "(Unabridged)",
+    "Abridged.",
+    "Audiobook",
+    "Audiobooks",
+    "Audio Book",
+    "Audio CD",
+    "MP3 CD",
+    "Unabridged Audiobook",
+    "Audible Audiobook",
+    "Part 2",
+    "Disc 1 of 3",
+    "CD 4",
+    "Side 2",
+    "Track 3 of 12",
+    "N/A",
+    "None",
+    "Unknown",
+    "TBD.",
+)
+_STILL_SYNOPSES = (
+    "Narrated by the ghost of her sister, this novel follows…",
+    "Narrated by the ghost of her sister, this novel follows her home",
+    "Written by a master of suspense, this thriller…",
+    "Read by millions…",
+    "Narrated by " + ", ".join(f"Name{chr(97 + index)} Example" for index in range(7)),
+    "Narrated by " + " and ".join("Example Narrator" for _ in range(20)),
+    "Synthetic Journey",
+    "Synthetic Journey (Unabridged)",
+    "A boy discovers he is a wizard.",
+    "Two rivals cross the sea.",
+    "Audiobook of the year",
+    "Narrated by Example Narrator in 2020",
+    "Part one",
+    "None of them survived the winter.",
+)
+
+
+@pytest.mark.parametrize("value", _CREDIT_LINES + _SHORT_FRAGMENTS)
+def test_credit_lines_and_short_fragments_are_placeholders(value):
+    """Structured credits and format fragments describe nothing (#1250)."""
+    assert _recognized_synopsis_placeholder(value)
+
+
+@pytest.mark.parametrize("value", _STILL_SYNOPSES)
+def test_prose_that_merely_resembles_a_credit_stays_a_synopsis(value):
+    assert not _recognized_synopsis_placeholder(value)
+
+
+@pytest.mark.parametrize("current", _CREDIT_LINES + _SHORT_FRAGMENTS)
+def test_persisted_reconstruction_replaces_what_the_floor_recognizes(current):
+    """The persisted projection reads the same floor the preview does."""
+    candidate = {"kind": "text", "value": "A voyage reveals a hidden city."}
+    assert (
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_replace",
+            candidate,
+            current,
+        )
+        == candidate
+    )
+    with pytest.raises(RichMetadataPreviewError):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "safe_plain_text:audiobook_description_fill",
+            {"kind": "text", "value": current},
+            None,
+        )
+
+
+@pytest.mark.parametrize("current", _STILL_SYNOPSES)
+def test_persisted_reconstruction_preserves_what_stays_a_synopsis(current):
+    with pytest.raises(RichMetadataPreviewError):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_replace",
+            {"kind": "text", "value": "A voyage reveals a hidden city."},
+            current,
+        )
+
+
+@pytest.mark.parametrize("current", ["Narrated by Example Narrator", "Unabridged"])
+def test_a_recognized_incumbent_is_replaced_through_the_persisted_decision(
+    tmp_path, current
+):
+    report = synopsis_report(current, ("A voyage reveals a hidden city.",))
+    database = tmp_path / "floor.sqlite"
+    with closing(open_repository(database)) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("description_fill",),
+            selected_options={"description_fill": "replace_safe_plain_text"},
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+    with closing(open_repository(database)) as repository:
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "description"
+        )
+        assert field["automatic_decision"]["selected_value"] == {
+            "kind": "text",
+            "value": "A voyage reveals a hidden city.",
+        }
+        decision = next(
+            AutomaticDecision.from_json(document)
+            for document in repository.get_review_case_decisions(case_id)
+            if json.loads(document)["destination"] == "description"
+        )
+        assert decision.policy_option == (
+            "replace_safe_plain_text:audiobook_description_replace"
+        )
 
 
 @pytest.mark.parametrize("option", ["safe_plain_text", "replace_safe_plain_text"])
@@ -1209,3 +1344,34 @@ def test_work_scope_wire_contract_and_direct_retry_refusal(effects, monkeypatch)
     assert repository._connection.execute(
         "SELECT count(*) FROM description_preparation_pending"
     ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    ("current", "outcome", "option"),
+    (
+        (("Audiobook",), "candidate", "fill_empty:audiobook_genres_fill"),
+        (
+            ("Audiobook", "Fantasy"),
+            "keep_current",
+            "fill_empty:audiobook_genres_preserve",
+        ),
+    ),
+)
+def test_a_format_only_genre_list_is_filled_through_the_persisted_decision(
+    tmp_path, current, outcome, option
+):
+    """The genre half of the floor, through the same persisted seam (#1250)."""
+    with closing(open_repository(tmp_path / "genres.sqlite")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            audiobook_genre_report(current, ("Fantasy",)),
+            ("genres",),
+            selected_options={"genres": "fill_empty"},
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        decision = next(
+            AutomaticDecision.from_json(document)
+            for document in repository.get_review_case_decisions(case_id)
+            if json.loads(document)["destination"] == "genres"
+        )
+    assert (decision.outcome, decision.policy_option) == (outcome, option)
