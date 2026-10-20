@@ -51,7 +51,8 @@ source's identity match cannot authorize a candidate's values.
 
 The derived review scope is `recording`, `work`, or absent. Work scope leaves the
 recording unresolved, excludes local-only values and every destination other than
-description and genres before combinations are formed, and preserves existing
+description and genres (and, since #1253, series and title; see below) before
+combinations are formed, and preserves existing
 field safety and election rules. A report without supported work values or an
 admitted recording completes as evidence-only. Ignore can leave no case. Counts
 retain the same ready/recorded/blocked partition.
@@ -76,7 +77,10 @@ one; a title that only restates the current value leaves it evidence-only.
 
 A work-scope description or genre choice whose every alternative only trims or
 extends the current value, by contiguous words or by genre-set containment,
-carries `work_alternative_immaterial`. It stays an owner choice but sets no
+carries `work_alternative_immaterial`. The bound applies only when the current
+value passes the audiobook synopsis and genre floor: a placeholder, a text
+holding markup, a visibly cut-off text ending "..." or "--", or a format-only
+genre list keeps every alternative material. It stays an owner choice but sets no
 `unresolved_choice` fact, so it is not queued unless its policy explicitly asks.
 Work-scope fills follow the same shared attention predicate: one held under an
 Automatic destination is not queued and reads as `owner_choosable`, while an

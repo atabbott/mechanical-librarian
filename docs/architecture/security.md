@@ -2114,7 +2114,8 @@ Shadow policy v20 requires a clean rebuild, with no migration or adoption.
 
 Work-only scope is recomputed from the bound report, never accepted as a client
 permission. Each description/genre source must independently establish the full
-work relationship. Recording remains unresolved; other fields are masked before
+work relationship. Recording remains unresolved; fields other than description,
+genres, series and title (the last two since #1253, below) are masked before
 combinations, and automatic reconstruction, covers and authored-description
 preparation/retry remain unavailable. Explicit owner choices reuse exact-current
 binding, library consent, backup readiness, target comparison, supported service

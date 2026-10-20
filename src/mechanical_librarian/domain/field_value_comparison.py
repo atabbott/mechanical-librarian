@@ -400,11 +400,13 @@ _WORD: Final = re.compile(r"\w+")
 def description_alternative_immaterial(current: object, candidate: object) -> bool:
     """Whether a description alternative only trims or extends a usable incumbent.
 
-    The incumbent must pass the audiobook synopsis floor. Both texts are read
-    with real markup removed, casefolded and split into words, and the
-    alternative is immaterial when one word sequence equals the other or runs
-    inside it contiguously, in either direction. An incumbent below the floor
-    makes every alternative material. Pure, and never raises (#1253).
+    The incumbent must pass the audiobook synopsis floor, so it is plain text
+    with no markup, no visible cut-off and no placeholder; an incumbent below
+    the floor makes every alternative material. The alternative is read with
+    its markup tags removed, both texts are NFC-normalised, casefolded and split
+    into words, and the alternative is immaterial when one word sequence equals
+    the other or runs inside it contiguously, in either direction. Pure, and
+    never raises (#1253).
     """
     if (
         not plain_audiobook_synopsis(current)
