@@ -282,3 +282,27 @@ The child protocol and its outputs are unchanged. The titles are recorded in
 value. On #1246's 122-item no-match tail the folder leaf reached 57 items and
 the single-file title tag 36; together with the two ladder families, 72 items
 and 83 distinct queries.
+
+## Description bound and oversized claims (#1250)
+
+A description fact holds at most 512 characters, the claim type's own width,
+and the bound is not raised. A longer description is validated whole first,
+against the configured tag width and the shared projection rule, so a
+credential, path, control or lone surrogate anywhere in it still refuses the
+value. Only then is it cut to its first 512 code points, with no canonical
+form, in the existing `oversized` state. That state is the truncation record:
+`audio-inspection-v4` already admits it, so neither the protocol nor the
+observation vocabulary changes, and the fact now refuses `oversized` for any
+other field. The prefix is evidence that a description exists. It is never a
+proposal, an automatic value or a written value, because the proposal set
+admits only valid claims with a canonical value. NFO and CUE lines over 512
+characters still never match their grammars.
+
+ISO 639-2's `und`, `mul`, `mis` and `zxx`, and the literal `xxx`, name no
+language, so no audio surface yields a language claim for one. The child's
+builder skips them and the parent's fact validation refuses them, each on its
+own. The MP4 `prID` atom is an Audible product id, not an ASIN, and no longer
+maps to one. Claims mean something different, so `metadata-report-v55` requires
+a clean rebuild under ADR-0013. On the retained #1086 data this restores 38
+description claims and removes 114 placeholder language claims and 37 malformed
+ASIN claims.

@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1250 advances the report to `metadata-report-v55` and the shadow decision
+policy to `deterministic-shadow-decision-policy-v22`: audiobook description,
+language and ASIN claims mean something different, and the audiobook synopsis
+and genre floor is wider. **Clean rebuild required** for every predecessor
+application database; startup refuses v54 reports and v21 outcomes before
+mutation. No migration, adoption, conversion, import or downgrade is supplied;
+F19a/F20/F46 records are displaced with their permission sets unchanged.
+
 #1252 advances the proposal policy to `fixed-conservative-v34` and the shadow
 decision policy to `deterministic-shadow-decision-policy-v21`: a recording's
 reordered authors are a preservation, and series-label title strips and
@@ -50,11 +58,11 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v54` plus `proposal-set-v8` under
+  `metadata-report-v55` plus `proposal-set-v8` under
   `fixed-conservative-v34`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v21`,
+  `deterministic-shadow-decision-policy-v22`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v10`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
@@ -405,3 +413,14 @@ requires a **clean rebuild** under ADR-0013. Predecessor stores are refused
 before mutation. No migration, adoption or relabelling is supplied. The
 case-detail field `classification` gains the value `owner_choosable` for such a
 settled fill; `review-case-detail-v5` and stored documents are unchanged.
+
+## Audiobook local claims and quality floor (#1250)
+
+Report `metadata-report-v55` adds no field. An audio description over 512
+characters is now an `oversized` claim holding its first 512 characters with no
+canonical value; `und`, `mul`, `mis`, `zxx` and `xxx` are no language claim; and
+the MP4 `prID` atom is no ASIN claim. A v54 report meant otherwise, so the exact
+SQLite discriminator requires a **clean rebuild** under ADR-0013, and decision
+policy v22 refuses v21 outcomes. Prior stores are refused before mutation. No
+migration, adoption or relabelling is supplied. `audio-inspection-v4`,
+`review-case-v2` and shadow-review packet envelopes are unchanged.

@@ -352,6 +352,16 @@ a library-wide provider barrier.
   and a sibling listing refuses at its entry bound — 1,024 entries — instead of
   materializing an unbounded directory. Path evidence reads bare name
   components only, never a joined path.
+  A description over the 512-character fact bound is validated whole, against
+  the tag width and the projection rule, before it is cut, so a credential,
+  path, control or lone surrogate placed past character 512 still refuses the
+  value rather than being cut off unseen. The kept first 512 code points carry
+  no canonical value and the `oversized` state, which only a description may
+  hold; the proposal set admits only valid claims with a canonical value, so
+  the cut text is never proposed, decided or written (#1250). A placeholder
+  language code (`und`, `mul`, `mis`, `zxx`, `xxx`) is no claim, refused by
+  the child's builder and again by the parent's fact validation, so a forged
+  child cannot supply one.
   The same hostile folder leaf, and a single-file item's title tag, may become
   an audiobook discovery title (#1255). One pure parent-side grammar reads each:
   text over 255 characters, or carrying a separator, NUL, any C0 or C1
@@ -1899,6 +1909,24 @@ Owner-final, Ask/Ignore, consent, backup, currentness, optimistic preconditions,
 read-back and audit remain mandatory. Shared shadow policy v17 and successor
 qualification bindings require a clean rebuild of prior derived stores; no new
 provider, parser, model, egress or write capability is introduced.
+
+#1250 widens the vocabulary without opening it. Structured credit lines (one to
+six segments, each a role verb with "by", a role label with ":" or a format
+word, naming one to six people of one to five letter tokens, at most 240
+characters, with a closed prose-word list that keeps sentences out), closed
+format words, numbered chapter, track, part, disc, CD or side markers, and
+`n/a`, `none`, `unknown` or `tbd` are recognized whole, by shape and never by
+length alone. This widens `replace_safe_plain_text` replacement of such an
+incumbent and narrows automatic fills, since a candidate matching the floor is
+refused with `description_quality_floor_not_met`; ebooks are unchanged. The
+same release treats an audiobook genre list of format words alone as empty, as
+an unknown language is: under the default `fill_empty` option a qualified
+candidate now fills such an incumbent automatically, a format-only candidate is
+`no_candidate`, and any list naming a real genre is still preserved. The F46
+identity registry and permission set are unchanged; only their records rotate.
+Every write keeps the consent, backup, currentness, optimistic, read-back and
+audit gates, and persisted authority reconstructs the same floor. The cut
+description prefix from the inspector is never a candidate.
 
 ## Ebook synopsis authority (#1076)
 
