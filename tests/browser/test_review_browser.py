@@ -7841,6 +7841,12 @@ def test_audiobook_work_owner_journey():
             expect(
                 page.get_by_role("region", name="Book-level evidence")
             ).to_contain_text("The exact recording remains unresolved.")
+            # A title the evidence only restates is no choice: the case shows
+            # the same rows as before #1253.
+            for field in ("Title", "Series"):
+                expect(
+                    page.get_by_role("button", name=re.compile(rf"^{field}\b"))
+                ).to_have_count(0)
             choice = page.get_by_role(
                 "button",
                 name="Choose proposed value: A voyage reveals a hidden city.",
