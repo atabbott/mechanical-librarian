@@ -163,9 +163,17 @@ side and field stated, and none composes:
   normalized rung with exactly that one family, with or without the narrowing
   retry. The provider title and ordered authors must admit exactly, with no
   transformation, against the title of the ladder query that carries that
-  lineage. Reordered authors do not admit. The original local title carries
-  neither a variant marker nor a recording-format term (abridged, unabridged,
-  dramatised, full cast, radio). A product that
+  lineage. Reordered authors do not admit. The product's own stated series
+  must corroborate the decoration the rung stripped: one membership's name is
+  closed-equal to a stripped series name, and its position equals a stripped
+  position numerically, Roman numerals included. A trailing sequence strips a
+  position alone, so a membership at that position suffices. A product with
+  no series or a different one never admits, so "Part II" is a decoration only
+  where the product says it is. The original local title carries neither a
+  variant marker nor a complete recording-format term (dramatised, dramatized,
+  dramatisation, dramatization, abridged, unabridged, abridgement, abridgment,
+  full cast or full-cast, or radio play, drama or dramatisation); "The
+  Dramatist" is not a dramatisation. A product that
   `provider_candidate_work_identity_contradiction` classifies as an explicit
   contradiction of the asserted title never admits, even where the rung title
   matches. The lineage is one local title application of that family.
@@ -173,7 +181,9 @@ side and field stated, and none composes:
   transformation, the author counts are equal and the authors are compared in
   order. Each pair is closed-equal, or closed-equal once runs of single
   letters each followed by a full stop are folded to the same letters
-  separated by spaces, and at least one pair needs the fold. "J.R.R." and
+  separated by spaces, and at least one pair needs the fold. Tokens split on
+  the whitespace the closed comparison collapses, no-break and thin spaces
+  included. "J.R.R." and
   "J. R. R." fold to "J R R"; "JRR" does not change. Every folded name keeps a
   token that is not a single letter. The lineage records one local or provider
   authors application per changed side, with the author's ordinal. The new
@@ -207,6 +217,9 @@ retained provider bodies:
   series name, 0 trailing series sequence), 0 false. Initials fold: 0.
 - 5 newly corroborated items gain 27 automatic outcomes, none wrong; hints
   fed fall from 58 to 46.
+
+These figures predate the product-series requirement and the bounded
+recording-format terms; they are re-measured at this head, see #1260.
 
 **Persistence.** The productions advance the report to `metadata-report-v57`.
 **Clean rebuild required** under ADR-0013. The lineage shape is unchanged.

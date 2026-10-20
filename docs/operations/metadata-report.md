@@ -597,10 +597,14 @@ plan's asserted WORK lane at an audiobook authority, for a candidate inside
 the 90-second tight band of the item's single local runtime with no recording
 language or format conflict. A title production needs the lane's dispatch
 lineage to be the normalized rung with exactly its one family, and the provider
-title and ordered authors to admit exactly against that rung's shaped title;
-a local title with a variant marker or a recording-format term (abridged,
-unabridged, dramatised, full cast, radio) never admits, and neither does a
-product the asserted title explicitly contradicts. `band_initials_fold` needs
+title and ordered authors to admit exactly against that rung's shaped title,
+and the product's own series claims to state what the rung stripped: a series
+name closed-equal to the stripped name and a position numerically equal to the
+stripped position, or for a trailing sequence any membership at that position.
+A local title with a variant marker or a complete recording-format term
+(dramatised or dramatized, dramatisation, abridged, unabridged, abridgement,
+full cast, radio play or drama) never admits, and neither does a product the
+asserted title explicitly contradicts. `band_initials_fold` needs
 closed-equal titles and ordered authors, each pair equal or equal once dotted
 initials fold, with a name that keeps a token longer than one letter, and
 records one application per changed side and author ordinal. Set admission

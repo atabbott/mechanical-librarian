@@ -1805,9 +1805,10 @@ authority's search page already stated, compare them under closed rules with no
 fuzzy matching, and run only on an audiobook plan's asserted lane when the
 candidate is inside the tight band of the item's own runtime. The band never
 admits alone: a title production needs the provider title and ordered authors
-to admit exactly against the lane's own shaped rung title, refuses a local
-title with a variant marker or recording-format term, and refuses a product the
-asserted title explicitly contradicts; the initials fold needs closed-equal
+to admit exactly against the lane's own shaped rung title and the product's own
+stated series to name the series and position the rung stripped, refuses a
+local title with a variant marker or complete recording-format term, and
+refuses a product the asserted title explicitly contradicts; the initials fold needs closed-equal
 titles and ordered authors. The alternative lane, fed ASIN lanes, hints and
 exact admission are unchanged, so a target assertion still cannot settle
 identity. Report validation and the proposal set replay the band-aware
