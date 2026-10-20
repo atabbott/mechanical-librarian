@@ -1795,6 +1795,42 @@ optimistic preconditions and read-back remain exact. A populated value cannot be
 fill-empty. Owner-final, Ask/Ignore, consent, backup and verification authority are
 unchanged. The report/SQL successor requires a clean rebuild, never migration.
 
+Report v54 widens this field-only grammar by two shapes (#1251). An
+attribute-free closing or self-closing HTML tag (`</p>`, `<br />`) is markup.
+Text holding one is admitted only when three scans pass: every rule but the
+absolute-path rule on the original text; the absolute-path rule on the text with
+each such tag rewritten to its slash-free form; and the whole default scan,
+every path and credential rule, on the text with every tag-like span (opening,
+closing or self-closing, with or without attributes) removed and its edges
+stripped, once with plain spans (`<[^<>]*>`) and once with quote-aware spans
+that keep a quoted `>` inside its tag; each alone misses either a quoted `>` or
+an unbalanced quote. So `</p>/srv/media`, `<a href="/x">`, `<img src="/x" />`
+and `&lt;/p&gt;` stay refused, and so does a credential, label or non-absolute
+path any well-formed tag splits or a leading tag hides (`https://u:p</i>@h`,
+`pass<b>word</b>=x`, `C<b>:</b>\Books`, `<p>Secret: x</p>`). Whatever this
+admits, the default scan admits with every tag-like span removed, both ways.
+Deliberately malformed, nested, unterminated or entity-encoded markup built to
+hide a path or credential is an accepted risk and out of scope: base admits such
+forms too, and this boundary guards against accidental leakage, not obfuscation.
+Only ASCII tag names and ASCII spacing form a tag. U+2028 is a line separator:
+the codepoint scan reads it as LF after CRLF folds, so `\r\u2028` still exposes
+a lone CR. Admission order is exact type and non-blank text, original bounds,
+forbidden codepoints and edge whitespace (C1 masked), then C1, production paths
+and credentials. Text whose only defect is C1 (U+0080–U+009F, usually
+Windows-1252 decoded as Latin-1) is refused as `contains C1 control text` (the
+adapter keeps only the field's `malformed` state, as for every other refusal);
+it is never repaired, because a guessed decoding would show a value the library
+does not hold. C1 beside another forbidden codepoint keeps the generic refusal.
+The stored value, fingerprints and field-value versions stay the original
+string. Tag-bearing incumbents compare as literal text and stay
+`target_state_unusable` for automatic synopsis authority. A path inside an
+attribute (`<a href="/x">`, `<img src="/x" />`) stays refused, and a slash
+inside a tag with attributes is never read as markup. U+2029, NEL and
+entity-escaped tags stay refused. Discovery titles, provider and local claims
+and every other projection keep the shared grammar and `_FORBIDDEN_CODEPOINTS`
+unchanged. Shadow-review packets may now carry literal markup or U+2028 in
+incumbent text, as JSON data only.
+
 ## Author evidence authority
 
 Author attribution is evidence, never authority by itself (#1083). Opening and rear EPUB paths share whole-statement structural classification and the original bounded navigation selection; fragment roles never spread across a resource. Incidental credits cannot mint Authors authority, and complete-set proposal conflicts cannot be bypassed by the shadow policy. Report v46, proposal policy v28 and shadow policy v15 invalidate old admission bindings; clean rebuild required. Historical automatic documents remain historical. Consent, exact currentness, backup, optimistic preconditions, read-back and durable audit still govern every permitted effect.

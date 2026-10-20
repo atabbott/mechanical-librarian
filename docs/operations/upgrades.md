@@ -1,5 +1,12 @@
 # Upgrades and compatibility
 
+#1251 advances the report to `metadata-report-v54`, which adds no field but
+reads an incumbent description holding an attribute-free HTML tag slash or
+U+2028 as its exact value instead of `malformed`. **Clean rebuild required** for
+every predecessor application database; startup refuses it before mutation. No
+migration, adoption, conversion, import or downgrade is supplied; F19a/F20/F46
+source bindings rotate with their existing permission sets.
+
 #1257 advances the report to `metadata-report-v53`, which records up to two
 band-first recording-lookup hints on an Audible lane and keeps only the ASIN of
 a fed answer naming another work. **Clean rebuild required** for every
@@ -51,7 +58,7 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v53`, `proposal-set-v8` under
+The current build uses `metadata-report-v54`, `proposal-set-v8` under
 `fixed-conservative-v33`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
 and `deterministic-shadow-decision-policy-v20`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**

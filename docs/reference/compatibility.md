@@ -41,7 +41,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v53` plus `proposal-set-v8` under
+  `metadata-report-v54` plus `proposal-set-v8` under
   `fixed-conservative-v33`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
@@ -374,3 +374,14 @@ tight band, which the ASIN feed looks up last. A fed ASIN answer naming another
 work now keeps only its ASIN. The exact SQLite discriminator requires a **clean
 rebuild** under ADR-0013. Prior v52 reports and stores are refused before
 mutation. No migration, adoption or relabelling is supplied.
+
+## Incumbent description markup and line separators (#1251)
+
+Report `metadata-report-v54` adds no field. An incumbent description holding an
+attribute-free HTML tag slash (`</p>`, `<br />`) or U+2028 is now its exact
+`value`; text whose only defect is C1 control characters is refused with its
+own validator reason and still reads `malformed` in the report and UI. A v53
+field meant the narrower grammar, so the exact SQLite discriminator requires a
+**clean rebuild** under ADR-0013. Prior v53 reports and stores are refused
+before mutation. No migration, adoption or relabelling is supplied.
+`review-case-v2` and shadow-review packet envelopes are unchanged.
