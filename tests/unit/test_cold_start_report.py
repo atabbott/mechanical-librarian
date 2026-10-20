@@ -1212,10 +1212,11 @@ def test_a_missing_or_unreadable_stage_timing_file_is_refused(
 
 
 def _outcome_reports() -> tuple[MetadataReport, ...]:
-    """Three more audiobooks: one runtime reason each, and one work-only case."""
+    """Four more audiobooks: one per runtime reason, and one work-only case."""
     from dataclasses import replace
 
     from mechanical_librarian.application.metadata_report import (
+        MetadataDiscoveryPlan,
         ProviderLaneResult,
         ProviderResult,
         provider_observation,
@@ -1241,6 +1242,9 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
     from tests.support.metadata_report_doubles import single_track_audio_facts
 
     plan = replace(work_plan(*audio_local_claims()), audio=single_track_audio_facts())
+    unmeasured = replace(
+        work_plan(*audio_local_claims(None)), audio=single_track_audio_facts()
+    )
     (lane,) = plan.lanes
     first_rung = WorkDispatchLineage.from_query(
         work_query_ladder(lane.title or "", lane.authors, audiobook=True)[0]
@@ -1249,9 +1253,10 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
     def report(
         item: str,
         duration: str,
-        cover: CoverSource,
+        cover: CoverSource | None,
         dispatched: tuple[int, int],
         series: tuple[str, str] | None = None,
+        plan: MetadataDiscoveryPlan = plan,
     ) -> MetadataReport:
         observation = provider_observation(
             "audible",
@@ -1287,7 +1292,7 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
             local_claims=plan.local_claims,
             local_reasons=("embedded_tag_duration",),
             providers=(observation,),
-            cover_sources=(cover,),
+            cover_sources=() if cover is None else (cover,),
             audio=plan.audio,
         )
 
@@ -1322,6 +1327,8 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
             (0, 0),
             series=("The Series", "1"),
         ),
+        # No composed local runtime, so no candidate's runtime is comparable.
+        report("item-7", "58200.000", None, (0, 0), plan=unmeasured),
     )
 
 
@@ -1338,9 +1345,37 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
         finally:
             connection.close()
 
-    report = cold_start.assemble_cold_start_report(
-        _dispatch_configuration(), snapshot, None, {}, 1
+    base = _dispatch_configuration()
+    # Only an enabled provider in the audiobook dispatch set can go unsent:
+    # the disabled second Audible and the enabled iTunes store are not counted.
+    configuration = ApplicationConfiguration(
+        connections=base.connections,
+        libraries=(
+            LibraryConfiguration(
+                "audiobooks",
+                "primary",
+                "library-b",
+                "audiobook",
+                "books",
+                ("audible", "second", "store"),
+            ),
+            *base.libraries[1:],
+        ),
+        mounts=base.mounts,
+        providers=(
+            ProviderConnectionConfiguration(
+                "audible", True, False, None, "audible_catalog", marketplaces=("us",)
+            ),
+            *base.providers,
+            ProviderConnectionConfiguration(
+                "second", False, False, None, "audible_catalog"
+            ),
+            ProviderConnectionConfiguration(
+                "store", True, False, None, "itunes_search"
+            ),
+        ),
     )
+    report = cold_start.assemble_cold_start_report(configuration, snapshot, None, {}, 1)
     blocks = {
         library["library"]: library
         for library in cast("list[dict[str, object]]", report["libraries"])
@@ -1348,20 +1383,20 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
     audiobooks = blocks["audiobooks"]
 
     assert {
-        "reports": 6,
+        "reports": 7,
         "recording_admitted": 2,
         "work_only": 1,
         "evidence_only": {
-            "total": 3,
+            "total": 4,
             "no_retained_recording_candidate": 1,
+            "no_comparable_runtime": 1,
             "runtime_contradiction": 1,
             "runtime_near_miss_only_or_mixed": 1,
-            "tight_band_candidate_but_not_admitted": 0,
         },
     } == audiobooks["audiobook_outcomes"]
     assert {
-        "reports": 6,
-        "without_read": 3,
+        "reports": 7,
+        "without_read": 4,
         "states": [
             {"state": "absent", "timeout_scope": None, "count": 1},
             {"state": "timeout", "timeout_scope": "attempted", "count": 1},
@@ -1382,14 +1417,14 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
         "second",
     ]
     assert {
-        "items": 6,
+        "items": 7,
         "initial": 4,
         "retry": 1,
-        "mean_per_item": 0.83,
+        "mean_per_item": 0.71,
         "per_item": [
             {"range": name, "items": items}
             for name, items in (
-                ("0", 4),
+                ("0", 5),
                 ("1", 1),
                 ("2", 0),
                 ("3-5", 1),
@@ -1406,10 +1441,27 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
             }
             for name in providers
         ],
+        # Audible sent items 4 and 5 an initial request and the other five none.
+        "never_dispatched": {
+            "audiobook_items": 7,
+            "items": 5,
+            "providers": [{"provider": "audible", "items": 5}],
+        },
     } == audiobooks["dispatches"]
     ebooks = blocks["ebooks"]
     assert 0 == cast("dict[str, object]", ebooks["audiobook_outcomes"])["reports"]
-    assert None is cast("dict[str, object]", ebooks["dispatches"])["mean_per_item"]
+    assert {
+        "items": 0,
+        "initial": 0,
+        "retry": 0,
+        "mean_per_item": None,
+        "per_item": [
+            {"range": name, "items": 0}
+            for name in ("0", "1", "2", "3-5", "6-10", "11-20", "21+")
+        ],
+        "providers": [],
+        "never_dispatched": {"audiobook_items": 0, "items": 0, "providers": []},
+    } == ebooks["dispatches"]
     assert None is report["recovery_jobs"]
 
 
@@ -1417,11 +1469,14 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
     ("bands", "reason"),
     (
         (frozenset(), "no_retained_recording_candidate"),
+        (frozenset({"unstated"}), "no_comparable_runtime"),
         (frozenset({"outside"}), "runtime_contradiction"),
         (frozenset({"loose"}), "runtime_near_miss_only_or_mixed"),
         (frozenset({"loose", "outside"}), "runtime_near_miss_only_or_mixed"),
+        (frozenset({"loose", "unstated"}), "runtime_near_miss_only_or_mixed"),
         (frozenset({"unstated", "outside"}), "runtime_near_miss_only_or_mixed"),
-        (frozenset({"tight", "outside"}), "tight_band_candidate_but_not_admitted"),
+        # Current admission admits a tight band, so it never reaches here alone.
+        (frozenset({"tight", "outside"}), "runtime_near_miss_only_or_mixed"),
     ),
 )
 def test_an_evidence_only_audiobook_is_named_by_its_best_bands(

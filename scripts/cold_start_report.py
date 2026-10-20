@@ -61,7 +61,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
 )
-from mechanical_librarian.application.configuration import ApplicationConfiguration
+from mechanical_librarian.application.configuration import (
+    AUDIOBOOK_DISPATCH_ADAPTERS,
+    ApplicationConfiguration,
+)
 from mechanical_librarian.application.operations import OperationsError, StageTiming
 from mechanical_librarian.domain.audiobook_corroboration import (
     lane_band,
@@ -142,7 +145,8 @@ _AUDIO_REPORTS_SQL = (
 # Every current item, report-only ones included: each one spent its dispatches.
 _DISPATCH_ROWS_SQL = (
     "SELECT ml.connection_name,ml.library_name,"
-    "json_extract(mr.document,'$.providers') "
+    "json_extract(mr.document,'$.providers'),"
+    "json_extract(mr.document,'$.audio') IS NOT NULL "
     "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id"
 )
@@ -281,9 +285,9 @@ _DISPATCH_RANGES = (
 )
 _EVIDENCE_ONLY_REASONS = (
     "no_retained_recording_candidate",
+    "no_comparable_runtime",
     "runtime_contradiction",
     "runtime_near_miss_only_or_mixed",
-    "tight_band_candidate_but_not_admitted",
 )
 _MAX_MOUNT_WALK_FILES = 1_000_000
 
@@ -372,12 +376,15 @@ def _evidence_only_reason(bands: frozenset[str]) -> str:
     """Name why an unadmitted, work-quiet audiobook stayed evidence only.
 
     `bands` holds the best runtime band of each audiobook-authority lane that
-    retained a candidate, so an empty set means no lane retained one.
+    retained a candidate, so an empty set means no lane retained one. With no
+    composed local runtime every band is `unstated`. A tight band cannot reach
+    here under current admission, which admits it, so it falls in the last
+    reason with every other mix.
     """
     if not bands:
         return "no_retained_recording_candidate"
-    if "tight" in bands:
-        return "tight_band_candidate_but_not_admitted"
+    if bands == {"unstated"}:
+        return "no_comparable_runtime"
     if bands == {"outside"}:
         return "runtime_contradiction"
     return "runtime_near_miss_only_or_mixed"
@@ -459,13 +466,13 @@ def _audiobook_rows(
 
 
 def _dispatch_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
-    """One row per current item: (connection, library, provider dispatches).
+    """One row per current item: (connection, library, dispatches, audio).
 
     Each provider is (provider, initial dispatches, retry dispatches), read
     from its persisted request accounting.
     """
     rows: list[tuple[object, ...]] = []
-    for connection_name, library_name, providers in connection.execute(
+    for connection_name, library_name, providers, audio in connection.execute(
         _DISPATCH_ROWS_SQL
     ).fetchall():
         rows.append(
@@ -480,6 +487,7 @@ def _dispatch_rows(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
                     )
                     for provider in json.loads(providers)
                 ),
+                bool(audio),
             )
         )
     return rows
@@ -790,17 +798,32 @@ def _audiobook_cover_reads(rows: list[tuple[object, ...]]) -> dict[str, object]:
     }
 
 
-def _dispatches(rows: list[tuple[object, ...]]) -> dict[str, object]:
-    """Count one library's initial and retry provider dispatches per item."""
+def _dispatches(
+    rows: list[tuple[object, ...]], dispatchable: tuple[str, ...]
+) -> dict[str, object]:
+    """Count one library's initial and retry provider dispatches per item.
+
+    `dispatchable` names the library's enabled providers in the audiobook
+    dispatch set; an audiobook that sent any of them no initial request is
+    counted against it as never dispatched.
+    """
     initial: Counter[str] = Counter()
     retry: Counter[str] = Counter()
     per_item: Counter[str] = Counter()
+    never: Counter[str] = Counter()
+    never_items = 0
     for row in rows:
         spent = 0
+        sent: Counter[str] = Counter()
         for provider, first, again in cast("tuple[tuple[str, int, int], ...]", row[2]):
             initial[provider] += first
             retry[provider] += again
+            sent[provider] += first
             spent += first + again
+        if row[3]:
+            missed = [name for name in dispatchable if not sent[name]]
+            never.update(missed)
+            never_items += bool(missed)
         per_item[
             next((name for bound, name in _DISPATCH_RANGES if spent <= bound), "21+")
         ] += 1
@@ -822,6 +845,14 @@ def _dispatches(rows: list[tuple[object, ...]]) -> dict[str, object]:
             }
             for provider in sorted(initial)
         ],
+        "never_dispatched": {
+            "audiobook_items": sum(1 for row in rows if row[3]),
+            "items": never_items,
+            "providers": [
+                {"provider": provider, "items": never[provider]}
+                for provider in sorted(dispatchable)
+            ],
+        },
     }
 
 
@@ -902,6 +933,11 @@ def assemble_cold_start_report(
     provider_connections = {
         library.name: tuple(library.provider_connections)
         for library in configuration.libraries
+    }
+    dispatchable_providers = {
+        provider.name
+        for provider in configuration.providers
+        if provider.enabled and provider.adapter in AUDIOBOOK_DISPATCH_ADAPTERS
     }
     mount_by_library = {
         library.name: library.mount for library in configuration.libraries
@@ -1157,7 +1193,14 @@ def assemble_cold_start_report(
                 "audiobook_cover_reads": _audiobook_cover_reads(
                     audiobook_rows.get(key, [])
                 ),
-                "dispatches": _dispatches(dispatch_rows.get(key, [])),
+                "dispatches": _dispatches(
+                    dispatch_rows.get(key, []),
+                    tuple(
+                        name
+                        for name in configured_providers
+                        if name in dispatchable_providers
+                    ),
+                ),
             }
         )
 

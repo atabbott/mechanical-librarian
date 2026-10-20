@@ -83,13 +83,18 @@ Over the same audiobook reports, `audiobook_outcomes` splits each library's
 whose recording identity is admitted and `work_only` one whose book evidence
 alone opens a work-level case, both read from the product's own review scope
 rather than re-derived. Every other report is `evidence_only`, with a `total`
-and a count for each of four reasons, judged by the best runtime band each
-audiobook-authority lane reaches, as `band` reports it:
-`no_retained_recording_candidate` when no such lane retained a candidate,
-`tight_band_candidate_but_not_admitted` when one reached the tight band,
-`runtime_contradiction` when every one is `outside`, and
-`runtime_near_miss_only_or_mixed` for any other mix of `loose`, `outside` and
-`unstated`. `audiobook_cover_reads` counts the Audiobookshelf cover read each
+and a count for each of four reasons. They are judged, in this order, by the
+set of best runtime bands its audiobook-authority lanes reach, as `band`
+reports them, ignoring lanes that retained nothing, so each report has exactly
+one: `no_retained_recording_candidate` when no such lane retained a candidate;
+`no_comparable_runtime` when every band is `unstated`, because the retained
+candidates state no runtime or the item has no composed local runtime;
+`runtime_contradiction` when every band is `outside`; and
+`runtime_near_miss_only_or_mixed` for every other set, which is any set holding
+`loose`, or `outside` beside `unstated`. A retained `tight` candidate is
+admitted under current admission, so it never reaches evidence only, and the
+single "tight band but not admitted" item #1086 measured has no equivalent
+here. `audiobook_cover_reads` counts the Audiobookshelf cover read each
 report records by `state` and, for a `timeout`, its `timeout_scope`
 (`attempted`, or `not_started_due_to_aggregate_deadline` when the window had
 already closed); `without_read` counts reports with no such read, as when
@@ -101,7 +106,14 @@ request accounting: the `items` counted, the `initial` and `retry` dispatch
 totals, their `mean_per_item` (`null` with no items), `per_item` counting
 items by the dispatches they spent (`0`, `1`, `2`, `3-5`, `6-10`, `11-20`,
 `21+`, each closed on its upper bound), and per-provider `initial` and
-`retry` totals.
+`retry` totals. Its `never_dispatched` block is the source for how many items
+had a provider that was never dispatched (#1294): over the library's
+`audiobook_items`, it counts per provider the current audiobooks to which an
+enabled provider in the audiobook dispatch set sent no initial request, and
+`items` counts the audiobooks with at least one such provider. It is not
+`starved`: it also counts a provider with nothing to answer, such as a
+per-ASIN provider for an item with no ASIN, and a starved lane may have sent
+earlier rungs.
 
 With `--recovery-database`, the top-level `recovery_jobs` block counts the
 recovery database's jobs: a total `jobs` and one group per provider
