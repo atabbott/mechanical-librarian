@@ -570,8 +570,9 @@ def _target_work_preview(report: MetadataReport):
             "no_op",
             "target_preserved",
         ),
+        ("<p></p>", "abstain", "target_state_unusable"),
     ),
-    ids=("markup", "line_separator"),
+    ids=("markup", "line_separator", "markup_only_under_fill_only"),
 )
 def test_admitted_markup_incumbent_keeps_no_automatic_authority(
     incumbent: str, outcome: str, reason: str
@@ -3881,6 +3882,11 @@ def test_an_ebook_format_only_genre_list_is_still_preserved() -> None:
         "Audiobook",
         "Part 1 of 3",
         "N/A",
+        "Section 2",
+        "Read by Example Narrator; Unabr",
+        "Read by Example Narrator; Length: 10 hrs and 3 mins",
+        "Audiobook created by Markable",
+        "fre:ac - free audio converter",
     ),
 )
 def test_an_audiobook_credit_or_fragment_candidate_misses_the_floor(

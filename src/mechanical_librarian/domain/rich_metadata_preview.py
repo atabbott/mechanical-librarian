@@ -415,7 +415,9 @@ def _project(
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
         if proposal.media_kind == "audiobook" and target.state is TargetFieldState.VALUE:
-            if not _plain_audiobook_synopsis(current):
+            if not _plain_audiobook_synopsis(current) and not (
+                option == "replace_safe_plain_text" and _markup_only_synopsis(current)
+            ):
                 return _abstain(field, option, target, current, "target_state_unusable")
             if automatic_work is not None:
                 refusal = _description_source_refusal(automatic_work, retained_claims)
@@ -1061,7 +1063,7 @@ def _one_typed_candidate(
 
 
 _SYNOPSIS_MARKER: Final = re.compile(
-    r"(?:(?:chapter|track|part|disc|cd|side) [0-9]+(?: of [0-9]+)?"
+    r"(?:(?:chapter|track|part|section|disc|cd|side) [0-9]+(?: of [0-9]+)?"
     r"|no (?:description|synopsis)(?: available)?|(?:description|synopsis) unavailable"
     r"|n/a|none|unknown|tbd)\.?"
 )
@@ -1074,11 +1076,37 @@ _CREDIT_ROLE: Final = (
     r"|directed|introduced|edited|recorded|voiced)"
 )
 _CREDIT_BY: Final = re.compile(rf"{_CREDIT_ROLE}(?: (?:and|&) {_CREDIT_ROLE})* by (.+)")
+# A ripper or tagger credit names a handle, which may hold digits and `_`.
+_RIPPER_ROLE: Final = r"(?:tagged|tag|ripped|encoded|created)"
+_RIPPER_BY: Final = re.compile(rf"{_RIPPER_ROLE}(?: (?:and|&) {_RIPPER_ROLE})* by (.+)")
+_CREDIT_BARE: Final = re.compile(
+    rf"(?:{_CREDIT_ROLE}|{_RIPPER_ROLE})(?: (?:and|&) (?:{_CREDIT_ROLE}|{_RIPPER_ROLE}))* by ?:?"
+)
+_DURATION: Final = r"[0-9]+ ?(?:hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)"
+_CREDIT_LENGTH: Final = re.compile(rf"length ?: ?{_DURATION}(?: (?:and )?{_DURATION})*")
+_MONTH: Final = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?"
+    r"|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+)
+_DATE: Final = (
+    r"(?:[0-9]{4}(?:-[0-9]{2}(?:-[0-9]{2})?)?|[0-9]{1,2}[.-][0-9]{1,2}[.-][0-9]{4}"
+    rf"|{_MONTH} [0-9]{{1,2}}(?:st|nd|rd|th)?,? [0-9]{{4}}"
+    rf"|[0-9]{{1,2}}(?:st|nd|rd|th)? {_MONTH},? [0-9]{{4}}|{_MONTH},? [0-9]{{4}})"
+)
+# A publisher or release label runs to the end of its segment, commas included.
+_CREDIT_PUBLISHER: Final = re.compile(r"publisher ?: ?\S.*")
+_CREDIT_RELEASE: Final = re.compile(rf"(?:release date|released) ?: ?{_DATE}")
+_UNABRIDGED: Final = "unabridged"
+_MIN_UNABRIDGED_PREFIX: Final = 4
+_MARKUP_TAG: Final = re.compile(r"<[^<>]*>")
+_ENCODER_WATERMARKS: Final = frozenset({"fre:ac - free audio converter"})
+_MARKABLE_WATERMARK: Final = " created by markable"
 _CREDIT_LABEL: Final = re.compile(
     r"(?:narrators?|reader|authors?|translator|performer|cast) ?: ?(.+)"
 )
 _CREDIT_NAME_JOIN: Final = re.compile(r" (?:and|&) ")
 _CREDIT_NAME_TOKEN: Final = re.compile(r"[^\W\d_](?:[^\W\d_]|[.'’-])*")
+_RIPPER_NAME_TOKEN: Final = re.compile(r"\w(?:\w|[.'’-])*")
 # Words that make a phrase prose rather than a name: "narrated by the ghost of
 # her sister" and "written by a master of suspense" credit nobody.
 _CREDIT_PROSE_WORDS: Final = frozenset({
@@ -1100,26 +1128,54 @@ def _recognized_synopsis_placeholder(value: str) -> bool:
     """Compare only the closed marker vocabulary; never rewrite retained text.
 
     A whole value is a placeholder when it is a marker -- a chapter, track,
-    part, disc, CD or side number, a "no description" phrase, `n/a`, `none`,
-    `unknown` or `tbd` -- or a closed format word, or a structured credit line
-    (#1250). Each recognizer reads shape, never length alone.
+    part, section, disc, CD or side number, a "no description" phrase, `n/a`,
+    `none`, `unknown` or `tbd` -- a closed format word, a closed encoder
+    watermark, markup with no text, or a structured credit line (#1250). Each
+    recognizer reads shape, never length alone.
     """
     text = canonical_text(TargetDestination.DESCRIPTION, value)
     return (
         _SYNOPSIS_MARKER.fullmatch(text) is not None
-        or audiobook_format_word(text.removesuffix("."))
+        or _synopsis_format_word(text.removesuffix("."))
+        or not _MARKUP_TAG.sub("", text).strip()
+        or text in _ENCODER_WATERMARKS
+        or (
+            text.endswith(_MARKABLE_WATERMARK)
+            and _synopsis_format_word(text.removesuffix(_MARKABLE_WATERMARK))
+        )
         or _credit_line(text)
     )
+
+
+def _synopsis_format_word(text: str) -> bool:
+    """A closed format word, or "unabridged" cut to four or more letters."""
+    return audiobook_format_word(text) or (
+        len(text) >= _MIN_UNABRIDGED_PREFIX and _UNABRIDGED.startswith(text)
+    )
+
+
+def _markup_only_synopsis(value: object) -> bool:
+    """Whether a valid incumbent holds markup and no text at all (#1250)."""
+    if type(value) is not str:
+        return False
+    try:
+        text = canonical_text(TargetDestination.DESCRIPTION, value)
+    except ValueError:
+        return False
+    return not _MARKUP_TAG.sub("", text).strip()
 
 
 def _credit_line(text: str) -> bool:
     """Read one canonical value as one to six credit or format segments.
 
     A segment is a role verb (or two joined by "and") followed by "by" and
-    names, a role label followed by ":" and names, or a closed format word; at
-    least one must be a credit. A credit names one to six people, each one to
-    five letter tokens, joined by "and", "&" or a comma; a prose word in any
-    name makes the value prose. The whole value is at most 240 characters.
+    names, a role label followed by ":" and names, a bare role verb and "by", a
+    closed format word, a length, or a publisher or release-date label running
+    to the end of its segment; at least one must be a credit. A credit names one
+    to six people, each one to five letter tokens, joined by "and", "&" or a
+    comma; a ripper or tagger credit's tokens may also hold digits and `_`. A
+    prose word in any name makes the value prose. The whole value is at most
+    240 characters.
     """
     if len(text) > _MAX_CREDIT_LINE:
         return False
@@ -1131,16 +1187,28 @@ def _credit_line(text: str) -> bool:
     open_names: int | None = None
     for piece in pieces:
         open_names = None
-        for part in piece.split(","):
+        parts = piece.split(",")
+        for index, part in enumerate(parts):
             part = part.strip()
+            rest = ",".join(parts[index:]).strip()
+            tokens = _CREDIT_NAME_TOKEN
             match = _CREDIT_BY.fullmatch(part) or _CREDIT_LABEL.fullmatch(part)
+            if match is None and (match := _RIPPER_BY.fullmatch(part)) is not None:
+                tokens = _RIPPER_NAME_TOKEN
             if match is not None:
-                open_names = _credit_names(match.group(1))
+                open_names = _credit_names(match.group(1), tokens)
                 if open_names is None:
                     return False
                 segments += 1
                 credits += 1
-            elif audiobook_format_word(part):
+            elif _CREDIT_BARE.fullmatch(part):
+                open_names = None
+                segments += 1
+                credits += 1
+            elif _CREDIT_PUBLISHER.fullmatch(rest) or _CREDIT_RELEASE.fullmatch(rest):
+                segments += 1
+                break
+            elif _synopsis_format_word(part) or _CREDIT_LENGTH.fullmatch(part):
                 open_names = None
                 segments += 1
             elif open_names is not None and (more := _credit_names(part)) is not None:
@@ -1152,15 +1220,17 @@ def _credit_line(text: str) -> bool:
                 or (open_names or 0) > _MAX_CREDIT_NAMES
             ):
                 return False
-    return credits > 0
+    return credits > 0 and segments <= _MAX_CREDIT_SEGMENTS
 
 
-def _credit_names(text: str) -> int | None:
+def _credit_names(
+    text: str, token_pattern: re.Pattern[str] = _CREDIT_NAME_TOKEN
+) -> int | None:
     names = _CREDIT_NAME_JOIN.split(text)
     for name in names:
         tokens = name.split(" ")
         if not 1 <= len(tokens) <= _MAX_CREDIT_NAME_TOKENS or any(
-            _CREDIT_NAME_TOKEN.fullmatch(token) is None
+            token_pattern.fullmatch(token) is None
             or token in _CREDIT_PROSE_WORDS
             for token in tokens
         ):
@@ -1867,7 +1937,10 @@ def project_audiobook_automatic_decision_value(
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         if current_value not in (None, "", value) and (
             option != "replace_safe_plain_text"
-            or not _plain_audiobook_synopsis(current_value)
+            or not (
+                _plain_audiobook_synopsis(current_value)
+                or _markup_only_synopsis(current_value)
+            )
             or not _recognized_synopsis_placeholder(current_value)
         ):
             raise RichMetadataPreviewError("rich automatic projection is invalid")

@@ -100,6 +100,32 @@ _SHORT_FRAGMENTS = (
     "Unknown",
     "TBD.",
 )
+# Closed shapes the retained-library recount found still missed (#1250).
+_CREDIT_LINE_EXTENSIONS = (
+    "Read by Example Narrator; Unabridged; Length:33h 50s;"
+    " Publisher: Example Audio, March 27, 2012",
+    "Narrated by Example Narrator. Length: 10 hrs and 3 mins",
+    "Narrated by Example Narrator; Publisher: Example Audio, Inc.",
+    "Read by Example Narrator; Released: 2012-03-27",
+    "Read by Example Narrator; Release date: 27 March 2012",
+    "Read by Example Narrator; Unabridged; Tag by A_S",
+    "Ripped and tagged by user42",
+    "Encoded by Example_Ripper",
+    "Created by Example Narrator",
+    "Read by Example Narrator; Unabr",
+    "Unab, read by Example Narrator",
+    "Unabridge",
+    "Read by",
+    "narrated by:",
+    "Narrated by; Unabridged",
+    "<p></p>",
+    "<p><br/></p>",
+    "Section 3",
+    "Section 2 of 9.",
+    "Audiobook created by Markable",
+    "Unabridged created by Markable",
+    "fre:ac - free audio converter",
+)
 _STILL_SYNOPSES = (
     "Narrated by the ghost of her sister, this novel follows…",
     "Narrated by the ghost of her sister, this novel follows her home",
@@ -115,10 +141,30 @@ _STILL_SYNOPSES = (
     "Narrated by Example Narrator in 2020",
     "Part one",
     "None of them survived the winter.",
+    "Fantasy (Unabridged)",
+    "DARK MATTER",
+    "Length: 33h 50s",
+    "Publisher: Example Audio",
+    "Released: 2012-03-27",
+    "Narrated by Example Narrator; Length: a long time",
+    "Narrated by Example Narrator; Released: someday soon",
+    "Tag by A_S and then she left",
+    "Read by Example_Narrator",
+    "Unable to sleep, she wanders the city.",
+    "Una",
+    "Unabridgedly told",
+    "Section one",
+    "Example created by Markable",
+    "fre:ac",
+    "<p>A story of loss.</p>",
+    "Narrated by Example Narrator. Set in 1920, a voyage reveals a hidden city"
+    " beneath the ice, and an archivist must decide what to keep.",
 )
 
 
-@pytest.mark.parametrize("value", _CREDIT_LINES + _SHORT_FRAGMENTS)
+@pytest.mark.parametrize(
+    "value", _CREDIT_LINES + _SHORT_FRAGMENTS + _CREDIT_LINE_EXTENSIONS
+)
 def test_credit_lines_and_short_fragments_are_placeholders(value):
     """Structured credits and format fragments describe nothing (#1250)."""
     assert _recognized_synopsis_placeholder(value)
@@ -129,7 +175,9 @@ def test_prose_that_merely_resembles_a_credit_stays_a_synopsis(value):
     assert not _recognized_synopsis_placeholder(value)
 
 
-@pytest.mark.parametrize("current", _CREDIT_LINES + _SHORT_FRAGMENTS)
+@pytest.mark.parametrize(
+    "current", _CREDIT_LINES + _SHORT_FRAGMENTS + _CREDIT_LINE_EXTENSIONS
+)
 def test_persisted_reconstruction_replaces_what_the_floor_recognizes(current):
     """The persisted projection reads the same floor the preview does."""
     candidate = {"kind": "text", "value": "A voyage reveals a hidden city."}
@@ -165,7 +213,15 @@ def test_persisted_reconstruction_preserves_what_stays_a_synopsis(current):
         )
 
 
-@pytest.mark.parametrize("current", ["Narrated by Example Narrator", "Unabridged"])
+@pytest.mark.parametrize(
+    "current",
+    [
+        "Narrated by Example Narrator",
+        "Unabridged",
+        "Read by Example Narrator; Unabr",
+        "<p></p>",
+    ],
+)
 def test_a_recognized_incumbent_is_replaced_through_the_persisted_decision(
     tmp_path, current
 ):
