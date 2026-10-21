@@ -11,10 +11,11 @@ the wiring rather than the adapters, which have their own suites.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from unittest.mock import patch
 
@@ -2844,3 +2845,229 @@ def test_the_dispatch_record_changes_no_request_or_decision(tmp_path: Path) -> N
     assert recorded[0] != bare[0]
     assert _without_dispatch(recorded[0]) == _without_dispatch(bare[0])
     assert recorded[1:] == bare[1:]
+
+
+_CATALOGUES = ("hardcover", "openlibrary")
+
+
+@contextlib.contextmanager
+def _catalogues_connected() -> Iterator[dict[str, int]]:
+    """Connect real Hardcover and Open Library adapters that may send nothing.
+
+    Yields how many times composition built each one, so a test can tell the
+    ASIN feed reached them as well as the discovery plan.
+    """
+    from dataclasses import replace
+
+    import httpx
+
+    from mechanical_librarian.adapters.providers.hardcover_metadata import (
+        HardcoverMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.open_library_metadata import (
+        OpenLibraryMetadataProvider,
+    )
+
+    def unreached(_request: httpx.Request) -> httpx.Response:
+        pytest.fail("a catalogue with no ASIN lookup sent a request")
+
+    built = dict.fromkeys(_CATALOGUES, 0)
+
+    def factory(name: str, adapter_type: type) -> Callable[..., object]:
+        def build(*_args: object, **_kwargs: object) -> object:
+            built[name] += 1
+            return adapter_type(
+                name,
+                httpx.Client(transport=httpx.MockTransport(unreached)),
+                262144,
+                5.0,
+                clock=lambda: 0.0,
+                wall_clock=lambda: 1700000000.0,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            )
+
+        return build
+
+    base = _configuration()
+    configuration = replace(
+        base,
+        libraries=(
+            replace(
+                base.libraries[0],
+                provider_connections=tuple(
+                    sorted((*base.libraries[0].provider_connections, *_CATALOGUES))
+                ),
+            ),
+        ),
+        providers=tuple(
+            sorted(
+                (
+                    *base.providers,
+                    ProviderConnectionConfiguration(
+                        "hardcover", True, False, "/run/hardcover-token", "hardcover"
+                    ),
+                    ProviderConnectionConfiguration(
+                        "openlibrary",
+                        True,
+                        False,
+                        None,
+                        "open_library",
+                        contact_email="owner@example.invalid",
+                    ),
+                ),
+                key=lambda value: value.name,
+            )
+        ),
+    )
+    with (
+        patch(__name__ + "._configuration", return_value=configuration),
+        patch.object(composition, "hardcover_client", return_value=object()),
+        patch.object(composition, "open_library_client", return_value=object()),
+        patch.object(
+            composition,
+            "HardcoverMetadataProvider",
+            side_effect=factory("hardcover", HardcoverMetadataProvider),
+        ),
+        patch.object(
+            composition,
+            "OpenLibraryMetadataProvider",
+            side_effect=factory("openlibrary", OpenLibraryMetadataProvider),
+        ),
+    ):
+        yield built
+
+
+def _catalogue_consequences(
+    root: Path, report: MetadataReport
+) -> tuple[str, int, set[str], set[str]]:
+    """Read what the published report drives, exactly as preparation does.
+
+    Admits the report's proposal, then returns the admission status, the
+    report's provider-limited browse fact, the connections it records a
+    provider-health failure for, and those it enrolls recovery jobs for --
+    through the same application calls the pipeline makes. Called inside
+    `_catalogues_connected`, whose configuration it reads.
+    """
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        record_provider_recovery_observations,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    configuration = _configuration()
+    repository = open_repository(root / "reports.sqlite")
+    try:
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        admission = json.loads(repository.admit_review_case(proposal))["status"]
+        (limited,) = repository._connection.execute(
+            "SELECT provider_limited FROM metadata_report_browse_facts "
+            "WHERE report_id=?",
+            (report.report_id,),
+        ).fetchone()
+        package = repository.current_review_package(
+            report.target.connection, report.target.library, report.target.item
+        )
+    finally:
+        repository.close()
+    assert package is not None
+    recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
+    try:
+        record_provider_recovery_observations(
+            recovery,
+            report,
+            adapters={value.name: value.adapter for value in configuration.providers},
+            scope=report.target.library,
+            generation=configuration.provider_recovery_generation,
+            now=0,
+        )
+        jobs = composition._provider_recovery_jobs(
+            report,
+            package=package,
+            proposal=proposal,
+            configuration=configuration,
+            scope=report.target.library,
+        )
+        if jobs:
+            recovery.enqueue_jobs(jobs, enqueued_at=0)
+        failing = {
+            connection
+            for (connection,) in recovery._connection.execute(
+                "SELECT connection FROM provider_recovery_health"
+            )
+        }
+        enrolled = {
+            connection
+            for (connection,) in recovery._connection.execute(
+                "SELECT connection FROM provider_recovery_jobs"
+            )
+        }
+    finally:
+        recovery.close()
+    return admission, limited, failing, enrolled
+
+
+def _catalogue_observations(report: MetadataReport) -> dict[str, tuple[object, ...]]:
+    return {
+        value.provider: (value.status, value.lanes, value.input_references)
+        for value in report.providers
+        if value.provider in _CATALOGUES
+    }
+
+
+def test_an_embedded_asin_audiobook_asks_the_catalogues_nothing(
+    tmp_path: Path, calls: list[tuple[str, ProviderQueryKind]]
+) -> None:
+    """Hardcover and Open Library answer an ASIN-only plan without failing.
+
+    Neither has an ASIN lookup, so each states that it had nothing to ask:
+    not a failure, so the report is not provider-limited, records no
+    provider-health failure and enrolls no recovery job (#1306).
+    """
+    providers = {
+        "audible_catalog": _FakeAudiobookProvider("audible", "audible_catalog", calls),
+        "audnexus": _FakeAudiobookProvider("enrichment", "audnexus", calls),
+        "audiosilo": _FakeAudiobookProvider("silo", "audiosilo", calls),
+        "itunes_search": _FakeAudiobookProvider("store", "itunes_search", calls),
+    }
+    with _catalogues_connected() as built:
+        serialized, repository = _run(tmp_path, providers)
+        work = repository._connection.execute(
+            "SELECT stage,state,outcome FROM review_preparation_work"
+        ).fetchone()
+        repository.close()
+        report = MetadataReport.from_json(serialized)
+        consequences = _catalogue_consequences(tmp_path, report)
+
+    assert {"hardcover": 1, "openlibrary": 1} == built
+    assert {
+        name: (ProviderStatus.INSUFFICIENT_INPUT, (), ()) for name in _CATALOGUES
+    } == _catalogue_observations(report)
+    assert ("admitted", 0, set(), set()) == consequences
+    # The three ASIN authorities still admit the recording, as they do with no
+    # catalogue connected.
+    assert ("proposal", "queued", None) == work
+
+
+def test_a_fed_asin_asks_the_catalogues_nothing(tmp_path: Path) -> None:
+    """The ASIN feed reaches the catalogues too, and changes nothing there.
+
+    Only the folder leaf is asked, so the catalogues, which never ask an
+    alternative title, answer no lane in discovery. Audible's admitted product
+    then feeds its ASIN to exactly those providers, and the catalogues answer
+    that plan as they answer an embedded ASIN (#1306).
+    """
+    with _catalogues_connected() as built:
+        report, work, audible_titles, _terms = _alternative_flow(tmp_path, _LEAF_FOLDER)
+        consequences = _catalogue_consequences(tmp_path, report)
+
+    assert ["The Real Title"] == audible_titles
+    assert {"hardcover": 2, "openlibrary": 2} == built
+    assert {
+        name: (ProviderStatus.INSUFFICIENT_INPUT, (), ()) for name in _CATALOGUES
+    } == _catalogue_observations(report)
+    assert ("admitted", 0, set(), set()) == consequences
+    assert ("proposal", "queued", None) == work

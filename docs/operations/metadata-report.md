@@ -204,7 +204,10 @@ first-phase observation answered no lane at all. Their first-phase observation
 is replaced rather than merged, so every provider still states exactly one
 observation per report. Across all three origins an item runs at most four ASIN
 lanes, in the order local, promoted, asserted, and there is no second promotion
-round. An item that already carries its own ASIN feeds nothing. A lane's origin
+round. An item that already carries its own ASIN feeds nothing. Hardcover and
+Open Library have no ASIN lookup, so a plan of ASIN lanes alone, local or fed,
+sends them no request and they record `insufficient_input` with no lane, not a
+failure (#1306). A lane's origin
 is read off its input references: an asserted lane names the ASIN claim whose
 source is the target, and a promoted lane names the same references the search
 lane used. A candidate returned on a promoted or asserted lane keeps

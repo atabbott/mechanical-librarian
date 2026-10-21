@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Hardcover and Open Library no longer fail on an audiobook identified only by
+  its ASIN, which neither can look up. They now send no request and record that
+  they had nothing to ask, so the audiobook is no longer marked provider-limited
+  and no provider-health failure or recovery job that could never succeed is
+  created. No clean rebuild is needed (#1306).
+
 - Provider request failures, throttles, deadline stops and recovery-job
   transitions now write one value-free JSON line each to the service log. A line
   never carries a title, query, URL, credential, path or item id. The cold-start
