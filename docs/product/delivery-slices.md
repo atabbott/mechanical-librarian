@@ -296,8 +296,17 @@ and disjoint narrator cast guards, with recording author reorders preserved;
 measurement, which removed iTunes from audiobook dispatch; #1258 dispatch
 classification; #1259 the closing replay, whose milestone-target figures are
 projections, and the band calibration, which confirmed the 90- and 600-second
-bands. #990 measures the 0.22.2 targets on the first run after the clean
-rebuild.
+bands; #1299 value-free provider failure, throttle, deadline and recovery log
+events with `cold-start-report-v4`; #1306 Hardcover and Open Library answering
+recording-only plans with no request; and #1294 the closing full audiobook
+library run.
+
+#1294 measured the targets on a fresh report-only run before #1306: 68
+audiobooks with no retained recording candidate (target at most 80), no
+provider starved and no Audiobookshelf cover-read timeout, but 112 not
+recording-admitted (at most 110), 8.87 dispatches per audiobook (at most 7.7)
+and attention unchanged at 285 fields over more cases. #1307 to #1310 own the
+misses; the measured table is on #1294.
 
 No release, tag, deployment, production-library operation, new provider or
 credential, transcription (#24), audiobook dispatch beyond the five-provider
