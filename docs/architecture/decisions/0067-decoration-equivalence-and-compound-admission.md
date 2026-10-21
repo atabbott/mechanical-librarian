@@ -167,8 +167,8 @@ side and field stated, and none composes:
   closed-equal to the stripped series name and, where the rung stripped a
   position, that same membership's position equals it as a decimal number. An
   inverted prefix always strips one. A parenthetical strips one when it ends in
-  an optional comma, an optional marker from the shared series vocabulary and
-  a decimal number, so "(Example Saga 3)" and "(Example Saga, Book 3)" need
+  an optional comma, an optional marker from the shared series vocabulary or
+  `#`, and a decimal number, so "(Example Saga 3)" and "(Example Saga, Book 3)" need
   "Example Saga" at position 3; any other parenthetical is a name alone. A
   product with no series, a different one, or the name and position on two
   memberships never admits. The original local title carries neither a
@@ -222,13 +222,11 @@ retained provider bodies:
   21 of 108 candidate-bearing items, and the wrong-title control refusing 38
   of 38.
 - All 81 stored audiobook work-lane admissions are identical.
-- Title productions: 12 admissions (9 inverted series prefix, 3 parenthesized
-  series name, 0 trailing series sequence), 0 false. Initials fold: 0.
-- 5 newly corroborated items gain 27 automatic outcomes, none wrong; hints
-  fed fall from 58 to 46.
-
-These figures predate the product-series requirement and the bounded
-recording-format terms; they are re-measured at this head, see #1260.
+- Title productions: 11 admissions (8 inverted series prefix, 3 parenthesized
+  series name), 0 false. Initials fold: 0.
+- 4 newly corroborated items gain 22 automatic outcomes, none wrong; hints
+  fed fall from 58 to 47, and measured items with no retained Audible
+  candidate from 59 to 57.
 
 **Persistence.** The productions advance the report to `metadata-report-v57`.
 **Clean rebuild required** under ADR-0013. The lineage shape is unchanged.

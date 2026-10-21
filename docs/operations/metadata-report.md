@@ -601,8 +601,8 @@ and the product's own series claims to state what the rung stripped on one
 membership: a series name closed-equal to the stripped name and, where the rung
 stripped a position, a position numerically equal to it. An inverted prefix
 always strips a position; a parenthetical strips one when it ends in an
-optional comma, an optional series marker and a number, as in
-`(Example Saga, Book 3)`. A trailing series sequence names no
+optional comma, an optional series marker or `#`, and a number, as in
+`(Example Saga, Book 3)` or `(Example Saga #3)`. A trailing series sequence names no
 series to corroborate, so it is not a band production.
 A local title with a variant marker or a whole-word recording-format term
 (dramatised, dramatized, dramatisation, dramatization, dramatisations,
