@@ -395,9 +395,10 @@ _RULE_ORDINAL = {
 }
 
 # The one decoration each band-first title production strips (#1260).
+# A trailing series sequence strips a position and no series name, so no
+# product series can corroborate it, and it is not a band production.
 _BAND_TITLE_FAMILIES = (
     WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
-    WorkTitleTransformationFamily.TRAILING_SERIES_SEQUENCE,
     WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX,
 )
 
@@ -549,7 +550,7 @@ _PAREN = re.compile(r"[\t\n\r\f\v ]*\(([^()]*)\)[\t\n\r\f\v ]*$")
 _SERIES_MARKER = re.compile(
     r"[\t\n\r\f\v ]*(?:[-,:][\t\n\r\f\v ]*)?"
     r"(?:book|volume|vol\.?|part)[\t\n\r\f\v ]*#?[\t\n\r\f\v ]*"
-    r"(?P<sequence>\d+(?:\.\d+)?|[ivxlcdm]+)[\t\n\r\f\v ]*$",
+    r"(?:\d+(?:\.\d+)?|[ivxlcdm]+)[\t\n\r\f\v ]*$",
     re.IGNORECASE,
 )
 _INVERTED_SERIES = re.compile(
@@ -1717,55 +1718,32 @@ def _band_decoration_corroborated(
 ) -> bool:
     """Whether the product's own series states what the rung stripped (#1260).
 
-    A stripped series name must closed-equal a stated series name, and a
-    stripped position must equal that membership's position numerically. A
-    trailing sequence strips a position alone, so any stated membership at
-    that position corroborates it.
+    The stripped series name must closed-equal a stated series name, and an
+    inverted prefix's position must equal that membership's position as a
+    decimal number.
     """
     title = _normalized_query_text(local_title)
-    name: str | None = None
-    sequence: str | None = None
     if family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME:
         match = _PAREN.search(title)
-        name = None if match is None else _clean(match.group(1))
-    elif family is WorkTitleTransformationFamily.TRAILING_SERIES_SEQUENCE:
-        match = _SERIES_MARKER.search(title)
-        sequence = None if match is None else match.group("sequence")
+        name = "" if match is None else _clean(match.group(1))
+        position = None
     else:
         match = _INVERTED_SERIES.fullmatch(title)
-        if match is not None:
-            name, sequence = _clean(match.group("series")), match.group("sequence")
-    position = None if sequence is None else _series_position(sequence)
-    if not name and position is None:
-        return False
-    return any(
-        (name is None or _closed_equal(stated_name, name))
+        if match is None:
+            return False
+        name = _clean(match.group("series"))
+        position = Decimal(match.group("sequence"))
+    return bool(name) and any(
+        _closed_equal(stated_name, name)
         and (
             position is None
             or stated_sequence is not None
-            and _series_position(stated_sequence) == position
+            and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", stated_sequence.strip())
+            is not None
+            and Decimal(stated_sequence.strip()) == position
         )
         for stated_name, stated_sequence in memberships
     )
-
-
-def _series_position(value: str) -> Decimal | None:
-    """Read a series position as a number: decimal digits or a Roman numeral."""
-    text = value.strip()
-    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", text):
-        return Decimal(text)
-    if not text or _ROMAN_NUMERAL.fullmatch(text) is None:
-        return None
-    digits = [_ROMAN_VALUES[letter] for letter in text.casefold()]
-    return Decimal(
-        sum(
-            -digit if digit < following else digit
-            for digit, following in zip(digits, [*digits[1:], 0], strict=True)
-        )
-    )
-
-
-_ROMAN_VALUES = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
 
 
 def _initials_fold(value: str) -> str:

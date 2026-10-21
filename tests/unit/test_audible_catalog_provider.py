@@ -2450,7 +2450,6 @@ def _band_report(
     ("title", "production"),
     (
         (_BAND_TITLE, "band_parenthesized_series_name"),
-        ("Plain Work, Book 2", "band_trailing_series_sequence"),
         ("Example Saga Book 2 - Plain Work", "band_order_inverted_series_prefix"),
     ),
 )
@@ -2485,19 +2484,14 @@ def test_a_tight_product_equal_to_the_shaped_rung_admits_as_a_recording(
 
 
 @pytest.mark.parametrize(
-    ("series", "admitted"),
-    (
-        ((("Henry Example", "2"),), True),
-        ((), False),
-        ((("Collected Plays", "5"),), False),
-        ((("Henry Example", "1"),), False),
-    ),
-    ids=("its_own_series_position", "no_series", "unrelated_series", "part_one"),
+    "series",
+    ((("Henry Example", "2"),), (), (("Collected Plays", "5"),)),
+    ids=("its_own_series_position", "no_series", "unrelated_series"),
 )
-def test_a_stripped_part_admits_only_what_the_product_s_series_states(
-    series: tuple[tuple[str, str], ...], admitted: bool
+def test_a_stripped_trailing_part_never_admits_band_first(
+    series: tuple[tuple[str, str], ...],
 ) -> None:
-    """A trailing "Part II" is a decoration only where the product says so."""
+    """A trailing "Part II" names no series, so nothing can corroborate it."""
     title = "Henry Example, Part II"
     plan = _band_plan(title=title)
     observation, asked = _band_observation(
@@ -2507,12 +2501,8 @@ def test_a_stripped_part_admits_only_what_the_product_s_series_states(
     _band_report(observation, plan, title=title)
 
     assert "Henry Example" == asked[0]
-    assert admitted is (ProviderStatus.CANDIDATES is observation.status)
-    assert (("band_trailing_series_sequence",) if admitted else ()) == tuple(
-        lane.transformation_lineage.production
-        for lane in observation.lanes
-        if lane.transformation_lineage is not None
-    )
+    assert ProviderStatus.NO_MATCH is observation.status
+    assert not any(lane.transformation_lineage for lane in observation.lanes)
 
 
 @pytest.mark.parametrize(

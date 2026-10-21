@@ -652,9 +652,12 @@ def test_constituent_families_stay_query_only_in_the_rule_table() -> None:
         WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
         WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
         WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
-        WorkTitleTransformationFamily.TRAILING_SERIES_SEQUENCE,
         WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX,
         WorkTitleTransformationFamily.INITIALS_FOLD,
+    }
+    # A trailing sequence names no series a product could corroborate (#1260).
+    assert "band_trailing_series_sequence" not in {
+        production.name for production in WORK_TITLE_COMPOUND_PRODUCTIONS
     }
     assert all(not rule.admission_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES)
     assert WorkTitleCompoundProduction(
@@ -1482,7 +1485,6 @@ def _band_replay(
     ("local_title", "production"),
     (
         ("Plain Work (Example Saga)", "band_parenthesized_series_name"),
-        ("Plain Work, Book 2", "band_trailing_series_sequence"),
         ("Example Saga Book 2 - Plain Work", "band_order_inverted_series_prefix"),
     ),
 )
@@ -1582,16 +1584,10 @@ def test_band_title_production_refusals(
     ("local_title", "provider_title", "series", "production"),
     (
         (
-            "Henry Example, Part II",
-            "Henry Example",
-            (("Henry Example", "2"),),
-            "band_trailing_series_sequence",
-        ),
-        (
-            "Plain Work, Book 2",
+            "Example Saga Book 2 - Plain Work",
             "Plain Work",
-            (("Another Saga", "2.0"),),
-            "band_trailing_series_sequence",
+            (("Example Saga", "2.0"),),
+            "band_order_inverted_series_prefix",
         ),
         (
             "Plain Work (Example Saga)",
@@ -1625,8 +1621,7 @@ def test_band_title_production_refusals(
         ),
     ),
     ids=(
-        "roman_part_matches_series_position",
-        "trailing_position_numerically_equal",
+        "inverted_position_numerically_equal",
         "parenthesized_name_among_memberships",
         "inverted_name_and_position",
         "dramatist_is_no_dramatisation",
@@ -1650,6 +1645,7 @@ def test_band_title_production_admits_with_the_product_s_own_series(
         ("Henry Example, Part 2", "Henry Example", ()),
         ("Henry Example, Part II", "Henry Example", (("Collected Plays", "5"),)),
         ("Henry Example, Part 2", "Henry Example", (("Collected Plays", "5"),)),
+        ("Henry Example, Part II", "Henry Example", (("Henry Example", "2"),)),
         ("Henry Example, Part II", "Henry Example", (("Henry Example", "1"),)),
         ("Henry Example, Part II", "Henry Example", (("Henry Example", None),)),
         ("Plain Work (Example Saga)", "Plain Work", ()),
@@ -1669,6 +1665,7 @@ def test_band_title_production_admits_with_the_product_s_own_series(
         "arabic_part_without_series",
         "roman_part_beside_an_unrelated_series",
         "arabic_part_beside_an_unrelated_series",
+        "trailing_part_even_at_its_own_series_position",
         "roman_part_at_another_position",
         "roman_part_without_a_position",
         "parenthesized_without_series",
@@ -1852,6 +1849,17 @@ def test_initials_fold_refuses_a_translator_credited_as_an_author() -> None:
         {
             "applications": [
                 {
+                    "family": "trailing_series_sequence",
+                    "field": "title",
+                    "ordinal": None,
+                    "side": "local",
+                }
+            ],
+            "production": "band_trailing_series_sequence",
+        },
+        {
+            "applications": [
+                {
                     "family": "parenthesized_series_name",
                     "field": "title",
                     "ordinal": None,
@@ -1872,6 +1880,7 @@ def test_initials_fold_refuses_a_translator_credited_as_an_author() -> None:
         "authors_field",
         "mismatched_production",
         "initials_on_title",
+        "trailing_sequence_not_a_production",
         "composed",
     ),
 )
