@@ -1806,9 +1806,9 @@ fuzzy matching, and run only on an audiobook plan's asserted lane when the
 candidate is inside the tight band of the item's own runtime. The band never
 admits alone: a title production needs the provider title and ordered authors
 to admit exactly against the lane's own shaped rung title and the product's own
-stated series to name the series the rung stripped, at the position it
-stripped where it stripped one, refuses a
-local title with a variant marker or complete recording-format term, and
+stated series to name, on one membership, the series the rung stripped and
+the position it stripped where it stripped one, refuses a
+local title with a variant marker or whole-word recording-format term, and
 refuses a product the asserted title explicitly contradicts; the initials fold needs closed-equal
 titles and ordered authors. The alternative lane, fed ASIN lanes, hints and
 exact admission are unchanged, so a target assertion still cannot settle

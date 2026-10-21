@@ -164,13 +164,18 @@ side and field stated, and none composes:
   transformation, against the title of the ladder query that carries that
   lineage. Reordered authors do not admit. The product's own stated series
   must corroborate the decoration the rung stripped: one membership's name is
-  closed-equal to the stripped series name, and for an inverted prefix its
-  position equals the stripped position as a decimal number. A product with
-  no series or a different one never admits. The original local title carries
-  neither a variant marker nor a complete recording-format term (dramatised, dramatized,
-  dramatisation, dramatization, abridged, unabridged, abridgement, abridgment,
-  full cast or full-cast, or radio play, drama or dramatisation); "The
-  Dramatist" is not a dramatisation. A product that
+  closed-equal to the stripped series name and, where the rung stripped a
+  position, that same membership's position equals it as a decimal number. An
+  inverted prefix always strips one. A parenthetical strips one when it ends in
+  an optional comma, an optional marker from the shared series vocabulary and
+  a decimal number, so "(Example Saga 3)" and "(Example Saga, Book 3)" need
+  "Example Saga" at position 3; any other parenthetical is a name alone. A
+  product with no series, a different one, or the name and position on two
+  memberships never admits. The original local title carries neither a
+  variant marker nor a whole-word recording-format term (dramatised,
+  dramatized, dramatisation, dramatization, dramatisations, dramatizations,
+  abridged, unabridged, abridgement, abridgment, full cast, full-cast or
+  radio); "The Dramatist" is not a dramatisation. A product that
   `provider_candidate_work_identity_contradiction` classifies as an explicit
   contradiction of the asserted title never admits, even where the rung title
   matches. The lineage is one local title application of that family.

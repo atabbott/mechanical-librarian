@@ -597,13 +597,17 @@ the 90-second tight band of the item's single local runtime with no recording
 language or format conflict. A title production needs the lane's dispatch
 lineage to be the normalized rung with exactly its one family, and the provider
 title and ordered authors to admit exactly against that rung's shaped title,
-and the product's own series claims to state what the rung stripped: a series
-name closed-equal to the stripped name and, for an inverted prefix, a position
-numerically equal to the stripped one. A trailing series sequence names no
+and the product's own series claims to state what the rung stripped on one
+membership: a series name closed-equal to the stripped name and, where the rung
+stripped a position, a position numerically equal to it. An inverted prefix
+always strips a position; a parenthetical strips one when it ends in an
+optional comma, an optional series marker and a number, as in
+`(Example Saga, Book 3)`. A trailing series sequence names no
 series to corroborate, so it is not a band production.
-A local title with a variant marker or a complete recording-format term
-(dramatised or dramatized, dramatisation, abridged, unabridged, abridgement,
-full cast, radio play or drama) never admits, and neither does a product the
+A local title with a variant marker or a whole-word recording-format term
+(dramatised, dramatized, dramatisation, dramatization, dramatisations,
+dramatizations, abridged, unabridged, abridgement, abridgment, full cast,
+full-cast or radio) never admits, and neither does a product the
 asserted title explicitly contradicts. `band_initials_fold` needs
 closed-equal titles and ordered authors, each pair equal or equal once dotted
 initials fold, with a name that keeps a token longer than one letter, and
