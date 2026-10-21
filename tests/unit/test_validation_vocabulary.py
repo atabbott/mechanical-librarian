@@ -13,6 +13,7 @@ from mechanical_librarian.domain.validation import (
     literal,
     non_negative_integer,
     nonempty_text,
+    one_of,
     prefixed_hex_identity,
     text,
 )
@@ -126,6 +127,16 @@ def test_prefixed_hex_identity_requires_exact_lowercase_64_hex_suffix() -> None:
     assert not check("record_" + "A" * 64)
     assert not check("record_" + "a" * 63)
     assert not check(_Text("record_" + "a" * 64))
+
+
+def test_one_of_accepts_only_exact_text_from_its_closed_set() -> None:
+    check = one_of("discovery", "recovery")
+    assert check("discovery") and check("recovery")
+    assert not check("asin_feed")
+    assert not check(_Text("discovery"))
+    # Membership compares by equality, so an unhashable value is refused, not raised.
+    assert not check(["discovery"])
+    assert not check(None)
 
 
 def test_literal_accepts_only_the_frozen_constant() -> None:

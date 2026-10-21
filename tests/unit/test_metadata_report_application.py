@@ -2812,9 +2812,12 @@ def test_each_provider_receives_at_most_its_share_of_the_aggregate(
 
 
 def test_an_asin_feed_after_a_slow_provider_dispatches_within_its_share(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The ASIN feed pass runs the same loop, so it draws the same share."""
+    """The ASIN feed pass runs the same loop, so it draws the same share.
+
+    Its events name the feed's own phase (#1299).
+    """
     clock = [1000.0]
     started = clock[0]
     monkeypatch.setattr(time, "monotonic", lambda: clock[0])
@@ -2827,7 +2830,15 @@ def test_an_asin_feed_after_a_slow_provider_dispatches_within_its_share(
         ) -> ProviderResult:
             assert deadline is not None
             calls.append(("audnexus", clock[0], deadline))
-            return super().observe(plan, deadline=deadline)
+            result = super().observe(plan, deadline=deadline)
+            if not result.observation.lanes:
+                return result
+            return replace(
+                result,
+                evidence=ProviderOperationalEvidence(
+                    attempt_records=(_attempt("http_500", "terminal"),)
+                ),
+            )
 
     selected = TargetFile("a" * 64, "book.m4b", "m4b")
     snapshot = _fed_snapshot(selected, asin="B0ASSERTED")
@@ -2865,6 +2876,18 @@ def test_an_asin_feed_after_a_slow_provider_dispatches_within_its_share(
         value for value in published.providers if value.provider == "audnexus"
     )
     assert [ProviderQueryKind.ASIN] == [lane.kind for lane in audnexus.lanes]
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [
+        ("slow", "discovery", "provider_deadline_stop"),
+        ("audnexus", "asin_feed", "provider_request_failed"),
+    ] == [(value["provider"], value["phase"], value["event"]) for value in events]
+    assert {
+        "lane_kind": "asin",
+        "query_family": "identifier",
+        "http_status": 500,
+        "deadline_ms": 20000,
+        "deadline_kind": "provider_share",
+    }.items() <= events[1].items()
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))
@@ -3610,6 +3633,52 @@ def test_each_request_failure_is_one_counted_event(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Distinct failures are counted, and a clean dispatch stays silent."""
+    assert expected == _emitted_events(monkeypatch, capsys, status, records)
+
+
+@pytest.mark.parametrize(
+    ("status", "category", "expected"),
+    (
+        (ProviderStatus.NO_MATCH, "http_404", []),
+        (ProviderStatus.NO_MATCH, "region_unavailable", []),
+        (
+            ProviderStatus.UNAVAILABLE,
+            "http_404",
+            [
+                _dispatch_event(
+                    "provider_request_failed",
+                    "http_non_success",
+                    http_status=404,
+                    attempt_outcome="terminal",
+                )
+            ],
+        ),
+        (
+            ProviderStatus.UNAVAILABLE,
+            "region_unavailable",
+            [
+                _dispatch_event(
+                    "provider_request_failed", "unknown", attempt_outcome="terminal"
+                )
+            ],
+        ),
+    ),
+    ids=(
+        "answered_not_found",
+        "answered_region",
+        "failed_not_found",
+        "failed_region",
+    ),
+)
+def test_a_not_found_answer_is_silent_unless_its_lane_failed(
+    status: ProviderStatus,
+    category: str,
+    expected: list[dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A 404 a provider answers as no match is its ordinary answer (#1299)."""
+    records = (_attempt(category, "terminal"),)
     assert expected == _emitted_events(monkeypatch, capsys, status, records)
 
 

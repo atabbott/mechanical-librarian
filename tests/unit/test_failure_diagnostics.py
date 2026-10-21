@@ -701,3 +701,39 @@ def test_provider_events_need_no_environment_switch(
         '{"event":"provider_throttled","outcome_class":"held"}\n'
         == capsys.readouterr().err
     )
+
+
+@pytest.mark.parametrize(
+    "seconds", (1e308, float("inf"), float("nan"), 10**400, 86_400.001, -1e308)
+)
+def test_an_unbounded_duration_names_no_milliseconds_and_keeps_the_event(
+    seconds: float,
+) -> None:
+    """A duration past the day bound is null, never an overflow (#1299)."""
+    from mechanical_librarian.application.failure_diagnostics import (
+        provider_dispatch_events,
+    )
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderAttemptRecord,
+    )
+
+    (event,) = provider_dispatch_events(
+        adapter="hardcover",
+        provider="catalogue",
+        item_ref="item-" + "0" * 16,
+        phase="discovery",
+        lanes=(),
+        observation=None,
+        evidence=ProviderOperationalEvidence(
+            attempt_records=(
+                ProviderAttemptRecord(
+                    "catalogue", 1, "http_500", None, 0.1, "terminal"
+                ),
+            )
+        ),
+        audio=False,
+        elapsed_seconds=seconds,
+        deadline_seconds=86_400,
+        deadline_kind="provider_share",
+    )
+    assert (None, 86_400_000) == (event["elapsed_ms"], event["deadline_ms"])

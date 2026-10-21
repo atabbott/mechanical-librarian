@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 import sys
 from collections import Counter
@@ -39,7 +38,7 @@ from mechanical_librarian.domain.validation import (
     FieldCheck,
     bounded_integer,
     matching,
-    text,
+    one_of,
 )
 
 if TYPE_CHECKING:
@@ -412,46 +411,43 @@ _THROTTLES = frozenset(
     }
 )
 _HTTP_STATUS = re.compile(r"http_([1-5][0-9]{2})")
+# A provider's ordinary "not found", which its adapter answers as no match. A
+# tuple compares by equality, so an unhashable category cannot raise here.
+_NOT_FOUND = ("http_404", "region_unavailable")
 _MAX_EVENT_MS = 86_400_000
 
 
-def _one_of(*values: str) -> FieldCheck:
-    return lambda value: text(value) and value in values
-
-
 _PROVIDER_EVENT_FIELDS: dict[str, FieldCheck] = {
-    "event": _one_of(
+    "event": one_of(
         "provider_request_failed",
         "provider_throttled",
         "provider_deadline_stop",
         "provider_recovery_job",
     ),
-    "level": _one_of("info", "warning"),
-    "adapter": _one_of(*(value for value in PROVIDER_AUTHORITIES if value)),
+    "level": one_of("info", "warning"),
+    "adapter": one_of(*(value for value in PROVIDER_AUTHORITIES if value)),
     "provider": matching(re.compile(r"[a-z][a-z0-9_-]{0,63}")),
     "item_ref": matching(re.compile(r"item-[0-9a-f]{16}")),
-    "phase": _one_of("discovery", "asin_feed", "recovery"),
-    "lane_kind": _one_of("isbn", "work", "asin", "mixed"),
-    "query_family": _one_of(
-        "identifier", "asserted", "path_leaf", "title_tag", "mixed"
-    ),
-    "outcome_class": _one_of(
+    "phase": one_of("discovery", "asin_feed", "recovery"),
+    "lane_kind": one_of("isbn", "work", "asin", "mixed"),
+    "query_family": one_of("identifier", "asserted", "path_leaf", "title_tag", "mixed"),
+    "outcome_class": one_of(
         "held", *(value.value for value in FailureCategory), *RECOVERY_OUTCOMES
     ),
     "http_status": bounded_integer(100, 599),
-    "attempt_outcome": _one_of(
+    "attempt_outcome": one_of(
         "retry", "exhausted", "terminal", "cancelled", "deadline_exhausted"
     ),
-    "stop": _one_of("before_dispatch", "in_flight"),
+    "stop": one_of("before_dispatch", "in_flight"),
     "count": bounded_integer(1, MAX_DIAGNOSTIC_COUNT),
     "retry_after_ms": bounded_integer(0, MAX_RECOVERY_DELAY * 1000),
     "elapsed_ms": bounded_integer(0, _MAX_EVENT_MS),
     "deadline_ms": bounded_integer(0, _MAX_EVENT_MS),
-    "deadline_kind": _one_of("provider_share", "aggregate", "recovery_window"),
-    "transition": _one_of("started", "settled", "failed", "stale", "held"),
+    "deadline_kind": one_of("provider_share", "aggregate", "recovery_window"),
+    "transition": one_of("started", "settled", "failed", "stale", "held"),
     "job_attempt": bounded_integer(0, 5),
     "physical_requests": bounded_integer(0, 54),
-    "dispatch_reason": _one_of(
+    "dispatch_reason": one_of(
         "missing_corroboration",
         "zero_provider_evidence",
         "settleable_disagreement",
@@ -502,7 +498,11 @@ def provider_item_ref(connection: str, library: str, item: str) -> str:
 
 
 def _milliseconds(seconds: object) -> int | None:
-    if type(seconds) not in {int, float} or not math.isfinite(cast(float, seconds)):
+    # The bound is checked before rounding, so NaN, an infinity or a huge
+    # finite value names no duration instead of raising.
+    if type(seconds) not in {int, float}:
+        return None
+    if not abs(cast(float, seconds)) * 1000 <= _MAX_EVENT_MS:
         return None
     return round(cast(float, seconds) * 1000)
 
@@ -535,7 +535,8 @@ def provider_dispatch_events(
     the lane when no attempt already named that class. A request the deadline
     stopped before dispatch is counted from the incomplete causes, and on an
     audiobook only where a lane was recorded as starved. A clean dispatch has
-    no event.
+    no event, and neither has a "not found" attempt when every lane answered
+    with candidates or no match: that is the provider's ordinary answer.
     """
     shapes = {lane.identity: _lane_shape(lane) for lane in lanes}
     answered = (
@@ -572,6 +573,14 @@ def provider_dispatch_events(
             "count": min(count, MAX_DIAGNOSTIC_COUNT),
         }
 
+    answered_cleanly = (
+        observation is not None
+        and bool(observation.lanes)
+        and all(
+            lane.status in {ProviderStatus.NO_MATCH, ProviderStatus.CANDIDATES}
+            for lane in observation.lanes
+        )
+    )
     attempts: Counter[tuple[str, str, int | None, object]] = Counter()
     delays: dict[tuple[str, str, int | None, object], int | None] = {}
     for record in evidence.attempt_records or ():
@@ -581,7 +590,7 @@ def provider_dispatch_events(
             if type(category) is str
             else (FailureCategory.UNKNOWN, FailureStage.RESPONSE)
         )
-        if mapped is None:
+        if mapped is None or (answered_cleanly and category in _NOT_FOUND):
             continue
         http = _HTTP_STATUS.fullmatch(category) if type(category) is str else None
         attempt_key = (
