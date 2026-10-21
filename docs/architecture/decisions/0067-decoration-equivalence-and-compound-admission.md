@@ -53,8 +53,9 @@ with side `local`, so no single-family lineage can exist and a persisted lineage
 whose production name does not derive from its families is rejected on replay.
 The persisted report schema advances `metadata-report-v35` to
 `metadata-report-v36`; ADR-0013 rejects v35 at startup and a clean rebuild is
-required. Enabling a further production still requires new corpus evidence and a
-new ADR.
+required. Enabling a further production requires its own per-family evidence
+and an amendment to this record; the #1260 amendment below revises how many one
+amendment may enable.
 
 **Decoration equivalence.** For a title result whose only reason is
 `competing_evidence`, exactly two provider-backed WORK alternatives that are
@@ -136,6 +137,106 @@ pre-empted the subtitle-segment and series families of F41 entirely.
 single-family dispatch lineages on the audiobook ladder only. No compound
 production is added: neither family composes with another, and neither admits.
 
+### Band-corroborated productions (#1260)
+
+The owner decided on 2026-10-19 to amend this record's one-production
+consequence before admitting the band-corroborated productions. One amendment
+may now enable several productions, provided each carries its own per-family
+evidence, each closes its own constituent where it is delivered in increments,
+and no production composes with another or with an existing production.
+
+**Band precondition.** These productions admit only on an audiobook plan's
+asserted WORK lane, from an audiobook provider authority, with the candidate
+inside the tight band of the item's single local runtime. The band is
+ADR-0064's `RUNTIME_BAND_TIGHT_SECONDS`, compared through its
+`runtime_agreement`, and the candidate must have no recording language or
+format conflict. An item with no single local runtime gets no widening. This
+inverts ADR-0064's admission-then-band order for these productions only. The
+alternative-title lane (#1255), fed ASIN lanes, the overflow witness, ebooks
+and every other authority keep their rules byte-identical.
+
+**Three productions.** Each is single-application or authors-only, with the
+side and field stated, and none composes:
+
+- `band_parenthesized_series_name` and `band_order_inverted_series_prefix`:
+  the lane's dispatch lineage is the normalized rung with exactly that one family, with or without the narrowing
+  retry. The provider title and ordered authors must admit exactly, with no
+  transformation, against the title of the ladder query that carries that
+  lineage. Reordered authors do not admit. The product's own stated series
+  must corroborate the decoration the rung stripped: one membership's name is
+  closed-equal to the stripped series name and, where the rung stripped a
+  position, that same membership's position equals it as a decimal number. An
+  inverted prefix always strips one. A parenthetical strips one when it ends in
+  an optional comma, an optional marker from the shared series vocabulary or
+  `#`, and a decimal number, so "(Example Saga 3)" and "(Example Saga, Book 3)" need
+  "Example Saga" at position 3; any other parenthetical is a name alone. A
+  product with no series, a different one, or the name and position on two
+  memberships never admits. The original local title carries neither a
+  variant marker nor a whole-word recording-format term (dramatised,
+  dramatized, dramatisation, dramatization, dramatisations, dramatizations,
+  abridged, unabridged, abridgement, abridgment, full cast, full-cast or
+  radio); "The Dramatist" is not a dramatisation. A product that
+  `provider_candidate_work_identity_contradiction` classifies as an explicit
+  contradiction of the asserted title never admits, even where the rung title
+  matches. The lineage is one local title application of that family.
+- `band_initials_fold`: the titles are closed-equal with no other
+  transformation, the author counts are equal and the authors are compared in
+  order. Each pair is closed-equal, or closed-equal once runs of single
+  letters each followed by a full stop are folded to the same letters
+  separated by spaces, and at least one pair needs the fold. Tokens split on
+  the whitespace the closed comparison collapses, no-break and thin spaces
+  included. "J.R.R." and
+  "J. R. R." fold to "J R R"; "JRR" does not change. Every folded name keeps a
+  token that is not a single letter. The lineage records one local or provider
+  authors application per changed side, with the author's ordinal. The new
+  `initials_fold` family is a table row that is neither query- nor
+  admission-enabled and is audiobook-only.
+
+**Trailing series sequence: not enabled.** A trailing sequence ("Part II",
+"Book 2") strips a position and no series name, so a product's series cannot
+corroborate it: "Henry IV, Part II" would admit a same-author "Henry IV" in
+any series at position 2. The replay recorded on #1260 found 0 positives for
+it. No `band_trailing_series_sequence` production exists, and a lineage
+naming one is refused.
+
+**Band-first set rule: deferred.** The proposed rule would admit the one
+tight product when every other admitted product lies outside the 600-second
+loose band. It ships only with at least one positive and no false admission,
+and the replay recorded on #1260 found none, in the engine or in a predicate
+scan over every retained page: of the 68 refused pages it reached, 66 had no
+admitted candidate and 2 had two candidates inside the band, correctly
+refused. It is not implemented.
+
+**Unchanged floors.** The variant, translation, adaptation and abridgement
+vetoes; `recording_variant_conflict`; exact fed-ASIN admission (#1257); the
+alternative-lane rule (#1255); ebook byte-identity; and the rule that the band
+never admits alone all hold. Set admission first runs exactly as before and
+widens only when that refuses, so every set it admitted before admits with the
+same candidates and lineage.
+
+**Evidence.** The replay recorded on #1260, over the #1086 snapshot and the
+retained provider bodies:
+
+- Floors: 91 of 91 case-bearing admissions with 0 on chapter basis, 238 of
+  238 duration claims equal to their track sums, the band refusing the same
+  21 of 108 candidate-bearing items, and the wrong-title control refusing 38
+  of 38.
+- All 81 stored audiobook work-lane admissions are identical.
+- Title productions: 11 admissions (8 inverted series prefix, 3 parenthesized
+  series name), 0 false. Initials fold: 0.
+- 4 newly corroborated items gain 22 automatic outcomes, none wrong; hints
+  fed fall from 58 to 47, and measured items with no retained Audible
+  candidate from 59 to 57.
+
+**Persistence.** The productions advance the report to `metadata-report-v57`.
+**Clean rebuild required** under ADR-0013. The lineage shape is unchanged.
+
+**Validation.** Unit matrices for each production in both directions,
+including the explicit-contradiction guard and an alternative-lane rung,
+dispatch canonicality, lineage round trip and forged-lineage rejection,
+report replay with and without band claims, v57 persistence and v56
+rejection, and integration through the real Audible and Audnexus adapters.
+
 ## Consequences
 
 ### Positive
@@ -159,8 +260,10 @@ production is added: neither family composes with another, and neither admits.
 
 - The report schema and proposal policy both advance, so every pre-release
   application database needs a clean rebuild.
-- The compound rule is one production, not a general composition mechanism;
-  each further composition costs a new review and a new ADR.
+- The compound rule is not a general composition mechanism. One reviewed
+  amendment may enable several productions, provided each carries its own
+  per-family evidence, each closes its own constituent where it is delivered in
+  increments, and no production composes with another (#1260).
 
 ### Neutral or deferred
 

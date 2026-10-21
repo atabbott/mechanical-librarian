@@ -469,3 +469,37 @@ provisional, and it cannot be exercised while only one audiobook cover
 authority is dispatched. `DURATION_AGREEMENT_BAND_SECONDS` stays a separate
 parameter, unchanged at 90. No constant changes, so the report version is
 unchanged and no clean rebuild is required. The full aggregates are on #1259.
+
+## Band-first work admission (#1260)
+
+The corroboration gate runs after work-identity admission: admission decides
+that a candidate set names the item's title and authors, and only then may the
+tight band widen one candidate to edition scope. ADR-0067's band-corroborated
+productions invert that order for themselves alone. On an audiobook plan's
+asserted WORK lane at an audiobook authority, a candidate inside the tight band
+of the item's single local runtime, with no recording language or format
+conflict, may admit through `band_parenthesized_series_name`,
+`band_order_inverted_series_prefix` or `band_initials_fold` where the closed comparison alone refuses it. The band is
+this record's `RUNTIME_BAND_TIGHT_SECONDS`, compared through
+`runtime_agreement`; there is no second constant. An item with no single local
+runtime gets no widening.
+
+Set admission first runs without the band. Only a set that refuses is tried
+again with the band-corroborated productions, so every set admitted before is
+admitted with the same candidates and lineage, and none of the band's refusals
+can admit. A product admitted this way is tight by construction, so the
+unchanged corroboration gate selects it, it keeps its marketplace edition
+evidence and stated-runtime admission grants it recording identity.
+`recording_identity_basis` stays `null`. The alternative-title lane (#1255),
+fed ASIN lanes and exact fed-ASIN admission (#1257), recording-lookup hints,
+the overflow witness and loose-band narrowing (#1256), the near-miss (#1258)
+and every ebook path keep their rules. A hint is still only a product the
+lane did not retain.
+
+Report validation and the proposal set replay the same band-aware set
+admission with the item's own local claims, on the asserted lane of an audio
+report at an audiobook authority only. A band
+lineage on an alternative lane, on an item with no single local runtime or
+with its candidate outside the tight band does not replay and is refused as an
+inconsistent lineage. The report advances to `metadata-report-v57`. **Clean
+rebuild required** under ADR-0013.

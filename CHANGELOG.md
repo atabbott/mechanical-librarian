@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An audiobook whose title carries a series decoration that the Audible
+  recording's own series confirms, a series name in parentheses or a leading
+  "Saga Book 2 -", or whose author is written with dotted initials, now matches
+  that recording when its running time agrees within 90 seconds. A wrong book, a
+  dramatisation or a translation still does not match. Upgrading requires a
+  clean rebuild (#1260).
+
 - Activity loads again after a verified write of a long value such as a book
   description; the confirmation now reads "Matches the new value" (#1278).
 

@@ -122,6 +122,16 @@ rung 1 for 5 of 91 case-bearing items and 47 of 238. Admission is unchanged: a r
 admits only what exact admission against the lane's own title admits. The
 schema advances to `metadata-report-v51`.
 
+The #1260 amendment appends one row, `initials_fold`, after every other row.
+It is audiobook-only and neither query- nor admission-enabled, so no ladder
+and no dispatch lineage changes; a persisted dispatch lineage naming it, or any
+other row that is not query-enabled, is refused. It folds a whitespace token of
+single letters each followed by a full stop to the letters separated by spaces,
+so "J.R.R." and "J. R. R." compare equal and "JRR" does not. It admits only
+through ADR-0067's `band_initials_fold` production, inside the tight runtime
+band, with titles closed-equal and authors ordered. The admission subset stays
+empty at row level.
+
 ## Consequences
 
 ### Positive

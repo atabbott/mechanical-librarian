@@ -16,8 +16,9 @@ The nullable replay field naming the ordered production that admitted a provider
 work identity and every exact field application: family, local or provider
 side, title or authors field, and author ordinal. Only an admission-enabled
 production is valid. The current productions are
-`author_prefix_then_underscores` and the single-family
-`latin_combining_marks`; every other individual transformation remains
+`author_prefix_then_underscores`, the single-family `latin_combining_marks`,
+and the band-corroborated audiobook productions `band_parenthesized_series_name`,
+`band_order_inverted_series_prefix` and `band_initials_fold` (#1260); every other individual transformation remains
 query-only.
 
 **Current pointer**

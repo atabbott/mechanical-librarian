@@ -89,6 +89,21 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Band-corroborated admission successor (#1260)
+
+The current F19a, F20 and F46 records move to semantic revision 57 over
+predecessor `78f3e2c6`, whose record bytes the archive index keeps. Their
+runtime digests join the prior-manifest histories with their frozen permission
+sets, so decisions minted under them stay readable without current authority.
+Report v57 binds the new semantics; **clean rebuild required**. Operation
+membership and historical measurements are unchanged, and focused synthetic
+proof is not library scoring.
+
+An audiobook's asserted work lane may now admit a recording through a
+band-corroborated production. That changes which products reach the decision
+pipeline, not what any qualified operation may do with them, so no operation
+gains or loses authority.
+
 ## Dispatch classification successor (#1258)
 
 The current F19a, F20 and F46 records move to semantic revision 56 over

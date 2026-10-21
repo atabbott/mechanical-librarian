@@ -916,7 +916,9 @@ is not exactly that enabled production. ADR-0068 additionally permits the
 closed Latin combining-mark family. Its admission lineage records exact changed
 local/provider title and author ordinals, while dispatch lineage records only
 the actual request; no retained claim is rewritten and compatibility or
-transliteration matching remains unavailable. The identity floor and every
+transliteration matching remains unavailable. ADR-0067's #1260 amendment adds
+three band-corroborated productions that admit only inside the tight runtime
+band on an audiobook plan's asserted lane. The identity floor and every
 translation, adaptation, abridgement, and variant-marker veto are unchanged.
 All widening and narrowing requests remain inside the existing deadline,
 pacing, byte, dispatch-count, and retry-accounting boundaries; ISBN/ASIN
@@ -1796,6 +1798,22 @@ Each audiobook lane's dispatch record (#1258) holds enum values and integers
 only. Its near-miss is a signed whole-second difference between two stated
 runtimes, taken from a page the adapter already parsed, with no provider text,
 title or ASIN and no new request.
+
+The band-corroborated productions (#1260) add no request, parser, provider or
+write capability. They read the title, authors and runtime an audiobook
+authority's search page already stated, compare them under closed rules with no
+fuzzy matching, and run only on an audiobook plan's asserted lane when the
+candidate is inside the tight band of the item's own runtime. The band never
+admits alone: a title production needs the provider title and ordered authors
+to admit exactly against the lane's own shaped rung title and the product's own
+stated series to name, on one membership, the series the rung stripped and
+the position it stripped where it stripped one, refuses a
+local title with a variant marker or whole-word recording-format term, and
+refuses a product the asserted title explicitly contradicts; the initials fold needs closed-equal
+titles and ordered authors. The alternative lane, fed ASIN lanes, hints and
+exact admission are unchanged, so a target assertion still cannot settle
+identity. Report validation and the proposal set replay the band-aware
+admission from the report's own claims, so a forged band lineage is refused.
 
 ## Incumbent description paragraphs
 

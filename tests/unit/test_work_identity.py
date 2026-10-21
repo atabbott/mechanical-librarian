@@ -217,6 +217,7 @@ def test_closed_rule_table_has_one_independent_row_per_family() -> None:
     } == {
         WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
         WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED,
+        WorkTitleTransformationFamily.INITIALS_FOLD,
     }
     assert [] == [
         rule.family
@@ -650,6 +651,13 @@ def test_constituent_families_stay_query_only_in_the_rule_table() -> None:
         WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
         WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
         WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,
+        WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+        WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX,
+        WorkTitleTransformationFamily.INITIALS_FOLD,
+    }
+    # A trailing sequence names no series a product could corroborate (#1260).
+    assert "band_trailing_series_sequence" not in {
+        production.name for production in WORK_TITLE_COMPOUND_PRODUCTIONS
     }
     assert all(not rule.admission_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES)
     assert WorkTitleCompoundProduction(
@@ -1243,10 +1251,15 @@ def test_audiobook_families_are_query_only_normalized_rows_in_place() -> None:
         (rule.query_enabled, rule.admission_enabled, rule.rung)
         for rule in WORK_TITLE_TRANSFORMATION_RULES
         if rule.audiobook_only
-    ] == [(True, False, WorkDispatchRung.NORMALIZED)] * 2
+    ] == [(True, False, WorkDispatchRung.NORMALIZED)] * 2 + [
+        (False, False, WorkDispatchRung.NORMALIZED)
+    ]
+    # The initials fold (#1260) is the one audiobook-only row that shapes no
+    # query, appended after every query row.
+    assert families[-1] is WorkTitleTransformationFamily.INITIALS_FOLD
     assert {
         rule.family for rule in WORK_TITLE_TRANSFORMATION_RULES if rule.audiobook_only
-    } == set(_AUDIOBOOK_FAMILIES)
+    } == {*_AUDIOBOOK_FAMILIES, WorkTitleTransformationFamily.INITIALS_FOLD}
 
 
 @pytest.mark.parametrize(
@@ -1417,3 +1430,525 @@ def test_discovery_title_candidate_is_bounded_on_adversarial_shapes(
 )
 def test_series_label_segment_reads_only_the_closed_series_grammar(segment, label):
     assert series_label_segment(segment) is label
+
+
+# Band-corroborated productions (ADR-0067, #1260).
+
+_BAND_AUTHORS = ("Ada Example",)
+# The product's own series, stating every decoration the band tests strip.
+_BAND_SERIES: tuple[tuple[str, str | None], ...] = (("Example Saga", "2"),)
+
+
+def _band_replay(
+    local_title: str,
+    provider_title: str,
+    *,
+    series: tuple[tuple[str, str | None], ...] = _BAND_SERIES,
+    family: WorkTitleTransformationFamily | None = None,
+    local_authors: tuple[str, ...] = _BAND_AUTHORS,
+    provider_authors: tuple[str, ...] = _BAND_AUTHORS,
+    runtime_tight: bool = True,
+    audiobook: bool = True,
+    narrowing: bool = False,
+    rung: int = 0,
+) -> object:
+    ladder = work_query_ladder(local_title, local_authors, audiobook=True)
+    dispatch = (
+        WorkDispatchLineage.from_query(ladder[rung])
+        if family is None
+        else WorkDispatchLineage(WorkDispatchRung.NORMALIZED, (family,))
+    )
+    if narrowing:
+        dispatch = WorkDispatchLineage(dispatch.rung, dispatch.transformations, True)
+    admission = replay_provider_work_identity_admission(
+        local_title=local_title,
+        local_authors=local_authors,
+        provider_title=provider_title,
+        provider_authors=provider_authors,
+        provider_work_identity="work-1",
+        dispatch_lineage=dispatch,
+        provider_series_memberships=series,
+        audiobook=audiobook,
+        runtime_tight=runtime_tight,
+    )
+    return (
+        None
+        if not admission.admitted
+        else "exact"
+        if admission.transformation is None
+        else admission.transformation.production
+    )
+
+
+@pytest.mark.parametrize("narrowing", (False, True), ids=("rung", "narrowing_retry"))
+@pytest.mark.parametrize(
+    ("local_title", "production"),
+    (
+        ("Plain Work (Example Saga)", "band_parenthesized_series_name"),
+        ("Example Saga Book 2 - Plain Work", "band_order_inverted_series_prefix"),
+    ),
+)
+def test_band_title_production_admits_the_shaped_rung_title(
+    local_title: str, production: str, narrowing: bool
+) -> None:
+    assert production == _band_replay(local_title, "Plain Work", narrowing=narrowing)
+    # Off the band the same product is refused, exactly as before.
+    assert None is _band_replay(
+        local_title, "Plain Work", narrowing=narrowing, runtime_tight=False
+    )
+
+
+_RECORDING_FORMAT_TERMS = (
+    "Dramatized",
+    "Dramatised",
+    "Dramatization",
+    "Dramatisation",
+    "Abridged",
+    "Unabridged",
+    "Abridgement",
+    "Abridgment",
+    "Full Cast",
+    "Full-Cast",
+    "Radio Play",
+    "Radio Drama",
+    "Radio Dramatisation",
+    "Dramatisations",
+    "Dramatizations",
+    "Radio",
+)
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title", "kwargs"),
+    (
+        ("Plain Work (Example Saga) [Tag]", "Plain Work", {}),
+        ("Plain Work: Example Saga, Book 2", "Plain Work", {"rung": 1}),
+        ("Plain Work (Example Saga) Book 2", "Plain Work Example Saga", {"rung": 1}),
+        ("03 - Plain Work", "Plain Work", {}),
+        ("Left Side - Plain Work", "Plain Work", {}),
+        ("Plain Work (Example Saga)", "Other Work", {}),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {
+                "local_authors": ("Ada Example", "Bea Example"),
+                "provider_authors": ("Bea Example", "Ada Example"),
+            },
+        ),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {
+                "local_authors": ("Ada Example", "Bea Example"),
+                "provider_authors": ("Ada Example",),
+            },
+        ),
+        *(
+            (f"Plain Work {term} (Example Saga)", f"Plain Work {term}", {})
+            for term in _RECORDING_FORMAT_TERMS
+        ),
+        ("Plain Work (Translated)", "Plain Work", {}),
+        ("Plain Work (Example Saga)", "Plain Work: Abridged Edition", {}),
+        ("Plain Work (Example Saga)", "Plain Work", {"audiobook": False}),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            {"family": WorkTitleTransformationFamily.TRAILING_SERIES_SEQUENCE},
+        ),
+    ),
+    ids=(
+        "two_families",
+        "subtitle_rung",
+        "folded_rung",
+        "leading_sequence_token",
+        "right_hand_segment",
+        "wrong_work_tight",
+        "reordered_authors",
+        "author_subset",
+        # The tier runner reduces an id to a safe alphabet, so the hyphenated
+        # and spaced forms of one term are told apart by position.
+        *(
+            f"recording_format_{index}_{term}"
+            for index, term in enumerate(_RECORDING_FORMAT_TERMS)
+        ),
+        "translated",
+        "provider_variant_marker",
+        "ebook",
+        "lineage_the_ladder_never_emits",
+    ),
+)
+def test_band_title_production_refusals(
+    local_title: str, provider_title: str, kwargs: dict[str, object]
+) -> None:
+    assert None is _band_replay(local_title, provider_title, **kwargs)  # type: ignore[arg-type]  # reason: parametrized keyword overrides
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title", "series", "production"),
+    (
+        (
+            "Example Saga Book 2 - Plain Work",
+            "Plain Work",
+            (("Example Saga", "2.0"),),
+            "band_order_inverted_series_prefix",
+        ),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            (("Other Saga", "1"), ("example saga", None)),
+            "band_parenthesized_series_name",
+        ),
+        (
+            "Example Saga Book 2 - Plain Work",
+            "Plain Work",
+            (("Example Saga", "02"),),
+            "band_order_inverted_series_prefix",
+        ),
+        (
+            "Plain Work (Example Saga 3)",
+            "Plain Work",
+            (("Example Saga", "3"),),
+            "band_parenthesized_series_name",
+        ),
+        (
+            "Plain Work (Example Saga, Book 3)",
+            "Plain Work",
+            (("Other Saga", "3"), ("Example Saga", "3.0")),
+            "band_parenthesized_series_name",
+        ),
+        (
+            "The Dramatist (Example Saga)",
+            "The Dramatist",
+            _BAND_SERIES,
+            "band_parenthesized_series_name",
+        ),
+        (
+            "Radioactive Work (Example Saga)",
+            "Radioactive Work",
+            _BAND_SERIES,
+            "band_parenthesized_series_name",
+        ),
+        (
+            "The Abridger (Example Saga)",
+            "The Abridger",
+            _BAND_SERIES,
+            "band_parenthesized_series_name",
+        ),
+    ),
+    ids=(
+        "inverted_position_numerically_equal",
+        "parenthesized_name_among_memberships",
+        "inverted_name_and_position",
+        "parenthesized_name_and_position",
+        "parenthesized_name_comma_marker_and_position",
+        "dramatist_is_no_dramatisation",
+        "radio_inside_a_word_is_no_format",
+        "abridger_is_no_abridgement",
+    ),
+)
+def test_band_title_production_admits_with_the_product_s_own_series(
+    local_title: str,
+    provider_title: str,
+    series: tuple[tuple[str, str | None], ...],
+    production: str,
+) -> None:
+    assert production == _band_replay(local_title, provider_title, series=series)
+
+
+@pytest.mark.parametrize(
+    ("local_title", "provider_title", "series"),
+    (
+        ("Henry Example, Part II", "Henry Example", ()),
+        ("Henry Example, Part 2", "Henry Example", ()),
+        ("Henry Example, Part II", "Henry Example", (("Collected Plays", "5"),)),
+        ("Henry Example, Part 2", "Henry Example", (("Collected Plays", "5"),)),
+        ("Henry Example, Part II", "Henry Example", (("Henry Example", "2"),)),
+        ("Henry Example, Part II", "Henry Example", (("Henry Example", "1"),)),
+        ("Henry Example, Part II", "Henry Example", (("Henry Example", None),)),
+        ("Plain Work (Example Saga)", "Plain Work", ()),
+        ("Plain Work (Example Saga)", "Plain Work", (("Other Saga", "2"),)),
+        (
+            "Plain Work (Example Saga)",
+            "Plain Work",
+            (("Example Saga Collection", None),),
+        ),
+        ("Plain Work (Example Saga 3)", "Plain Work", (("Example Saga", "4"),)),
+        (
+            "Plain Work (Example Saga, Book 3)",
+            "Plain Work",
+            (("Example Saga", "4"),),
+        ),
+        ("Plain Work (Example Saga 3)", "Plain Work", (("Example Saga", None),)),
+        (
+            "Plain Work (Example Saga, Book 3)",
+            "Plain Work",
+            (("Example Saga", None), ("Other Saga", "3")),
+        ),
+        ("Plain Work (Example Saga 3)", "Plain Work", (("Example Saga 3", None),)),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Example Saga", "3"),)),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Example Saga", None),)),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Other Saga", "2"),)),
+        ("Example Saga Book 2 - Plain Work", "Plain Work", (("Example Saga", "two"),)),
+    ),
+    ids=(
+        "roman_part_without_series",
+        "arabic_part_without_series",
+        "roman_part_beside_an_unrelated_series",
+        "arabic_part_beside_an_unrelated_series",
+        "trailing_part_even_at_its_own_series_position",
+        "roman_part_at_another_position",
+        "roman_part_without_a_position",
+        "parenthesized_without_series",
+        "parenthesized_with_another_series_name",
+        "parenthesized_with_a_longer_series_name",
+        "parenthesized_position_at_another_position",
+        "parenthesized_marker_position_at_another_position",
+        "parenthesized_position_without_a_stated_position",
+        "parenthesized_name_and_position_split_across_memberships",
+        "parenthesized_position_read_as_part_of_the_name",
+        "inverted_at_another_position",
+        "inverted_without_a_position",
+        "inverted_with_another_series_name",
+        "inverted_with_a_non_numeric_position",
+    ),
+)
+def test_band_title_production_refuses_without_the_product_s_own_series(
+    local_title: str,
+    provider_title: str,
+    series: tuple[tuple[str, str | None], ...],
+) -> None:
+    assert None is _band_replay(local_title, provider_title, series=series)
+
+
+def test_band_title_production_never_composes_with_another_production() -> None:
+    # The rung title matches, but only once the authors' initials fold too.
+    assert None is _band_replay(
+        "Plain Work (Example Saga)",
+        "Plain Work",
+        local_authors=("J.R.R. Example",),
+        provider_authors=("J. R. R. Example",),
+    )
+
+
+@pytest.mark.parametrize(
+    ("local", "provider", "sides"),
+    (
+        ("J.R.R. Example", "J. R. R. Example", ("local", "provider")),
+        ("J.K. Example", "J K Example", ("local",)),
+        ("Ada B. Example", "Ada B Example", ("local",)),
+        ("Ada B Example", "Ada B. Example", ("provider",)),
+        # No-break and thin spaces are whitespace to the closed comparison, so
+        # they separate the initials from the name exactly as a space does.
+        ("J.R.R.\N{NO-BREAK SPACE}Example", "J. R. R. Example", ("local", "provider")),
+        ("J.R.R.\N{THIN SPACE}Example", "J R R Example", ("local",)),
+        (
+            "J R R Example",
+            "J.\N{THIN SPACE}R.\N{THIN SPACE}R.\N{NO-BREAK SPACE}Example",
+            ("provider",),
+        ),
+    ),
+)
+def test_initials_fold_admits_closed_equal_title_inside_the_band(
+    local: str, provider: str, sides: tuple[str, ...]
+) -> None:
+    admission = admit_provider_work_identity(
+        local_title="Plain Work",
+        local_authors=("Bea Example", local),
+        provider_title="Plain Work",
+        provider_authors=("Bea Example", provider),
+        provider_work_identity="work-1",
+        audiobook=True,
+        runtime_tight=True,
+    )
+
+    assert admission.admitted and admission.transformation is not None
+    assert admission.transformation.production == "band_initials_fold"
+    assert [
+        (value.family, value.side.value, value.field, value.ordinal)
+        for value in admission.transformation.applications
+    ] == [
+        (
+            WorkTitleTransformationFamily.INITIALS_FOLD,
+            side,
+            WorkTitleTransformationField.AUTHORS,
+            1,
+        )
+        for side in sides
+    ]
+    assert (
+        work_title_transformation_lineage_from_data(admission.transformation.to_data())
+        == admission.transformation
+    )
+
+
+@pytest.mark.parametrize(
+    ("local", "provider", "kwargs"),
+    (
+        ("JRR Example", "J.R.R. Example", {}),
+        ("J. Example", "J. D. Example", {}),
+        ("A.B. Example", "A.C. Example", {}),
+        ("J. Example", "Jane Example", {}),
+        ("J.R.R.", "J. R. R.", {}),
+        ("St. Example", "St Example", {}),
+        ("J.R.R. Example", "J. R. R. Example", {"provider_title": "Other Work"}),
+        ("J.R.R. Example", "J. R. R. Example", {"runtime_tight": False}),
+        ("J.R.R. Example", "J. R. R. Example", {"audiobook": False}),
+    ),
+    ids=(
+        "undotted_run",
+        "added_initial",
+        "different_initials",
+        "initial_against_given_name",
+        "initials_only",
+        "abbreviation_is_not_folded",
+        "title_differs",
+        "band_off",
+        "ebook",
+    ),
+)
+def test_initials_fold_refusals(
+    local: str, provider: str, kwargs: dict[str, object]
+) -> None:
+    arguments: dict[str, object] = {
+        "local_title": "Plain Work",
+        "local_authors": (local,),
+        "provider_title": "Plain Work",
+        "provider_authors": (provider,),
+        "provider_work_identity": "work-1",
+        "audiobook": True,
+        "runtime_tight": True,
+        **kwargs,
+    }
+    assert not admit_provider_work_identity(**arguments).admitted  # type: ignore[arg-type]  # reason: parametrized keyword overrides
+
+
+def test_initials_fold_refuses_a_translator_credited_as_an_author() -> None:
+    assert not admit_provider_work_identity(
+        local_title="Plain Work",
+        local_authors=("J.R.R. Example",),
+        provider_title="Plain Work",
+        provider_authors=("J. R. R. Example", "Bea Translator"),
+        provider_work_identity="work-1",
+        audiobook=True,
+        runtime_tight=True,
+    ).admitted
+
+
+@pytest.mark.parametrize(
+    "data",
+    (
+        {
+            "applications": [
+                {
+                    "family": "parenthesized_series_name",
+                    "field": "title",
+                    "ordinal": None,
+                    "side": "provider",
+                }
+            ],
+            "production": "band_parenthesized_series_name",
+        },
+        {
+            "applications": [
+                {
+                    "family": "trailing_series_sequence",
+                    "field": "authors",
+                    "ordinal": 0,
+                    "side": "local",
+                }
+            ],
+            "production": "band_trailing_series_sequence",
+        },
+        {
+            "applications": [
+                {
+                    "family": "parenthesized_series_name",
+                    "field": "title",
+                    "ordinal": None,
+                    "side": "local",
+                }
+            ],
+            "production": "band_trailing_series_sequence",
+        },
+        {
+            "applications": [
+                {
+                    "family": "initials_fold",
+                    "field": "title",
+                    "ordinal": None,
+                    "side": "local",
+                }
+            ],
+            "production": "band_initials_fold",
+        },
+        {
+            "applications": [
+                {
+                    "family": "trailing_series_sequence",
+                    "field": "title",
+                    "ordinal": None,
+                    "side": "local",
+                }
+            ],
+            "production": "band_trailing_series_sequence",
+        },
+        {
+            "applications": [
+                {
+                    "family": "parenthesized_series_name",
+                    "field": "title",
+                    "ordinal": None,
+                    "side": "local",
+                },
+                {
+                    "family": "initials_fold",
+                    "field": "authors",
+                    "ordinal": 0,
+                    "side": "local",
+                },
+            ],
+            "production": "band_parenthesized_series_name",
+        },
+    ),
+    ids=(
+        "provider_side",
+        "authors_field",
+        "mismatched_production",
+        "initials_on_title",
+        "trailing_sequence_not_a_production",
+        "composed",
+    ),
+)
+def test_band_lineage_readback_rejects_forged_shapes(data: dict[str, object]) -> None:
+    with pytest.raises(ValueError):
+        work_title_transformation_lineage_from_data(data)
+
+
+def test_band_title_lineage_round_trips() -> None:
+    lineage = WorkTitleTransformationLineage(
+        (
+            WorkTitleTransformationApplication(
+                WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX,
+                WorkTitleTransformationSide.LOCAL,
+                WorkTitleTransformationField.TITLE,
+                None,
+            ),
+        )
+    )
+
+    assert lineage.production == "band_order_inverted_series_prefix"
+    assert work_title_transformation_lineage_from_data(lineage.to_data()) == lineage
+
+
+@pytest.mark.parametrize(
+    "family", ("initials_fold", "provider_associated_series_suffix")
+)
+def test_dispatch_canonicality_rejects_query_disabled_families(family: str) -> None:
+    with pytest.raises(ValueError):
+        work_dispatch_lineage_from_data(
+            {
+                "candidate_limit_narrowing_retry": False,
+                "rung": "normalized",
+                "transformations": [family],
+            }
+        )

@@ -234,14 +234,15 @@ def retained_report_as_current(document: str) -> MetadataReport:
     none added a field. v56 added each lane's dispatch record: null on an
     ebook lane, and on an audiobook lane the outcome its status and ladder
     allow, never starved, with no ladder depth or near-miss, since a v49
-    producer kept no cause or depth. Nothing is migrated: the copy is never
-    written back.
+    producer kept no cause or depth. v57 changed which audiobook products a
+    band-corroborated lane admits and added no field. Nothing is migrated: the
+    copy is never written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v56"
+    data["schema_version"] = "metadata-report-v57"
     for provider in data["providers"]:
         for lane in provider["lanes"]:
             lane["exhausted_dispatch"] = []
@@ -274,7 +275,7 @@ PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v56'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v57'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -293,10 +294,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v56'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v57'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v56'", f"= '{version}'"
+            "= 'metadata-report-v57'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 
 from mechanical_librarian.domain.audio_inspection import MAX_OBSERVED_CHARACTERS
@@ -40,6 +41,7 @@ class WorkTitleTransformationFamily(StrEnum):
     SUBTITLE_SEGMENT = "subtitle_segment"
     PUNCTUATION_AMPERSAND_FOLD = "punctuation_ampersand_fold"
     LATIN_COMBINING_MARKS = "latin_combining_marks"
+    INITIALS_FOLD = "initials_fold"
 
 
 class WorkTitleTransformationSide(StrEnum):
@@ -256,6 +258,15 @@ WORK_TITLE_TRANSFORMATION_RULES = (
         False,
         WorkDispatchRung.PUNCTUATION_FOLDED,
     ),
+    # An authors-only fold that shapes no query and admits only through the
+    # band-corroborated `band_initials_fold` production (#1260).
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.INITIALS_FOLD,
+        False,
+        False,
+        WorkDispatchRung.NORMALIZED,
+        audiobook_only=True,
+    ),
 )
 
 
@@ -383,6 +394,19 @@ _RULE_ORDINAL = {
     rule.family: ordinal for ordinal, rule in enumerate(WORK_TITLE_TRANSFORMATION_RULES)
 }
 
+# The one decoration each band-first title production strips (#1260).
+# A trailing series sequence strips a position and no series name, so no
+# product series can corroborate it, and it is not a band production.
+_BAND_TITLE_FAMILIES = (
+    WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
+    WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX,
+)
+
+# The productions the explicit-contradiction guard applies to (#1260).
+BAND_TITLE_PRODUCTIONS = frozenset(
+    f"band_{family.value}" for family in _BAND_TITLE_FAMILIES
+)
+
 WORK_TITLE_COMPOUND_PRODUCTIONS = (
     WorkTitleCompoundProduction(
         "local_audiobook_unabridged",
@@ -406,6 +430,15 @@ WORK_TITLE_COMPOUND_PRODUCTIONS = (
         "latin_combining_marks",
         (WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,),
         True,
+    ),
+    # Band-corroborated productions (ADR-0067, #1260): each admits only inside
+    # the tight runtime band on an audiobook plan's asserted WORK lane.
+    *(
+        WorkTitleCompoundProduction(f"band_{family.value}", (family,), True)
+        for family in (
+            *_BAND_TITLE_FAMILIES,
+            WorkTitleTransformationFamily.INITIALS_FOLD,
+        )
     ),
 )
 _ADMITTED_PRODUCTIONS_BY_FAMILIES = {
@@ -470,6 +503,19 @@ def _lineage_production(
         for value in applications
     ):
         return "latin_combining_marks"
+    if (
+        len(applications) == 1
+        and applications[0].family in _BAND_TITLE_FAMILIES
+        and applications[0].side is WorkTitleTransformationSide.LOCAL
+        and applications[0].field is WorkTitleTransformationField.TITLE
+    ):
+        return f"band_{applications[0].family.value}"
+    if all(
+        value.family is WorkTitleTransformationFamily.INITIALS_FOLD
+        and value.field is WorkTitleTransformationField.AUTHORS
+        for value in applications
+    ):
+        return "band_initials_fold"
     return None
 
 
@@ -479,6 +525,15 @@ if len({production.name for production in WORK_TITLE_COMPOUND_PRODUCTIONS}) != l
     raise RuntimeError("work title compound production table is ambiguous")
 
 _ASCII_SPACE = re.compile(r"[\t\n\r\f\v ]+")
+# A recording-format term in the local title keeps a band-first title
+# production from admitting, alongside the `_VARIANT` vocabulary (#1260).
+_RECORDING_FORMAT = re.compile(
+    r"\b(?:dramati[sz](?:ed|ations?)|(?:un)?abridged|abridge?ment|full[- ]cast"
+    r"|radio)\b",
+    re.IGNORECASE,
+)
+# A whitespace token of single letters, each followed by a full stop.
+_DOTTED_INITIALS = re.compile(r"(?:[^\W\d_]\.)+")
 _BRACKET_SOURCE = re.compile(r"[\t\n\r\f\v ]*\[[^\[\]]{1,80}\][\t\n\r\f\v ]*$")
 _ELECTION_BRACKET_SOURCE = re.compile(
     r"[\t\n\r\f\v ]*\[(?P<tag>[^\[\]]{1,80})\][\t\n\r\f\v ]*$"
@@ -492,15 +547,25 @@ _EDITION = re.compile(
     re.IGNORECASE,
 )
 _PAREN = re.compile(r"[\t\n\r\f\v ]*\(([^()]*)\)[\t\n\r\f\v ]*$")
+# The one closed series-marker vocabulary every series position grammar reads.
+_SERIES_WORD = r"(?:book|volume|vol\.?|part)"
 _SERIES_MARKER = re.compile(
     r"[\t\n\r\f\v ]*(?:[-,:][\t\n\r\f\v ]*)?"
-    r"(?:book|volume|vol\.?|part)[\t\n\r\f\v ]*#?[\t\n\r\f\v ]*"
+    rf"{_SERIES_WORD}[\t\n\r\f\v ]*#?[\t\n\r\f\v ]*"
     r"(?:\d+(?:\.\d+)?|[ivxlcdm]+)[\t\n\r\f\v ]*$",
     re.IGNORECASE,
 )
 _INVERTED_SERIES = re.compile(
-    r"^.+?\b(?:book|volume|vol\.?|part|#)[\t\n\r\f\v ]*\d+(?:\.\d+)?"
-    r"[\t\n\r\f\v ]+[-–—][\t\n\r\f\v ]+(.+)$",
+    rf"^(?P<series>.+?)\b(?:{_SERIES_WORD}|#)[\t\n\r\f\v ]*"
+    r"(?P<sequence>\d+(?:\.\d+)?)"
+    r"[\t\n\r\f\v ]+[-–—][\t\n\r\f\v ]+(?P<title>.+)$",
+    re.IGNORECASE,
+)
+# A parenthetical ending in a position, "Saga 3" or "Saga, Book 3": the series
+# name, then a comma or whitespace, an optional marker, and a decimal number.
+_PAREN_SERIES_POSITION = re.compile(
+    r"(?P<series>.+?)(?:[\t\n\r\f\v ]*,[\t\n\r\f\v ]*|[\t\n\r\f\v ]+)"
+    rf"(?:(?:{_SERIES_WORD}|#)[\t\n\r\f\v ]*)?(?P<sequence>\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
 # A leading position token: "3. Title", "Book 2: Title", "#4 - Title".  At
@@ -679,7 +744,7 @@ def _dispatch_transformations_are_canonical(
     transformations: tuple[WorkTitleTransformationFamily, ...],
 ) -> bool:
     """Reject persisted lineage combinations the bounded ladder cannot emit."""
-    if WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED in transformations:
+    if any(not _RULES_BY_FAMILY[family].query_enabled for family in transformations):
         return False
     if tuple(sorted(transformations, key=_RULE_ORDINAL.__getitem__)) != transformations:
         return False
@@ -744,8 +809,13 @@ def admit_provider_work_identity(
     variant_excluded: bool = False,
     allow_reordered_authors: bool = False,
     audiobook: bool = False,
+    runtime_tight: bool = False,
 ) -> WorkIdentityAdmission:
-    """Apply the one closed work-title/author identity decision."""
+    """Apply the one closed work-title/author identity decision.
+
+    `runtime_tight` says the candidate is inside the tight runtime band on an
+    audiobook plan's asserted lane; only then may the initials fold admit.
+    """
     if (
         type(local_title) is not str
         or type(provider_title) is not str
@@ -759,6 +829,7 @@ def admit_provider_work_identity(
         or type(variant_excluded) is not bool
         or type(audiobook) is not bool
         or type(allow_reordered_authors) is not bool
+        or type(runtime_tight) is not bool
         or variant_excluded
         or work_title_has_variant_marker(local_title)
         or work_title_has_variant_marker(provider_title)
@@ -819,6 +890,10 @@ def admit_provider_work_identity(
     )
     if latin is not None:
         return WorkIdentityAdmission(True, latin)
+    if audiobook and runtime_tight and _closed_equal(local_title, provider_title):
+        initials = _initials_fold_lineage(local_authors, provider_authors)
+        if initials is not None:
+            return WorkIdentityAdmission(True, initials)
     remainder = _filename_author_title_prefix_remainder(local_title, local_authors)
     if (
         remainder is None
@@ -867,9 +942,18 @@ def replay_provider_work_identity_admission(
     dispatch_lineage: WorkDispatchLineage | None,
     variant_excluded: bool = False,
     provider_series: tuple[tuple[str, str], ...] = (),
+    provider_series_memberships: tuple[tuple[str, str | None], ...] = (),
     audiobook: bool = False,
+    runtime_tight: bool = False,
 ) -> WorkIdentityAdmission:
-    """Recompute admission only for a dispatch the exact local ladder can emit."""
+    """Recompute admission only for a dispatch the exact local ladder can emit.
+
+    `runtime_tight` enables the band-corroborated productions (#1260); the
+    caller passes it only for a tight candidate on an audiobook plan's asserted
+    lane from an audiobook authority. A band title production also needs one
+    of `provider_series_memberships`, the product's own stated series names and
+    positions, to state the series the rung stripped.
+    """
     admission = admit_provider_work_identity(
         local_title=local_title,
         local_authors=local_authors,
@@ -879,6 +963,7 @@ def replay_provider_work_identity_admission(
         variant_excluded=variant_excluded,
         allow_reordered_authors=True,
         audiobook=audiobook,
+        runtime_tight=runtime_tight,
     )
     if not admission.admitted and len(provider_series) == 1:
         series, sequence = provider_series[0]
@@ -918,6 +1003,62 @@ def replay_provider_work_identity_admission(
                     ),
                 )
                 break
+    if (
+        not admission.admitted
+        and audiobook
+        and runtime_tight
+        and dispatch_lineage is not None
+        and dispatch_lineage.rung is WorkDispatchRung.NORMALIZED
+        and len(dispatch_lineage.transformations) == 1
+        and dispatch_lineage.transformations[0] in _BAND_TITLE_FAMILIES
+        and not work_title_has_variant_marker(local_title)
+        and _RECORDING_FORMAT.search(local_title) is None
+        and _band_decoration_corroborated(
+            dispatch_lineage.transformations[0],
+            local_title,
+            provider_series_memberships,
+        )
+    ):
+        # The rung's own shaped title is what this band-first production
+        # compares: exactly one ladder decoration away from the local title.
+        rung = next(
+            (
+                query
+                for query in work_query_ladder(
+                    local_title, local_authors, audiobook=True
+                )
+                if query.rung is dispatch_lineage.rung
+                and query.transformations == dispatch_lineage.transformations
+            ),
+            None,
+        )
+        if (
+            rung is not None
+            and (
+                exact := admit_provider_work_identity(
+                    local_title=rung.title,
+                    local_authors=local_authors,
+                    provider_title=provider_title,
+                    provider_authors=provider_authors,
+                    provider_work_identity=provider_work_identity,
+                    variant_excluded=variant_excluded,
+                )
+            ).admitted
+            and exact.transformation is None
+        ):
+            admission = WorkIdentityAdmission(
+                True,
+                WorkTitleTransformationLineage(
+                    (
+                        WorkTitleTransformationApplication(
+                            dispatch_lineage.transformations[0],
+                            WorkTitleTransformationSide.LOCAL,
+                            WorkTitleTransformationField.TITLE,
+                            None,
+                        ),
+                    )
+                ),
+            )
     if not admission.admitted or dispatch_lineage is None:
         return WorkIdentityAdmission(False)
     queries = work_query_ladder(local_title, local_authors, audiobook=audiobook)
@@ -1028,7 +1169,7 @@ def apply_work_title_transformation(
         return _clean(_SERIES_MARKER.sub("", title))
     if family is WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX:
         match = _INVERTED_SERIES.fullmatch(title)
-        return _clean(match.group(1)) if match is not None else title
+        return _clean(match.group("title")) if match is not None else title
     if family is WorkTitleTransformationFamily.LEADING_SEQUENCE_TOKEN:
         match = _LEADING_SEQUENCE.fullmatch(title)
         rest = "" if match is None else _clean(match.group("rest"))
@@ -1165,7 +1306,7 @@ def series_label_segment(segment: str) -> bool:
     return (
         _SERIES_MARKER.search(text) is not None
         or _POSITION_NUMBER.search(text) is not None
-        or (inverted is not None and inverted.group(1) == "x")
+        or (inverted is not None and inverted.group("title") == "x")
         or (leading is not None and leading.group("rest") == "x")
     )
 
@@ -1579,6 +1720,99 @@ def _latin_admission_lineage(
     )
 
 
+def _band_decoration_corroborated(
+    family: WorkTitleTransformationFamily,
+    local_title: str,
+    memberships: tuple[tuple[str, str | None], ...],
+) -> bool:
+    """Whether the product's own series states what the rung stripped (#1260).
+
+    One membership must state both halves: its name closed-equals the stripped
+    series name, and where the rung stripped a position (an inverted prefix,
+    or a parenthetical ending in one) its position equals that position as a
+    decimal number.
+    """
+    title = _normalized_query_text(local_title)
+    match: re.Match[str] | None
+    if family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME:
+        paren = _PAREN.search(title)
+        inside = "" if paren is None else _clean(paren.group(1))
+        match = _PAREN_SERIES_POSITION.fullmatch(inside)
+        if match is None:
+            name, position = inside, None
+    else:
+        match = _INVERTED_SERIES.fullmatch(title)
+        if match is None:
+            return False
+    if match is not None:
+        name = _clean(match.group("series"))
+        position = Decimal(match.group("sequence"))
+    return bool(name) and any(
+        _closed_equal(stated_name, name)
+        and (
+            position is None
+            or stated_sequence is not None
+            and re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", stated_sequence.strip())
+            is not None
+            and Decimal(stated_sequence.strip()) == position
+        )
+        for stated_name, stated_sequence in memberships
+    )
+
+
+def _initials_fold(value: str) -> str:
+    """Fold each token of dotted single letters to the letters, space-separated.
+
+    Tokens split on the whitespace `_closed_equal` collapses, no-break and
+    thin spaces included. "J.R.R." and "J. R. R." both become "j r r"; "JRR"
+    and "St." are unchanged but for case.
+    """
+    return " ".join(
+        " ".join(token[::2]) if _DOTTED_INITIALS.fullmatch(token) else token
+        for token in _comparison_text(value).split(" ")
+        if token
+    )
+
+
+def _initials_fold_lineage(
+    local_authors: tuple[str, ...], provider_authors: tuple[str, ...]
+) -> WorkTitleTransformationLineage | None:
+    """Admit ordered authors equal once dotted initials fold (#1260).
+
+    Every pair is closed-equal, or closed-equal once folded with a folded name
+    that keeps a token longer than one letter; at least one pair needs the fold.
+    """
+    applications: list[WorkTitleTransformationApplication] = []
+    for ordinal, (local, provider) in enumerate(
+        zip(local_authors, provider_authors, strict=True)
+    ):
+        if _closed_equal(local, provider):
+            continue
+        local_folded, provider_folded = _initials_fold(local), _initials_fold(provider)
+        if not _closed_equal(local_folded, provider_folded) or all(
+            len(token) == 1 for token in local_folded.split(" ")
+        ):
+            return None
+        applications.extend(
+            WorkTitleTransformationApplication(
+                WorkTitleTransformationFamily.INITIALS_FOLD,
+                side,
+                WorkTitleTransformationField.AUTHORS,
+                ordinal,
+            )
+            for side, original, folded in (
+                (WorkTitleTransformationSide.LOCAL, local, local_folded),
+                (WorkTitleTransformationSide.PROVIDER, provider, provider_folded),
+            )
+            if _comparison_text(folded) != _comparison_text(original)
+        )
+    if not applications:
+        return None
+    return WorkTitleTransformationLineage(
+        tuple(sorted(applications, key=_application_ordinal))
+    )
+
+
 def _remove_valid_identifier(match: re.Match[str]) -> str:
     label = match.group("label").casefold()
     compact = re.sub(r"[^0-9A-Z]", "", match.group("value").upper())
@@ -1616,6 +1850,7 @@ def _year(value: str) -> bool:
 
 
 __all__ = [
+    "BAND_TITLE_PRODUCTIONS",
     "WORK_TITLE_COMPOUND_PRODUCTIONS",
     "WORK_TITLE_TRANSFORMATION_RULES",
     "WorkDispatchLineage",

@@ -186,9 +186,13 @@ and work-identity admission decision. Provider adapters render its values into
 their documented grammars but cannot define title equivalence. Exact dispatch
 lineage survives report replay, retry successors, overflow witnesses, and
 ProposalSet evaluation. Admission is granted only by the reviewed
-`author_prefix_then_underscores` and `latin_combining_marks` productions. Latin
-recovery records every changed local or provider title/author field and author
-ordinal; every other individual table row stays query-only.
+`author_prefix_then_underscores` and `latin_combining_marks` productions, and,
+inside the tight runtime band on an audiobook plan's asserted lane, by the
+band-corroborated `band_parenthesized_series_name`,
+`band_order_inverted_series_prefix` and `band_initials_fold` productions
+(#1260). Latin recovery records every changed
+local or provider title/author field and author ordinal; every other individual
+table row stays query-only.
 Candidate-aware domain finalization deterministically reclassifies publication
 facts between claims and evidence, promotes safely linked manifestation dates,
 demotes incompatible publication claims, and assigns canonical comparison

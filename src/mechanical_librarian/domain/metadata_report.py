@@ -71,6 +71,7 @@ from mechanical_librarian.domain.validation import (
     non_negative_integer,
 )
 from mechanical_librarian.domain.work_identity import (
+    BAND_TITLE_PRODUCTIONS,
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkIdentityAdmission,
@@ -89,7 +90,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v56"
+REPORT_SCHEMA = "metadata-report-v57"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -3165,8 +3166,14 @@ def provider_candidate_work_identity_admission(
     dispatch_lineage: WorkDispatchLineage | None,
     *,
     audiobook: bool = False,
+    runtime_tight: bool = False,
 ) -> WorkIdentityAdmission:
-    """Apply the closed WORK qualification floor to one retained candidate."""
+    """Apply the closed WORK qualification floor to one retained candidate.
+
+    `runtime_tight` is set only on an audiobook plan's asserted lane, so
+    `local_title` is then the asserted title: a band-first title production
+    never admits a product that explicitly contradicts it (#1260).
+    """
     claims = (
         _linked_edition_work_identity_claims(candidate, local_title)
         if audiobook
@@ -3180,7 +3187,23 @@ def provider_candidate_work_identity_admission(
     ):
         return WorkIdentityAdmission(True)
     ordered = tuple(sorted(candidate.claims, key=lambda claim: claim.raw_order))
-    return replay_provider_work_identity_admission(
+    # Each stated series name with the position claim that directly follows
+    # it, `None` where that position is not a valid value.
+    memberships = tuple(
+        (
+            name.value,
+            sequence.value if sequence.state is FieldState.VALID else None,
+        )
+        for name, sequence in zip(ordered, ordered[1:], strict=False)
+        if name.kind is ClaimKind.SERIES
+        and sequence.kind is ClaimKind.SERIES_SEQUENCE
+        and name.scope is ClaimScope.WORK
+        and sequence.scope is ClaimScope.WORK
+        and name.state is FieldState.VALID
+        and name.value is not None
+        and sequence.raw_order == name.raw_order + 1
+    )
+    admission = replay_provider_work_identity_admission(
         local_title=local_title,
         local_authors=local_authors,
         provider_title=title,
@@ -3189,30 +3212,34 @@ def provider_candidate_work_identity_admission(
         dispatch_lineage=dispatch_lineage,
         variant_excluded=variant_excluded,
         provider_series=tuple(
-            (name.value, sequence.value)
-            for name, sequence in zip(ordered, ordered[1:], strict=False)
-            if name.kind is ClaimKind.SERIES
-            and sequence.kind is ClaimKind.SERIES_SEQUENCE
-            and name.scope is ClaimScope.WORK
-            and sequence.scope is ClaimScope.WORK
-            and name.state is FieldState.VALID
-            and sequence.state is FieldState.VALID
-            and name.value is not None
-            and sequence.value is not None
-            and sequence.raw_order == name.raw_order + 1
+            (name, sequence)
+            for name, sequence in memberships
+            if sequence is not None
             and sum(claim.kind is ClaimKind.SERIES for claim in ordered) == 1
             and not any(
                 claim.kind is ClaimKind.SUBTITLE
                 and claim.state is not FieldState.ABSENT
                 and not (
                     claim.state is FieldState.VALID
-                    and claim.value == f"{name.value}, Book {sequence.value}"
+                    and claim.value == f"{name}, Book {sequence}"
                 )
                 for claim in ordered
             )
         ),
+        provider_series_memberships=memberships,
         audiobook=audiobook,
+        runtime_tight=runtime_tight,
     )
+    if (
+        admission.transformation is not None
+        and admission.transformation.production in BAND_TITLE_PRODUCTIONS
+        and provider_candidate_work_identity_contradiction(
+            candidate, local_title, local_authors
+        )
+        is WorkIdentityContradiction.EXPLICIT
+    ):
+        return WorkIdentityAdmission(False)
+    return admission
 
 
 def provider_candidate_exact_work_identity_admission(
@@ -3683,14 +3710,55 @@ def provider_candidate_set_work_identity_admission(
     dispatch_lineage: WorkDispatchLineage | None,
     *,
     audiobook: bool = False,
+    band_claims: tuple[LocalClaim, ...] | None = None,
 ) -> ProviderWorkIdentitySetAdmission:
-    """Admit exactly one work identity and one lineage from a candidate set."""
-    return _provider_candidate_set_work_identity_admission(
-        candidates,
-        lambda candidate: provider_candidate_work_identity_admission(
-            candidate, local_title, local_authors, dispatch_lineage, audiobook=audiobook
-        ),
-        audiobook=audiobook,
+    """Admit exactly one work identity and one lineage from a candidate set.
+
+    `band_claims` are the item's local claims on an audiobook plan's asserted
+    WORK lane from an audiobook authority, and `None` everywhere else. Only a
+    set refused without them is tried again with the band-corroborated
+    productions, each candidate inside the tight band of the item's runtime
+    and without a recording conflict, so every set admitted without them
+    keeps its candidates and lineage (#1260).
+    """
+
+    def admit(
+        tight: Callable[[ProviderCandidate], bool],
+    ) -> ProviderWorkIdentitySetAdmission:
+        return _provider_candidate_set_work_identity_admission(
+            candidates,
+            lambda candidate: provider_candidate_work_identity_admission(
+                candidate,
+                local_title,
+                local_authors,
+                dispatch_lineage,
+                audiobook=audiobook,
+                runtime_tight=tight(candidate),
+            ),
+            audiobook=audiobook,
+        )
+
+    unwidened = admit(lambda _candidate: False)
+    if unwidened.admitted or band_claims is None:
+        return unwidened
+    # Imported here: the corroboration module imports this one, and it alone
+    # owns the tight band (ADR-0064).
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        CorroborationOutcome,
+        candidate_runtime_seconds,
+        local_claim_runtime_seconds,
+        runtime_agreement,
+    )
+
+    local = local_claim_runtime_seconds(band_claims)
+    if local is None:
+        return unwidened
+    return admit(
+        lambda candidate: (
+            runtime_agreement(local, candidate_runtime_seconds(candidate)).outcome
+            is CorroborationOutcome.CORROBORATED
+            and recording_variant_conflict(candidate, band_claims, local_title) is None
+        )
     )
 
 
@@ -4066,6 +4134,15 @@ class MetadataReport:
                 if lane.kind is ProviderQueryKind.WORK
                 and lane.status is ProviderStatus.CANDIDATES
             )
+            # Band claims reach only the asserted lane of an audiobook plan at
+            # an audiobook authority, so a band-corroborated lineage anywhere
+            # else does not replay (#1260).
+            band_claims = (
+                self.local_claims
+                if self.audio is not None
+                and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+                else None
+            )
             if (
                 not work_lanes
                 and provider.query_kind is ProviderQueryKind.WORK
@@ -4077,6 +4154,7 @@ class MetadataReport:
                     target_authors,
                     provider.dispatch_lineage,
                     audiobook=self.audio is not None,
+                    band_claims=band_claims,
                 )
                 if (
                     not set_admission.admitted
@@ -4102,6 +4180,11 @@ class MetadataReport:
                     target_authors,
                     lane.dispatch_lineage,
                     audiobook=self.audio is not None,
+                    band_claims=(
+                        band_claims
+                        if payload is not None and payload.title_basis is None
+                        else None
+                    ),
                 )
                 if (
                     not set_admission.admitted

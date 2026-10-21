@@ -132,6 +132,15 @@ series associations survive; malformed credits never authorize partial lists.
 One exact terminal ` (Unabridged)` may be ignored in local audiobook matching
 when the remaining full title and complete authors agree. This is not a title
 rewrite, provider-title stripping, or inferred abridgement authority.
+When the provider's running time is within 90 seconds of the recording's own,
+the asserted title's one series decoration (a parenthesized series name or an
+inverted series prefix such as "Saga Book 2 - Title") may also be ignored when
+the recording's own series states that name and position, and
+dotted initials such as "J.R.R." match their spaced form (#1260). The runtime
+never matches on its own, and dramatisations, translations and other variants
+still do not match. A recording admitted this way follows the ordinary
+recording route, so its title change stays an owner choice when the series
+the decoration named is not preserved.
 
 Recording facts retain field-specific relationships and runtime/variant vetoes.
 Explicit language, abridgement, full-cast and part conflicts matter; unknown
