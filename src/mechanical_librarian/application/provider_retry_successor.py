@@ -11,6 +11,7 @@ import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import partial
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
@@ -19,7 +20,10 @@ from mechanical_librarian.application.configuration import (
     ReportLimits,
 )
 from mechanical_librarian.application.failure_diagnostics import (
+    emit_provider_events,
     merge_provider_diagnostics,
+    provider_dispatch_events,
+    provider_item_ref,
     provider_result_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -33,6 +37,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ProviderBinding,
     ProviderLaneResult,
+    ProviderObservationFailure,
     ReportRepository,
     TargetReader,
     audiobook_asin_feed_plan,
@@ -63,6 +68,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderStatus,
     ReportValueError,
+    TargetFacts,
     candidate_asins,
 )
 from mechanical_librarian.domain.provider_recovery import (
@@ -285,6 +291,7 @@ class GenerateProviderRetrySuccessor:
                 plan,
                 selected,
                 original,
+                source.target,
                 deadline=time.monotonic() + 60.0,
             )
             self._heartbeat()
@@ -562,13 +569,45 @@ class GenerateProviderRetrySuccessor:
         plan: MetadataDiscoveryPlan,
         selected: tuple[MetadataDiscoveryLane, ...],
         original: ProviderObservation,
+        target: TargetFacts,
         *,
         deadline: float,
     ) -> tuple[ProviderObservation, int | None, RecoveryAttemptEvidence]:
+        """Dispatch the selected lanes once, within the recovery window.
+
+        The dispatch's failures, throttles and deadline stops are written as
+        value-free provider events whether it returns or raises (#1299).
+        """
+        started = time.monotonic()
+        events = partial(
+            provider_dispatch_events,
+            adapter=provider.binding.authority,
+            provider=provider.binding.name,
+            item_ref=provider_item_ref(target.connection, target.library, target.item),
+            phase="recovery",
+            lanes=selected,
+            audio=plan.audio is not None,
+            deadline_seconds=max(0.0, deadline - started),
+            deadline_kind="recovery_window",
+        )
         try:
             client: MetadataProvider = provider.binding.factory()
             result = client.observe(replace(plan, lanes=selected), deadline=deadline)
         except Exception as error:
+            elapsed, failure = time.monotonic() - started, error
+            # The partial evidence is read inside the event guard: a snapshot
+            # the adapter malformed must not displace the failure below.
+            emit_provider_events(
+                lambda: events(
+                    observation=None,
+                    evidence=(
+                        failure.snapshot.evidence
+                        if isinstance(failure, ProviderObservationFailure)
+                        else ProviderOperationalEvidence()
+                    ),
+                    elapsed_seconds=elapsed,
+                )
+            )
             # Provider construction and the remote observation are one dispatch
             # across the complete result/failure contract. Either failing
             # means the retry produced no observation, and the checks below --
@@ -579,6 +618,12 @@ class GenerateProviderRetrySuccessor:
                 "provider retry dispatch failed",
                 evidence=partial_recovery_evidence(error, provider.binding.name),
             ) from error
+        emit_provider_events(
+            events,
+            observation=result.observation,
+            evidence=result.evidence,
+            elapsed_seconds=time.monotonic() - started,
+        )
         observation = result.observation
         evidence = observed_recovery_evidence(observation)
         try:

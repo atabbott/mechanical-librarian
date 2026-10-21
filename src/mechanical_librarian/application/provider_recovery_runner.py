@@ -8,11 +8,16 @@ caller and the background caller cannot fan out concurrently.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol, cast
 from uuid import uuid4
 
+from mechanical_librarian.application.failure_diagnostics import (
+    emit_provider_events,
+    provider_recovery_job_events,
+)
 from mechanical_librarian.application.provider_recovery_evidence import (
     settled_recovery_evidence,
 )
@@ -169,6 +174,7 @@ class ScopedProviderRecoveryRunner:
         clock: Callable[[], int] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
         blocked_targets: Callable[[], frozenset[str]] = lambda: frozenset(),
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store, self._generation = store, generation
         self._retry, self._classify_failure = retry, classify_failure
@@ -176,6 +182,28 @@ class ScopedProviderRecoveryRunner:
             clock,
             cancelled,
             blocked_targets,
+        )
+        self._monotonic = monotonic
+
+    def _job_event(
+        self,
+        started: float,
+        job: ProviderRecoveryJob,
+        transition: str,
+        evidence: RecoveryAttemptEvidence | None = None,
+    ) -> None:
+        """Name one job transition the store has already committed (#1299).
+
+        Called only after the store call returns, so an event never describes
+        a settlement that did not happen; the clock is read inside the guard.
+        """
+        emit_provider_events(
+            lambda: provider_recovery_job_events(
+                job=job,
+                transition=transition,
+                evidence=evidence,
+                elapsed_seconds=self._monotonic() - started,
+            )
         )
 
     def _current(self, floor: int) -> int:
@@ -188,6 +216,7 @@ class ScopedProviderRecoveryRunner:
         return self._store.enqueue_jobs(jobs, enqueued_at=enqueued_at)
 
     def run_one(self, *, now: int, token: str | None = None) -> RecoveryRun:
+        started = self._monotonic()
         token = token or uuid4().hex
         current = self._current(now)
         blocked = self._blocked_targets()
@@ -216,6 +245,8 @@ class ScopedProviderRecoveryRunner:
             canary = self._store.claim_job(
                 recovery=claimed, token=token, now=current, blocked_targets=blocked
             )
+            if canary is not None:
+                self._job_event(started, canary, "started")
         if fanout_state is not None:
             pass
         elif canary is None:
@@ -263,6 +294,7 @@ class ScopedProviderRecoveryRunner:
                             recovery=claimed,
                             now=current,
                         )
+                        self._job_event(started, canary, "held")
                         return RecoveryRun("target_held")
                     if failure == "stale":
                         self._store.complete_stale_job(
@@ -270,12 +302,15 @@ class ScopedProviderRecoveryRunner:
                             token=token,
                             now=current,
                         )
+                        self._job_event(started, canary, "stale")
                         canary = self._store.claim_job(
                             recovery=claimed,
                             token=token,
                             now=current,
                             blocked_targets=blocked,
                         )
+                        if canary is not None:
+                            self._job_event(started, canary, "started")
                         continue
                     if failure not in RECOVERY_FAILURES:
                         exhausted = self._store.complete_exhausted_scope(
@@ -285,6 +320,7 @@ class ScopedProviderRecoveryRunner:
                             now=current,
                             evidence=evidence,
                         )
+                        self._job_event(started, canary, "failed", evidence)
                         return RecoveryRun(exhausted.state)
                     self._store.complete_canary_failure(
                         job=canary,
@@ -295,6 +331,7 @@ class ScopedProviderRecoveryRunner:
                         failure=failure,
                         retry_after=retry_after,
                     )
+                    self._job_event(started, canary, "failed", evidence)
                     return RecoveryRun("waiting")
                 current = self._current(current)
                 fanout_state = self._store.authorize_fanout(
@@ -303,6 +340,12 @@ class ScopedProviderRecoveryRunner:
                     recovery=claimed,
                     now=current,
                     evidence=evidence,
+                )
+                self._job_event(
+                    started,
+                    canary,
+                    "settled",
+                    evidence or RecoveryAttemptEvidence("completed"),
                 )
                 break
             if canary is None:
@@ -324,6 +367,7 @@ class ScopedProviderRecoveryRunner:
             )
             if member is None:
                 break
+            self._job_event(started, member, "started")
             completed_evidence = None
             try:
 
@@ -348,6 +392,7 @@ class ScopedProviderRecoveryRunner:
                     recovery=fanout_state,
                     evidence=evidence,
                 )
+                self._job_event(started, member, "settled", completed_evidence)
                 fanout += 1
             except Exception as error:
                 # ``_classify_failure`` does the naming here as it does in the
@@ -372,6 +417,7 @@ class ScopedProviderRecoveryRunner:
                         recovery=fanout_state,
                         now=current,
                     )
+                    self._job_event(started, member, "held")
                     return RecoveryRun("target_held", fanout)
                 if failure == "stale":
                     self._store.complete_stale_job(
@@ -379,6 +425,7 @@ class ScopedProviderRecoveryRunner:
                         token=token,
                         now=current,
                     )
+                    self._job_event(started, member, "stale")
                 elif failure in RECOVERY_FAILURES:
                     self._store.interrupt_fanout(
                         job=member,
@@ -389,6 +436,7 @@ class ScopedProviderRecoveryRunner:
                         failure=failure,
                         retry_after=retry_after,
                     )
+                    self._job_event(started, member, "failed", evidence)
                     return RecoveryRun("waiting", fanout)
                 else:
                     self._store.complete_job(
@@ -399,6 +447,7 @@ class ScopedProviderRecoveryRunner:
                         recovery=fanout_state,
                         evidence=evidence,
                     )
+                    self._job_event(started, member, "failed", evidence)
         if self._cancelled():
             return RecoveryRun("fanout", fanout)
         if self._store.fanout_pending(recovery=fanout_state):

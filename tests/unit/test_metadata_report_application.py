@@ -67,6 +67,7 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.operations import StageTimer, StageTiming
 from mechanical_librarian.application.provider_evidence import (
+    ProviderAttemptRecord,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
     ProviderOperationalEvidence,
@@ -3454,3 +3455,327 @@ def test_an_ebook_observation_keeps_no_dispatch_record() -> None:
     )
 
     assert [None] == [lane.dispatch for lane in observation.lanes]
+
+
+# Provider log events (#1299): each dispatch's failures, throttles and deadline
+# stops are one value-free stderr line apiece, and writing them changes nothing.
+
+
+def _item_ref(item: str = "item-1") -> str:
+    import hashlib
+
+    material = f"primary\0books\0{item}".encode()
+    return "item-" + hashlib.sha256(material).hexdigest()[:16]
+
+
+class _AttemptProvider:
+    """Answer every asserted lane with one status and the given attempt records."""
+
+    def __init__(
+        self,
+        status: ProviderStatus,
+        records: tuple[ProviderAttemptRecord, ...],
+        clock: list[float],
+    ) -> None:
+        self._status = status
+        self._records = records
+        self._clock = clock
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        self._clock[0] += 1.5
+        return ProviderResult(
+            provider_observation(
+                "catalogue",
+                tuple(
+                    ProviderLaneResult(lane, self._status)
+                    for lane in plan.lanes
+                    if lane.title_basis is None
+                ),
+                authority="hardcover",
+            ),
+            evidence=ProviderOperationalEvidence(attempt_records=self._records),
+        )
+
+
+def _attempt(
+    category: str, outcome: str, delay: float | None = None
+) -> ProviderAttemptRecord:
+    return ProviderAttemptRecord("catalogue", 1, category, delay, 0.5, outcome)
+
+
+def _dispatch_event(name: str, outcome: str, **fields: object) -> dict[str, object]:
+    return {
+        "event": name,
+        "level": "warning",
+        "adapter": "hardcover",
+        "provider": "catalogue",
+        "item_ref": _item_ref(),
+        "phase": "discovery",
+        "lane_kind": "work",
+        "query_family": "asserted",
+        "outcome_class": outcome,
+        "http_status": None,
+        "elapsed_ms": 1500,
+        "deadline_ms": 20000,
+        "deadline_kind": "provider_share",
+        "count": 1,
+        **fields,
+    }
+
+
+def _emitted_events(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    status: ProviderStatus,
+    records: tuple[ProviderAttemptRecord, ...],
+) -> list[object]:
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    binding = ProviderBinding(
+        "catalogue",
+        True,
+        partial(_AttemptProvider, status, records, clock),
+        authority="hardcover",
+    )
+    snapshot = _share_snapshot("ebook")
+    _share_service("ebook", snapshot, FakeReportRepository(), (binding,), None).run(
+        "item-1", 0
+    )
+    return [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+
+
+@pytest.mark.parametrize(
+    ("status", "records", "expected"),
+    (
+        (
+            ProviderStatus.UNAVAILABLE,
+            (
+                _attempt("transport_connect_error", "retry", 0.25),
+                _attempt("transport_connect_error", "retry", 0.5),
+                _attempt("http_500", "terminal"),
+                _attempt("response_malformed", "terminal"),
+            ),
+            [
+                _dispatch_event(
+                    "provider_request_failed",
+                    "transport",
+                    attempt_outcome="retry",
+                    count=2,
+                ),
+                _dispatch_event(
+                    "provider_request_failed",
+                    "http_non_success",
+                    http_status=500,
+                    attempt_outcome="terminal",
+                ),
+                _dispatch_event(
+                    "provider_request_failed",
+                    "malformed_over_bound_response",
+                    attempt_outcome="terminal",
+                ),
+            ],
+        ),
+        (
+            ProviderStatus.MALFORMED,
+            (_attempt("none", "response_received"),),
+            [
+                _dispatch_event(
+                    "provider_request_failed", "malformed_over_bound_response"
+                )
+            ],
+        ),
+        (
+            ProviderStatus.UNAVAILABLE,
+            (_attempt("transport_read_timeout", "deadline_exhausted", 1.0),),
+            [
+                _dispatch_event(
+                    "provider_deadline_stop",
+                    "timeout",
+                    attempt_outcome="deadline_exhausted",
+                    stop="in_flight",
+                )
+            ],
+        ),
+        (ProviderStatus.NO_MATCH, (_attempt("none", "response_received"),), []),
+    ),
+    ids=("request_failures", "malformed_lane", "in_flight_deadline", "clean"),
+)
+def test_each_request_failure_is_one_counted_event(
+    status: ProviderStatus,
+    records: tuple[ProviderAttemptRecord, ...],
+    expected: list[dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Distinct failures are counted, and a clean dispatch stays silent."""
+    assert expected == _emitted_events(monkeypatch, capsys, status, records)
+
+
+@pytest.mark.parametrize(
+    ("records", "expected"),
+    (
+        (
+            (_attempt("http_429", "exhausted", 30.0),),
+            _dispatch_event(
+                "provider_throttled",
+                "quota_rate_limit",
+                http_status=429,
+                attempt_outcome="exhausted",
+                retry_after_ms=30000,
+            ),
+        ),
+        (
+            (_attempt("burst_throttled", "terminal"),),
+            _dispatch_event(
+                "provider_throttled",
+                "burst_throttle",
+                attempt_outcome="terminal",
+                retry_after_ms=None,
+            ),
+        ),
+        (
+            (_attempt("quota_exhausted", "terminal", 3600.0),),
+            _dispatch_event(
+                "provider_throttled",
+                "daily_quota_exhausted",
+                attempt_outcome="terminal",
+                retry_after_ms=3600000,
+            ),
+        ),
+        (
+            (),
+            _dispatch_event("provider_throttled", "held", retry_after_ms=None),
+        ),
+    ),
+    ids=("rate_limit", "burst", "daily_quota", "held"),
+)
+def test_a_burst_throttle_stays_distinct_from_the_daily_quota(
+    records: tuple[ProviderAttemptRecord, ...],
+    expected: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A rate-limited lane with no attempt is the shared pacer's hold."""
+    assert [expected] == _emitted_events(
+        monkeypatch, capsys, ProviderStatus.RATE_LIMITED, records
+    )
+
+
+@pytest.mark.parametrize("media", ("ebook", "audiobook"))
+@pytest.mark.parametrize("slow", (1, 2, 3))
+def test_a_deadline_stop_names_the_share_or_the_aggregate_that_bound_it(
+    media: str,
+    slow: int,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A slow provider's undispatched request is stopped before dispatch.
+
+    The incumbent cover read spends five seconds, so the third slow provider
+    is bound by the 15 seconds the aggregate has left rather than a share.
+    """
+    clock = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    calls: list[tuple[str, float, float]] = []
+
+    class CoverObserver:
+        def observe_current(self, _target, local, _aggregate):
+            clock[0] += 5
+            return local
+
+        def observe(self, _target, _providers, local, _descriptors, _aggregate):
+            return local
+
+    bindings = (
+        *(
+            ProviderBinding(
+                f"slow-{index}",
+                True,
+                partial(_SlowProvider, f"slow-{index}", "hardcover", clock, calls),
+                authority="hardcover",
+            )
+            for index in range(slow)
+        ),
+        ProviderBinding(
+            "fast-0",
+            True,
+            partial(_FastProvider, "fast-0", "open_library", clock, calls),
+            authority="open_library",
+        ),
+    )
+
+    _share_service(
+        media, _share_snapshot(media), FakeReportRepository(), bindings, CoverObserver()
+    ).run("item-1", 0)
+
+    shares = [(20000, "provider_share"), (20000, "provider_share")][:slow]
+    if slow == 3:
+        shares.append((15000, "aggregate"))
+    assert [
+        {
+            **_dispatch_event(
+                "provider_deadline_stop",
+                "timeout",
+                stop="before_dispatch",
+                elapsed_ms=share,
+                deadline_ms=share,
+                deadline_kind=kind,
+            ),
+            "provider": f"slow-{index}",
+        }
+        for index, (share, kind) in enumerate(shares)
+    ] == [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+
+
+class _BrokenStream:
+    def write(self, _text: str) -> int:
+        raise OSError("SINK_PRIVATE_SENTINEL")
+
+
+@pytest.mark.parametrize("media", ("ebook", "audiobook"))
+def test_a_broken_stderr_changes_neither_the_report_nor_the_provider_calls(
+    media: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Events are observation only: an unwritable sink is not a failure (#1136)."""
+
+    def prepare() -> tuple[str, list[tuple[str, float, float]]]:
+        clock = [1000.0]
+        monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+        calls: list[tuple[str, float, float]] = []
+        bindings = (
+            ProviderBinding(
+                "slow-0",
+                True,
+                partial(_SlowProvider, "slow-0", "hardcover", clock, calls),
+                authority="hardcover",
+            ),
+            ProviderBinding(
+                "catalogue",
+                True,
+                partial(
+                    _AttemptProvider,
+                    ProviderStatus.RATE_LIMITED,
+                    (_attempt("http_429", "exhausted", 30.0),),
+                    clock,
+                ),
+                authority="hardcover",
+            ),
+        )
+        published = _share_service(
+            media, _share_snapshot(media), FakeReportRepository(), bindings, None
+        ).run("item-1", 0)
+        return published, calls
+
+    written = prepare()
+    assert len(capsys.readouterr().err.splitlines()) == 2
+    with monkeypatch.context() as sink:
+        sink.setattr("sys.stderr", _BrokenStream())
+        broken = prepare()
+    output = capsys.readouterr()
+
+    assert written == broken
+    assert output.out == output.err == ""

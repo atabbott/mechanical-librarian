@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
+import re
+import sys
 from collections import Counter
+from collections.abc import Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, cast
 
 from mechanical_librarian.application.provider_evidence import (
+    ProviderIncompleteCause,
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
@@ -16,9 +24,28 @@ from mechanical_librarian.domain.failure_diagnostics import (
     diagnostics_are_canonical,
 )
 from mechanical_librarian.domain.metadata_report import (
+    PROVIDER_AUTHORITIES,
+    DispatchOutcome,
     ProviderObservation,
     ProviderStatus,
 )
+from mechanical_librarian.domain.provider_recovery import (
+    MAX_RECOVERY_DELAY,
+    RECOVERY_OUTCOMES,
+    ProviderRecoveryJob,
+    RecoveryAttemptEvidence,
+)
+from mechanical_librarian.domain.validation import (
+    FieldCheck,
+    bounded_integer,
+    matching,
+    text,
+)
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.metadata_report import (
+        MetadataDiscoveryLane,
+    )
 
 
 def provider_attempt_diagnostics(
@@ -368,4 +395,301 @@ def provider_result_diagnostics(
                 _work_identity_refusal_is_the_only_no_match_reason(observation)
             ),
         ),
+    )
+
+
+# Provider log events (#1299). Each is one value-free JSON line on stderr: every
+# key is allow-listed and every value is a closed word, a bounded integer or
+# null, so no title, author, URL, body, credential, path or item id can reach
+# it. `emit_provider_events` is the one writer, as `review_pipeline` writes its
+# own diagnostics: a function call on `sys.stderr`, with no handler, level,
+# switch or global sink.
+_THROTTLES = frozenset(
+    {
+        FailureCategory.QUOTA_RATE_LIMIT,
+        FailureCategory.BURST_THROTTLE,
+        FailureCategory.DAILY_QUOTA_EXHAUSTED,
+    }
+)
+_HTTP_STATUS = re.compile(r"http_([1-5][0-9]{2})")
+_MAX_EVENT_MS = 86_400_000
+
+
+def _one_of(*values: str) -> FieldCheck:
+    return lambda value: text(value) and value in values
+
+
+_PROVIDER_EVENT_FIELDS: dict[str, FieldCheck] = {
+    "event": _one_of(
+        "provider_request_failed",
+        "provider_throttled",
+        "provider_deadline_stop",
+        "provider_recovery_job",
+    ),
+    "level": _one_of("info", "warning"),
+    "adapter": _one_of(*(value for value in PROVIDER_AUTHORITIES if value)),
+    "provider": matching(re.compile(r"[a-z][a-z0-9_-]{0,63}")),
+    "item_ref": matching(re.compile(r"item-[0-9a-f]{16}")),
+    "phase": _one_of("discovery", "asin_feed", "recovery"),
+    "lane_kind": _one_of("isbn", "work", "asin", "mixed"),
+    "query_family": _one_of(
+        "identifier", "asserted", "path_leaf", "title_tag", "mixed"
+    ),
+    "outcome_class": _one_of(
+        "held", *(value.value for value in FailureCategory), *RECOVERY_OUTCOMES
+    ),
+    "http_status": bounded_integer(100, 599),
+    "attempt_outcome": _one_of(
+        "retry", "exhausted", "terminal", "cancelled", "deadline_exhausted"
+    ),
+    "stop": _one_of("before_dispatch", "in_flight"),
+    "count": bounded_integer(1, MAX_DIAGNOSTIC_COUNT),
+    "retry_after_ms": bounded_integer(0, MAX_RECOVERY_DELAY * 1000),
+    "elapsed_ms": bounded_integer(0, _MAX_EVENT_MS),
+    "deadline_ms": bounded_integer(0, _MAX_EVENT_MS),
+    "deadline_kind": _one_of("provider_share", "aggregate", "recovery_window"),
+    "transition": _one_of("started", "settled", "failed", "stale", "held"),
+    "job_attempt": bounded_integer(0, 5),
+    "physical_requests": bounded_integer(0, 54),
+    "dispatch_reason": _one_of(
+        "missing_corroboration",
+        "zero_provider_evidence",
+        "settleable_disagreement",
+        "blanket_scan",
+    ),
+}
+
+
+def emit_provider_events(
+    build: Callable[..., Iterable[Mapping[str, object]]], /, **arguments: object
+) -> None:
+    """Write each event `build(**arguments)` returns as one JSON line; never raise.
+
+    `build` runs inside the guard, so neither building nor writing can change
+    the dispatch or settlement the events describe. A key outside the allow-list
+    is dropped and an out-of-shape value becomes null; a line over 1024 bytes is
+    dropped whole. Each line is one `write`, which keeps concurrent writers'
+    lines whole on a pipe.
+    """
+    try:
+        for event in build(**arguments):
+            line = (
+                json.dumps(
+                    {
+                        name: event[name] if check(event[name]) else None
+                        for name, check in _PROVIDER_EVENT_FIELDS.items()
+                        if name in event
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
+            if len(line) <= 1024:
+                sys.stderr.write(line)
+    except Exception:
+        # Observation only: an unwritable stderr or an unexpected value drops
+        # the line, never the dispatch or settlement it described.
+        pass
+
+
+def provider_item_ref(connection: str, library: str, item: str) -> str:
+    """Correlate one item's events without logging its raw identifier."""
+    # `surrogatepass` keeps this total over any text, so a caller may compute it
+    # outside the event guard.
+    material = "\0".join((connection, library, item)).encode("utf-8", "surrogatepass")
+    return "item-" + hashlib.sha256(material).hexdigest()[:16]
+
+
+def _milliseconds(seconds: object) -> int | None:
+    if type(seconds) not in {int, float} or not math.isfinite(cast(float, seconds)):
+        return None
+    return round(cast(float, seconds) * 1000)
+
+
+def _lane_shape(lane: MetadataDiscoveryLane) -> tuple[str, str]:
+    kind = lane.kind.value
+    return kind, "identifier" if kind != "work" else lane.title_basis or "asserted"
+
+
+def provider_dispatch_events(
+    *,
+    adapter: str | None,
+    provider: str,
+    item_ref: str,
+    phase: str,
+    lanes: tuple[MetadataDiscoveryLane, ...],
+    observation: ProviderObservation | None,
+    evidence: ProviderOperationalEvidence,
+    audio: bool,
+    elapsed_seconds: float,
+    deadline_seconds: float,
+    deadline_kind: str,
+) -> tuple[dict[str, object], ...]:
+    """Name each request failure, throttle and deadline stop of one dispatch.
+
+    Attempts carry no lane, so an attempt event states the lanes the
+    observation answered, `mixed` when they differ. One event stands for each
+    distinct (event, class, HTTP status, attempt outcome), with its `count`. A
+    malformed lane, or a rate-limited lane the shared pacer held, is named from
+    the lane when no attempt already named that class. A request the deadline
+    stopped before dispatch is counted from the incomplete causes, and on an
+    audiobook only where a lane was recorded as starved. A clean dispatch has
+    no event.
+    """
+    shapes = {lane.identity: _lane_shape(lane) for lane in lanes}
+    answered = (
+        tuple(shapes.values())
+        if observation is None
+        else tuple(
+            shapes[lane.identity]
+            for lane in observation.lanes
+            if lane.identity in shapes
+        )
+    )
+
+    def event(
+        name: str, shape: Iterable[tuple[str, str]], outcome: str, count: int
+    ) -> dict[str, object]:
+        kinds = {kind for kind, _ in shape}
+        families = {family for _, family in shape}
+        return {
+            "event": name,
+            "level": "warning",
+            "adapter": adapter,
+            "provider": provider,
+            "item_ref": item_ref,
+            "phase": phase,
+            "lane_kind": kinds.pop() if len(kinds) == 1 else "mixed" if kinds else None,
+            "query_family": (
+                families.pop() if len(families) == 1 else "mixed" if families else None
+            ),
+            "outcome_class": outcome,
+            "http_status": None,
+            "elapsed_ms": _milliseconds(elapsed_seconds),
+            "deadline_ms": _milliseconds(deadline_seconds),
+            "deadline_kind": deadline_kind,
+            "count": min(count, MAX_DIAGNOSTIC_COUNT),
+        }
+
+    attempts: Counter[tuple[str, str, int | None, object]] = Counter()
+    delays: dict[tuple[str, str, int | None, object], int | None] = {}
+    for record in evidence.attempt_records or ():
+        category = record.category
+        mapped = (
+            _provider_attempt_category(category)
+            if type(category) is str
+            else (FailureCategory.UNKNOWN, FailureStage.RESPONSE)
+        )
+        if mapped is None:
+            continue
+        http = _HTTP_STATUS.fullmatch(category) if type(category) is str else None
+        attempt_key = (
+            "provider_deadline_stop"
+            if record.outcome == "deadline_exhausted"
+            else "provider_throttled"
+            if mapped[0] in _THROTTLES
+            else "provider_request_failed",
+            mapped[0].value,
+            None if http is None else int(http.group(1)),
+            record.outcome,
+        )
+        attempts[attempt_key] += 1
+        delays[attempt_key] = _milliseconds(record.delay_seconds)
+    events = []
+    for key, count in attempts.items():
+        name, outcome, status, attempt = key
+        value = event(name, answered, outcome, count)
+        value.update(http_status=status, attempt_outcome=attempt)
+        if name == "provider_throttled":
+            value["retry_after_ms"] = delays[key]
+        if name == "provider_deadline_stop":
+            value["stop"] = "in_flight"
+        events.append(value)
+    named = {outcome for _, outcome, _, _ in attempts}
+    observed = () if observation is None else observation.lanes
+    for lane_status, name, outcome, covered in (
+        (
+            ProviderStatus.MALFORMED,
+            "provider_request_failed",
+            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE.value,
+            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE.value in named,
+        ),
+        (
+            ProviderStatus.RATE_LIMITED,
+            "provider_throttled",
+            "held",
+            any(value.value in named for value in _THROTTLES),
+        ),
+    ):
+        if covered:
+            continue
+        groups = Counter(
+            shapes[lane.identity]
+            for lane in observed
+            if lane.status is lane_status and lane.identity in shapes
+        )
+        for shape, count in sorted(groups.items()):
+            value = event(name, (shape,), outcome, count)
+            if name == "provider_throttled":
+                value["retry_after_ms"] = None
+            events.append(value)
+    stopped = sum(
+        record.cause is ProviderIncompleteCause.DEADLINE
+        for record in evidence.incomplete_causes or ()
+    )
+    stops: list[tuple[tuple[tuple[str, str], ...], int]]
+    if audio:
+        starved = Counter(
+            shapes[lane.identity]
+            for lane in observed
+            if lane.identity in shapes
+            and lane.dispatch is not None
+            and lane.dispatch.outcome is DispatchOutcome.STARVED
+        )
+        stops = [((shape,), count) for shape, count in sorted(starved.items())]
+    else:
+        stops = [(answered, stopped)] if stopped else []
+    for stopped_shape, count in stops:
+        value = event(
+            "provider_deadline_stop",
+            stopped_shape,
+            FailureCategory.TIMEOUT.value,
+            count,
+        )
+        value["stop"] = "before_dispatch"
+        events.append(value)
+    return tuple(events)
+
+
+def provider_recovery_job_events(
+    *,
+    job: ProviderRecoveryJob,
+    transition: str,
+    evidence: RecoveryAttemptEvidence | None,
+    elapsed_seconds: float,
+) -> tuple[dict[str, object]]:
+    """Name one committed recovery-job transition (#1299)."""
+    return (
+        {
+            "event": "provider_recovery_job",
+            "level": "warning" if transition == "failed" else "info",
+            "adapter": job.adapter,
+            "provider": job.connection,
+            "item_ref": provider_item_ref(job.target_connection, job.library, job.item),
+            "phase": "recovery",
+            "lane_kind": None,
+            "query_family": None,
+            "outcome_class": None if evidence is None else evidence.outcome,
+            "http_status": None,
+            "elapsed_ms": _milliseconds(elapsed_seconds),
+            "deadline_ms": None,
+            "deadline_kind": None,
+            "transition": transition,
+            "job_attempt": job.attempt,
+            "physical_requests": None
+            if evidence is None
+            else evidence.physical_requests,
+            "dispatch_reason": job.dispatch_reason,
+        },
     )
