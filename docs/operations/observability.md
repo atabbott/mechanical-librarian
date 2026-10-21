@@ -100,6 +100,39 @@ unchanged counts. Any other claim failure still reports **Preparation stopped**
 as above, and so does a claimed stage whose failure settlement is blocked by the
 same long read; #1217 tracks that settlement case.
 
+Provider dispatch and provider recovery write one value-free JSON line to
+stderr through the same best-effort write (#1299). They are on by default and
+have no switch, environment variable or `logging` configuration.
+
+| `event` | Written when |
+|---|---|
+| `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane with no failing attempt |
+| `provider_throttled` | `quota_rate_limit`, `burst_throttle`, `daily_quota_exhausted`, or `held` for a lane the shared pacer held without a request |
+| `provider_deadline_stop` | `stop: before_dispatch` when the deadline left a request unsent; `stop: in_flight` when it ended a retry |
+| `provider_recovery_job` | A recovery job's `transition`: `started`, `settled`, `failed`, `stale` or `held` |
+
+Dispatch events are de-duplicated per observation, with a `count`. Every line
+carries `adapter`, `provider` and `item_ref`: `item-` plus 16 hex characters
+of a SHA-256 over connection, library and item, never the item id. It also
+carries `phase` (`discovery`, `asin_feed` or `recovery`), `lane_kind`,
+`query_family`, `outcome_class`, `http_status`, `elapsed_ms`, `deadline_ms` and
+`deadline_kind` (`provider_share`, `aggregate` or `recovery_window`).
+
+Recovery events add `job_attempt`, `physical_requests` and `dispatch_reason`.
+Each key is allow-listed. Each value is a closed vocabulary or a bounded
+integer, and an out-of-shape value is written as `null`. A line is at most 1024
+bytes, written in one call. A clean dispatch writes nothing.
+
+Lines carry no title, author, query, URL, body, exception text, credential or
+path. Attempt records carry no lane, so an observation that dispatched more than
+one lane reports `mixed`. A failed write changes no dispatch, report or
+settlement.
+
+A preparation writes a few hundred lines at most; recovery adds about two per
+job attempt. These are advisory, not audit history. Docker's default
+`json-file` log driver does not rotate, so set `max-size` and `max-file` or
+another retention the operator controls.
+
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound
 `POST /api/v1/operations/support/export` creates it again and re-runs redaction.
