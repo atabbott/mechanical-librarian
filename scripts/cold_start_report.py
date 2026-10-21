@@ -1025,7 +1025,7 @@ def _recovery_jobs(rows: list[tuple[object, ...]]) -> dict[str, object]:
 
 
 def _recovery_class(outcome: str) -> str:
-    """Name an attempt outcome's class; only `completed` merged its requests."""
+    """Name an attempt outcome's class; `completed` and `no_match` published."""
     if outcome in {"rate_limited", "burst_throttled", "quota_exhausted"}:
         return "throttle"
     return outcome if outcome in {"no_match", "completed"} else "source_failure"
@@ -1036,9 +1036,10 @@ def _recovery_events(
 ) -> dict[str, object]:
     """Count recovery job attempts and health outcomes per provider.
 
-    A completed attempt's requests are already in its successor report's
-    request accounting, so `physical_requests.by_class` keeps them apart
-    rather than inviting a reader to add them twice.
+    A `completed` or `no_match` attempt publishes a successor report whose
+    request accounting already holds its requests; a `throttle` or
+    `source_failure` attempt publishes none. `physical_requests.by_class`
+    keeps them apart so a reader adds only the unpublished ones.
     """
     classes = ("throttle", "source_failure", "no_match", "completed")
     providers: dict[tuple[str, str], tuple[Counter[str], ...]] = {}

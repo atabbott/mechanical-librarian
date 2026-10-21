@@ -106,7 +106,7 @@ have no switch, environment variable or `logging` configuration.
 
 | `event` | Written when |
 |---|---|
-| `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane with no failing attempt |
+| `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane with no failing attempt. A `http_404` or `region_unavailable` attempt is not one when every lane answered with candidates or no match: that is the provider's ordinary "not found". |
 | `provider_throttled` | `quota_rate_limit`, `burst_throttle`, `daily_quota_exhausted`, or `held` for a lane the shared pacer held without a request |
 | `provider_deadline_stop` | `stop: before_dispatch` when the deadline left a request unsent; `stop: in_flight` when it ended a retry |
 | `provider_recovery_job` | A recovery job's `transition`: `started`, `settled`, `failed`, `stale` or `held` |
@@ -128,8 +128,9 @@ path. Attempt records carry no lane, so an observation that dispatched more than
 one lane reports `mixed`. A failed write changes no dispatch, report or
 settlement.
 
-A preparation writes a few hundred lines at most; recovery adds about two per
-job attempt. These are advisory, not audit history. Docker's default
+For a library of about 240 audiobooks, the expected volume is a few hundred
+lines per preparation. That is an estimate, not a bound. Recovery adds about
+two lines per job attempt. These are advisory, not audit history. Docker's default
 `json-file` log driver does not rotate, so set `max-size` and `max-file` or
 another retention the operator controls.
 

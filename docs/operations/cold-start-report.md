@@ -164,9 +164,11 @@ without the option. Its keys:
   `physical_requests` with a `total` and the same `by_class` split.
 - `health_outcomes`: the ordinary health failures per provider and outcome.
 
-A completed attempt's requests are already in its successor report's request
-accounting. Read `physical_requests.by_class` instead of adding the total to
-the dispatch counts.
+A `completed` or `no_match` attempt publishes a successor report. Its requests
+are already in that report's request accounting, and so in `dispatches`. A
+`throttle` or `source_failure` attempt publishes nothing, so its requests are
+counted only here. Add `physical_requests.by_class` for those two classes to
+the dispatch counts, never the total.
 
 Top-level totals give the quiet fraction — the headline first-boot attention
 rate is its complement and includes only libraries still present in the loaded
