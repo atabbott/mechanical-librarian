@@ -479,8 +479,7 @@ productions invert that order for themselves alone. On an audiobook plan's
 asserted WORK lane at an audiobook authority, a candidate inside the tight band
 of the item's single local runtime, with no recording language or format
 conflict, may admit through `band_parenthesized_series_name`,
-`band_trailing_series_sequence`, `band_order_inverted_series_prefix` or
-`band_initials_fold` where the closed comparison alone refuses it. The band is
+`band_order_inverted_series_prefix` or `band_initials_fold` where the closed comparison alone refuses it. The band is
 this record's `RUNTIME_BAND_TIGHT_SECONDS`, compared through
 `runtime_agreement`; there is no second constant. An item with no single local
 runtime gets no widening.

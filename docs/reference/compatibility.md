@@ -462,7 +462,7 @@ moves to `cold-start-report-v3`, and the closed stage-timing vocabulary gains
 ## Band-corroborated admission (#1260)
 
 Report `metadata-report-v57` adds no field. A lane's `transformation_lineage`
-may now name `band_parenthesized_series_name`, `band_trailing_series_sequence`,
+may now name `band_parenthesized_series_name`,
 `band_order_inverted_series_prefix` or `band_initials_fold`, and an application
 may name the `initials_fold` family; the lineage shape is unchanged. A v56
 lane refused products v57 admits, so the exact SQLite discriminator requires a

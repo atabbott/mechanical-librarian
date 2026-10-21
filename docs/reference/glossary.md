@@ -18,8 +18,7 @@ side, title or authors field, and author ordinal. Only an admission-enabled
 production is valid. The current productions are
 `author_prefix_then_underscores`, the single-family `latin_combining_marks`,
 and the band-corroborated audiobook productions `band_parenthesized_series_name`,
-`band_trailing_series_sequence`, `band_order_inverted_series_prefix` and
-`band_initials_fold` (#1260); every other individual transformation remains
+`band_order_inverted_series_prefix` and `band_initials_fold` (#1260); every other individual transformation remains
 query-only.
 
 **Current pointer**

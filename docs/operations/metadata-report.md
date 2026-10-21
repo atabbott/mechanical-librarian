@@ -572,7 +572,6 @@ of its constituent rows alone:
 | --- | --- | --- | --- |
 | `author_prefix_then_underscores` | complete first-author filename prefix, then filename underscores | local | admission-enabled |
 | `band_parenthesized_series_name` | parenthesized series name, as the rung's only decoration | local title | tight band only |
-| `band_trailing_series_sequence` | trailing series or sequence marker, as the rung's only decoration | local title | tight band only |
 | `band_order_inverted_series_prefix` | order-inverted series prefix, as the rung's only decoration | local title | tight band only |
 | `band_initials_fold` | dotted initials folded to spaced letters | local or provider authors | tight band only |
 
@@ -599,8 +598,9 @@ language or format conflict. A title production needs the lane's dispatch
 lineage to be the normalized rung with exactly its one family, and the provider
 title and ordered authors to admit exactly against that rung's shaped title,
 and the product's own series claims to state what the rung stripped: a series
-name closed-equal to the stripped name and a position numerically equal to the
-stripped position, or for a trailing sequence any membership at that position.
+name closed-equal to the stripped name and, for an inverted prefix, a position
+numerically equal to the stripped one. A trailing series sequence names no
+series to corroborate, so it is not a band production.
 A local title with a variant marker or a complete recording-format term
 (dramatised or dramatized, dramatisation, abridged, unabridged, abridgement,
 full cast, radio play or drama) never admits, and neither does a product the

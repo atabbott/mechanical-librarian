@@ -155,22 +155,19 @@ inverts ADR-0064's admission-then-band order for these productions only. The
 alternative-title lane (#1255), fed ASIN lanes, the overflow witness, ebooks
 and every other authority keep their rules byte-identical.
 
-**Four productions.** Each is single-application or authors-only, with the
+**Three productions.** Each is single-application or authors-only, with the
 side and field stated, and none composes:
 
-- `band_parenthesized_series_name`, `band_trailing_series_sequence` and
-  `band_order_inverted_series_prefix`: the lane's dispatch lineage is the
-  normalized rung with exactly that one family, with or without the narrowing
+- `band_parenthesized_series_name` and `band_order_inverted_series_prefix`:
+  the lane's dispatch lineage is the normalized rung with exactly that one family, with or without the narrowing
   retry. The provider title and ordered authors must admit exactly, with no
   transformation, against the title of the ladder query that carries that
   lineage. Reordered authors do not admit. The product's own stated series
   must corroborate the decoration the rung stripped: one membership's name is
-  closed-equal to a stripped series name, and its position equals a stripped
-  position numerically, Roman numerals included. A trailing sequence strips a
-  position alone, so a membership at that position suffices. A product with
-  no series or a different one never admits, so "Part II" is a decoration only
-  where the product says it is. The original local title carries neither a
-  variant marker nor a complete recording-format term (dramatised, dramatized,
+  closed-equal to the stripped series name, and for an inverted prefix its
+  position equals the stripped position as a decimal number. A product with
+  no series or a different one never admits. The original local title carries
+  neither a variant marker nor a complete recording-format term (dramatised, dramatized,
   dramatisation, dramatization, abridged, unabridged, abridgement, abridgment,
   full cast or full-cast, or radio play, drama or dramatisation); "The
   Dramatist" is not a dramatisation. A product that
@@ -189,6 +186,13 @@ side and field stated, and none composes:
   authors application per changed side, with the author's ordinal. The new
   `initials_fold` family is a table row that is neither query- nor
   admission-enabled and is audiobook-only.
+
+**Trailing series sequence: not enabled.** A trailing sequence ("Part II",
+"Book 2") strips a position and no series name, so a product's series cannot
+corroborate it: "Henry IV, Part II" would admit a same-author "Henry IV" in
+any series at position 2. The replay recorded on #1260 found 0 positives for
+it. No `band_trailing_series_sequence` production exists, and a lineage
+naming one is refused.
 
 **Band-first set rule: deferred.** The proposed rule would admit the one
 tight product when every other admitted product lies outside the 600-second
