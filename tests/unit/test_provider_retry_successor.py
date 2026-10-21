@@ -3088,3 +3088,89 @@ def test_a_recovery_dispatch_names_its_failures_whether_it_returns_or_raises(
             "count": 1,
         }
     ] == [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+
+
+def test_a_recovery_window_that_starves_an_audiobook_lane_names_the_stop(
+    retry: _Retry,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The event reads the lane dispatch the successor records (#1299)."""
+    import time
+
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderIncompleteCause,
+        ProviderIncompleteCauseRecord,
+    )
+    from mechanical_librarian.domain.metadata_report import DispatchOutcome
+
+    clock = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    target = audio_target("Asserted Title", ("Ada Author",))
+    claims = (target_title_claim("Asserted Title"),)
+    audio = replace(
+        single_track_audio_facts(),
+        discovery_titles=(AudioDiscoveryTitle("path_leaf", "The Real Title"),),
+    )
+    plan = audiobook_discovery_plan(target, claims, audio=audio)
+    asserted, alternative = provider_discovery_lane_order(plan)
+    original = recorded_dispatch(
+        provider_observation(
+            "audible",
+            tuple(
+                ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                for lane in (asserted, alternative)
+            ),
+            authority="audible_catalog",
+        )
+    )
+
+    class StarvedProvider:
+        def observe(self, plan, *, deadline=None):
+            clock[0] += 1.5
+            return ProviderResult(
+                provider_observation(
+                    "audible",
+                    tuple(
+                        ProviderLaneResult(lane, ProviderStatus.INCOMPLETE)
+                        for lane in plan.lanes
+                    ),
+                    authority="audible_catalog",
+                ),
+                evidence=ProviderOperationalEvidence(
+                    incomplete_causes=(
+                        ProviderIncompleteCauseRecord(ProviderIncompleteCause.DEADLINE),
+                    )
+                ),
+            )
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding("audible", True, StarvedProvider, "audible_catalog"),
+        "audible_catalog",
+        2,
+    )
+    service = retry.service(configured)
+    selected = service._selected(plan, original, (alternative.identity,))
+    replacement, _delay, _evidence = service._observe(
+        configured, plan, selected, original, retry.report.target, deadline=130.0
+    )
+
+    (lane,) = replacement.lanes
+    assert DispatchOutcome.STARVED is cast("Any", lane.dispatch).outcome
+    (event,) = (json.loads(line) for line in capsys.readouterr().err.splitlines())
+    assert {
+        "event": "provider_deadline_stop",
+        "level": "warning",
+        "adapter": "audible_catalog",
+        "provider": "audible",
+        "phase": "recovery",
+        "lane_kind": "work",
+        "query_family": "path_leaf",
+        "outcome_class": "timeout",
+        "http_status": None,
+        "stop": "before_dispatch",
+        "elapsed_ms": 1500,
+        "deadline_ms": 30000,
+        "deadline_kind": "recovery_window",
+        "count": 1,
+    } == {key: value for key, value in event.items() if key != "item_ref"}

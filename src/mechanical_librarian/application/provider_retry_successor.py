@@ -618,11 +618,32 @@ class GenerateProviderRetrySuccessor:
                 "provider retry dispatch failed",
                 evidence=partial_recovery_evidence(error, provider.binding.name),
             ) from error
+        elapsed = time.monotonic() - started
+
+        def dispatched(value: ProviderObservation) -> ProviderObservation:
+            # A replacement lane is starved only where the merged successor's
+            # diagnostics, which keep the original's, still back it (#1258).
+            return with_lane_dispatch(
+                replace(
+                    value,
+                    diagnostics=merge_provider_diagnostics(
+                        original.diagnostics,
+                        provider_result_diagnostics(value, result.evidence),
+                    ),
+                ),
+                result,
+                audio=plan.audio is not None,
+            )
+
+        # The events read the lane dispatch the successor records, so a starved
+        # lane is named; reading the result inside the guard keeps every check
+        # below where it was.
         emit_provider_events(
-            events,
-            observation=result.observation,
-            evidence=result.evidence,
-            elapsed_seconds=time.monotonic() - started,
+            lambda: events(
+                observation=dispatched(result.observation),
+                evidence=result.evidence,
+                elapsed_seconds=elapsed,
+            )
         )
         observation = result.observation
         evidence = observed_recovery_evidence(observation)
@@ -652,21 +673,9 @@ class GenerateProviderRetrySuccessor:
                     "provider retry result is invalid",
                     evidence=replace(evidence, outcome="terminal_response"),
                 )
-            diagnostics = provider_result_diagnostics(observation, result.evidence)
-            # A replacement lane is starved only where the merged successor's
-            # diagnostics, which keep the original's, still back it (#1258).
             observation = replace(
-                with_lane_dispatch(
-                    replace(
-                        observation,
-                        diagnostics=merge_provider_diagnostics(
-                            original.diagnostics, diagnostics
-                        ),
-                    ),
-                    result,
-                    audio=plan.audio is not None,
-                ),
-                diagnostics=diagnostics,
+                dispatched(observation),
+                diagnostics=provider_result_diagnostics(observation, result.evidence),
             )
             return observation, self._retry_after(result.evidence), evidence
         except ProviderRetrySuccessorError:
