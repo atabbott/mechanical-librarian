@@ -528,8 +528,8 @@ _ASCII_SPACE = re.compile(r"[\t\n\r\f\v ]+")
 # A recording-format term in the local title keeps a band-first title
 # production from admitting, alongside the `_VARIANT` vocabulary (#1260).
 _RECORDING_FORMAT = re.compile(
-    r"\b(?:dramati[sz](?:ed|ation)|(?:un)?abridged|abridge?ment|full[- ]cast"
-    r"|radio[\t\n\r\f\v ]+(?:play|drama|dramati[sz]ation))\b",
+    r"\b(?:dramati[sz](?:ed|ations?)|(?:un)?abridged|abridge?ment|full[- ]cast"
+    r"|radio)\b",
     re.IGNORECASE,
 )
 # A whitespace token of single letters, each followed by a full stop.
@@ -547,16 +547,25 @@ _EDITION = re.compile(
     re.IGNORECASE,
 )
 _PAREN = re.compile(r"[\t\n\r\f\v ]*\(([^()]*)\)[\t\n\r\f\v ]*$")
+# The one closed series-marker vocabulary every series position grammar reads.
+_SERIES_WORD = r"(?:book|volume|vol\.?|part)"
 _SERIES_MARKER = re.compile(
     r"[\t\n\r\f\v ]*(?:[-,:][\t\n\r\f\v ]*)?"
-    r"(?:book|volume|vol\.?|part)[\t\n\r\f\v ]*#?[\t\n\r\f\v ]*"
+    rf"{_SERIES_WORD}[\t\n\r\f\v ]*#?[\t\n\r\f\v ]*"
     r"(?:\d+(?:\.\d+)?|[ivxlcdm]+)[\t\n\r\f\v ]*$",
     re.IGNORECASE,
 )
 _INVERTED_SERIES = re.compile(
-    r"^(?P<series>.+?)\b(?:book|volume|vol\.?|part|#)[\t\n\r\f\v ]*"
+    rf"^(?P<series>.+?)\b(?:{_SERIES_WORD}|#)[\t\n\r\f\v ]*"
     r"(?P<sequence>\d+(?:\.\d+)?)"
     r"[\t\n\r\f\v ]+[-–—][\t\n\r\f\v ]+(?P<title>.+)$",
+    re.IGNORECASE,
+)
+# A parenthetical ending in a position, "Saga 3" or "Saga, Book 3": the series
+# name, then a comma or whitespace, an optional marker, and a decimal number.
+_PAREN_SERIES_POSITION = re.compile(
+    r"(?P<series>.+?)(?:[\t\n\r\f\v ]*,[\t\n\r\f\v ]*|[\t\n\r\f\v ]+)"
+    rf"(?:(?:{_SERIES_WORD}|#)[\t\n\r\f\v ]*)?(?P<sequence>\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
 # A leading position token: "3. Title", "Book 2: Title", "#4 - Title".  At
@@ -1718,19 +1727,24 @@ def _band_decoration_corroborated(
 ) -> bool:
     """Whether the product's own series states what the rung stripped (#1260).
 
-    The stripped series name must closed-equal a stated series name, and an
-    inverted prefix's position must equal that membership's position as a
+    One membership must state both halves: its name closed-equals the stripped
+    series name, and where the rung stripped a position (an inverted prefix,
+    or a parenthetical ending in one) its position equals that position as a
     decimal number.
     """
     title = _normalized_query_text(local_title)
+    match: re.Match[str] | None
     if family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME:
-        match = _PAREN.search(title)
-        name = "" if match is None else _clean(match.group(1))
-        position = None
+        paren = _PAREN.search(title)
+        inside = "" if paren is None else _clean(paren.group(1))
+        match = _PAREN_SERIES_POSITION.fullmatch(inside)
+        if match is None:
+            name, position = inside, None
     else:
         match = _INVERTED_SERIES.fullmatch(title)
         if match is None:
             return False
+    if match is not None:
         name = _clean(match.group("series"))
         position = Decimal(match.group("sequence"))
     return bool(name) and any(
