@@ -5,6 +5,7 @@ request cardinality, lane overflow, and cross-connection references.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import cast
 
 import httpx
@@ -48,7 +49,12 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     isbn_family,
 )
-from tests.support.audiobook_providers import alternative_work_plan
+from tests.support.audiobook_providers import (
+    alternative_work_plan,
+    asin_plan,
+    fed_asin_plan,
+    with_asin_lane,
+)
 from tests.support.hardcover_evidence import (
     hardcover_envelope,
     isbn_claim,
@@ -1356,3 +1362,59 @@ def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
         for value in observation.lanes
     ]
     assert len(requests) == observation.request_accounting.logical_requests
+
+
+def _recorded_observation(
+    plan: MetadataDiscoveryPlan,
+) -> tuple[ProviderObservation, list[str]]:
+    operations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        operations.append(json.loads(request.content)["operationName"])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope(
+                [{"id": 1, "book_id": 10, "isbn_13": "9780306406157"}],
+                [{"id": 10, "title": "Current title"}],
+            ),
+        )
+
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        wall_clock=lambda: 1700000000.0,
+    )
+    return provider.observe(plan).observation, operations
+
+
+@pytest.mark.parametrize(
+    "plan", (asin_plan(), fed_asin_plan()), ids=("embedded_asin", "fed_asin")
+)
+def test_an_asin_only_plan_asks_hardcover_nothing(
+    plan: MetadataDiscoveryPlan,
+) -> None:
+    """Hardcover has no ASIN lookup, so it answers with no lane and no input."""
+    observation, operations = _recorded_observation(plan)
+
+    assert [] == operations
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert () == observation.lanes
+    assert () == observation.input_references
+    assert 0 == observation.request_accounting.logical_requests
+
+
+def test_an_asin_lane_beside_served_lanes_leaves_their_answer_unchanged() -> None:
+    mixed = with_asin_lane(_identifier_first_plan())
+    served = replace(
+        mixed,
+        lanes=tuple(
+            lane for lane in mixed.lanes if lane.kind is not ProviderQueryKind.ASIN
+        ),
+    )
+    assert len(served.lanes) + 1 == len(mixed.lanes)
+    expected = _recorded_observation(served)
+
+    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == expected[1]
+    assert expected == _recorded_observation(mixed)

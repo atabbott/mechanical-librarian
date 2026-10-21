@@ -304,9 +304,23 @@ class OpenLibraryMetadataProvider:
         if plan.overflow:
             self._client.close()
             return ProviderObservation(self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED)
+        # Only ISBN and work lanes are served here: an ASIN lane names a product
+        # this provider has no lookup for, so a plan made only of ASIN lanes
+        # names nothing it can be asked and sends no request (#1306).
+        served = replace(
+            plan,
+            lanes=tuple(
+                lane
+                for lane in plan.lanes
+                if lane.kind in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+            ),
+        )
+        if not served.lanes:
+            self._client.close()
+            return ProviderObservation(self._name, ProviderStatus.INSUFFICIENT_INPUT)
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("open_library", "search-v1")
-        for lane in plan.lanes:
+        for lane in served.lanes:
             ledger.register(
                 kind=lane.kind.value,
                 matched_family=lane.matched_family,
@@ -321,8 +335,8 @@ class OpenLibraryMetadataProvider:
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         with provider_client_lifetime(self._client):
-            for lane in provider_discovery_lane_order(plan):
-                if identifier_suppresses_discovery(plan, results, lane):
+            for lane in provider_discovery_lane_order(served):
+                if identifier_suppresses_discovery(served, results, lane):
                     ledger.suppress(
                         kind=lane.kind.value,
                         matched_family=lane.matched_family,

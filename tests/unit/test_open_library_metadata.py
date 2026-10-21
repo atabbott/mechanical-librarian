@@ -46,6 +46,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderEvidenceKind,
+    ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
@@ -63,7 +64,12 @@ from mechanical_librarian.domain.work_identity import (
 from mechanical_librarian.infrastructure.security.credentials import (
     open_library_client,
 )
-from tests.support.audiobook_providers import alternative_work_plan
+from tests.support.audiobook_providers import (
+    alternative_work_plan,
+    asin_plan,
+    fed_asin_plan,
+    with_asin_lane,
+)
 
 
 class _InterruptedStream(httpx.SyncByteStream):
@@ -4404,3 +4410,61 @@ def test_an_audiobook_alternative_work_lane_is_never_dispatched_here() -> None:
         for value in observation.lanes
     ]
     assert len(requests) == observation.request_accounting.logical_requests
+
+
+def _recorded_observation(
+    plan: MetadataDiscoveryPlan,
+) -> tuple[ProviderObservation, list[str]]:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/search.json":
+            value = _search("/books/OL1M")
+        elif request.url.path == "/books/OL1M.json":
+            value = _edition("/books/OL1M")
+        else:
+            value = _work()
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=value
+        )
+
+    provider = OpenLibraryMetadataProvider(
+        "open_library",
+        httpx.Client(transport=httpx.MockTransport(handler)),
+        65_536,
+        pacer=OpenLibraryPacer(sleep=lambda _: None),
+        wall_clock=lambda: 1700000000.0,
+    )
+    return provider.observe(plan).observation, paths
+
+
+@pytest.mark.parametrize(
+    "plan", (asin_plan(), fed_asin_plan()), ids=("embedded_asin", "fed_asin")
+)
+def test_an_asin_only_plan_asks_open_library_nothing(
+    plan: MetadataDiscoveryPlan,
+) -> None:
+    """Open Library has no ASIN lookup, so it answers with no lane and no input."""
+    observation, paths = _recorded_observation(plan)
+
+    assert [] == paths
+    assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
+    assert () == observation.lanes
+    assert () == observation.input_references
+    assert 0 == observation.request_accounting.logical_requests
+
+
+def test_an_asin_lane_beside_served_lanes_leaves_their_answer_unchanged() -> None:
+    mixed = with_asin_lane(_identifier_first_plan())
+    served = replace(
+        mixed,
+        lanes=tuple(
+            lane for lane in mixed.lanes if lane.kind is not ProviderQueryKind.ASIN
+        ),
+    )
+    assert len(served.lanes) + 1 == len(mixed.lanes)
+    expected = _recorded_observation(served)
+
+    assert "/search.json" in expected[1]
+    assert expected == _recorded_observation(mixed)

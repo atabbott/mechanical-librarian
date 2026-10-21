@@ -17,6 +17,7 @@ from typing import Any
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     TargetSnapshot,
+    audiobook_asin_feed_plan,
     audiobook_discovery_plan,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -24,6 +25,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     LocalClaim,
+    ProviderQueryKind,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -132,6 +134,38 @@ def local_claims(asin: str = "B08G9PRS1K") -> tuple[LocalClaim, ...]:
 
 def asin_plan(asin: str = "B08G9PRS1K") -> MetadataDiscoveryPlan:
     return audiobook_discovery_plan(audio_target(), local_claims(asin))
+
+
+def fed_asin_plan(asin: str = "B08G9PRS1K") -> MetadataDiscoveryPlan:
+    """The ASIN feed for one target asserting `asin` and carrying no local one."""
+    target = asserted_target(asin)
+    feed = audiobook_asin_feed_plan(
+        target,
+        audiobook_discovery_plan(
+            target, (target_title_claim(), target_asin_claim(asin))
+        ),
+        (),
+    )
+    assert feed is not None
+    assert {ProviderQueryKind.ASIN} == {lane.kind for lane in feed.lanes}
+    return feed
+
+
+def with_asin_lane(plan: MetadataDiscoveryPlan) -> MetadataDiscoveryPlan:
+    """`plan` with one embedded-ASIN product lane added beside its own lanes.
+
+    No plan the product builds mixes the two -- an audiobook's lanes are ASIN
+    or work and an ebook's carry no ASIN -- so this only proves that an adapter
+    serving one kind leaves its answer to the other as it was.
+    """
+    product = asin_plan()
+    return replace(
+        plan,
+        local_claims=(*plan.local_claims, *product.local_claims),
+        lanes=tuple(
+            sorted((*plan.lanes, *product.lanes), key=lambda lane: lane.identity)
+        ),
+    )
 
 
 def target_title_claim(title: str = "Project Hail Mary") -> LocalClaim:
