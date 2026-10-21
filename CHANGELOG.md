@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Provider request failures, throttles, deadline stops and recovery-job
+  transitions now write one value-free JSON line each to the service log. A line
+  never carries a title, query, URL, credential, path or item id. The cold-start
+  report moves to v4 and counts replays, starved providers, refusals, decisions,
+  recovery events and stored-authority attention. Requests, reports and
+  decisions are unchanged, and no clean rebuild is needed (#1299).
+
 - An audiobook whose title carries a series decoration that the Audible
   recording's own series confirms, a series name in parentheses or a leading
   "Saga Book 2 -", or whose author is written with dotted initials, now matches

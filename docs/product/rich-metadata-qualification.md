@@ -89,6 +89,19 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Provider log events successor (#1299)
+
+The current F19a, F20 and F46 records move to semantic revision 58 over
+predecessor `cda45e0c`, whose record bytes the archive index keeps. Their
+runtime digests join the prior-manifest histories with their frozen permission
+sets, so decisions minted under them stay readable without current authority.
+Report bytes are unchanged, so no clean rebuild is required. Operation
+membership and historical measurements are unchanged.
+
+Preparation and recovery dispatch now write value-free provider events to
+stderr after each dispatch or settlement they describe. The events change no
+request, report, proposal or decision, so no operation gains or loses authority.
+
 ## Band-corroborated admission successor (#1260)
 
 The current F19a, F20 and F46 records move to semantic revision 57 over

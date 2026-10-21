@@ -40,6 +40,23 @@ terminal reference includes its persisted recovery count while the restart
 reference preserves the existing runtime-stop formula. Neither asserts a committed
 settlement. No diagnostic field is persisted or added to status/support (#1136).
 
+Provider dispatch and recovery-job events cross the same stderr boundary by
+construction (#1299). A pure builder in the application layer reads only closed,
+value-free evidence the adapters already return. The writer is
+`emit_provider_events` in `application/failure_diagnostics.py`, the single
+module that owns this boundary.
+
+The writer keeps allow-listed keys only, and it writes `null` for any value
+outside its closed vocabulary or integer bound. Provider names are re-checked
+against the configuration name grammar. The item is a 16-hex-character SHA-256
+reference. Each line is at most 1024 bytes and written in one call.
+
+Building or writing can never raise into dispatch or settlement. No title,
+author, query, URL, body, exception text, credential, path or item id can reach
+a line. The redaction test feeds each of these in and asserts none comes out.
+No handler, level, switch or global sink exists, and nothing is persisted or
+added to status or support.
+
 Ordinary Linux server-root recovery is explicitly opted in under the exclusive
 bound-parent lock. A supported private DELETE journal must pass streaming envelope
 checks and native rollback plus full current-schema admission on byte-verified

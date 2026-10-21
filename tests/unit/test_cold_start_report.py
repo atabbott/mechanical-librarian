@@ -99,6 +99,9 @@ def _empty_snapshot() -> dict[str, object]:
     return {
         "libraries": [],
         "attention_fields": [],
+        "stored_attention_fields": [],
+        "stored_attention_works": [],
+        "automatic_decisions": [],
         "current_cover_pointer_libraries": [],
         "provider_lanes": [],
         "unmatched_works": [],
@@ -278,6 +281,13 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             {"provider": "catalogue", "lanes": {"candidates": 1}, "zero_lane": False},
         ]
         assert library["works_without_provider_candidates"] == 2
+        # With no cover consideration the stored basis is the live one.
+        assert library["attention_stored_basis"] == {
+            "basis": "stored_cover_authority",
+            "non_cover_fields": attention,
+            "cover_fields_with_owner_actions": 0,
+            "works": 1,
+        }
         fidelity = cast("dict[str, object]", library["scan_fidelity"])
         assert fidelity["mount"] == "books"
         assert fidelity["mount_files_by_extension"] == {"epub": 3}
@@ -384,6 +394,19 @@ def test_current_cover_pointer_marks_attention_counts_unavailable(
     assert (
         library["attention_unavailable_reason"] == "current_cover_authority_unavailable"
     )
+    # The stored authority is the one the surface counted two fields under:
+    # the series conflict, and the cover whose stored consideration is ready.
+    assert library["attention_stored_basis"] == {
+        "basis": "stored_cover_authority",
+        "non_cover_fields": {
+            "total": 1,
+            "by_destination": {"series": 1},
+            "by_cause": {"no_safe_bibliographic_combination": 1},
+            "by_class": {"conflict": 1},
+        },
+        "cover_fields_with_owner_actions": 1,
+        "works": 2,
+    }
     assert library["works_without_provider_candidates"] == 0
     serialized = json.dumps(report)
     assert "private-cover-item" not in serialized
@@ -781,8 +804,8 @@ def test_main_rejects_a_malformed_mount_root() -> None:
         )
 
 
-def test_the_schema_is_pinned_at_its_third_version() -> None:
-    assert "cold-start-report-v3" == cold_start.COLD_START_REPORT_SCHEMA
+def test_the_schema_is_pinned_at_its_fourth_version() -> None:
+    assert "cold-start-report-v4" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 _EMPTY_DISPATCH = {
@@ -791,6 +814,7 @@ _EMPTY_DISPATCH = {
     "providers": [],
     "audible_rungs": [],
     "band": [],
+    "refusal_diagnostic": {"items": 0, "providers": []},
     "near_miss": {"items": 0, "buckets": []},
 }
 
@@ -835,6 +859,7 @@ def _census_reports() -> tuple[MetadataReport, ...]:
         ProviderLaneObservation,
         ProviderObservation,
         ProviderQueryKind,
+        ProviderRequestAccounting,
         ProviderStatus,
         TargetField,
         WorkDispatchLineage,
@@ -868,12 +893,15 @@ def _census_reports() -> tuple[MetadataReport, ...]:
         *,
         deadline: bool = False,
         ladders: tuple[WorkLadderFacts, ...] = (),
+        refused: int = 0,
     ) -> ProviderObservation:
         causes = (
             (ProviderIncompleteCauseRecord(ProviderIncompleteCause.DEADLINE),)
             if deadline
             else ()
         )
+        # A deadline stopped the one request it would have sent, and a refusal
+        # is the provider-level diagnostic the product lifts from its lanes.
         observation = provider_observation(
             name,
             results,
@@ -883,7 +911,10 @@ def _census_reports() -> tuple[MetadataReport, ...]:
                     (), status="incomplete", incomplete_causes=causes
                 )
                 if deadline
-                else ()
+                else work_ladder_diagnostics(0, refused)
+            ),
+            request_accounting=ProviderRequestAccounting(
+                int(deadline), undispatched_incomplete=int(deadline)
             ),
         )
         return with_lane_dispatch(
@@ -946,6 +977,7 @@ def _census_reports() -> tuple[MetadataReport, ...]:
                 ),
             ),
             ladders=(WorkLadderFacts(lane.identity, len(walked), -1_200),),
+            refused=len(walked),
         ),
         observed(
             "audible-admitted",
@@ -978,10 +1010,12 @@ def _census_reports() -> tuple[MetadataReport, ...]:
             "audnexus",
             (ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE),),
         ),
+        # Refused without walking its whole ladder, so its lane cannot say which.
         observed(
             "hardcover",
             "hardcover",
             (ProviderLaneResult(lane, ProviderStatus.NO_MATCH),),
+            refused=1,
         ),
         observed(
             "open_library",
@@ -1101,24 +1135,37 @@ def test_the_audiobook_dispatch_census_counts_every_outcome_exactly() -> None:
             )
         ],
         "audible_rungs": [
-            {"outcome": "admitted", "rungs": 1, "count": 1},
-            {"outcome": "empty", "rungs": 1, "count": 2},
-            {"outcome": "overflow", "rungs": 1, "count": 1},
-            {"outcome": "refused", "rungs": 1, "count": 1},
-        ],
-        "band": [
-            {"provider": provider, "band": band, "count": count}
-            for provider, band, count in (
-                ("audible", "none", 3),
-                ("audible", "tight", 1),
-                ("audible-admitted", "tight", 1),
-                ("audible-empty", "none", 1),
-                ("audnexus", "none", 1),
-                ("hardcover", "none", 1),
-                ("open_library", "none", 1),
-                ("second", "none", 1),
+            {"lane": lane, "outcome": outcome, "rungs": 1, "count": count}
+            for lane, outcome, count in (
+                ("work", "admitted", 1),
+                ("work", "empty", 2),
+                ("work", "refused", 1),
+                ("work_alternative", "overflow", 1),
             )
         ],
+        "band": [
+            {"provider": provider, "lane": lane, "band": band, "count": count}
+            for provider, lane, band, count in (
+                ("audible", "asin", "tight", 1),
+                ("audible", "work", "none", 2),
+                ("audible", "work_alternative", "none", 1),
+                ("audible-admitted", "work", "tight", 1),
+                ("audible-empty", "work", "none", 1),
+                ("audnexus", "work", "none", 1),
+                ("hardcover", "work", "none", 1),
+                ("open_library", "work", "none", 1),
+                ("second", "work", "none", 1),
+            )
+        ],
+        # Both refusing providers answered the first item: one item, and the
+        # one whose lane is empty_or_refused counts beside the walked one.
+        "refusal_diagnostic": {
+            "items": 1,
+            "providers": [
+                {"provider": "audible", "items": 1},
+                {"provider": "hardcover", "items": 1},
+            ],
+        },
         "near_miss": {
             "items": 2,
             "buckets": [
@@ -1212,7 +1259,11 @@ def test_a_missing_or_unreadable_stage_timing_file_is_refused(
 
 
 def _outcome_reports() -> tuple[MetadataReport, ...]:
-    """Four more audiobooks: one per runtime reason, and one work-only case."""
+    """Five more audiobooks: one per runtime reason, and two work-only ones.
+
+    The second work-only report's series comes from a provider outside the
+    audiobook authorities, so it retains no recording candidate at all.
+    """
     from dataclasses import replace
 
     from mechanical_librarian.application.metadata_report import (
@@ -1257,9 +1308,11 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
         dispatched: tuple[int, int],
         series: tuple[str, str] | None = None,
         plan: MetadataDiscoveryPlan = plan,
+        replays: int = 0,
+        source: tuple[str, str] = ("audible", "audible_catalog"),
     ) -> MetadataReport:
         observation = provider_observation(
-            "audible",
+            source[0],
             (
                 ProviderLaneResult(
                     lane,
@@ -1267,7 +1320,7 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
                     (
                         audiobook_candidate(
                             plan.local_claims,
-                            provider="audible",
+                            provider=source[0],
                             duration=duration,
                             series=series,
                         ),
@@ -1275,13 +1328,15 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
                     dispatch_lineage=first_rung,
                 ),
             ),
-            authority="audible_catalog",
+            authority=source[1],
         )
         initial, retry = dispatched
         observation = with_lane_dispatch(
             replace(
                 observation,
-                request_accounting=ProviderRequestAccounting(initial, initial, retry),
+                request_accounting=ProviderRequestAccounting(
+                    initial + replays, initial, retry, replays
+                ),
             ),
             ProviderResult(observation),
             audio=True,
@@ -1311,6 +1366,7 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
             "50000.000",
             abs_cover(CoverSourceState.TIMEOUT, "attempted"),
             (3, 1),
+            replays=2,
         ),
         report(
             "item-5",
@@ -1329,6 +1385,14 @@ def _outcome_reports() -> tuple[MetadataReport, ...]:
         ),
         # No composed local runtime, so no candidate's runtime is comparable.
         report("item-7", "58200.000", None, (0, 0), plan=unmeasured),
+        report(
+            "item-8",
+            "50000.000",
+            None,
+            (0, 0),
+            series=("The Series", "2"),
+            source=("hardcover", "hardcover"),
+        ),
     )
 
 
@@ -1338,6 +1402,11 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
         repository = open_repository(database)
         for value in (*_census_reports(), *_outcome_reports()):
             repository.publish(value, lambda: True)
+            # One work-only report reaches a review case; the other does not.
+            if value.target.item == "item-6":
+                proposal = evaluate_report(value)
+                repository.publish_proposal(proposal)
+                repository.admit_review_case(proposal)
         repository.close()
         connection = cold_start._open_read_only(database)
         try:
@@ -1347,7 +1416,8 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
 
     base = _dispatch_configuration()
     # Only an enabled provider in the audiobook dispatch set can go unsent:
-    # the disabled second Audible and the enabled iTunes store are not counted.
+    # the disabled second Audible and the enabled iTunes, Google Books and
+    # Inventaire connections are not counted, though each has a zero row.
     configuration = ApplicationConfiguration(
         connections=base.connections,
         libraries=(
@@ -1357,7 +1427,15 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
                 "library-b",
                 "audiobook",
                 "books",
-                ("audible", "second", "store"),
+                (
+                    "audible",
+                    "google_books",
+                    "hardcover",
+                    "inventaire",
+                    "open_library",
+                    "second",
+                    "store",
+                ),
             ),
             *base.libraries[1:],
         ),
@@ -1366,7 +1444,22 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
             ProviderConnectionConfiguration(
                 "audible", True, False, None, "audible_catalog", marketplaces=("us",)
             ),
+            ProviderConnectionConfiguration(
+                "google_books", True, False, None, "google_books"
+            ),
+            ProviderConnectionConfiguration("hardcover", True, False, None),
             *base.providers,
+            ProviderConnectionConfiguration(
+                "inventaire", True, False, None, "inventaire"
+            ),
+            ProviderConnectionConfiguration(
+                "open_library",
+                True,
+                False,
+                None,
+                "open_library",
+                contact_email="operator@example.invalid",
+            ),
             ProviderConnectionConfiguration(
                 "second", False, False, None, "audible_catalog"
             ),
@@ -1382,21 +1475,35 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
     }
     audiobooks = blocks["audiobooks"]
 
+    reasons = {
+        "no_retained_recording_candidate": 1,
+        "no_comparable_runtime": 1,
+        "runtime_contradiction": 1,
+        "runtime_near_miss_only_or_mixed": 1,
+    }
     assert {
-        "reports": 7,
+        "reports": 8,
         "recording_admitted": 2,
-        "work_only": 1,
-        "evidence_only": {
-            "total": 4,
+        "work_only": 2,
+        "work_only_cases": 1,
+        "evidence_only": {"total": 4, **reasons},
+        # Each work-only report is named by the same basis as evidence only.
+        "not_recording_admitted": {
+            "total": 6,
+            **reasons,
+            "no_retained_recording_candidate": 2,
+            "runtime_contradiction": 2,
+        },
+        "work_only_by_reason": {
             "no_retained_recording_candidate": 1,
-            "no_comparable_runtime": 1,
+            "no_comparable_runtime": 0,
             "runtime_contradiction": 1,
-            "runtime_near_miss_only_or_mixed": 1,
+            "runtime_near_miss_only_or_mixed": 0,
         },
     } == audiobooks["audiobook_outcomes"]
     assert {
-        "reports": 7,
-        "without_read": 4,
+        "reports": 8,
+        "without_read": 5,
         "states": [
             {"state": "absent", "timeout_scope": None, "count": 1},
             {"state": "timeout", "timeout_scope": "attempted", "count": 1},
@@ -1407,24 +1514,28 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
             },
         ],
     } == audiobooks["audiobook_cover_reads"]
-    providers = [
+    zero = {"initial": 0, "retry": 0, "replays": 0}
+    configured = {
         "audible",
-        "audible-admitted",
-        "audible-empty",
-        "audnexus",
+        "google_books",
         "hardcover",
+        "inventaire",
         "open_library",
         "second",
-    ]
+        "store",
+    }
+    providers = sorted(configured | {"audible-admitted", "audible-empty", "audnexus"})
     assert {
-        "items": 7,
+        "items": 8,
         "initial": 4,
         "retry": 1,
-        "mean_per_item": 0.71,
+        "replays": 2,
+        "mean_per_item": 0.62,
+        "mean_per_item_with_replays": 0.88,
         "per_item": [
             {"range": name, "items": items}
             for name, items in (
-                ("0", 5),
+                ("0", 6),
                 ("1", 1),
                 ("2", 0),
                 ("3-5", 1),
@@ -1436,16 +1547,28 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
         "providers": [
             {
                 "provider": name,
-                "initial": 4 if name == "audible" else 0,
-                "retry": 1 if name == "audible" else 0,
+                "configured": name in configured,
+                "audiobook": (
+                    {"initial": 4, "retry": 1, "replays": 2}
+                    if name == "audible"
+                    else zero
+                ),
+                "ebook": zero,
             }
             for name in providers
         ],
-        # Audible sent items 4 and 5 an initial request and the other five none.
+        # Audible sent items 4 and 5 an initial request and the other six none.
+        # Open Library's deadline stopped the one request it would have sent
+        # the first item; Hardcover had nothing to answer and starved nowhere.
         "never_dispatched": {
-            "audiobook_items": 7,
-            "items": 5,
-            "providers": [{"provider": "audible", "items": 5}],
+            "audiobook_items": 8,
+            "items": 8,
+            "starved_items": 1,
+            "providers": [
+                {"provider": "audible", "items": 6, "starved_items": 0},
+                {"provider": "hardcover", "items": 8, "starved_items": 0},
+                {"provider": "open_library", "items": 8, "starved_items": 1},
+            ],
         },
     } == audiobooks["dispatches"]
     ebooks = blocks["ebooks"]
@@ -1454,15 +1577,30 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
         "items": 0,
         "initial": 0,
         "retry": 0,
+        "replays": 0,
         "mean_per_item": None,
+        "mean_per_item_with_replays": None,
         "per_item": [
             {"range": name, "items": 0}
             for name in ("0", "1", "2", "3-5", "6-10", "11-20", "21+")
         ],
-        "providers": [],
-        "never_dispatched": {"audiobook_items": 0, "items": 0, "providers": []},
+        "providers": [
+            {
+                "provider": "hardcover-main",
+                "configured": True,
+                "audiobook": zero,
+                "ebook": zero,
+            }
+        ],
+        "never_dispatched": {
+            "audiobook_items": 0,
+            "items": 0,
+            "starved_items": 0,
+            "providers": [],
+        },
     } == ebooks["dispatches"]
     assert None is report["recovery_jobs"]
+    assert None is report["recovery_events"]
 
 
 @pytest.mark.parametrize(
@@ -1483,6 +1621,52 @@ def test_an_evidence_only_audiobook_is_named_by_its_best_bands(
     bands: frozenset[str], reason: str
 ) -> None:
     assert reason == cold_start._evidence_only_reason(bands)
+
+
+def test_automatic_decisions_count_per_library_destination_and_outcome(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.domain.metadata_report import MetadataReport
+    from tests.support.evidence_led_titles import (
+        isbn_title_report,
+        publish_title_case,
+    )
+
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    titled = MetadataReport.from_json(
+        isbn_title_report(
+            titles=("Example Title", "Example Title"),
+            provider_languages=("English", "en"),
+            local_language="UND",
+        ).to_json()
+    )
+    publish_title_case(repository, titled)
+    persisted = repository._connection.execute(
+        "SELECT destination,json_extract(document,'$.outcome') FROM automatic_decisions"
+    ).fetchall()
+    repository.close()
+    connection = cold_start._open_read_only(database)
+    try:
+        snapshot = cold_start.cold_start_snapshot(connection)
+    finally:
+        connection.close()
+
+    report = cold_start.assemble_cold_start_report(
+        _dispatch_configuration(), snapshot, None, {}, 1
+    )
+    decisions = {
+        library["library"]: library["automatic_decisions"]
+        for library in cast("list[dict[str, object]]", report["libraries"])
+    }
+    assert [("title", "candidate")] == persisted
+    assert {
+        "audiobooks": [],
+        "ebooks": [{"destination": "title", "outcome": "candidate", "count": 1}],
+    } == decisions
+    serialized = json.dumps(report)
+    for leaked in ("Example Title", "item-1", "review_case_", "alternative_"):
+        assert leaked not in serialized
 
 
 def test_recovery_jobs_count_by_provider_library_and_state(tmp_path: Path) -> None:
@@ -1516,10 +1700,16 @@ def test_recovery_jobs_count_by_provider_library_and_state(tmp_path: Path) -> No
             )
     connection.close()
 
-    rows = cold_start._read_recovery_jobs(path)
+    rows = cold_start._read_recovery(path)
     report = cold_start.assemble_cold_start_report(
-        _configuration(), _empty_snapshot(), None, {}, 1, recovery_jobs=rows
+        _configuration(), _empty_snapshot(), None, {}, 1, recovery=rows
     )
+    assert {
+        "last_occurred_at": None,
+        "last_job_attempt_at": None,
+        "providers": [],
+        "health_outcomes": [],
+    } == report["recovery_events"]
 
     group = {"provider": "catalogue", "adapter": "hardcover", "connection": "primary"}
     assert {
@@ -1531,7 +1721,121 @@ def test_recovery_jobs_count_by_provider_library_and_state(tmp_path: Path) -> No
         ],
     } == report["recovery_jobs"]
     with pytest.raises(SystemExit, match="names no recovery database"):
-        cold_start._read_recovery_jobs(tmp_path / "absent.sqlite")
+        cold_start._read_recovery(tmp_path / "absent.sqlite")
     (tmp_path / "other.sqlite").write_bytes(b"")
     with pytest.raises(SystemExit, match="is unreadable"):
-        cold_start._read_recovery_jobs(tmp_path / "other.sqlite")
+        cold_start._read_recovery(tmp_path / "other.sqlite")
+
+
+def test_recovery_events_count_attempts_requests_and_health(tmp_path: Path) -> None:
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+
+    path = tmp_path / "provider-recovery.sqlite"
+    store = SQLiteProviderRecoveryStore.open(path)
+    store.close()
+    connection = sqlite3.connect(path)
+    with connection:
+        for row in (
+            ("catalogue", "hardcover", "checking", None, 100, "completed", 1, 3),
+            ("catalogue", "hardcover", "fanout", None, 110, "completed", 1, 2),
+            ("catalogue", "hardcover", "checking", None, 120, "burst_throttled", 2, 1),
+            ("catalogue", "hardcover", "checking", None, 130, "transient", 1, None),
+            ("catalogue", "hardcover", "checking", None, 140, "no_match", 1, 0),
+            ("audio-store", "audible_catalog", "fanout", None, 105, "completed", 1, 4),
+            # Scope health: one throttle outcome and one recovery with none.
+            ("catalogue", "hardcover", "waiting", 500, 150, "rate_limited", None, None),
+            ("catalogue", "hardcover", "recovered", None, 160, None, None, None),
+        ):
+            provider, adapter, state, eligible, occurred, outcome, attempt, sent = row
+            connection.execute(
+                "INSERT INTO provider_recovery_events(connection,adapter,scope,"
+                "generation,state,attempt,next_eligible_at,occurred_at,outcome,"
+                "job_attempt,physical_requests,request_count_status) "
+                "VALUES(?,?,'search',1,?,0,?,?,?,?,?,?)",
+                (
+                    provider,
+                    adapter,
+                    state,
+                    eligible,
+                    occurred,
+                    outcome,
+                    attempt,
+                    sent,
+                    None
+                    if attempt is None
+                    else "unknown"
+                    if sent is None
+                    else "partial"
+                    if outcome == "burst_throttled"
+                    else "observed",
+                ),
+            )
+    connection.close()
+
+    report = cold_start.assemble_cold_start_report(
+        _configuration(),
+        _empty_snapshot(),
+        None,
+        {},
+        1,
+        recovery=cold_start._read_recovery(path),
+    )
+
+    classes = ("throttle", "source_failure", "no_match", "completed")
+    assert {
+        "last_occurred_at": 160,
+        "last_job_attempt_at": 140,
+        "providers": [
+            {
+                "provider": "audio-store",
+                "adapter": "audible_catalog",
+                "job_attempts": 1,
+                "physical_requests": {
+                    "total": 4,
+                    "by_class": {kind: 4 * (kind == "completed") for kind in classes},
+                },
+                "request_count_status": {"observed": 1},
+                "outcomes": {"completed": 1},
+                "classes": {kind: int(kind == "completed") for kind in classes},
+            },
+            {
+                "provider": "catalogue",
+                "adapter": "hardcover",
+                "job_attempts": 5,
+                # An unknown request count adds nothing it cannot state.
+                "physical_requests": {
+                    "total": 6,
+                    "by_class": {
+                        "throttle": 1,
+                        "source_failure": 0,
+                        "no_match": 0,
+                        "completed": 5,
+                    },
+                },
+                "request_count_status": {"observed": 3, "partial": 1, "unknown": 1},
+                "outcomes": {
+                    "burst_throttled": 1,
+                    "completed": 2,
+                    "no_match": 1,
+                    "transient": 1,
+                },
+                "classes": {
+                    "throttle": 1,
+                    "source_failure": 1,
+                    "no_match": 1,
+                    "completed": 2,
+                },
+            },
+        ],
+        "health_outcomes": [
+            {
+                "provider": "catalogue",
+                "adapter": "hardcover",
+                "outcome": "rate_limited",
+                "count": 1,
+            }
+        ],
+    } == report["recovery_events"]
+    assert {"jobs": 0, "groups": []} == report["recovery_jobs"]

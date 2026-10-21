@@ -906,6 +906,17 @@ preserved; an expired request that never starts records
 `attempted`. Final target, media and cover-byte currentness checks still run
 before publication and retain their existing bounded reads.
 
+Each dispatch that fails, throttles or stops on a deadline writes value-free
+`provider_*` stderr lines once it returns (#1299). The lines carry
+`deadline_kind` and `deadline_ms`, and name which bound stopped the provider:
+- `provider_share` when the provider's 20-second share ended it;
+- `aggregate` when the window's remainder was the smaller bound.
+
+They are written after the dispatch and before publication, so a report that
+then fails publication can still have lines. They change no request, report or
+decision.
+[Observability](observability.md) lists the fields.
+
 Validated EPUB directory entries are not file-cover candidates. The package
 must still pass the existing archive validation and declare exactly one supported
 image resource. A child wall timeout is a timeout, not an invalid declaration.

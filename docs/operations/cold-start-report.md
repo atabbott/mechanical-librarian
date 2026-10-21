@@ -15,7 +15,7 @@ uv run python scripts/cold_start_report.py \
     --recovery-database /copy/provider-recovery.sqlite
 ```
 
-It writes nothing and prints one `cold-start-report-v3` JSON document. It can
+It writes nothing and prints one `cold-start-report-v4` JSON document. It can
 run at any point during or after preparation, repeatedly. `--mount-root`
 remaps a configured mount name to a host path for the extension census,
 because the configuration records container paths. `--stage-timings` is
@@ -41,6 +41,19 @@ catalogue measurements remain available. Historical cover considerations do
 not trigger this state, and an unavailable unconfigured library does not make
 the configured headline totals unavailable.
 
+Every library also carries `attention_stored_basis` (#1299), whether or not its
+attention aggregates are available. It counts attention on the cover
+authority persisted with each consideration, which needs no live binding.
+Its keys:
+- `basis: stored_cover_authority`;
+- `non_cover_fields`, in the same shape as `attention_fields`;
+- `cover_fields_with_owner_actions`, the cover fields whose stored
+  consideration is ready for the owner and agrees with its case and report;
+- `works`, the works with any such field.
+
+Without a cover consideration it equals the live read. With one, it is the
+read under the persisted authority, not a claim about the live one.
+
 Per configured library the document reports: the latest preparation scan
 (state, discovered total, timestamps); work counts (current, attention, quiet,
 preparation-ledger ready/blocked, absences by kind), excluding an in-flight
@@ -59,6 +72,9 @@ finishes with none; scan fidelity (files by extension on the mount, target
 items by classification and format from the catalogue, works in the
 preparation ledger); and automatic decisions bucketed by how many independent
 provider sources corroborate the chosen candidate (0, 1, 2, 3_plus).
+`automatic_decisions` lists one row per destination and decision `outcome`, with
+its `count`. Each row is a persisted automatic decision on a current review
+case in that library (#1299).
 
 Each library also carries an `audiobook_dispatch` block (#1258) counting how
 the provider lanes of every current audiobook report ended, `report_only`
@@ -67,10 +83,13 @@ number of audiobook reports; `lanes` counts each provider's lanes by kind
 (`asin`, `work`, or `work_alternative`) and dispatch outcome; `providers`
 counts each provider's derived class per report, where a refusal outranks an
 empty ladder in a no-match and one starved lane makes an incomplete provider
-starved; `audible_rungs` counts Audible WORK lanes by outcome and the number
-of ladder rungs attempted; `band` counts each provider's lanes by the best
-runtime band a retained candidate reaches (`tight`, `loose`, `outside`,
-`unstated`, or `none` for a lane that retained nothing); and `near_miss`
+starved; `audible_rungs` counts Audible WORK lanes by `lane` kind, outcome and
+the number of ladder rungs attempted; `band` counts each provider's lanes by
+`lane` kind and the best runtime band a retained candidate reaches (`tight`,
+`loose`, `outside`, `unstated`, or `none` for a lane that retained nothing);
+`refusal_diagnostic` counts the `items` and, per provider, the reports where a
+no-match provider states a work-identity refusal, including one whose lane is
+`empty_or_refused` because it did not walk its whole ladder; and `near_miss`
 counts the recorded Audible near-misses by sign and magnitude bucket
 (`600-900`, `900-1800`, `1800-3600`, `3600+` seconds, each closed on its upper
 bound). An ebook-only library reports zero reports and empty lists.
@@ -100,26 +119,56 @@ report records by `state` and, for a `timeout`, its `timeout_scope`
 already closed); `without_read` counts reports with no such read, as when
 cover evidence is switched off.
 
+`audiobook_outcomes` also names every report a recording did not admit by the
+same four reasons, so work-only reports are counted too (#1299):
+- `not_recording_admitted` has a `total` and a count per reason;
+- `work_only_by_reason` gives the same counts for work-only reports alone;
+- `work_only_cases` counts the work-only reports that reached a review case.
+
 Each library also carries `dispatches`, over every current item of any media
 kind, `report_only` packages included, read from each provider's persisted
 request accounting: the `items` counted, the `initial` and `retry` dispatch
 totals, their `mean_per_item` (`null` with no items), `per_item` counting
 items by the dispatches they spent (`0`, `1`, `2`, `3-5`, `6-10`, `11-20`,
-`21+`, each closed on its upper bound), and per-provider `initial` and
-`retry` totals. Its `never_dispatched` block is the source for how many items
+`21+`, each closed on its upper bound), and `replays` with
+`mean_per_item_with_replays`. `providers` has one row for each provider in
+the library's `provider_connections`, zeros included, and one for each
+provider a report names. Each row has a `configured` flag and an `audiobook`
+and an `ebook` split of `initial`, `retry` and `replays`. Its `never_dispatched` block is the source for how many items
 had a provider that was never dispatched (#1294): over the library's
 `audiobook_items`, it counts per provider the current audiobooks to which an
 enabled provider in the audiobook dispatch set sent no initial request, and
 `items` counts the audiobooks with at least one such provider. It is not
 `starved`: it also counts a provider with nothing to answer, such as a
 per-ASIN provider for an item with no ASIN, and a starved lane may have sent
-earlier rungs.
+earlier rungs. `starved_items` counts, overall and per provider, the audiobooks
+where a provider was stopped by the deadline before its first request: the
+provider is `incomplete`, has no initial dispatch, and has at least one
+undispatched incomplete request.
 
 With `--recovery-database`, the top-level `recovery_jobs` block counts the
 recovery database's jobs: a total `jobs` and one group per provider
 connection, adapter, target connection, library and state. Without the
 option it is `null`; a named file that does not exist or cannot be read as a
 recovery database stops the report.
+
+`recovery_events` is read from the same database in the same transaction.
+The event table has no library column, so the block is global. It is `null`
+without the option. Its keys:
+- `last_occurred_at`: the latest event of any kind.
+- `last_job_attempt_at`: the latest settled job attempt. This and
+  `last_occurred_at` show whether recovery is quiet.
+- `providers`: per provider connection and adapter, the `job_attempts`,
+  `request_count_status`, `outcomes`, and `classes` (`throttle`,
+  `source_failure`, `no_match`, `completed`). It also gives
+  `physical_requests` with a `total` and the same `by_class` split.
+- `health_outcomes`: the ordinary health failures per provider and outcome.
+
+A `completed` or `no_match` attempt publishes a successor report. Its requests
+are already in that report's request accounting, and so in `dispatches`. A
+`throttle` or `source_failure` attempt publishes nothing, so its requests are
+counted only here. Add `physical_requests.by_class` for those two classes to
+the dispatch counts, never the total.
 
 Top-level totals give the quiet fraction — the headline first-boot attention
 rate is its complement and includes only libraries still present in the loaded

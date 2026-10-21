@@ -105,6 +105,11 @@ def literal(expected: object) -> FieldCheck:
     return lambda value: type(value) is type(expected) and value == expected
 
 
+def one_of(*values: str) -> FieldCheck:
+    """Accept exact text naming one member of a closed vocabulary."""
+    return lambda value: text(value) and value in values
+
+
 def bounded_integer(minimum: int, maximum: int | None = None) -> FieldCheck:
     """Accept only an exact ``int`` inside the inclusive bounds."""
 

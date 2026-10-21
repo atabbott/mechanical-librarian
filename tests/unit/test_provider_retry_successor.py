@@ -511,6 +511,7 @@ def test_observe_wrapped_credential_error_remains_authentication_for_recovery(
             retry.plan,
             (retry.failed,),
             retry.report.providers[0],
+            retry.report.target,
             deadline=1.0,
         )
     cause = raised.value.__cause__
@@ -2676,7 +2677,12 @@ def test_a_retry_admitting_a_siblings_hinted_product_still_merges(
     service = retry.service(configured)
     selected = service._selected(plan, original, (alternative.identity,))
     replacement, _delay, _evidence = service._observe(
-        configured, plan, selected, original, deadline=1_700_000_100.0
+        configured,
+        plan,
+        selected,
+        original,
+        retry.report.target,
+        deadline=1_700_000_100.0,
     )
     merged = service._merged(plan, original, selected, replacement)
 
@@ -2818,7 +2824,12 @@ def test_a_faulted_dispatch_records_no_alternative_and_its_retry_succeeds(
     service = retry.service(configured)
     selected = service._selected(plan, initial.observation, (asserted.identity,))
     observation, _delay, _evidence = service._observe(
-        configured, plan, selected, initial.observation, deadline=1_700_000_100.0
+        configured,
+        plan,
+        selected,
+        initial.observation,
+        retry.report.target,
+        deadline=1_700_000_100.0,
     )
 
     assert [(asserted.identity, ProviderStatus.NO_MATCH)] == [
@@ -2876,7 +2887,12 @@ def test_a_faulted_collapsed_plan_keeps_the_alternative_only_where_it_is_sent(
     service = retry.service(configured)
     selected = service._selected(plan, initial.observation, (alternative.identity,))
     observation, _delay, _evidence = service._observe(
-        configured, plan, selected, initial.observation, deadline=1_700_000_100.0
+        configured,
+        plan,
+        selected,
+        initial.observation,
+        retry.report.target,
+        deadline=1_700_000_100.0,
     )
 
     assert [(alternative.identity, ProviderStatus.NO_MATCH)] == [
@@ -2962,7 +2978,12 @@ def test_a_retry_keeps_an_unselected_dispatch_record_and_recomputes_its_own(
     service = retry.service(configured)
     selected = service._selected(plan, original, (alternative.identity,))
     replacement, _delay, _evidence = service._observe(
-        configured, plan, selected, original, deadline=1_700_000_100.0
+        configured,
+        plan,
+        selected,
+        original,
+        retry.report.target,
+        deadline=1_700_000_100.0,
     )
     merged = service._merged(plan, original, selected, replacement)
 
@@ -2988,3 +3009,168 @@ def test_a_retry_keeps_an_unselected_dispatch_record_and_recomputes_its_own(
         audio=audio,
     )
     assert successor == MetadataReport.from_json(successor.to_json())
+
+
+@pytest.mark.parametrize("raises", (False, True), ids=("returned", "raised"))
+def test_a_recovery_dispatch_names_its_failures_whether_it_returns_or_raises(
+    retry: _Retry,
+    raises: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A raised dispatch's partial evidence still names its failure (#1299)."""
+    import hashlib
+    import time
+
+    clock = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    evidence = ProviderOperationalEvidence(
+        attempt_records=(
+            ProviderAttemptRecord("catalogue", 1, "http_503", None, 0.5, "exhausted"),
+        )
+    )
+
+    class FailingProvider:
+        def observe(self, plan, *, deadline=None):
+            clock[0] += 2
+            if raises:
+                raise ProviderObservationFailure(
+                    ProviderFailureSnapshot(evidence=evidence)
+                )
+            return ProviderResult(
+                provider_observation(
+                    "catalogue",
+                    tuple(
+                        ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                        for lane in plan.lanes
+                    ),
+                    authority="open_library",
+                ),
+                evidence=evidence,
+            )
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding("catalogue", True, FailingProvider, "open_library"),
+        "open_library",
+        2,
+    )
+    service = retry.service(configured)
+    try:
+        service._observe(
+            configured,
+            retry.plan,
+            (retry.failed,),
+            retry.report.providers[0],
+            retry.report.target,
+            deadline=clock[0] + 60.0,
+        )
+    except ProviderRetrySuccessorError:
+        assert raises
+
+    target = retry.report.target
+    material = f"{target.connection}\0{target.library}\0{target.item}".encode()
+    assert [
+        {
+            "event": "provider_request_failed",
+            "level": "warning",
+            "adapter": "open_library",
+            "provider": "catalogue",
+            "item_ref": "item-" + hashlib.sha256(material).hexdigest()[:16],
+            "phase": "recovery",
+            "lane_kind": "isbn",
+            "query_family": "identifier",
+            "outcome_class": "http_non_success",
+            "http_status": 503,
+            "attempt_outcome": "exhausted",
+            "elapsed_ms": 2000,
+            "deadline_ms": 60000,
+            "deadline_kind": "recovery_window",
+            "count": 1,
+        }
+    ] == [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+
+
+def test_a_recovery_window_that_starves_an_audiobook_lane_names_the_stop(
+    retry: _Retry,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The event reads the lane dispatch the successor records (#1299)."""
+    import time
+
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderIncompleteCause,
+        ProviderIncompleteCauseRecord,
+    )
+    from mechanical_librarian.domain.metadata_report import DispatchOutcome
+
+    clock = [100.0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    target = audio_target("Asserted Title", ("Ada Author",))
+    claims = (target_title_claim("Asserted Title"),)
+    audio = replace(
+        single_track_audio_facts(),
+        discovery_titles=(AudioDiscoveryTitle("path_leaf", "The Real Title"),),
+    )
+    plan = audiobook_discovery_plan(target, claims, audio=audio)
+    asserted, alternative = provider_discovery_lane_order(plan)
+    original = recorded_dispatch(
+        provider_observation(
+            "audible",
+            tuple(
+                ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
+                for lane in (asserted, alternative)
+            ),
+            authority="audible_catalog",
+        )
+    )
+
+    class StarvedProvider:
+        def observe(self, plan, *, deadline=None):
+            clock[0] += 1.5
+            return ProviderResult(
+                provider_observation(
+                    "audible",
+                    tuple(
+                        ProviderLaneResult(lane, ProviderStatus.INCOMPLETE)
+                        for lane in plan.lanes
+                    ),
+                    authority="audible_catalog",
+                ),
+                evidence=ProviderOperationalEvidence(
+                    incomplete_causes=(
+                        ProviderIncompleteCauseRecord(ProviderIncompleteCause.DEADLINE),
+                    )
+                ),
+            )
+
+    configured = ConfiguredProviderRetry(
+        ProviderBinding("audible", True, StarvedProvider, "audible_catalog"),
+        "audible_catalog",
+        2,
+    )
+    service = retry.service(configured)
+    selected = service._selected(plan, original, (alternative.identity,))
+    replacement, _delay, _evidence = service._observe(
+        configured, plan, selected, original, retry.report.target, deadline=130.0
+    )
+
+    (lane,) = replacement.lanes
+    assert DispatchOutcome.STARVED is cast("Any", lane.dispatch).outcome
+    (event,) = (json.loads(line) for line in capsys.readouterr().err.splitlines())
+    assert {
+        "event": "provider_deadline_stop",
+        "level": "warning",
+        "adapter": "audible_catalog",
+        "provider": "audible",
+        "phase": "recovery",
+        "lane_kind": "work",
+        "query_family": "path_leaf",
+        "outcome_class": "timeout",
+        "http_status": None,
+        "stop": "before_dispatch",
+        "elapsed_ms": 1500,
+        "deadline_ms": 30000,
+        "deadline_kind": "recovery_window",
+        "count": 1,
+    } == {key: value for key, value in event.items() if key != "item_ref"}

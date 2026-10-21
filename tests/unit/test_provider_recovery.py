@@ -4952,3 +4952,201 @@ def test_fanout_fallback_preserves_only_current_invocation_accounting(
         "SELECT state,next_eligible_at FROM provider_recovery_health"
     ).fetchone() == ("waiting", 14_401)
     store.close()
+
+
+# Provider log events (#1299): one line per committed recovery-job transition.
+
+
+def _recovery_events(capsys: pytest.CaptureFixture[str]) -> list[dict[str, object]]:
+    return [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+
+
+def _transitions(
+    events: list[dict[str, object]],
+) -> list[tuple[object, object, object]]:
+    return [
+        (
+            {
+                hashlib.sha256(f"primary\0books\0{member}".encode()).hexdigest()[
+                    :16
+                ]: member
+                for member in ("canary", "sibling")
+            }[cast(str, event["item_ref"]).removeprefix("item-")],
+            event["transition"],
+            event["outcome_class"],
+        )
+        for event in events
+    ]
+
+
+def _event_runner(
+    store: SQLiteProviderRecoveryStore,
+    failing: str | None,
+    classification: tuple[str, int | None],
+    clock: list[float],
+) -> ScopedProviderRecoveryRunner:
+    def retry(_, job: ProviderRecoveryJob, __) -> RecoveryAttemptEvidence:
+        clock[0] += 1.5
+        if job.member_id == failing:
+            raise RuntimeError("private provider failure")
+        return RecoveryAttemptEvidence("completed", 2, "observed")
+
+    return ScopedProviderRecoveryRunner(
+        store=store,
+        generation=1,
+        retry=retry,
+        classify_failure=lambda _: classification,
+        monotonic=lambda: clock[0],
+    )
+
+
+def test_a_settled_recovery_job_names_its_committed_transitions(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = _due_store(tmp_path / "recovery.sqlite")
+    store.enqueue_jobs((_job("canary"), _job("sibling")), enqueued_at=0)
+    clock = [100.0]
+
+    assert "recovered" == (
+        _event_runner(store, None, ("transient", None), clock).run_one(now=1).state
+    )
+
+    events = _recovery_events(capsys)
+    store.close()
+    assert [
+        ("canary", "started", None),
+        ("canary", "settled", "completed"),
+        ("sibling", "started", None),
+        ("sibling", "settled", "completed"),
+    ] == _transitions(events)
+    assert {
+        "event": "provider_recovery_job",
+        "level": "info",
+        "adapter": "google_books",
+        "provider": "google",
+        "item_ref": "item-"
+        + hashlib.sha256(b"primary\0books\0canary").hexdigest()[:16],
+        "phase": "recovery",
+        "lane_kind": None,
+        "query_family": None,
+        "outcome_class": "completed",
+        "http_status": None,
+        "elapsed_ms": 1500,
+        "deadline_ms": None,
+        "deadline_kind": None,
+        "transition": "settled",
+        "job_attempt": 1,
+        "physical_requests": 2,
+        "dispatch_reason": "blanket_scan",
+    } == events[1]
+
+
+@pytest.mark.parametrize(
+    ("failing", "classification", "expected"),
+    (
+        ("canary", ("transient", None), [("canary", "failed", "transient")]),
+        ("canary", ("terminal", None), [("canary", "failed", "terminal_failure")]),
+        (
+            "canary",
+            ("stale", None),
+            [
+                ("canary", "stale", None),
+                ("sibling", "started", None),
+                ("sibling", "settled", "completed"),
+            ],
+        ),
+        ("canary", ("target_held", None), [("canary", "held", None)]),
+        (
+            "sibling",
+            ("transient", None),
+            [
+                ("canary", "settled", "completed"),
+                ("sibling", "started", None),
+                ("sibling", "failed", "transient"),
+            ],
+        ),
+        (
+            "sibling",
+            ("terminal", None),
+            [
+                ("canary", "settled", "completed"),
+                ("sibling", "started", None),
+                ("sibling", "failed", "terminal_failure"),
+            ],
+        ),
+        (
+            "sibling",
+            ("stale", None),
+            [
+                ("canary", "settled", "completed"),
+                ("sibling", "started", None),
+                ("sibling", "stale", None),
+            ],
+        ),
+        (
+            "sibling",
+            ("target_held", None),
+            [
+                ("canary", "settled", "completed"),
+                ("sibling", "started", None),
+                ("sibling", "held", None),
+            ],
+        ),
+    ),
+    ids=(
+        "canary_failed",
+        "canary_exhausted",
+        "canary_stale",
+        "canary_held",
+        "fanout_interrupted",
+        "fanout_failed",
+        "fanout_stale",
+        "fanout_held",
+    ),
+)
+def test_each_failed_stale_or_held_job_names_its_transition(
+    failing: str,
+    classification: tuple[str, int | None],
+    expected: list[tuple[str, str, str | None]],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _due_store(tmp_path / "recovery.sqlite")
+    store.enqueue_jobs((_job("canary"), _job("sibling")), enqueued_at=0)
+
+    _event_runner(store, failing, classification, [100.0]).run_one(now=1)
+
+    events = _recovery_events(capsys)
+    store.close()
+    assert [("canary", "started", None), *expected] == _transitions(events)
+    assert all(
+        event["level"] == ("warning" if event["transition"] == "failed" else "info")
+        for event in events
+    )
+
+
+@pytest.mark.parametrize(
+    ("settlement", "failing"),
+    (("complete_canary_failure", "canary"), ("authorize_fanout", None)),
+)
+def test_a_settlement_the_store_refused_names_no_transition(
+    settlement: str,
+    failing: str | None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An event follows only a store call that returned, so it is committed."""
+    store = _due_store(tmp_path / "recovery.sqlite")
+    store.enqueue_jobs((_job("canary"), _job("sibling")), enqueued_at=0)
+
+    def refuse(**_: object) -> None:
+        raise ProviderRecoveryStoreError("synthetic refusal")
+
+    runner = _event_runner(store, failing, ("transient", None), [100.0])
+    with patch.object(store, settlement, refuse):
+        with pytest.raises(ProviderRecoveryStoreError):
+            runner.run_one(now=1)
+
+    events = _recovery_events(capsys)
+    store.close()
+    assert [("canary", "started", None)] == _transitions(events)

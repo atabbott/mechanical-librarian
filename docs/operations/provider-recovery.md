@@ -180,6 +180,25 @@ were avoidable. Controlled clocks can distinguish due canaries, non-due idle,
 shared failures, interrupted fanout and eventual recovery; that does not establish
 an historical cost reduction.
 
+Each recovery job transition also writes one value-free
+`provider_recovery_job` line to stderr after its store call commits (#1299).
+
+| `transition` | Written after |
+|---|---|
+| `started` | a job is claimed |
+| `settled` | the canary authorizes fanout, or a member succeeds |
+| `failed` | a canary failure, an exhausted scope, interrupted fanout, or a member failure |
+| `stale` | a job is completed as stale |
+| `held` | a target hold is released |
+
+A store call that raises writes nothing. Each line carries:
+- `outcome_class`: the recovery attempt outcome;
+- `job_attempt`, `physical_requests` and `dispatch_reason`;
+- `elapsed_ms` since the runner turn began.
+
+The replacement dispatch itself writes `phase: recovery` dispatch lines bounded
+by `recovery_window`. [Observability](observability.md) lists the fields.
+
 Activity shows only current waiting/dormant failure reasons from the latest
 ordinary event matching the current health identity. A later transition clears
 an old reason. The existing next-eligible timestamp is eligibility, not a finish

@@ -1575,6 +1575,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="band-corroborated-admission-predecessor-f46",
         ),
+        pytest.param(
+            "d916a590f1f346e458cc919d044a4120f527822f84b2398bd0bf6e03776a73af",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="provider-log-events-predecessor-f19a",
+        ),
+        pytest.param(
+            "97fafa5eb0dd8d20f9d403aa4e675febfb2396d80e90fef7987af51430d37860",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="provider-log-events-predecessor-f20",
+        ),
+        pytest.param(
+            "e6d1c3be3023d722f755b855d0409c107081a6399b4ed9f506b085e64b06df80",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="provider-log-events-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

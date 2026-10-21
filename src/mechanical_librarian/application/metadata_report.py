@@ -19,8 +19,11 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
+    emit_provider_events,
     merge_provider_diagnostics,
     provider_attempt_diagnostics,
+    provider_dispatch_events,
+    provider_item_ref,
     provider_result_diagnostics,
 )
 from mechanical_librarian.application.operations import StageTimer
@@ -2644,7 +2647,7 @@ class GenerateMetadataReport:
             _release_repository(repository, error)
             raise
         observations, descriptors = self._observe_providers(
-            repository, plan, cover_aggregate_deadline
+            repository, plan, cover_aggregate_deadline, item, "discovery"
         )
 
         reasons = tuple(
@@ -2697,6 +2700,8 @@ class GenerateMetadataReport:
         repository: ReportRepository,
         plan: MetadataDiscoveryPlan,
         deadline: float,
+        item: str,
+        phase: str,
         bindings: tuple[ProviderBinding, ...] | None = None,
     ) -> tuple[tuple[ProviderObservation, ...], tuple[ProviderCoverDescriptor, ...]]:
         """Dispatch one discovery plan across the configured provider bindings.
@@ -2721,6 +2726,12 @@ class GenerateMetadataReport:
         skipped before its enabled and overflow checks, so it is never built,
         sent a request, or recorded, and neither the configured connections nor
         `bindings` can widen the set. An ebook plan is not filtered here.
+
+        Each dispatched binding's failures, throttles and deadline stops are
+        written as value-free provider events once its observation returns,
+        outside the timed stage and before publication, so a report that then
+        fails to publish still leaves them (#1299). `item` and `phase` only
+        correlate those events.
         """
         observations: list[ProviderObservation] = []
         descriptors: list[ProviderCoverDescriptor] = []
@@ -2802,7 +2813,8 @@ class GenerateMetadataReport:
                 failure = MetadataReportError("provider construction failed")
                 _release_repository(repository, failure)
                 raise failure from error
-            share = min(deadline, time.monotonic() + _PROVIDER_DEADLINE_SHARE_SECONDS)
+            dispatched = time.monotonic()
+            share = min(deadline, dispatched + _PROVIDER_DEADLINE_SHARE_SECONDS)
             try:
                 with self._timing.measure("provider_search", "provider"):
                     result = observe_provider(
@@ -2815,6 +2827,22 @@ class GenerateMetadataReport:
             except Exception as error:
                 _release_repository(repository, error)
                 raise
+            emit_provider_events(
+                provider_dispatch_events,
+                adapter=binding.authority,
+                provider=binding.name,
+                item_ref=provider_item_ref(
+                    self._connection.name, self._library.name, item
+                ),
+                phase=phase,
+                lanes=plan.lanes,
+                observation=result.observation,
+                evidence=result.evidence,
+                audio=plan.audio is not None,
+                elapsed_seconds=time.monotonic() - dispatched,
+                deadline_seconds=max(0.0, share - dispatched),
+                deadline_kind="aggregate" if share == deadline else "provider_share",
+            )
             observations.append(result.observation)
             candidate_descriptors = result.cover_descriptors
             if type(candidate_descriptors) is not tuple or any(
@@ -2962,7 +2990,7 @@ class GenerateMetadataReport:
             _release_repository(repository, error)
             raise
         observations, descriptors = self._observe_providers(
-            repository, plan, cover_aggregate_deadline
+            repository, plan, cover_aggregate_deadline, item, "discovery"
         )
         feed = audiobook_asin_feed_plan(initial, plan, observations)
         unanswered = {value.provider for value in observations if not value.lanes}
@@ -2973,7 +3001,7 @@ class GenerateMetadataReport:
         )
         if feed is not None and targets:
             fed, fed_descriptors = self._observe_providers(
-                repository, feed, cover_aggregate_deadline, targets
+                repository, feed, cover_aggregate_deadline, item, "asin_feed", targets
             )
             replaced = {value.provider for value in fed}
             observations = (

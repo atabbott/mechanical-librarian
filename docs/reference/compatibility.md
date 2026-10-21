@@ -470,3 +470,12 @@ lane refused products v57 admits, so the exact SQLite discriminator requires a
 migration, adoption or relabelling is supplied. The comparison version, the
 proposal and decision policies and the proposal, packet, outcome and review
 envelopes are unchanged.
+
+## Provider log events (#1299)
+
+No persisted schema, report, proposal, decision or envelope version changes,
+so upgrading needs no clean rebuild. Preparation and provider recovery add
+value-free `provider_*` JSON lines on stderr. The workbench cold-start report
+moves to `cold-start-report-v4`, because the rows of `band`, `audible_rungs`
+and `dispatches.providers` change shape and new keys are added. A reader of v3
+must be updated.

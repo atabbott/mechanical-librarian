@@ -588,3 +588,152 @@ def test_status_derived_empty_no_match_is_suppressed_only_on_request() -> None:
             (), status="malformed", work_identity_refused_only=True
         )
     )
+
+
+def test_provider_events_carry_no_title_url_credential_path_or_item(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every key is allow-listed and every value closed, so nothing leaks (#1299)."""
+    import json
+
+    from mechanical_librarian.application.failure_diagnostics import (
+        emit_provider_events,
+        provider_dispatch_events,
+        provider_item_ref,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        MetadataDiscoveryLane,
+    )
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderAttemptRecord,
+    )
+
+    url = "https://x.invalid/?q=secret&key=TOKEN"
+    lane = MetadataDiscoveryLane(
+        "lane_" + "a" * 64,
+        ProviderQueryKind.WORK,
+        (),
+        title="Secret Title",
+        authors=("Private Author",),
+    )
+    emit_provider_events(
+        provider_dispatch_events,
+        adapter="hardcover",
+        provider="Private Provider",
+        item_ref=provider_item_ref("primary", "books", "/media/private/book.m4b"),
+        phase="discovery",
+        lanes=(lane,),
+        observation=None,
+        evidence=ProviderOperationalEvidence(
+            attempt_records=(
+                ProviderAttemptRecord("catalogue", 1, url, None, 0.1, "Bearer TOKEN"),
+            )
+        ),
+        audio=False,
+        elapsed_seconds=0.25,
+        deadline_seconds=20.0,
+        deadline_kind="provider_share",
+    )
+    emit_provider_events(
+        lambda: (
+            {
+                "event": "provider_request_failed",
+                "item_ref": "/media/private/book.m4b",
+                "outcome_class": url,
+                "title": "Secret Title",
+                "message": "Bearer TOKEN",
+            },
+        )
+    )
+
+    def raises() -> tuple[dict[str, object], ...]:
+        raise RuntimeError(f"{url} Bearer TOKEN /media/private/book.m4b")
+
+    emit_provider_events(raises)
+
+    written = capsys.readouterr().err
+    for leaked in (
+        "Secret Title",
+        "Private Author",
+        "x.invalid",
+        "secret",
+        "TOKEN",
+        "Bearer",
+        "/media/private",
+        "book.m4b",
+        "Private Provider",
+    ):
+        assert leaked not in written
+    dispatched, injected = (json.loads(line) for line in written.splitlines())
+    assert dispatched["provider"] is None
+    assert dispatched["attempt_outcome"] is None
+    assert dispatched["outcome_class"] == "unknown"
+    assert dispatched["item_ref"].startswith("item-")
+    assert {"lane_kind": "work", "query_family": "asserted"}.items() <= (
+        dispatched.items()
+    )
+    assert {
+        "event": "provider_request_failed",
+        "item_ref": None,
+        "outcome_class": None,
+    } == injected
+    assert all(len(line) + 1 <= 1024 for line in written.splitlines())
+
+
+def test_provider_events_need_no_environment_switch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Events are on by default: nothing in the environment enables them."""
+    import os
+
+    from mechanical_librarian.application.failure_diagnostics import (
+        emit_provider_events,
+    )
+
+    for name in tuple(os.environ):
+        monkeypatch.delenv(name)
+
+    emit_provider_events(
+        lambda: ({"event": "provider_throttled", "outcome_class": "held"},)
+    )
+
+    assert (
+        '{"event":"provider_throttled","outcome_class":"held"}\n'
+        == capsys.readouterr().err
+    )
+
+
+@pytest.mark.parametrize(
+    "seconds", (1e308, float("inf"), float("nan"), 10**400, 86_400.001, -1e308)
+)
+def test_an_unbounded_duration_names_no_milliseconds_and_keeps_the_event(
+    seconds: float,
+) -> None:
+    """A duration past the day bound is null, never an overflow (#1299)."""
+    from mechanical_librarian.application.failure_diagnostics import (
+        provider_dispatch_events,
+    )
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderAttemptRecord,
+    )
+
+    (event,) = provider_dispatch_events(
+        adapter="hardcover",
+        provider="catalogue",
+        item_ref="item-" + "0" * 16,
+        phase="discovery",
+        lanes=(),
+        observation=None,
+        evidence=ProviderOperationalEvidence(
+            attempt_records=(
+                ProviderAttemptRecord(
+                    "catalogue", 1, "http_500", None, 0.1, "terminal"
+                ),
+            )
+        ),
+        audio=False,
+        elapsed_seconds=seconds,
+        deadline_seconds=86_400,
+        deadline_kind="provider_share",
+    )
+    assert (None, 86_400_000) == (event["elapsed_ms"], event["deadline_ms"])
