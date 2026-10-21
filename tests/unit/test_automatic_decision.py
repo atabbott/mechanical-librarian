@@ -1590,6 +1590,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="provider-log-events-predecessor-f46",
         ),
+        pytest.param(
+            "c25e3fe2b71b7c102c7cc2098a958d656fbcbd867a4f34d1f0b792b580b487ba",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="asin-only-plans-predecessor-f19a",
+        ),
+        pytest.param(
+            "ffa423afc5f9d347f1cd273389df4ca89a11b793c8568311e2b04dcd46d6cef3",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="asin-only-plans-predecessor-f20",
+        ),
+        pytest.param(
+            "1017cd0f2b8c554989fddd4953d51ad1af6d95c8a1658b6559a1cd705787b3d5",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="asin-only-plans-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

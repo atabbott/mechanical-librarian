@@ -479,3 +479,10 @@ value-free `provider_*` JSON lines on stderr. The workbench cold-start report
 moves to `cold-start-report-v4`, because the rows of `band`, `audible_rungs`
 and `dispatches.providers` change shape and new keys are added. A reader of v3
 must be updated.
+
+## ASIN-only audiobook plans (#1306)
+
+No persisted schema, report, proposal, decision or envelope version changes,
+so upgrading needs no clean rebuild. A report already published with a false
+Hardcover or Open Library `unavailable` keeps it; the product has no release
+install, so no adoption or relabelling is supplied.

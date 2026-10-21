@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## ASIN-only plan successor (#1306)
+
+The current F19a, F20 and F46 records move to semantic revision 59 over
+predecessor `32360e99`, whose record bytes the archive index keeps. Their
+runtime digests join the prior-manifest histories with their frozen permission
+sets, so decisions minted under them stay readable without current authority.
+Operation membership and historical measurements are unchanged.
+
+Hardcover and Open Library now answer an audiobook plan made only of ASIN lanes
+with no request and no lane instead of an `unavailable` observation. That
+changes no proposal or decision, so no operation gains or loses authority.
+
 ## Provider log events successor (#1299)
 
 The current F19a, F20 and F46 records move to semantic revision 58 over
