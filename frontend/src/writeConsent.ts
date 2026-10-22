@@ -123,3 +123,32 @@ export const readWriteConsent = (
     reasons,
   }
 }
+
+/**
+ * What a permission draft was reviewed against: the configured libraries, each
+ * library's capability and per-destination state and consent, and the active
+ * policy. A draft survives anything that leaves this unchanged and is discarded
+ * when it differs (#1279). Prepared counts, backup readiness, the example and
+ * the waiting reasons are excluded: they move with ordinary preparation, and
+ * confirmation re-checks backup and capability on the server regardless.
+ */
+export const consentBasis = (
+  view: Pick<ActivityPermissionReadinessView, 'capabilities' | 'configured_libraries'>,
+  policyId: string,
+) => {
+  // Each entry is serialised before sorting, so the order a response lists
+  // libraries or destinations in never reads as a change.
+  const sorted = (items: readonly unknown[]) => items.map((item) => JSON.stringify(item)).sort()
+  return JSON.stringify([
+    sorted(view.configured_libraries.map((item) => [item.connection, item.library])),
+    sorted(
+      view.capabilities.map((item) => [
+        item.connection,
+        item.library,
+        item.state,
+        sorted(item.destinations.map((entry) => [entry.destination, entry.state, entry.consented])),
+      ]),
+    ),
+    policyId,
+  ])
+}

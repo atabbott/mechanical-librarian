@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reviewing write permissions on Activity now keeps the checked libraries and
+  ticks through refreshes, focus changes and updates from other tabs. They are
+  cleared, with the reason stated, only when the library settings really changed,
+  which Confirm checks again before granting. The panel sits below the heading,
+  and there is one Review write permissions entry, never inside a disclosure (#1279).
+
 - An author or narrator that only loses its accents now keeps your spelling;
   any other accent-dropping or credit-prefixed contributor, a title carrying a
   "Now a Major Motion Picture"-style announcement, or a description that is

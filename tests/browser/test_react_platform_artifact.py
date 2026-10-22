@@ -1202,12 +1202,21 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 page.get_by_role("button", name="Use light mode").click()
                 page.emulate_media(reduced_motion="no-preference")
                 page.set_viewport_size({"width": 390, "height": 844})
-                page.get_by_text("Authority and recovery", exact=True).click()
-                page.get_by_role("button", name="Review write permissions").click()
+                # One entry, in the status section rather than the disclosure.
+                entry = page.get_by_role("button", name="Review write permissions")
+                expect(entry).to_have_count(1)
+                assert entry.evaluate("node => node.closest('details') === null")
+                entry.click()
                 page.get_by_role("heading", name="Enable guarded writes").wait_for()
                 page.locator(".activity-consent-library").filter(
                     has_text="Household ebooks"
                 ).get_by_text("5 prepared · Some destinations are ready").wait_for()
+                spoken = (
+                    page.locator(".activity-consent-library")
+                    .filter(has_text="Spoken stories")
+                    .get_by_role("checkbox")
+                )
+                spoken.check()
                 page.get_by_role("heading", name="Activity ledger").wait_for()
                 page.get_by_label("Search activity").wait_for()
                 for width, height in ((1440, 900), (390, 844)):
@@ -1262,20 +1271,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "future_provider_origin"
                     not in page.locator(".cm-activity-ledger").inner_text()
                 )
-                # The history controls above invalidate the earlier permission
-                # snapshot. Selection requires a new explicit current check.
-                expect(page.locator(".activity-consent-library")).to_have_count(0)
+                # The history controls above refetch Activity without changing
+                # its consent basis, so the reviewed draft and its tick survive.
+                expect(page.locator(".activity-consent-library")).to_have_count(3)
+                expect(spoken).to_be_checked()
                 expect(
                     page.get_by_role("button", name="Confirm write permissions")
-                ).to_be_disabled()
-                page.get_by_role("button", name="Check write permissions").click()
-                page.get_by_text(
-                    "Backup readiness checked. Review the included and excluded destinations.",
-                    exact=True,
-                ).wait_for()
-                page.locator(".activity-consent-library").filter(
-                    has_text="Spoken stories"
-                ).get_by_role("checkbox").check()
+                ).to_be_enabled()
                 assert consent_payloads == []
                 stage[0] = "activity:consent-refresh"
                 page.get_by_role("button", name="Confirm write permissions").click()

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { mapActivity, mapActivityConsent } from '../src/api/http'
-import { readWriteConsent } from '../src/writeConsent'
+import { consentBasis, readWriteConsent } from '../src/writeConsent'
 import currentActivity from './descriptionAdviceActivityFixture.json'
 import { activity } from './fixtures'
 
@@ -214,4 +214,103 @@ describe('the Library notice and Activity state one offer', () => {
       expect(notice.state).toBe(enabling ? 'enabling' : state)
     },
   )
+})
+
+describe('the consent basis a permission draft is kept against', () => {
+  const base = {
+    configured_libraries: [
+      { connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 1, total: 2 } },
+      { connection: 'primary', library: 'history', prepared: { automatic: 0, human: 1, total: 1 } },
+    ],
+    capabilities: [
+      capability('fiction', [
+        { destination: 'title', state: 'allowed', prepared: 2 },
+        { destination: 'cover', state: 'insufficient_permission' },
+      ]),
+      capability('history', [{ destination: 'title', state: 'allowed', prepared: 1 }]),
+    ],
+  }
+  type Basis = typeof base
+  const [fiction, history] = base.capabilities as [
+    Basis['capabilities'][number],
+    Basis['capabilities'][number],
+  ]
+  const withFiction = (change: Partial<typeof fiction>): Basis => ({
+    ...base,
+    capabilities: [{ ...fiction, ...change }, history],
+  })
+  const destinations = (change: (entry: (typeof fiction.destinations)[number]) => object) =>
+    withFiction({
+      destinations: fiction.destinations.map((entry) => ({ ...entry, ...change(entry) })),
+    })
+
+  it.each<[string, Basis, string]>([
+    [
+      'prepared counts',
+      {
+        configured_libraries: base.configured_libraries.map((item) => ({
+          ...item,
+          prepared: { automatic: 9, human: 9, total: 18 },
+        })),
+        capabilities: destinations(() => ({ prepared: 7 })).capabilities,
+      },
+      'policy-1',
+    ],
+    [
+      'library order',
+      { ...base, configured_libraries: [...base.configured_libraries].reverse() },
+      'policy-1',
+    ],
+    ['capability order', { ...base, capabilities: [history, fiction] }, 'policy-1'],
+    [
+      'destination order',
+      withFiction({ destinations: [...fiction.destinations].reverse() }),
+      'policy-1',
+    ],
+  ])('is unchanged by %s', (_name, value, policyId) => {
+    expect(consentBasis(value, policyId)).toBe(consentBasis(base, 'policy-1'))
+  })
+
+  it.each<[string, Basis, string]>([
+    ['the active policy', base, 'policy-2'],
+    [
+      'a configured library',
+      { ...base, configured_libraries: base.configured_libraries.slice(0, 1) },
+      'policy-1',
+    ],
+    [
+      'a library connection',
+      {
+        ...base,
+        configured_libraries: base.configured_libraries.map((item) => ({
+          ...item,
+          connection: 'archive',
+        })),
+      },
+      'policy-1',
+    ],
+    ['a library capability', withFiction({ state: 'allowed' }), 'policy-1'],
+    [
+      'a destination state',
+      destinations((entry) => (entry.destination === 'cover' ? { state: 'allowed' } : {})),
+      'policy-1',
+    ],
+    [
+      'a destination consent',
+      destinations((entry) => (entry.destination === 'title' ? { consented: true } : {})),
+      'policy-1',
+    ],
+    [
+      'an added destination',
+      withFiction({
+        destinations: [
+          ...fiction.destinations,
+          { destination: 'authors', state: 'allowed', consented: false, prepared: 0 },
+        ],
+      }),
+      'policy-1',
+    ],
+  ])('changes with %s', (_name, value, policyId) => {
+    expect(consentBasis(value, policyId)).not.toBe(consentBasis(base, 'policy-1'))
+  })
 })
