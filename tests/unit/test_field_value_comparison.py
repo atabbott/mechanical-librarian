@@ -3,8 +3,11 @@
 import pytest
 
 from mechanical_librarian.domain.field_value_comparison import (
+    contributor_credit_prefixed,
     description_alternative_immaterial,
     genre_alternative_immaterial,
+    mostly_quoted_praise,
+    promotional_announcement,
     values_match,
 )
 from mechanical_librarian.domain.metadata_report import TargetDestination
@@ -181,3 +184,107 @@ def test_genre_alternative_is_immaterial_only_by_set_containment(
     current: object, candidate: object, immaterial: bool
 ) -> None:
     assert genre_alternative_immaterial(current, candidate) is immaterial
+
+
+@pytest.mark.parametrize(
+    ("value", "prefixed"),
+    (
+        ("Narrated by Example Reader", True),
+        ("Read by Example Reader", True),
+        ("Written by Example Author", True),
+        ("  READ BY  Example Reader ", True),
+        ("Narrated and produced by Example Reader", True),
+        ("Read by", True),
+        ("Narrated by:", True),
+        ("Narrator: Example Reader", True),
+        ("Cast: Example Reader & Other Reader", True),
+        ("Byron Read", False),
+        ("Narrated Example", False),
+        ("Reader Byers", False),
+        ("Example Reader", False),
+        ("Ann By", False),
+        (None, False),
+    ),
+)
+def test_contributor_credit_prefix_reads_the_credit_grammar(
+    value: object, prefixed: bool
+) -> None:
+    assert contributor_credit_prefixed(value) is prefixed
+
+
+@pytest.mark.parametrize(
+    ("value", "announcement"),
+    (
+        ("Now a Major Motion Picture", True),
+        (" now an  HBO series", False),
+        ("Now a Netflix Series", True),
+        ("The Number One Bestseller", True),
+        ("A New York Times Bestseller", True),
+        ("Winner of the Example Prize 2024", True),
+        ("A Bestselling Life", False),
+        ("A Tale of Courage", False),
+        ("The Prize", False),
+        (None, False),
+    ),
+)
+def test_promotional_announcement_reads_whole_segments(
+    value: object, announcement: bool
+) -> None:
+    assert promotional_announcement(value) is announcement
+
+
+_PRAISE = (
+    '"A triumph of quiet suspense." — Example Review '
+    '"I could not put it down." — Sample Times'
+)
+
+
+@pytest.mark.parametrize(
+    ("value", "praise"),
+    (
+        (_PRAISE, True),
+        ("“Luminous.” – Example Review", True),
+        ('"Gripping from start to finish." - Example Weekly', True),
+        ("Praise for Synthetic Journey: a voyage reveals a hidden city.", True),
+        ("  PRAISE   FOR the author", True),
+        (
+            '"Luminous." — Example Review\n\nAn explorer crosses the sea, '
+            "maps a coastline nobody has charted and discovers an ancient city "
+            "whose archive holds the last record of a vanished people.",
+            False,
+        ),
+        (
+            '"Where are we?" she asked. "Somewhere old," he said. "Keep walking."',
+            False,
+        ),
+        ('"A triumph." "Gripping." "Luminous."', False),
+        ('"Unforgettable." — J. R. Example, author of Another Journey', True),
+        (
+            '"Luminous." — Example Review. An explorer crosses the sea and '
+            "discovers an ancient city whose archive holds a vanished record.",
+            False,
+        ),
+        ("A voyage reveals a hidden city.", False),
+        ("", False),
+        (None, False),
+    ),
+    ids=(
+        "attributed_quotes",
+        "curly_en_dash",
+        "spaced_hyphen",
+        "praise_for",
+        "praise_for_folded",
+        "one_pull_quote_and_synopsis",
+        "dialogue_without_attribution",
+        "quotes_without_attribution",
+        "initials_in_attribution",
+        "pull_quote_then_synopsis_on_one_line",
+        "synopsis",
+        "empty",
+        "not_text",
+    ),
+)
+def test_mostly_quoted_praise_reads_attributed_quote_blocks(
+    value: object, praise: bool
+) -> None:
+    assert mostly_quoted_praise(value) is praise

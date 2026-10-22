@@ -1,5 +1,15 @@
 # Upgrades and compatibility
 
+#1283 advances the proposal policy to `fixed-conservative-v36` and the shadow
+decision policy to `deterministic-shadow-decision-policy-v23`: an author or
+narrator that only drops a current name's accents keeps the current spelling,
+and a credit-prefixed contributor, an announcement in a title part, or a mostly
+quoted praise description is never automatic or recommended. **Clean rebuild
+required** for every predecessor application database; startup refuses v35
+proposals and v22 outcomes before mutation. No migration, adoption, conversion,
+import or downgrade is supplied; F19a/F20/F46 records are displaced to revision
+60 with their permission sets unchanged.
+
 #1260 advances the report to `metadata-report-v57`: on an audiobook's asserted
 lane, a product inside the tight runtime band can now admit through a
 band-corroborated production, and its lineage names productions and a family a
@@ -111,8 +121,8 @@ decodable history without current authority; no adoption or migration is supplie
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v57`, `proposal-set-v8` under
-`fixed-conservative-v35`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
-and `deterministic-shadow-decision-policy-v22`. #1077 removes only the image
+`fixed-conservative-v36`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
+and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.
 No migration, adoption, conversion, import or downgrade is supplied. Historical

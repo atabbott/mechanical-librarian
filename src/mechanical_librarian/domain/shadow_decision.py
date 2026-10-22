@@ -8,7 +8,14 @@ import re
 from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
+from mechanical_librarian.domain.field_value_comparison import (
+    PRAISE_OPENING,
+    PRAISE_QUOTED_SHARE,
+    contributor_credit_prefixed,
+    promotional_announcement,
+)
 from mechanical_librarian.domain.proposal_set import (
+    _TITLE_PART_BOUNDARY,
     DECORATION_TIDY_TITLE_REASONS,
     EVIDENCE_LED_TITLE_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
@@ -23,7 +30,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v22"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v23"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -49,6 +56,15 @@ _REASON_CODES = frozenset(
         "unsupported_destination",
     }
 )
+# Both media's synopsis rules refuse the same praise shape (#1283).
+_PRAISE_RULE = {
+    "mostly_quoted_praise_refused": True,
+    "praise_quote_block": "balanced_double_quoted_span_and_dash_attribution",
+    "praise_attribution_ends": ["line_end", "next_quote", "full_stop_after_word"],
+    "praise_quoted_non_whitespace_share_minimum": PRAISE_QUOTED_SHARE,
+    "praise_dash_attribution": ["em_dash", "en_dash", "spaced_hyphen"],
+    "praise_opening": PRAISE_OPENING,
+}
 _RULE_TABLE = {
     "scalar_incumbent_title": {
         "sole_eligible_candidate_equals_current": True,
@@ -72,6 +88,7 @@ _RULE_TABLE = {
         "source_record_tiebreak": ["provider", "candidate_identity"],
         "safety_identity_and_source_conflict_precede_fitness": True,
         "explicit_owner_choice_unchanged": True,
+        **_PRAISE_RULE,
     },
     "audiobook_synopsis": {
         "execution": "rich_metadata_preview",
@@ -110,6 +127,7 @@ _RULE_TABLE = {
         "optional_final_full_stop": True,
         "preserve_other_safe_plain_incumbents": True,
         "safety_and_identity_precede_comparison": True,
+        **_PRAISE_RULE,
     },
     "audiobook_genres": {
         "execution": "rich_metadata_preview",
@@ -172,6 +190,25 @@ _RULE_TABLE = {
         "target_only_preservation": 0,
         "authors": "complete_set_proposal_sufficiency_and_recording_or_local_or_two_independent_providers",
         "unique_action_required": True,
+        "credit_prefixed_contributor_refused_for": ["authors", "narrators"],
+        "credit_prefixed_contributor": [
+            "credit_line_role_by_names",
+            "credit_line_label_colon_names",
+            "credit_line_bare_role_by_optional_colon",
+        ],
+        "promotional_title_part_refused": True,
+        "promotional_title_part": [
+            "winner_of_award_or_prize_optional_year",
+            "optionally_qualified_bestseller",
+            "now_a_major_motion_picture_film_or_series",
+        ],
+        "title_parts_split_at": [
+            "enclosure",
+            "colon",
+            "spaced_dash",
+            "comma",
+            "semicolon",
+        ],
     },
     "combinations": {
         "exact_destination_order": list(_COMBINATION_DESTINATIONS),
@@ -620,6 +657,22 @@ def _candidate_is_eligible(
         and len(reasons) == 1
         and reasons[0] in DECORATION_TIDY_TITLE_REASONS
     )
+    wrapped = candidate["value"]
+    value = wrapped.get("value") if type(wrapped) is dict else wrapped
+    if (
+        destination in {"authors", "narrators"}
+        and type(value) is list
+        and any(contributor_credit_prefixed(member) for member in value)
+    ) or (
+        destination == "title"
+        and type(value) is str
+        and any(
+            promotional_announcement(part) for part in _TITLE_PART_BOUNDARY.split(value)
+        )
+    ):
+        # A credit line in a contributor or an announcement in a title is
+        # never automatic; the owner may still choose it (#1283).
+        return False
     recording_support = summary["recording_support"]
     narrator_agreement = destination == "narrators" and summary["narrator_agreement"]
     field_support = recording_support or narrator_agreement or work_publication

@@ -1170,6 +1170,61 @@ def test_automatic_description_abstains_when_competing_text_misses_quality_floor
     )
 
 
+_EBOOK_PRAISE = (
+    '"A triumph of quiet suspense." \u2014 Example Review '
+    '"I could not put it down." \u2014 Sample Times'
+)
+
+
+@pytest.mark.parametrize(
+    ("texts", "outcome", "reason"),
+    (
+        ((_EBOOK_PRAISE,), "abstain", "description_quality_floor_not_met"),
+        (
+            ("Praise for Synthetic Journey. " + _QUALIFIED_DESCRIPTION,),
+            "abstain",
+            "description_quality_floor_not_met",
+        ),
+        # One pull quote before a longer synopsis is a synopsis.
+        (
+            ('"Luminous." \u2014 Example Review. ' + _QUALIFIED_DESCRIPTION,),
+            "projected",
+            None,
+        ),
+        # A praise run beside a synopsis leaves the synopsis to elect.
+        ((_EBOOK_PRAISE, _QUALIFIED_DESCRIPTION), "projected", None),
+    ),
+    ids=("praise_only", "praise_for", "pull_quote", "praise_beside_synopsis"),
+)
+def test_automatic_description_never_elects_mostly_quoted_praise(
+    texts: tuple[str, ...], outcome: str, reason: str | None
+) -> None:
+    proposal, fields = _target_work_preview(
+        _target_work_report(
+            tuple(
+                (
+                    name,
+                    "hardcover",
+                    (_description_candidate(name, f"edition-{name}", "work-1", text),),
+                    True,
+                )
+                for name, text in zip(
+                    ("first", "second")[: len(texts)], texts, strict=True
+                )
+            )
+        )
+    )
+
+    description = fields["description_fill"]
+    assert (description.outcome, description.reason) == (outcome, reason)
+    if outcome == "projected":
+        assert description.desired_value == texts[-1]
+    # Every text stays an alternative the owner may still choose.
+    assert {
+        value.value.value for value in _description_result(proposal).alternatives
+    } >= set(texts)
+
+
 def test_isbn_intersection_does_not_replace_missing_work_identity() -> None:
     candidate = _isbn_target_work_candidate("9780306406157")
 

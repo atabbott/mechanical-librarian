@@ -22,7 +22,9 @@ from mechanical_librarian.domain.field_value_comparison import (
     SYNOPSIS_MARKUP_TAG,
     audiobook_format_only_genres,
     canonical_text,
+    mostly_quoted_praise,
     plain_audiobook_synopsis,
+    promotional_announcement,
     recognized_synopsis_placeholder,
     values_match,
 )
@@ -400,7 +402,7 @@ def _project(
             proposal.media_kind != "audiobook"
             or (
                 target.state is TargetFieldState.VALUE
-                and not _promotional_subtitle(current)
+                and not promotional_announcement(current)
             )
         )
     ):
@@ -724,24 +726,11 @@ def _series_candidate(result: ProposalResult, *, audiobook: bool = False, curren
     return None
 
 
-def _promotional_subtitle(value: object) -> bool:
-    """Recognize whole-field announcements while retaining descriptive wording."""
-    if type(value) is not str:
-        return False
-    normalized = " ".join(value.split())
-    return re.fullmatch(
-        r"(?:winner of (?:the )?.+\b(?:award|prize)(?: \d{4})?"
-        r"|(?:the |a |an )?(?:(?:international|new york times|sunday times|#1|number one) )?bestseller"
-        r"|now (?:a|an) (?:major )?(?:motion picture|film|television series|tv series|netflix series))",
-        normalized, re.IGNORECASE,
-    ) is not None
-
-
 def _descriptive_audiobook_subtitle(result: ProposalResult, report: MetadataReport) -> ProposalAlternative | None:
     retained = _retained_claims(report)
     candidates = [candidate for candidate in result.alternatives
                   if candidate.value.kind is ProposalValueKind.TEXT
-                  and not _promotional_subtitle(candidate.value.value)
+                  and not promotional_announcement(candidate.value.value)
                   and any((held := retained.get(reference)) is not None
                           and type(held.claim) is ProviderClaim
                           and held.claim.kind is ClaimKind.SUBTITLE
@@ -1169,6 +1158,7 @@ def _automatic_description_candidate(
             if type(candidate.value.value) is str
             and candidate.value.value.strip()
             and not recognized_synopsis_placeholder(candidate.value.value)
+            and not mostly_quoted_praise(candidate.value.value)
             and not candidate.value.value.rstrip().endswith(
                 DESCRIPTION_VISIBLE_CUTOFFS
             )
@@ -1182,6 +1172,7 @@ def _automatic_description_candidate(
             (candidate, references)
             for candidate, references in candidates
             if _eligible_ebook_synopsis(candidate.value.value)
+            and not mostly_quoted_praise(candidate.value.value)
         ]
         if not candidates:
             return None, (), "description_quality_floor_not_met"
@@ -1792,7 +1783,7 @@ def project_audiobook_automatic_decision_value(
         projected = {"kind": "boolean", "value": True}
     elif field == "description_fill":
         value = candidate_value["value"]
-        if candidate_value["kind"] != "text" or not plain_audiobook_synopsis(value) or recognized_synopsis_placeholder(value):
+        if candidate_value["kind"] != "text" or not plain_audiobook_synopsis(value) or recognized_synopsis_placeholder(value) or mostly_quoted_praise(value):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         if current_value not in (None, "", value) and (
             option != "replace_safe_plain_text"
@@ -1806,9 +1797,9 @@ def project_audiobook_automatic_decision_value(
         projected = {"kind": "text", "value": value}
     elif field == "subtitle" and option == "replace_descriptive":
         value = candidate_value["value"]
-        if candidate_value["kind"] != "text" or type(value) is not str or _promotional_subtitle(value):
+        if candidate_value["kind"] != "text" or type(value) is not str or promotional_announcement(value):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
-        if current_value not in (None, "", value) and not _promotional_subtitle(current_value):
+        if current_value not in (None, "", value) and not promotional_announcement(current_value):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         projected = {"kind": "text", "value": value}
     else:

@@ -845,7 +845,7 @@ def test_the_decoration_tidy_rule_states_its_own_closed_thresholds() -> None:
 
 
 def test_v14_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v22" == DECISION_POLICY_VERSION
+    assert "deterministic-shadow-decision-policy-v23" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"
@@ -971,3 +971,72 @@ def test_scalar_incumbent_selection_requires_exact_compiled_keep(variant):
         2 if variant == "nonunique" else 0 if variant == "candidate_combination" else 1
     )
     assert all(action.recommendation == "recommend_candidate" for action in eligible)
+
+
+@pytest.mark.parametrize(
+    "destination,value,recommendation,reason",
+    (
+        (
+            "authors",
+            {"kind": "list", "value": ["Written by Example Author"]},
+            "manual",
+            "no_eligible_action",
+        ),
+        (
+            "authors",
+            {"kind": "list", "value": ["Example Author", "Author: Second Writer"]},
+            "manual",
+            "no_eligible_action",
+        ),
+        (
+            "authors",
+            {"kind": "list", "value": ["Byron Read"]},
+            "recommend_candidate",
+            "unique_supported_candidate",
+        ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey: Now a Major Motion Picture"},
+            "manual",
+            "no_eligible_action",
+        ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey (The Number One Bestseller)"},
+            "manual",
+            "no_eligible_action",
+        ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey: A Bestselling Life"},
+            "recommend_candidate",
+            "unique_supported_candidate",
+        ),
+    ),
+    ids=(
+        "written_by",
+        "credit_label_member",
+        "name_holding_a_role_word",
+        "announcement_subtitle",
+        "enclosed_announcement",
+        "descriptive_subtitle",
+    ),
+)
+def test_credit_lines_and_announcements_are_never_eligible_candidates(
+    destination, value, recommendation, reason
+) -> None:
+    data = json.loads(_packet(destination).to_json())
+    data["proposals"][0]["candidates"][0]["value"] = value
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert (decision.recommendation, decision.reason_code) == (recommendation, reason)
+
+
+def test_the_candidate_rule_names_its_credit_and_announcement_refusals() -> None:
+    rule = shadow_decision_module._RULE_TABLE["candidate"]
+    assert rule["credit_prefixed_contributor_refused_for"] == ["authors", "narrators"]
+    assert rule["promotional_title_part_refused"] is True
+    for name in ("ebook_synopsis", "audiobook_synopsis"):
+        synopsis = shadow_decision_module._RULE_TABLE[name]
+        assert synopsis["mostly_quoted_praise_refused"] is True
+        assert synopsis["praise_quoted_non_whitespace_share_minimum"] == 0.5
+        assert synopsis["praise_opening"] == "praise for"

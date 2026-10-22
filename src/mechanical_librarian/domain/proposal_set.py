@@ -105,7 +105,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v35"
+POLICY_VERSION = "fixed-conservative-v36"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1267,6 +1267,53 @@ def _keeps_every_mark(current: str, candidate: str) -> bool:
                 return False
             kept.remove(mark)
     return True
+
+
+def _folded_bases(text: str) -> list[str]:
+    return [base for base, _ in _mark_clusters(text)]
+
+
+def _mark_stripped_member(current: str, candidate: str) -> bool:
+    """Whether a candidate spells the current member with fewer of its marks.
+
+    The two must read the same with every mark folded away, while the current
+    member carries a mark the candidate drops or moves. A candidate that only
+    adds marks is not mark-stripped (#1283).
+    """
+    return _folded_bases(current) == _folded_bases(candidate) and not (
+        _keeps_every_mark(current, candidate)
+    )
+
+
+def _incumbent_spellings(
+    current: tuple[str, ...], candidate: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Keep each current member's spelling where the candidate strips its marks.
+
+    Each candidate member pairs with the first unpaired current member that
+    reads the same with marks folded away, so a current member pairs at most
+    once and never with a different member; a mark-stripped pair keeps the
+    current spelling, and every other member keeps the candidate's (#1283).
+    """
+    unpaired = list(current)
+    members: list[str] = []
+    for member in candidate:
+        match = next(
+            (
+                incumbent
+                for incumbent in unpaired
+                if _folded_bases(incumbent) == _folded_bases(member)
+            ),
+            None,
+        )
+        if match is not None:
+            unpaired.remove(match)
+        members.append(
+            match
+            if match is not None and _mark_stripped_member(match, member)
+            else member
+        )
+    return tuple(members)
 
 
 def _work_title_cleanup(target: TargetField, value: ProposalValue) -> bool:
@@ -4658,6 +4705,21 @@ def _alternatives(
             proposal_values,
             key=lambda value: canonical_json(value.to_data()),
         )
+        if (
+            destination in {TargetDestination.AUTHORS, TargetDestination.NARRATORS}
+            and target.state is TargetFieldState.VALUE
+            and type(target.value) is tuple
+            and type(proposal_value.value) is tuple
+        ):
+            # A candidate that only strips a current member's marks names the
+            # same person less exactly, so the member keeps its spelling
+            # (#1283).
+            spellings = _incumbent_spellings(
+                cast("tuple[str, ...]", target.value),
+                cast("tuple[str, ...]", proposal_value.value),
+            )
+            if spellings != proposal_value.value:
+                proposal_value = _value(destination, spellings)
         if (
             report.audio is not None
             and destination is TargetDestination.AUTHORS

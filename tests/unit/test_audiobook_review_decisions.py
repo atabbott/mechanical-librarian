@@ -2460,3 +2460,133 @@ def test_a_recordings_author_reorder_is_a_preservation_not_a_write(
         report, ("contributor_names",), {"contributor_names": "canonical"}
     )["authors"]
     assert _routing(authors) == routing
+
+
+_CONTRIBUTORS = {"contributor_names": "canonical"}
+
+
+@pytest.mark.parametrize(
+    "source,target,routing,kept",
+    (
+        (
+            ("Sean Example",),
+            ("Seán Example",),
+            ("automatic", "keep_current", "canonical:audiobook_narrators_preserve"),
+            ("Seán Example",),
+        ),
+        (
+            ("Sean Example", "New Reader"),
+            ("Seán Example",),
+            ("automatic", "candidate", "canonical:audiobook_narrators_add"),
+            ("Seán Example", "New Reader"),
+        ),
+        # A candidate that adds marks is still a replacement.
+        (
+            ("Seán Example",),
+            ("Sean Example",),
+            ("automatic", "candidate", "canonical:audiobook_narrators_replace"),
+            ("Seán Example",),
+        ),
+    ),
+    ids=("mark_strip", "membership_change", "adds_marks"),
+)
+def test_a_mark_stripped_narrator_keeps_the_incumbent_spelling(
+    source, target, routing, kept
+):
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=source, target_narrators=target, local_narrators=()
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert _routing(narrators) == routing
+    (result,) = (
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.NARRATORS
+    )
+    assert [value.value.value for value in result.alternatives] == [kept]
+
+
+def test_a_mark_stripped_recording_author_is_preserved():
+    report = synthetic_audiobook_bibliographic_report(
+        source_authors=("Zoe Sample",), target_authors=("Zoë Sample",)
+    )
+    authors = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "authors"
+    ]
+    assert _routing(authors) == (
+        "automatic",
+        "keep_current",
+        "canonical:audiobook_authors_preserve",
+    )
+
+
+@pytest.mark.parametrize(
+    "source,target",
+    (
+        (("Narrated by Example Reader",), ("Example Reader",)),
+        (("Read by Example Reader", "Other Reader"), ()),
+        (("Narrator: Example Reader",), ("Old Reader",)),
+    ),
+    ids=("replace", "fill", "label"),
+)
+def test_a_credit_prefixed_narrator_candidate_is_never_automatic(source, target):
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=source, target_narrators=target
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert narrators.disposition == "abstention"
+    assert narrators.reason_code == "insufficient_support"
+    assert not narrators.combination_ids
+    # The candidate stays the provider's exact text for the owner to choose.
+    (result,) = (
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.NARRATORS
+    )
+    assert [value.value.value for value in result.alternatives] == [source]
+
+
+def test_a_credit_prefixed_incumbent_is_still_cleaned_by_a_plain_cast():
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=("Example Reader",),
+        target_narrators=("Narrated by Example Reader",),
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert _routing(narrators) == (
+        "automatic",
+        "candidate",
+        "canonical:audiobook_narrators_replace",
+    )
+
+
+_PROMOTIONAL: dict[str, dict[str, Any]] = {
+    "promotional_candidate": {
+        "source_title": "Synthetic Journey: Now a Major Motion Picture",
+        "source_subtitle": None,
+    },
+    "promotional_incumbent": {
+        "title": "Synthetic Journey: The Number One Bestseller",
+        "source_title": "Synthetic Journey",
+        "source_subtitle": None,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "variant,disposition",
+    (("promotional_candidate", "abstention"), ("promotional_incumbent", "candidate")),
+)
+def test_a_promotional_title_candidate_is_never_automatic(variant, disposition):
+    report = synthetic_audiobook_bibliographic_report(**_PROMOTIONAL[variant])
+    title = _recording_outcomes(report, ("title_layout",))["title"]
+    assert _routing(title) == (
+        "automatic",
+        disposition,
+        "title_and_subtitle:audiobook_title_replace",
+    )
