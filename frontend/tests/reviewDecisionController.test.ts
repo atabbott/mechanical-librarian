@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { AmbiguousMutationError, ApiError, mapCaseDetail } from '../src/api/http'
+import { AmbiguousMutationError, ApiError, CsrfRenewedError, mapCaseDetail } from '../src/api/http'
 import {
   actionable,
   choiceAvailable,
@@ -12,12 +12,17 @@ import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 
 describe('review decision failure contract', () => {
   it('retries only the closed transient server outcomes', () => {
-    for (const code of ['persistence', 'unavailable']) {
-      const error = new ApiError(503, code)
+    for (const error of [
+      new ApiError(503, 'persistence'),
+      new ApiError(503, 'unavailable'),
+      new CsrfRenewedError(),
+    ]) {
       expect(classifyDecisionFailure(error)).toBe('retryable')
       expect(retryableDecisionFailure(error)).toBe(true)
     }
     for (const error of [
+      new ApiError(403, 'csrf_renewed'),
+      new ApiError(403, 'origin'),
       new ApiError(422, 'unsupported'),
       new ApiError(422, 'invalid_selection'),
       new ApiError(409, 'idempotency_conflict'),

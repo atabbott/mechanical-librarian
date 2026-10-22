@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { ApiError, mapCaseDetail } from '../src/api/http'
+import { ApiError, CsrfRenewedError, mapCaseDetail } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
 import { ownerChoiceCount } from '../src/reviewChoiceCounts'
@@ -5127,90 +5127,95 @@ describe('Library route', () => {
     ).toBeVisible()
   })
 
-  it('retries the embedded Library decision with the exact preserved command and idempotency key', async () => {
-    const user = userEvent.setup()
-    const titleField = detail.fields[0]
-    if (!titleField) throw new Error('workspace fixture requires a title field')
-    const settled: CaseDetailView = {
-      ...detail,
-      fields: [
-        {
-          ...titleField,
-          needsAttention: false,
-          humanDecision: {
-            actor: 'owner',
-            application: 'apply' as const,
-            decision_id: 'decision-retried',
-            destination: 'title',
-            occurred_at: 1,
-            outcome: 'keep_current',
-            proposal_id: titleField.proposalId,
-            review_case_id: 'case-1',
-            selected_value: null,
-            target_fingerprint: titleField.targetFingerprint,
+  it.each([
+    [new ApiError(503, 'persistence'), 'The decision was not recorded. Your choice is unchanged.'],
+    [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
+  ])(
+    'retries the embedded Library decision after %s with the exact preserved command and idempotency key',
+    async (failure, copy) => {
+      const user = userEvent.setup()
+      const titleField = detail.fields[0]
+      if (!titleField) throw new Error('workspace fixture requires a title field')
+      const settled: CaseDetailView = {
+        ...detail,
+        fields: [
+          {
+            ...titleField,
+            needsAttention: false,
+            humanDecision: {
+              actor: 'owner',
+              application: 'apply' as const,
+              decision_id: 'decision-retried',
+              destination: 'title',
+              occurred_at: 1,
+              outcome: 'keep_current',
+              proposal_id: titleField.proposalId,
+              review_case_id: 'case-1',
+              selected_value: null,
+              target_fingerprint: titleField.targetFingerprint,
+            },
           },
-        },
-      ],
-    }
-    let current = detail
-    let attempts = 0
-    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
-      attempts += 1
-      if (attempts === 1) throw new ApiError(503, 'persistence')
-      current = settled
-      return {
-        confirmation: { status: 'confirmed' as const, case: current },
-        invalidation_sequences: [],
-        schema_version: 'review-decision-v1' as const,
-        actor: 'owner' as const,
-        application: 'apply' as const,
-        decision_id: 'decision-retried',
-        destination: 'title',
-        occurred_at: 1,
-        outcome: 'keep_current' as const,
-        proposal_id: titleField.proposalId,
-        review_case_id: 'case-1',
-        selected_value: null,
-        target_fingerprint: titleField.targetFingerprint,
+        ],
       }
-    })
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getCaseDetail: vi.fn(async () => current),
-      recordDecision,
-    }
-    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      let current = detail
+      let attempts = 0
+      const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
+        attempts += 1
+        if (attempts === 1) throw failure
+        current = settled
+        return {
+          confirmation: { status: 'confirmed' as const, case: current },
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          application: 'apply' as const,
+          decision_id: 'decision-retried',
+          destination: 'title',
+          occurred_at: 1,
+          outcome: 'keep_current' as const,
+          proposal_id: titleField.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: titleField.targetFingerprint,
+        }
+      })
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => current),
+        recordDecision,
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'The decision was not recorded. Your choice is unchanged.',
-    )
-    expect(
-      screen.getByRole('button', { name: 'Choose current value: Old title' }),
-    ).not.toHaveTextContent('Recording…')
-    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    )
-    expect(screen.queryByText('Choice recorded.')).toBeNull()
-    expect(document.body.textContent).not.toContain('Recording accept…')
-    expect(document.body.textContent).not.toContain('Recording choice…')
-    expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
-    expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
-    const retry = screen.getByRole('button', { name: 'Try the same decision again' })
-    expect(retry).toHaveFocus()
-    const firstCommand = recordDecision.mock.calls[0]?.[1]
-    await user.click(retry)
+      await user.click(
+        await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+      )
+      expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+      expect(
+        screen.getByRole('button', { name: 'Choose current value: Old title' }),
+      ).not.toHaveTextContent('Recording…')
+      expect(
+        screen.getByRole('button', { name: 'Choose current value: Old title' }),
+      ).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.queryByText('Choice recorded.')).toBeNull()
+      expect(document.body.textContent).not.toContain('Recording accept…')
+      expect(document.body.textContent).not.toContain('Recording choice…')
+      expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
+      expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+      const retry = screen.getByRole('button', { name: 'Try the same decision again' })
+      expect(retry).toHaveFocus()
+      const firstCommand = recordDecision.mock.calls[0]?.[1]
+      await user.click(retry)
 
-    await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
-    expect(recordDecision.mock.calls[1]?.[1]).toEqual(firstCommand)
-    expect(recordDecision.mock.calls[1]?.[1].idempotencyKey).toBe(firstCommand?.idempotencyKey)
-    expect(await screen.findByText('Review complete')).toBeVisible()
-    expect(
-      screen.getByRole('button', { name: /Title.*Current value retained.*Old title/u }),
-    ).toBeVisible()
-    expect(document.activeElement).toHaveClass('review-complete')
-  })
+      await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
+      expect(recordDecision.mock.calls[1]?.[1]).toEqual(firstCommand)
+      expect(recordDecision.mock.calls[1]?.[1].idempotencyKey).toBe(firstCommand?.idempotencyKey)
+      expect(await screen.findByText('Review complete')).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: /Title.*Current value retained.*Old title/u }),
+      ).toBeVisible()
+      expect(document.activeElement).toHaveClass('review-complete')
+    },
+  )
 
   describe("a recording's optional choice (#1249)", () => {
     const title = detail.fields[0]

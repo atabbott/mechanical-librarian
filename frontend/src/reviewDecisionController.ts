@@ -2,7 +2,7 @@ import { invalidateBackgroundQueries } from './queryWork'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
-import { AmbiguousMutationError, ApiError } from './api/http'
+import { AmbiguousMutationError, ApiError, CsrfRenewedError, refusalCopy } from './api/http'
 import type { CaseDetailView, DecisionCommand } from './api/http'
 import { labelWords } from './labels'
 import {
@@ -28,6 +28,7 @@ export type DecisionFailure = 'permanent' | 'retryable' | 'stale' | 'uncertain'
 export const classifyDecisionFailure = (error: unknown): DecisionFailure => {
   if (error instanceof AmbiguousMutationError) return 'uncertain'
   if (error instanceof ApiError && error.code === 'stale') return 'stale'
+  if (error instanceof CsrfRenewedError) return 'retryable'
   if (
     error instanceof ApiError &&
     error.status === 503 &&
@@ -325,7 +326,7 @@ export const useReviewDecisionController = ({
         command.destination,
         classifyDecisionFailure(error) === 'uncertain'
           ? 'The response was lost. The current case was reloaded before any retry.'
-          : 'The decision was not recorded. Your choice is unchanged.',
+          : refusalCopy(error, 'The decision was not recorded. Your choice is unchanged.'),
       )
       // The current field is already authoritative after reconciliation. Do
       // not make truthful failure feedback wait on a no-op same-field route
