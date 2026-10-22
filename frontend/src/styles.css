@@ -227,7 +227,6 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-page-heading h1, .cm-page-heading p { margin:0; }
 .cm-page-heading p { max-width:72ch; margin-top:.35rem; color:var(--soft); font-size:.8rem; line-height:1.5; }
 .cm-policy-route .cm-page-heading { margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid var(--line-strong); }
-.cm-policy-state { flex:0 0 auto; align-self:end; padding:.5rem .7rem; border:1px solid var(--line); border-radius:999px; color:var(--accent-strong); background:var(--surface); font-size:.7rem; font-weight:700; }
 .cm-policy-editor { display:grid; grid-template-columns:minmax(230px,270px) minmax(0,1fr); align-items:start; overflow:clip; border:1px solid var(--line); border-radius:1rem; background:var(--surface); box-shadow:var(--shadow); }
 /* The rail is bounded and scrolls itself. Unbounded it grew past the viewport,
    and the sticky finish tray then floated across its safety controls. */
@@ -236,13 +235,17 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-sidebar > header span, .cm-policy-sidebar > header small { color:var(--soft); font-size:.72rem; }
 .cm-policy-sidebar > header strong { overflow-wrap:anywhere; font:700 1.08rem/1.25 Georgia,serif; }
 .cm-policy-sidebar > header small { color:var(--notice); }
-.cm-policy-transition { margin:.65rem; padding:.6rem; border:1px solid var(--notice); border-radius:.5rem; color:var(--soft); background:var(--notice-soft); font-size:.68rem; line-height:1.4; }
 .cm-policy-sidebar nav { display:grid; padding:.45rem; }
 .cm-policy-chapter-legend { margin:.1rem .65rem .55rem; color:var(--soft); font-size:.62rem; font-weight:700; text-align:right; }
 .cm-policy-sidebar nav button { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:.6rem; min-height:68px; padding:.55rem .6rem; border-color:transparent; background:transparent; text-align:left; }
 .cm-policy-sidebar nav button:hover:not(:disabled) { background:color-mix(in srgb,var(--accent-soft) 42%,transparent); }
 .cm-policy-sidebar nav button[aria-current='page'] { border-color:var(--accent); background:var(--accent-soft); }
 .cm-policy-sidebar nav button > span { display:grid; gap:.12rem; }
+/* The page body breaks any word that would overflow. A Policy label is a
+   name, so it keeps its words whole and the layout gives it the room. The
+   segmented options and step labels keep the body rule: at 200% text they
+   have no room to give, and a broken word beats a clipped one. */
+.cm-policy-route :is(h1, h2, .cm-policy-sidebar nav strong, .cm-policy-field > header strong, .cm-policy-representation > span, .cm-policy-control-heading strong, .cm-finish-summary strong, .cm-policy-impact > b) { overflow-wrap:normal; }
 .cm-policy-sidebar nav button small { color:var(--soft); font-size:.68rem; line-height:1.35; }
 .cm-change-count { flex:none; display:grid; width:26px; height:26px; place-items:center; border:1px solid var(--line-strong); border-radius:50%; color:var(--soft); font-size:.66rem; }
 [aria-current='page'] > .cm-change-count { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); }
@@ -315,7 +318,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-finish-tray { position:sticky; z-index:5; bottom:.7rem; display:grid; grid-column:1 / -1; grid-template-columns:minmax(300px,1fr) auto auto; align-items:center; gap:.65rem .85rem; margin:.7rem; padding:.72rem .85rem; border:1px solid var(--line-strong); border-radius:.85rem; background:var(--surface); box-shadow:var(--shadow); transition:border-color 180ms ease-out,background 180ms ease-out; }
 .cm-finish-tray.stage-preview, .cm-finish-tray.stage-activation { border-color:var(--accent); background:color-mix(in srgb,var(--surface) 92%,var(--accent-soft)); }
 .cm-finish-tray.stage-activated { border-color:var(--accent-strong); background:var(--accent-soft); }
-.cm-finish-summary { display:grid; min-width:0; gap:.15rem; }
+.cm-finish-summary, .cm-policy-finish-message { display:grid; min-width:0; gap:.15rem; }
 .cm-finish-summary > small { color:var(--accent-strong); font-size:.58rem; font-weight:850; letter-spacing:.015em; }
 .cm-finish-summary strong { font-size:.76rem; }
 .cm-finish-summary span { overflow:hidden; color:var(--soft); font-size:.66rem; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
@@ -331,11 +334,11 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-finish-actions { display:flex; justify-content:flex-end; gap:.5rem; }
 .cm-finish-actions button { white-space:nowrap; }
 .cm-finish-actions .primary-action { border-color:var(--accent); color:var(--surface); background:var(--accent-strong); }
-.cm-policy-validation, .cm-policy-result, .cm-policy-activated { grid-column:1 / -1; animation:cm-policy-result-reveal 260ms cubic-bezier(.16,1,.3,1) both; }
+.cm-policy-validation, .cm-policy-result { grid-column:1 / -1; animation:cm-policy-result-reveal 260ms cubic-bezier(.16,1,.3,1) both; }
 .cm-policy-validation { display:grid; grid-template-columns:minmax(190px,.7fr) minmax(0,1.3fr); gap:.85rem; padding-top:.7rem; border-top:1px solid var(--line); }
-.cm-policy-validation > header, .cm-policy-result aside > header, .cm-policy-activated { display:flex; align-items:center; gap:.65rem; }
-.cm-policy-validation > header > div, .cm-policy-result aside > header > div, .cm-policy-activated > div { display:grid; gap:.1rem; }
-.cm-policy-validation small, .cm-policy-result small, .cm-policy-activated small { color:var(--soft); font-size:.64rem; line-height:1.35; }
+.cm-policy-validation > header, .cm-policy-result aside > header { display:flex; align-items:center; gap:.65rem; }
+.cm-policy-validation > header > div, .cm-policy-result aside > header > div { display:grid; gap:.1rem; }
+.cm-policy-validation small, .cm-policy-result small { color:var(--soft); font-size:.64rem; line-height:1.35; }
 .cm-policy-validation-spinner { width:22px; height:22px; border:2px solid var(--line-strong); border-top-color:var(--accent-strong); border-radius:50%; animation:cm-policy-validation-spin .7s linear infinite; }
 .cm-policy-validation ul { display:grid; grid-template-columns:repeat(3,1fr); gap:.4rem; margin:0; padding:0; list-style:none; }
 .cm-policy-validation li { display:grid; grid-template-columns:8px minmax(0,1fr); align-items:start; gap:.4rem; padding:.48rem; background:var(--page); }
@@ -346,8 +349,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-validation li strong { font-size:.66rem; }
 .cm-policy-result { display:grid; grid-column:2; grid-template-columns:minmax(0,1fr); overflow:hidden; border-top:1px solid var(--line); background:var(--surface); }
 .cm-policy-result > aside { display:grid; align-content:center; gap:.65rem; padding:.75rem; border:0; border-right:1px solid var(--line); border-radius:0; background:var(--surface-strong); }
-.cm-policy-result aside > header > span, .cm-policy-activated > span { display:grid; flex:0 0 28px; width:28px; height:28px; place-items:center; border-radius:50%; color:var(--surface); background:var(--accent-strong); }
-.cm-policy-result aside svg, .cm-policy-activated svg { width:16px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+.cm-policy-result aside > header > span { display:grid; flex:0 0 28px; width:28px; height:28px; place-items:center; border-radius:50%; color:var(--surface); background:var(--accent-strong); }
+.cm-policy-result aside svg { width:16px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
 .cm-policy-result dl { display:grid; gap:.3rem; margin:0; }
 .cm-policy-result dl div { display:flex; justify-content:space-between; gap:.5rem; padding-top:.35rem; border-top:1px solid var(--line); font-size:.62rem; }
 .cm-policy-result dd { margin:0; color:var(--accent-strong); font-weight:700; }
@@ -364,6 +367,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-preview-list > div > span:nth-child(2) strong { overflow:hidden; font-size:.66rem; text-overflow:ellipsis; white-space:nowrap; }
 .cm-policy-impact { display:grid; justify-items:end; gap:.08rem; min-width:0; text-align:right; }
 .cm-policy-impact > b { color:var(--accent-strong); font-size:.64rem; }
+.cm-policy-preview-list > .is-unpreviewed .cm-policy-impact > b { color:var(--notice); }
 .cm-policy-impact > small { overflow-wrap:anywhere; color:var(--soft); font-size:.59rem; line-height:1.28; }
 .cm-policy-impact details { max-width:100%; color:var(--soft); font-size:.55rem; }
 .cm-policy-impact summary { cursor:pointer; }
@@ -372,7 +376,6 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-activation { display:grid; grid-column:1 / -1; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:.65rem; padding:.6rem .75rem; border-top:1px solid var(--line); background:var(--accent-soft); }
 .cm-policy-activation strong { font:700 .9rem/1.25 Georgia,serif; }
 .cm-policy-activation span { color:var(--soft); font-size:.68rem; }
-.cm-policy-activated { padding-top:.7rem; border-top:1px solid var(--line); }
 @keyframes cm-policy-validation-spin { to { transform:rotate(360deg); } }
 @keyframes cm-policy-validation-pulse { from { opacity:.35; transform:scale(.75); } to { opacity:1; transform:scale(1); } }
 @keyframes cm-policy-result-reveal { from { opacity:.35; clip-path:inset(0 0 100% 0); transform:translateY(-6px); } to { opacity:1; clip-path:inset(0); transform:translateY(0); } }
@@ -504,12 +507,11 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-page-heading { align-items:flex-start; flex-direction:column; gap:.55rem; }
   .cm-policy-route .cm-page-heading { margin-bottom:.75rem; padding-bottom:.75rem; }
   .cm-policy-route .cm-page-heading h1 { font-size:1.65rem; }
-  .cm-policy-state { align-self:flex-start; padding:.45rem .65rem; }
   .cm-policy-editor { border-radius:.8rem; box-shadow:none; }
   .cm-policy-sidebar > header { padding:.8rem .9rem; }
   .cm-policy-sidebar > header strong { font-size:1rem; }
   .cm-policy-sidebar > header small { max-width:16ch; font-size:.66rem; }
-  .cm-policy-sidebar nav { grid-template-columns:repeat(auto-fit,minmax(8rem,1fr)); padding:.45rem; }
+  .cm-policy-sidebar nav { grid-template-columns:repeat(auto-fit,minmax(min(100%,9.5rem),1fr)); padding:.45rem; }
   .cm-policy-sidebar nav button { min-height:52px; padding:.5rem .55rem; }
   .cm-policy-sidebar nav button .cm-change-count { width:24px; height:24px; }
   .cm-policy-mode { margin:.1rem .55rem .55rem; padding:.65rem .45rem; }
@@ -523,7 +525,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-control-heading, .cm-policy-representation { font-size:.68rem; }
   .cm-policy-control-heading small { font-size:.7rem; }
   .cm-finish-tray { grid-template-columns:minmax(0,1fr); gap:.65rem; margin:.5rem; padding:.75rem; }
-  .cm-finish-summary { gap:.18rem; }
+  .cm-finish-summary, .cm-policy-finish-message { gap:.18rem; }
   .cm-finish-summary > small { font-size:.7rem; }
   .cm-finish-summary strong { font-size:.8rem; }
   .cm-finish-summary span { overflow:visible; font-size:.7rem; text-overflow:clip; white-space:normal; }
@@ -541,10 +543,10 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-result > aside { display:grid; grid-template-columns:1fr; align-content:start; border-right:0; border-bottom:1px solid var(--line); }
   .cm-policy-result dl { grid-template-columns:1fr; }
   .cm-policy-preview-list > div { grid-template-columns:26px minmax(0,1fr); gap:.5rem; min-height:54px; }
+  .cm-policy-preview-list > div > span:nth-child(2) strong { overflow:visible; text-overflow:clip; white-space:normal; }
   .cm-policy-impact { grid-column:2; justify-items:start; text-align:left; }
   .cm-policy-activation { grid-template-columns:1fr; gap:.25rem; }
   .cm-policy-activation strong { font-size:.86rem; }
-  .cm-policy-activated { align-items:flex-start; }
   .cm-dropdown-menu > button { min-height:44px; }
   .policy-workflow-actions { justify-content:flex-start; }
   .build-mismatch { align-items:flex-start; flex-direction:column; }
@@ -678,7 +680,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 @media (max-width:390px) {
   .settings-field-row,.settings-sheet > header,.settings-record > h3,.settings-record-meta,.settings-immediate { padding-inline:.85rem; }
 }
-@media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-policy-activated,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
 /* Variant M workspace: regular widths keep work, decision and attention in one operating surface. */
 .variant-m-workspace :is(.library-header,.compact-workspace-controls) { container-type:inline-size; display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:1rem; max-width:1480px; margin-inline:auto; }
 :is(.library-header,.compact-workspace-controls) .cm-library-handoff { flex:1 1 32rem; grid-template-columns:minmax(0,1fr) auto; margin:0; }
