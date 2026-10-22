@@ -537,23 +537,27 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const ledger = data.ledger
   const rows = ledgerRows(data.events)
   const eventsElement = useRef<HTMLDivElement | null>(null)
-  const ledgerFocus = useRef<HTMLElement | null>(null)
+  // The focused ledger control, and the focus key of the checks toggle whose
+  // list holds it, if any.
+  const ledgerFocus = useRef<{ control: HTMLElement; toggle: string | undefined } | null>(null)
   // A focused ledger control that a changed page removed hands focus to its
-  // replacement, or to the ledger heading; it never falls to the document.
+  // replacement, then to its group's toggle, then to the ledger heading; it
+  // never falls to the document.
   useLayoutEffect(() => {
     const removed = ledgerFocus.current
-    if (!removed || removed.isConnected) return
+    if (!removed || removed.control.isConnected) return
     ledgerFocus.current = null
     if (document.activeElement !== null && document.activeElement !== document.body) return
-    const key = removed.dataset.activityFocus
-    const replacement = key
-      ? [
-          ...(eventsElement.current?.querySelectorAll<HTMLElement>('[data-activity-focus]') ?? []),
-        ].find((control) => control.dataset.activityFocus === key)
-      : undefined
-    ;(replacement ?? document.getElementById('activity-ledger-title'))?.focus({
-      preventScroll: true,
-    })
+    const controls = [
+      ...(eventsElement.current?.querySelectorAll<HTMLElement>('[data-activity-focus]') ?? []),
+    ]
+    const find = (key: string | undefined) =>
+      key ? controls.find((control) => control.dataset.activityFocus === key) : undefined
+    ;(
+      find(removed.control.dataset.activityFocus) ??
+      find(removed.toggle) ??
+      document.getElementById('activity-ledger-title')
+    )?.focus({ preventScroll: true })
   }, [data])
   // Filled after mount, so the status region exists before what it announces.
   const unrecognisedFilter = search.filter === 'unrecognised'
@@ -1092,7 +1096,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           className="cm-activity-events"
           ref={eventsElement}
           onFocus={(event) => {
-            ledgerFocus.current = event.target
+            // A member's list is `activity-checks-{key}`; its toggle's focus
+            // key is `checks-{key}`.
+            const list = event.target.closest('.cm-activity-checks')
+            ledgerFocus.current = {
+              control: event.target,
+              toggle: list ? list.id.replace(/^activity-/u, '') : undefined,
+            }
           }}
           onBlur={(event) => {
             // A control the user left is forgotten; one a refetch removed is
@@ -1102,7 +1112,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               // A window blur fires this while the control keeps focus; keep it.
               if (
                 left.isConnected &&
-                ledgerFocus.current === left &&
+                ledgerFocus.current?.control === left &&
                 document.activeElement !== left
               )
                 ledgerFocus.current = null
@@ -1151,8 +1161,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       <strong title={first.work_label}>{first.work_label}</strong>
                       <span>{first.library}</span>
                     </div>
-                    <div className="cm-activity-change" aria-label={sentence}>
-                      <span aria-hidden="true">{sentence}</span>
+                    <div className="cm-activity-change">
+                      <span>{sentence}</span>
                     </div>
                     <b>{stateLabel('no_change_required')}</b>
                     <button
