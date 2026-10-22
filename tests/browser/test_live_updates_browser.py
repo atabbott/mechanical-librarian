@@ -671,8 +671,8 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                     "cm-page-heading",
                     "cm-activity-ledger",
                     "cm-write-consent is-off",
-                    "cm-activity-status",
                     "activity-command-status",
+                    "cm-activity-status",
                 ]
                 _activity_surface_order(
                     page,
@@ -681,9 +681,9 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                     visual=[
                         "cm-page-heading",
                         "cm-write-consent is-off",
+                        "activity-command-status",
                         "cm-activity-status",
                         "cm-activity-ledger",
-                        "activity-command-status",
                     ],
                 )
                 _activity_surface_order(
@@ -694,8 +694,8 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                         "cm-page-heading",
                         "cm-activity-ledger",
                         "cm-write-consent is-off",
-                        "cm-activity-status",
                         "activity-command-status",
+                        "cm-activity-status",
                     ],
                 )
                 page.set_viewport_size({"width": 1440, "height": 900})
@@ -780,9 +780,9 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 semantic = [
                     "cm-page-heading",
                     "cm-activity-ledger",
+                    "activity-command-status",
                     "cm-activity-status",
                     "connection-notice is-paused",
-                    "activity-command-status",
                 ]
                 _activity_surface_order(
                     page,
@@ -791,9 +791,9 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                     visual=[
                         "cm-page-heading",
                         "connection-notice is-paused",
+                        "activity-command-status",
                         "cm-activity-status",
                         "cm-activity-ledger",
-                        "activity-command-status",
                     ],
                 )
                 _activity_surface_order(
@@ -803,9 +803,9 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                     visual=[
                         "cm-page-heading",
                         "cm-activity-ledger",
+                        "activity-command-status",
                         "cm-activity-status",
                         "connection-notice is-paused",
-                        "activity-command-status",
                     ],
                 )
 
@@ -892,8 +892,8 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                     "cm-activity-ledger",
                     "cm-write-consent is-off",
                     "activity-consent-ledger",
-                    "cm-activity-status",
                     "activity-command-status",
+                    "cm-activity-status",
                 ]
                 _activity_surface_order(
                     watcher,
@@ -903,9 +903,9 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                         "cm-page-heading",
                         "cm-write-consent is-off",
                         "activity-consent-ledger",
+                        "activity-command-status",
                         "cm-activity-status",
                         "cm-activity-ledger",
-                        "activity-command-status",
                     ],
                 )
                 _activity_surface_order(
@@ -917,8 +917,8 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                         "cm-activity-ledger",
                         "cm-write-consent is-off",
                         "activity-consent-ledger",
-                        "cm-activity-status",
                         "activity-command-status",
+                        "cm-activity-status",
                     ],
                 )
                 watcher.set_viewport_size({"width": 1440, "height": 900})
@@ -972,7 +972,8 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                     has_text="Your session was refreshed. Press again."
                 )
                 succeeded.or_(refreshed).wait_for()
-                if refreshed.is_visible():
+                refreshed_seen = refreshed.is_visible()
+                if refreshed_seen:
                     # The actor's commands renewed the shared session's token;
                     # the refusal kept the draft, so one more press confirms.
                     expect(fiction).to_be_checked()
@@ -981,7 +982,8 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                 fiction_only = {
                     "grants": [{"library": "fiction", "destinations": ["title"]}]
                 }
-                assert grants in ([fiction_only], [fiction_only, fiction_only])
+                # A refused press is a request too, so a refresh means two.
+                assert grants == [fiction_only] * (2 if refreshed_seen else 1)
 
                 # Writes enabled: one entry, in the status section.
                 entry = watcher.get_by_role("button", name="Review write permissions")
