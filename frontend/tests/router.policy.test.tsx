@@ -96,15 +96,32 @@ describe('Policy route', () => {
       total: 11,
       failed: 2,
     })
+    let read: (value: never) => void = () => undefined
     const http: ReviewHttp = {
       ...createHttp(),
-      getPolicyTransition: vi.fn(async () => failing as never),
+      getPolicyTransition: vi.fn(
+        () =>
+          new Promise<never>((resolve) => {
+            read = resolve
+          }),
+      ),
     }
     renderRoute('/policy', http)
 
-    expect(
-      await screen.findByRole('heading', { name: 'Activation completed with failures' }),
-    ).toBeVisible()
+    // The live region exists, empty, before the finished transition is read,
+    // so its arrival is an announced insertion rather than a mount.
+    expect(await screen.findByRole('heading', { name: 'Library policy' })).toBeVisible()
+    await waitFor(() => expect(http.getPolicyTransition).toHaveBeenCalled())
+    const region = document.querySelector('.cm-policy-route > section > [role="status"]')
+    expect(region).toBeEmptyDOMElement()
+    expect(region?.parentElement).not.toHaveAttribute('class')
+    expect(screen.queryByRole('region', { name: 'Policy activation progress' })).toBeNull()
+    read(failing as never)
+    const heading = await screen.findByRole('heading', {
+      name: 'Activation completed with failures',
+    })
+    expect(heading).toBeVisible()
+    expect(heading.closest('[role="status"]')).toBe(region)
     expect(screen.getByRole('button', { name: 'Retry failed reconciliation' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss update' })).toBeVisible()
     expect(screen.getByText(/^Active policy$/u)).toBeVisible()
@@ -1268,6 +1285,8 @@ describe('Policy route', () => {
     expect(document.querySelector('.cm-policy-finish-message')).toHaveTextContent(
       /^Policy activated$/u,
     )
+    // Focus goes to the success message, not to the body the button left.
+    expect(document.querySelector('.cm-policy-finish-message')).toHaveFocus()
     expect(document.querySelector('.policy-status')).toHaveTextContent(
       /^Policy state updated from the authoritative server\.$/u,
     )

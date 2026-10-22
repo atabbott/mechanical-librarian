@@ -889,6 +889,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             : 'Policy state updated from the authoritative server.',
       })
       if (action === 'automatic-safety/recover') safetySummaryRef.current?.focus()
+      // The dismissed update took its focused button with it.
+      if (action.endsWith('/acknowledge')) finishMessageRef.current?.focus()
     } catch (error) {
       setStatus(
         error instanceof AmbiguousMutationError
@@ -1908,23 +1910,33 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           ) : null}
         </FinishTray>
       </div>
-      {activationNotice ? (
-        <section className="policy-cutover" aria-label="Policy activation progress">
-          <div role="status">
-            <h2>
-              {activationNotice.state === 'processing'
-                ? 'Applying updated policy'
-                : activationNotice.failed
-                  ? 'Activation completed with failures'
-                  : 'Activation complete'}
-            </h2>
-            <p>
-              {activationNotice.total
-                ? `${String(activationNotice.completed)} of ${String(activationNotice.total)} current unapplied items reconciled.`
-                : 'No current unapplied items needed reconciliation.'}{' '}
-              Applied history is untouched.
-            </p>
-          </div>
+      {/* The status region stays mounted, so a transition that is already
+          finished when first read is inserted into a live region that exists
+          and is announced. Empty, the section has no class, name or height. */}
+      <section
+        className={activationNotice ? 'policy-cutover' : undefined}
+        aria-label={activationNotice ? 'Policy activation progress' : undefined}
+      >
+        <div role="status">
+          {activationNotice ? (
+            <>
+              <h2>
+                {activationNotice.state === 'processing'
+                  ? 'Applying updated policy'
+                  : activationNotice.failed
+                    ? 'Activation completed with failures'
+                    : 'Activation complete'}
+              </h2>
+              <p>
+                {activationNotice.total
+                  ? `${String(activationNotice.completed)} of ${String(activationNotice.total)} current unapplied items reconciled.`
+                  : 'No current unapplied items needed reconciliation.'}{' '}
+                Applied history is untouched.
+              </p>
+            </>
+          ) : null}
+        </div>
+        {activationNotice ? (
           <div className="policy-workflow-actions">
             {activationNotice.failed ? (
               <button
@@ -1947,8 +1959,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               </button>
             ) : null}
           </div>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
     </div>
   )
 }
