@@ -746,9 +746,9 @@ The client converts a 401 into
 document navigation to `/login`, and passes abort signals through critical and
 progressive reads. Every unsafe
 browser request carries `x-ml-build-identity`; FastAPI rejects a missing or
-mismatched value before application authority. Mutations do not retry
-automatically or claim optimistic success and reconcile ambiguous outcomes from
-authoritative state. The client uses no browser storage, inline script,
+mismatched value before application authority. Apart from that one bounded
+CSRF resend, mutations do not retry automatically; they never claim optimistic
+success and reconcile ambiguous outcomes from authoritative state. The client uses no browser storage, inline script,
 external origin, worker, blob, source map, credential, target client, or write
 adapter. The packaged loader validates bounded exact paths, sizes, digests, a
 content-derived build identity, and the independently emitted expected identity
