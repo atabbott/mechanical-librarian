@@ -2619,7 +2619,9 @@ def test_a_mark_stripping_cast_change_is_never_written_automatically(
         "narrators"
     ]
     assert narrators.disposition in {"abstention", "manual"}
-    assert narrators.reason_code == "candidate_strips_marks"
+    # The file's own tag is offered too and lacks support, so the support
+    # reason explains the refusal rather than the accent rule alone.
+    assert narrators.reason_code == "insufficient_support"
     (result,) = (
         value
         for value in evaluate_report(report).results
