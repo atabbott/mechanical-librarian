@@ -1120,10 +1120,15 @@ def test_a_degraded_title_confirmed_beside_a_generic_subtitle_is_not_kept_automa
             "Synthetic Journey: Winner of the Example Prize",
             "candidate_promotional_title",
         ),
+        ("Current synthetic title", "candidate_promotional_title"),
     ),
-    ids=("one_degraded_one_unsupported", "every_candidate_degraded"),
+    ids=(
+        "one_degraded_one_unsupported",
+        "every_candidate_degraded",
+        "the_other_candidate_is_the_current_value",
+    ),
 )
-def test_a_degraded_reason_is_named_only_when_it_blocked_every_candidate(
+def test_a_degraded_reason_is_named_only_when_it_blocked_every_proposed_change(
     second, reason
 ) -> None:
     data = json.loads(_packet("title", candidate_count=2).to_json())

@@ -636,6 +636,14 @@ def _packet_value(wrapped: object) -> object:
     return wrapped.get("value") if type(wrapped) is dict else wrapped
 
 
+def _current_value(proposal: dict[str, object]) -> object:
+    return _packet_value(
+        cast("dict[str, object]", proposal["current"]).get("value")
+        if type(proposal["current"]) is dict
+        else None
+    )
+
+
 def _degraded_candidate_reason(
     proposal: dict[str, object], candidate: dict[str, object]
 ) -> str | None:
@@ -647,11 +655,7 @@ def _degraded_candidate_reason(
     """
     destination = proposal["destination"]
     value = _packet_value(candidate["value"])
-    current = _packet_value(
-        cast("dict[str, object]", proposal["current"]).get("value")
-        if type(proposal["current"]) is dict
-        else None
-    )
+    current = _current_value(proposal)
     if destination in {"authors", "narrators"} and type(value) is list:
         if any(contributor_credit_prefixed(member) for member in value):
             return "candidate_credit_prefixed"
@@ -675,14 +679,20 @@ def _degraded_candidate_reason(
 
 
 def _degraded_reason(proposal: dict[str, object]) -> str | None:
-    """Name a degraded refusal only when it blocked every candidate (#1283)."""
+    """Name a degraded refusal only when it blocked every proposed change (#1283).
+
+    A clean candidate equal to the current value proposes no change, so it
+    never displaces the refusal that blocked the candidates that do.
+    """
     candidates = cast("list[dict[str, object]]", proposal["candidates"])
-    degraded = sorted(
-        reason
-        for value in candidates
-        if (reason := _degraded_candidate_reason(proposal, value)) is not None
-    )
-    return degraded[0] if degraded and len(degraded) == len(candidates) else None
+    current = _current_value(proposal)
+    reasons = [_degraded_candidate_reason(proposal, value) for value in candidates]
+    if any(
+        reason is None and _packet_value(value["value"]) != current
+        for reason, value in zip(reasons, candidates, strict=True)
+    ):
+        return None
+    return min((reason for reason in reasons if reason is not None), default=None)
 
 
 def _candidate_is_eligible(
