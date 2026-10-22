@@ -3463,6 +3463,33 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     await waitFor(() => expect(document.getElementById('activity-ledger-title')).toHaveFocus())
   })
 
+  it('still restores focus after the window blurred while a control kept it', async () => {
+    const user = userEvent.setup()
+    let current = activity({ events: [change, ...members] })
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/activity', http)
+    await user.click(within(await waitFor(checksRow)).getByRole('button', { name: 'Details' }))
+    const [member] = within(byId(`activity-checks-${key}`)).getAllByRole('button', {
+      name: 'Details',
+    })
+    if (!member) throw new Error('Expected a member')
+    member.focus()
+    // Switching tabs blurs the control while it stays the active element.
+    await act(async () => {
+      member.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }))
+      await Promise.resolve()
+    })
+    expect(member).toHaveFocus()
+
+    current = activity({ events: [change] })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() => expect(ledger().querySelector('article.is-checks')).toBeNull())
+    await waitFor(() => expect(document.getElementById('activity-ledger-title')).toHaveFocus())
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
   it('reaches the checks toggle and then its members by keyboard', async () => {
     const user = userEvent.setup()
     const http = createHttp()

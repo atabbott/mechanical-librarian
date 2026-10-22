@@ -2611,6 +2611,7 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
     bundle = load_react_asset_bundle(Path(os.environ["ML_REACT_ASSET_DIR"]))
     assert isinstance(bundle, ReactAssetBundle)
     widened = False
+    checks_gone = False
 
     def fulfill(route: Route) -> None:
         path = urlsplit(route.request.url).path
@@ -2622,10 +2623,13 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                 body=json.dumps({"reduced_motion": "follow_system"}),
             )
         elif path.startswith("/api/v1/"):
-            route.fulfill(
-                content_type="application/json",
-                body=json.dumps(rich_payload(route.request.url)),
-            )
+            payload = rich_payload(route.request.url)
+            if checks_gone and path == "/api/v1/activity":
+                activity = cast("dict[str, list[dict[str, object]]]", payload)
+                activity["events"] = [
+                    event for event in activity["events"] if not event["check_group"]
+                ]
+            route.fulfill(content_type="application/json", body=json.dumps(payload))
         elif path.startswith("/assets/review-app/"):
             relative = path.removeprefix("/assets/review-app/")
             css = relative.endswith(".css")
@@ -2698,6 +2702,22 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
         page.keyboard.press("Enter")
         expect(page.locator(".cm-activity-checks")).to_have_count(0)
         expect(toggle).to_be_focused()
+
+        # A tab switch blurs the focused check without moving focus. When the
+        # next refetch removes its row, focus goes to the ledger heading.
+        page.keyboard.press("Enter")
+        members.nth(0).get_by_role("button", name="Details").focus()
+        page.evaluate(
+            """() => {
+              document.activeElement.dispatchEvent(
+                new FocusEvent('focusout', { bubbles: true }));
+              window.dispatchEvent(new FocusEvent('blur'));
+            }"""
+        )
+        checks_gone = True
+        expect(page.locator("article.is-checks")).to_have_count(0, timeout=15_000)
+        expect(page.locator("#activity-ledger-title")).to_be_focused()
+        checks_gone = False
 
         notice = page.locator(".cm-activity-filter-notice")
         expect(notice).to_have_text("")
