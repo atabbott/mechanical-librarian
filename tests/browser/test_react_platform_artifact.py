@@ -2573,6 +2573,38 @@ _NAMED_CLIP = """node => {
 }"""
 
 
+# Every Activity row's category pill and time, named by the row they belong to.
+# A pill may wrap between words but never inside one, and never runs out of its
+# box; a compact time track is never narrower than the time or day it holds.
+_ROW_LABELS = """(compact) => [...document.querySelectorAll('.cm-activity-event-group article')]
+  .flatMap(row => {
+    const work = row.querySelector('.cm-activity-work');
+    const name = `${work?.querySelector('strong')?.textContent} (${work?.querySelector('span')?.textContent})`;
+    const found = [];
+    const pill = row.querySelector('.cm-activity-category');
+    const walker = document.createTreeWalker(pill, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/\\S+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const tops = new Set([...range.getClientRects()].filter(rect => rect.width > 0)
+          .map(rect => Math.round(rect.top)));
+        if (tops.size > 1) found.push(`the ${name} pill splits "${match[0]}"`);
+      }
+    const words = document.createRange();
+    words.selectNodeContents(pill);
+    if (pill.scrollWidth > pill.clientWidth ||
+        words.getBoundingClientRect().right > pill.getBoundingClientRect().right + 1)
+      found.push(`the ${name} pill "${pill.textContent}" runs out of its box`);
+    const time = row.querySelector(':scope > time');
+    if (compact && time.scrollWidth > time.clientWidth)
+      found.push(`the ${name} time "${time.textContent}" is ` +
+        `${time.scrollWidth - time.clientWidth}px wider than its track`);
+    return found;
+  })"""
+
+
 def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() -> None:
     """One preparation's automatic checks read as one row that opens onto each
     check, and an address naming no known filter says so (#1281)."""
@@ -2676,11 +2708,16 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
         page.get_by_role("button", name="Policy changes").click()
         expect(notice).to_have_text("")
 
-        # Every row's promises, the new row's whole labels, and the pagination,
-        # with each glyph widened as hosted Linux fonts render, light with
-        # motion and dark with reduced motion.
-        widened = True
-        for dark in (False, True):
+        # Every row's promises, the new row's whole labels, the pagination and
+        # every row's pill and time, as installed and with each glyph widened
+        # as hosted Linux fonts render, light with motion and dark with reduced
+        # motion.
+        for widened, dark in (
+            (False, False),
+            (False, True),
+            (True, False),
+            (True, True),
+        ):
             scheme = "dark" if dark else "light"
             page.emulate_media(
                 color_scheme="dark" if dark else "light",
@@ -2693,8 +2730,10 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
             for width in (1440, 1100, 884, 761, 760, 390, 320):
                 page.set_viewport_size({"width": width, "height": 900})
                 page.evaluate("() => document.documentElement.offsetWidth")
-                where = f"{scheme} at {width}px"
+                where = f"{scheme}{' widened' if widened else ''} at {width}px"
                 assert page.evaluate(_ROW_PROMISES, width <= 760) == [], where
+                labels = page.evaluate(_ROW_LABELS, width <= 760)
+                assert labels == [], f"{where}: {labels}"
                 failures = [
                     failure
                     for selector in (
@@ -2730,7 +2769,8 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                     Path(capture).mkdir(parents=True, exist_ok=True)
                     page.screenshot(
                         path=str(
-                            Path(capture) / f"activity-checks-{width}-{scheme}.png"
+                            Path(capture) / f"activity-checks-{width}-{scheme}"
+                            f"{'-wide' if widened else ''}.png"
                         ),
                         full_page=True,
                     )
