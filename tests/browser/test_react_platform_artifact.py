@@ -2674,11 +2674,16 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
         page.get_by_role("button", name="Policy changes").click()
         expect(notice).to_have_text("")
 
-        # Every row's promises, the new row's whole labels, and the R2
-        # pagination, with each glyph widened as hosted Linux fonts render.
+        # Every row's promises, the new row's whole labels, and the pagination,
+        # with each glyph widened as hosted Linux fonts render, light with
+        # motion and dark with reduced motion.
         widened = True
-        for scheme, motion in (("light", "no-preference"), ("dark", "reduce")):
-            page.emulate_media(color_scheme=scheme, reduced_motion=motion)
+        for dark in (False, True):
+            scheme = "dark" if dark else "light"
+            page.emulate_media(
+                color_scheme="dark" if dark else "light",
+                reduced_motion="reduce" if dark else "no-preference",
+            )
             page.goto("https://react-platform.invalid/activity?eventType=owner_choice")
             page.locator("article.is-checks").get_by_role("button").click()
             expect(members).to_have_count(3)
