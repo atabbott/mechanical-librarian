@@ -2702,7 +2702,8 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             },
             "narrators",
             "contributor_names",
-            "carries a credit label",
+            'A value here carries a credit label such as "Narrated by", so '
+            "automatic handling never writes or confirms it.",
         ),
         (
             {
@@ -2711,7 +2712,8 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             },
             "narrators",
             "contributor_names",
-            "drops accents from a name you already have",
+            "The proposed value drops accents from a name you already have, so "
+            "automatic handling never writes it.",
         ),
         (
             {
@@ -2721,7 +2723,8 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             },
             "narrators",
             "contributor_names",
-            "drops accents from a name you already have",
+            "The proposed value drops accents from a name you already have, so "
+            "automatic handling never writes it.",
         ),
         (
             {
@@ -2731,13 +2734,15 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             },
             "narrators",
             "contributor_names",
-            "not strong enough for automatic handling to choose a value",
+            "The retained evidence is not strong enough for automatic handling to "
+            "choose a value.",
         ),
         (
             _PROMOTIONAL["promotional_candidate"],
             "title",
             "title_layout",
-            "carries an announcement",
+            'A title here carries an announcement such as "Now a Major Motion '
+            'Picture", so automatic handling never writes or confirms it.',
         ),
     ),
     ids=(
@@ -2775,7 +2780,7 @@ def test_a_degraded_candidate_tells_the_owner_why_it_was_withheld(
             if value["destination"] == destination
         )
     assert field["automatic_decision"] is None
-    assert message in field["automatic_withheld_reason"]
+    assert field["automatic_withheld_reason"] == message
     assert field["needs_attention"]
 
 
@@ -2817,7 +2822,7 @@ def _confirmed_promotional_title_report():
             _confirmed_promotional_title_report,
             "title",
             "title_layout",
-            'This title carries an announcement such as "Now a Major Motion '
+            'A title here carries an announcement such as "Now a Major Motion '
             'Picture", so automatic handling never writes or confirms it.',
         ),
         (
@@ -2827,7 +2832,7 @@ def _confirmed_promotional_title_report():
             ),
             "narrators",
             "contributor_names",
-            'This value carries a credit label such as "Narrated by", so '
+            'A value here carries a credit label such as "Narrated by", so '
             "automatic handling never writes or confirms it.",
         ),
     ),
