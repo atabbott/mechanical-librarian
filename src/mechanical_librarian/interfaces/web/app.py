@@ -1020,6 +1020,9 @@ class _ActivityEvent(_ClosedModel):
     change: str = Field(default="Recorded", max_length=512)
     change_id: str = Field(default="recorded-change", max_length=128)
     change_detail: str = Field(default="Recorded", max_length=512)
+    # The preparation report an automatic no-change check belongs to; the
+    # browser gathers a page's checks by it and never shows it (#1281).
+    check_group: str | None = Field(default=None, pattern=r"^report_[0-9a-f]{64}$")
     destination: str = Field(max_length=512)
     diagnostic: _ActivityDiagnostic | None = None
     event_id: str = Field(default="recorded-event", max_length=128)

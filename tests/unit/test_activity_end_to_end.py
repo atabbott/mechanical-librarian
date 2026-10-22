@@ -63,6 +63,7 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.readable_activity import value_text
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.interfaces.web.app import _ActivityEvent, _ActivityResponse
 from tests.support.audiobook_providers import payload
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
@@ -404,6 +405,79 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
     assert [event["state"] for event in no_change_rows] == ["no_change_required"]
     assert _ledger(effects, search="retryable") == []
     assert _ledger(effects, search="no_change_required") == []
+
+
+def test_one_preparation_gathers_only_its_automatic_checks(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    """Keeps and scheduled no-changes share one key; a change and a write never do."""
+    effects.repository.publish(
+        metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1"),
+        lambda: True,
+    )
+    _plan(
+        effects,
+        destination="subtitle",
+        pre="Original subtitle",
+        desired="Replacement subtitle",
+        suffix="e",
+    )
+    report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
+    decisions = _automatic_decisions(
+        effects,
+        report,
+        category,
+        option,
+        qualified=True,
+        also=(("description_fill", "safe_plain_text"), ("tags", "fill_empty")),
+    )
+    assert {(value.destination, value.outcome) for value in decisions} == {
+        ("genres", "keep_current"),
+        ("description", "candidate"),
+        ("tags", "candidate"),
+    }
+    ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+        {("primary", "ebooks"): SimpleNamespace()},
+        PersistedFieldEffectAuthority(effects.repository),
+        (("primary", "ebooks"),),
+        lambda: 10,
+        lambda *_: None,
+    ).schedule()
+
+    events = _ledger(effects)
+    keys = {
+        (event["state"], event["destination"]): event.get("check_group")
+        for event in events
+        if event["event_type"] != "policy"
+    }
+    assert keys == {
+        ("recorded", "genres"): report.report_id,
+        ("no_change_required", "genres"): report.report_id,
+        ("recorded", "description"): None,
+        ("recorded", "tags"): None,
+        ("planned", "subtitle"): None,
+    }
+    assert {event.get("check_group") for event in events} == {None, report.report_id}
+
+    lane = ContinuousGuardedApplication(
+        effects.repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(effects.repository),
+        (("primary", "ebooks"),),
+        lambda: 2_000,
+        lambda *_: None,
+        activity_only=True,
+    )
+    activity = lane.activity()
+    ledger = cast(dict[str, object], activity["ledger"])
+    assert ledger["total"] == len(cast(list[object], activity["events"])) == len(events)
+    _ActivityResponse.model_validate(activity)
+    gathered = next(event for event in events if event.get("check_group"))
+    with pytest.raises(ValueError, match="check_group"):
+        _ActivityEvent.model_validate({**gathered, "check_group": "report_x"})
 
 
 def test_a_real_write_reaches_the_owner_as_one_exact_sentence(

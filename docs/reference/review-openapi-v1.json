@@ -2026,6 +2026,18 @@
             "title": "Change Id",
             "type": "string"
           },
+          "check_group": {
+            "anyOf": [
+              {
+                "pattern": "^report_[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Group"
+          },
           "destination": {
             "maxLength": 512,
             "title": "Destination",

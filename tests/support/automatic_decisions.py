@@ -33,15 +33,20 @@ def _automatic_decisions(
     option: str,
     *,
     qualified: bool,
+    also: tuple[tuple[str, str], ...] = (),
 ) -> tuple[AutomaticDecision, ...]:
-    """Persist naturally supported automatic outcomes through public seams."""
+    """Persist naturally supported automatic outcomes through public seams.
+
+    ``also`` makes further categories automatic in the same preparation.
+    """
     options = dict(DEFAULT_OPTIONS)
-    options[category] = option
     destinations = {
         name: "unsupported" if name == "explicit" else "ask"
         for name in OPTION_CATALOGUE
     }
-    destinations[category] = "automatic"
+    for name, value in ((category, option), *also):
+        options[name] = value
+        destinations[name] = "automatic"
     profile = MetadataPolicyProfile.create("Activity automatic", options, destinations)
     resolved = resolve_policy(profile, report.target.library)
     environment.repository.enter_shadow_preview(1)
