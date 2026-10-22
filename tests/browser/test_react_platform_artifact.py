@@ -2710,9 +2710,12 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                 # A check on another day names that day without running into
                 # the category beside it.
                 overlaps = page.locator(".cm-activity-checks time").evaluate_all(
-                    """times => times.filter(time => time.getBoundingClientRect().right >
-                        time.nextElementSibling.getBoundingClientRect().left)
-                        .map(time => time.textContent)"""
+                    """times => times.filter(time => {
+                        const text = document.createRange();
+                        text.selectNodeContents(time);
+                        return text.getBoundingClientRect().right >
+                            time.nextElementSibling.getBoundingClientRect().left;
+                    }).map(time => time.textContent)"""
                 )
                 assert overlaps == [], f"{where}: {overlaps} overlap their category"
                 split = page.evaluate(
