@@ -8,8 +8,11 @@ import {
   AmbiguousMutationError,
   ApiError,
   BuildMismatchError,
+  CsrfRenewedError,
   derivePolicyDraftDisplay,
   policyAutomaticQualification,
+  refusalCopy,
+  sessionRefreshedCopy,
 } from '../api/http'
 import type {
   PolicyActivationView,
@@ -882,7 +885,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             }
           : {
               tone: 'error',
-              message: 'Nothing changed. Review the current server state and try again.',
+              message: refusalCopy(
+                error,
+                'Nothing changed. Review the current server state and try again.',
+              ),
             },
       )
     }
@@ -922,6 +928,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           message:
             'The result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
         })
+      else if (error instanceof CsrfRenewedError)
+        setStatus({ tone: 'error', message: sessionRefreshedCopy })
       else if (error instanceof ApiError && error.status === 422)
         setStatus({
           tone: 'error',
@@ -1007,7 +1015,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       } else {
         setStatus({
           tone: 'error',
-          message: 'Activation failed safely. The reviewed snapshot remains available to retry.',
+          message: refusalCopy(
+            error,
+            'Activation failed safely. The reviewed snapshot remains available to retry.',
+          ),
         })
       }
     }
