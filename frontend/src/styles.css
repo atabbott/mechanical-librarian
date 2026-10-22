@@ -543,7 +543,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-result > aside { display:grid; grid-template-columns:1fr; align-content:start; border-right:0; border-bottom:1px solid var(--line); }
   .cm-policy-result dl { grid-template-columns:1fr; }
   .cm-policy-preview-list > div { grid-template-columns:26px minmax(0,1fr); gap:.5rem; min-height:54px; }
-  .cm-policy-preview-list > div > span:nth-child(2) strong { overflow:visible; text-overflow:clip; white-space:normal; }
+  /* Compact titles and selected values wrap rather than clip under wider font metrics. */
+  .cm-policy-preview-list > div > span:nth-child(2) strong, .cm-policy-route .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
   .cm-policy-impact { grid-column:2; justify-items:start; text-align:left; }
   .cm-policy-activation { grid-template-columns:1fr; gap:.25rem; }
   .cm-policy-activation strong { font-size:.86rem; }

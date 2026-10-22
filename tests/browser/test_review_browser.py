@@ -8278,7 +8278,9 @@ def test_ebook_isbn_owner_journey(destination):
 _POLICY_CLIPPED = """root => [...root.querySelectorAll('*')].flatMap(node => {
     if (!(node instanceof HTMLElement) || node.closest('.sr-only')
         || !node.getClientRects().length) return [];
-    const name = `${node.tagName}.${node.className}`;
+    const owner = node.parentElement?.closest('[class]');
+    const name = `${node.tagName}.${node.className} in ${owner?.className ?? 'root'}`
+        + ` "${node.textContent.trim().slice(0, 32)}"`;
     const found = [];
     if (getComputedStyle(node).display !== 'inline'
         && node.scrollWidth > node.clientWidth + 1)
@@ -8468,9 +8470,11 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                         )
                         editor = page.locator(".cm-policy-editor")
                         assert (
+                            width,
+                            theme,
                             editor.evaluate(_POLICY_CLIPPED),
                             page.evaluate(_POLICY_MID_WORD, _POLICY_LABELS),
-                        ) == ([], [])
+                        ) == (width, theme, [], [])
                     collapse = result.get_by_role("button", name="Show fewer outcomes")
                     collapse.focus()
                     page.keyboard.press("Enter")
