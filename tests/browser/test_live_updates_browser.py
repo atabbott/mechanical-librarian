@@ -24,6 +24,8 @@ from playwright.sync_api import Page, Request, Response, expect, sync_playwright
 
 from tests.browser.test_review_browser import (
     _PASSWORD,
+    _POLICY_CLIPPED,
+    _POLICY_MID_WORD,
     _certificate,
     _closing_context,
     _login,
@@ -96,7 +98,7 @@ def _activity_surface_order(
           if (root === null) return null;
           const name = (node) => node.className;
           const children = [...root.children].filter((node) =>
-            node.matches('.cm-page-heading, .cm-activity-ledger, .cm-write-consent, .cm-activity-status, .connection-notice, .activity-command-status')
+            node.matches('.cm-page-heading, .cm-activity-ledger, .cm-write-consent, .activity-consent-ledger, .cm-activity-status, .connection-notice, .activity-command-status')
           );
           return {
             dom: children.map(name),
@@ -806,6 +808,218 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                         "activity-command-status",
                     ],
                 )
+
+
+_BASIS_CHANGED = "Your library settings changed. Review the permissions again."
+# The words a consent label must keep whole, and the synthetic name that tests it.
+_CONSENT_LABELS = (
+    ".activity-consent-library label strong, .activity-consent-library label small, "
+    ".activity-consent-library li span, .activity-consent-library li small, "
+    ".activity-consent-actions > p, .activity-consent-actions button, "
+    "#activity-consent h2, .cm-activity-status-copy > button"
+)
+_LONG_LIBRARY = (
+    "The Household Reference Shelf of Collected Synthetic Field Guides and Atlases"
+)
+
+
+def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes() -> (
+    None
+):
+    """A draft outlives every refresh that leaves its basis alone (#1279).
+
+    The watcher reviews permissions while the actor works in another tab. A
+    grant there changes what the watcher reviewed, so its draft is discarded
+    with the reason and nothing is sent; a decision there changes nothing the
+    watcher reviewed, so its ticks survive the refetch and confirm exactly.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+            )
+            watcher = context.new_page()
+            grants: list[Any] = []
+            activity_reads: list[str] = []
+
+            def record(request: Request) -> None:
+                path = request.url.split("?", 1)[0]
+                if path.endswith("/api/v1/activity/consent"):
+                    grants.append(request.post_data_json)
+                elif path.endswith("/api/v1/activity"):
+                    activity_reads.append(request.url)
+
+            watcher.on("request", record)
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(watcher, origin)
+                _widen_text(watcher)
+                watcher.goto(f"{origin}/activity")
+                watcher.get_by_role("heading", name="Activity and recovery").wait_for()
+                review = watcher.locator("#activity-consent")
+                checked = watcher.get_by_text(
+                    "Backup readiness checked. Review the included and excluded destinations.",
+                    exact=True,
+                )
+                fiction = review.get_by_role("checkbox", name="fiction")
+                confirm = watcher.get_by_role(
+                    "button", name="Confirm write permissions"
+                )
+                watcher.get_by_role("button", name="Review write permissions").click()
+                checked.wait_for()
+                fiction.check()
+                # Open, the panel paints below the heading and the card it
+                # belongs to at every width, never above the page heading.
+                semantic = [
+                    "cm-page-heading",
+                    "cm-activity-ledger",
+                    "cm-write-consent is-off",
+                    "activity-consent-ledger",
+                    "cm-activity-status",
+                    "activity-command-status",
+                ]
+                _activity_surface_order(
+                    watcher,
+                    width=1440,
+                    semantic=semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-write-consent is-off",
+                        "activity-consent-ledger",
+                        "cm-activity-status",
+                        "cm-activity-ledger",
+                        "activity-command-status",
+                    ],
+                )
+                _activity_surface_order(
+                    watcher,
+                    width=390,
+                    semantic=semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-activity-ledger",
+                        "cm-write-consent is-off",
+                        "activity-consent-ledger",
+                        "cm-activity-status",
+                        "activity-command-status",
+                    ],
+                )
+                watcher.set_viewport_size({"width": 1440, "height": 900})
+                _fits_every_width(watcher, ".activity-consent-ledger")
+
+                # B2: the actor grants history, which the watcher reviewed as
+                # ungranted. Its draft goes, the reason stays, nothing is sent.
+                actor = context.new_page()
+                actor.goto(f"{origin}/activity")
+                actor.get_by_role("button", name="Review write permissions").click()
+                actor.get_by_role("checkbox", name="history").check()
+                actor.get_by_role("button", name="Confirm write permissions").click()
+                actor.get_by_text(
+                    "Activity state refreshed from the authoritative server."
+                ).wait_for()
+                review.get_by_role("status").filter(has_text=_BASIS_CHANGED).wait_for(
+                    timeout=8_000
+                )
+                expect(review.get_by_role("checkbox")).to_have_count(0)
+                expect(confirm).to_be_disabled()
+                check = watcher.get_by_role("button", name="Check write permissions")
+                expect(check).to_be_focused()
+                assert grants == []
+
+                # B1: a fresh draft survives a visibility change and a decision
+                # the actor makes, both of which refetch Activity.
+                check.click()
+                checked.wait_for()
+                fiction.check()
+                watcher.evaluate(
+                    "() => document.dispatchEvent(new Event('visibilitychange'))"
+                )
+                reads = len(activity_reads)
+                actor.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                actor.get_by_role("heading", name="Works", exact=True).wait_for()
+                actor.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).first.click()
+                assert _wait_until(watcher, lambda: len(activity_reads) > reads), (
+                    "the watcher never refetched Activity after the decision"
+                )
+                watcher.wait_for_timeout(500)
+                expect(fiction).to_be_checked()
+                expect(confirm).to_be_enabled()
+                expect(review.get_by_text(_BASIS_CHANGED)).to_have_count(0)
+                confirm.click()
+                succeeded = watcher.get_by_text(
+                    "Activity state refreshed from the authoritative server."
+                )
+                refreshed = review.get_by_role("alert").filter(
+                    has_text="Your session was refreshed. Press again."
+                )
+                succeeded.or_(refreshed).wait_for()
+                if refreshed.is_visible():
+                    # The actor's commands renewed the shared session's token;
+                    # the refusal kept the draft, so one more press confirms.
+                    expect(fiction).to_be_checked()
+                    confirm.click()
+                succeeded.wait_for()
+                fiction_only = {
+                    "grants": [{"library": "fiction", "destinations": ["title"]}]
+                }
+                assert grants in ([fiction_only], [fiction_only, fiction_only])
+
+                # Writes enabled: one entry, in the status section.
+                entry = watcher.get_by_role("button", name="Review write permissions")
+                expect(entry).to_have_count(1)
+                assert entry.evaluate(
+                    "node => node.closest('details') === null"
+                    " && node.closest('.cm-activity-status') !== null"
+                )
+                _fits_every_width(watcher, ".cm-activity-status")
+                entry.click()
+                checked.wait_for()
+                _fits_every_width(watcher, ".activity-consent-ledger")
+                review.locator(".activity-consent-library label strong").first.evaluate(
+                    "(node, name) => { node.textContent = name; }", _LONG_LIBRARY
+                )
+                # The probes below read these labels, so they must be present.
+                assert watcher.locator(_CONSENT_LABELS).count() >= 8
+                for theme in ("light", "dark"):
+                    if theme == "dark":
+                        watcher.get_by_role("button", name="Use dark mode").click()
+                        watcher.get_by_role("button", name="Use light mode").wait_for()
+                    for width in (390, 320):
+                        watcher.set_viewport_size({"width": width, "height": 844})
+                        watcher.evaluate("() => document.documentElement.offsetWidth")
+                        assert (
+                            theme,
+                            width,
+                            review.evaluate(_POLICY_CLIPPED),
+                            watcher.locator(".cm-activity-status").evaluate(
+                                _POLICY_CLIPPED
+                            ),
+                            watcher.evaluate(_POLICY_MID_WORD, _CONSENT_LABELS),
+                            watcher.evaluate(
+                                "() => document.documentElement.scrollWidth"
+                            )
+                            <= width,
+                        ) == (theme, width, [], [], [], True)
+            browser.close()
 
 
 def _an_open_record_survives_a_viewport_change(page: Page) -> None:
