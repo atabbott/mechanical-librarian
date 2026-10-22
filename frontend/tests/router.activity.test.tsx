@@ -328,6 +328,37 @@ describe('Activity route', () => {
     expect(http.activityCommand).toHaveBeenCalledOnce()
   })
 
+  it('announces a successful pause through a status line already present beside the controls', async () => {
+    const user = userEvent.setup()
+    let release: (() => void) | undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }),
+      ),
+      activityCommand: vi.fn(
+        () =>
+          new Promise<undefined>((resolve) => {
+            release = () => resolve(undefined)
+          }),
+      ),
+    }
+    renderRoute('/activity', http)
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    const authority = screen.getByLabelText('Activity authority and recovery')
+    const line = within(authority).getByRole('status')
+    expect(line).toHaveClass('activity-command-status')
+    expect(line).toBeEmptyDOMElement()
+    if (!release) throw new Error('pause must be pending')
+    release()
+    await waitFor(() =>
+      expect(line).toHaveTextContent('Activity state refreshed from the authoritative server.'),
+    )
+    expect(within(authority).getByRole('status')).toBe(line)
+  })
+
   it('keeps the reviewed consent selection after a refreshed session so one more press confirms', async () => {
     const user = userEvent.setup()
     const initial: ActivityView = activity({
