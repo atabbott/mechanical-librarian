@@ -62,6 +62,10 @@ concurrency, and hostile-text rendering boundaries remain in force.
 Amended 2026-10-14 (#1193): content-hashed review bundles and digest-addressed
 cover previews are now cached `private, max-age=31536000, immutable`; every
 other response keeps `no-store`.
+Amended 2026-10-22 (#1018): after the one CSRF renewal, a request that carries
+an idempotency key or is side-effect free is sent once more instead of waiting
+for an explicit retry; every other unsafe request still requires one, and the
+owner is told the session was refreshed.
 
 A corrupt or mismatched installed bundle produces one stable owner-rebuild
 state and never an automatic reload loop. Missing chunks permit at most one
