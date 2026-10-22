@@ -161,8 +161,8 @@ candidate any of whose members is a credit line ("Narrated by …", "Read by",
 "Narrator: …") is never automatic and stays the provider's exact text for the
 owner to choose; a credit-line incumbent is still replaced by a plain cast.
 Because the refusal reads the candidate, a credit-line incumbent that a source
-confirms word for word is no longer kept automatically: it needs the owner's
-review (#1283).
+confirms word for word is no longer kept automatically. The field says why, and
+it joins the attention queue only when another value is offered (#1283).
 
 Title and author preservation records one durable no-change, removes the
 decision from pending application work, and calls no target or effect guards.
@@ -183,8 +183,8 @@ A title candidate on either medium with any part (between a colon, a spaced
 dash, a comma, a semicolon or an enclosure) that is such an announcement is
 never automatic and remains the owner's choice; a current title holding one may
 still be replaced by a plain title. A current title holding one that a source
-confirms word for word is no longer kept automatically: it needs the owner's
-review (#1283).
+confirms word for word is no longer kept automatically. The field says why, and
+it joins the attention queue only when another value is offered (#1283).
 Descriptive collisions and materially different subtitles remain visible. A
 corroborated title/subtitle split requires both options Automatic and both
 current decisions and consents. One PATCH applies the pair, both read-backs are
