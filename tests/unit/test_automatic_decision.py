@@ -1620,6 +1620,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="degraded-candidates-predecessor-f46",
         ),
+        pytest.param(
+            "14a1bb36e56326dcead2ca4b1f0547fdd5b6d3be30db84460cc8412fa4ea3da3",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="activity-check-groups-predecessor-f19a",
+        ),
+        pytest.param(
+            "4360c683d6e9ff5dcc3836400e1790db9082864b928b9b5a73de8491a23e9543",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="activity-check-groups-predecessor-f20",
+        ),
+        pytest.param(
+            "a01f3c5122d525016714ce8230b77df853200414d0e94fb4d1da08246dd886aa",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="activity-check-groups-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

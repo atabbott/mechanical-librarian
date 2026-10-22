@@ -1,5 +1,12 @@
 # Pre-release compatibility policy
 
+#1281 adds an optional, pattern-bound `check_group` to each
+`continuous-field-activity-v3` event, so the browser can gather one
+preparation's automatic no-change checks; the schema version is unchanged.
+Nothing persisted changes: the Activity fact store is rebuilt in memory at
+startup, so no clean rebuild is required. F19a/F20/F46 records are displaced
+because the web interface they bind changed, with permission sets unchanged.
+
 #1283 advances the proposal policy to `fixed-conservative-v36` and the shadow
 decision policy to `deterministic-shadow-decision-policy-v23`: an accent-only
 contributor respelling is a preservation, and other accent-dropping or
