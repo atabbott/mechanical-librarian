@@ -788,7 +788,13 @@ The default Activity ledger shows one row for each immutable change identity;
 the latest durable transition supplies its result and time. Its bounded
 inspection discloses the ordered lifecycle without replacing, rewriting, or
 loading the complete append-only audit stream. Search, filters, date bounds,
-totals, and pagination operate on those rows server-side.
+totals, and pagination operate on those rows server-side. On each page, the
+automatic checks one preparation made with no change to write are gathered into
+one row: "Checked N fields, no changes". It opens onto each check with its own
+details. An automatic choice names its field and value, as in "Set series to
+Earthsea Cycle (1)". An address naming an unknown filter
+shows every event and says so until the next filter, search, range, page-size
+or page change (#1281).
 
 The delivered F16a detail page uses a bounded horizontally scrollable field
 attention-only strip inside a non-overflowing document. For each genuinely
