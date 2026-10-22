@@ -3,7 +3,14 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-import { AmbiguousMutationError, ApiError, BuildMismatchError, displayValue } from '../api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  BuildMismatchError,
+  CsrfRenewedError,
+  displayValue,
+  sessionRefreshedCopy,
+} from '../api/http'
 import type {
   ActivityCategory,
   ActivityLibraryView,
@@ -526,6 +533,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     mutationFn: ({ path, body }: { path: string; body?: unknown }) =>
       http.activityCommand(path, body),
     retry: false,
+    // A new command starts silent, so even an identical outcome is announced.
+    onMutate: () => setStatus(''),
     onSuccess: async () => {
       closeConsentReview()
       setSelection({ source: permission, names: new Set() })
@@ -533,6 +542,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
     onError: async (error, command) => {
+      // Refused before any effect: keep the reviewed selection and readiness so
+      // the same press can be repeated, and confirmation re-validates them (#1018).
+      if (error instanceof CsrfRenewedError) {
+        setStatus(sessionRefreshedCopy)
+        return
+      }
       discardPermissions()
       if (
         error instanceof AmbiguousMutationError ||
@@ -709,14 +724,22 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const showOperationalSummary =
     !permissionNeeded || Boolean(connection) || recoveryCount > 0 || data.paused
   const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
-  const commandStatus = (
+  // Pause, resume and revoke report beside the controls that issued them. The
+  // authority and page lines both stay mounted, so a live region is never
+  // created at the moment it is filled; only the line that owns the outcome
+  // carries it, the focus ref and the alert role.
+  const authorityFeedback =
+    hasAuthority &&
+    mutation.variables !== undefined &&
+    mutation.variables.path !== 'activity/consent'
+  const commandStatus = (owner: boolean) => (
     <p
       className="activity-command-status"
-      ref={commandStatusRef}
+      ref={owner ? commandStatusRef : undefined}
       tabIndex={-1}
-      role={mutation.isError ? 'alert' : 'status'}
+      role={owner && mutation.isError ? 'alert' : 'status'}
     >
-      {status}
+      {owner ? status : ''}
     </p>
   )
   return (
@@ -1182,7 +1205,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             Only the included destinations shown above are enabled. Excluded destinations remain
             off. Backup and service capability are checked again on confirmation.
           </p>
-          {consentFeedback ? commandStatus : null}
+          {consentFeedback ? commandStatus(true) : null}
           <button type="button" onClick={closeConsentReview} disabled={mutation.isPending}>
             Cancel permission review
           </button>
@@ -1378,6 +1401,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   Review write permissions
                 </button>
               ) : null}
+              {commandStatus(authorityFeedback)}
               {suspensions.length ? (
                 <div className="cm-activity-recovery-facts" aria-label="Recovery facts">
                   {suspensions.map((item, index) => (
@@ -1394,7 +1418,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         ) : null}
       </section>
       <PreparationNotice routeIdentity={routeIdentity} />
-      {!consentFeedback ? commandStatus : null}
+      {!consentFeedback ? commandStatus(!authorityFeedback) : null}
     </div>
   )
 }

@@ -2,7 +2,13 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AmbiguousMutationError, ApiError, BuildMismatchError, mapActivity } from '../src/api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  BuildMismatchError,
+  CsrfRenewedError,
+  mapActivity,
+} from '../src/api/http'
 import type { ActivitySearch, ActivityView, ReviewHttp } from '../src/api/http'
 import type { LiveUpdate, LiveStreamState, LiveUpdateStream } from '../src/liveUpdates'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
@@ -294,6 +300,121 @@ describe('Activity route', () => {
       ),
     )
     expect(http.activityCommand).toHaveBeenCalledOnce()
+  })
+
+  it('asks for a second press after a refreshed session without resending the pause', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }),
+      ),
+      activityCommand: vi.fn(async () => {
+        throw new CsrfRenewedError()
+      }),
+    }
+    renderRoute('/activity', http)
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    const authority = screen.getByLabelText('Activity authority and recovery')
+    await waitFor(() =>
+      expect(within(authority).getByRole('alert')).toHaveTextContent(
+        /^Your session was refreshed\. Press again\.$/,
+      ),
+    )
+    expect(within(authority).getByRole('alert')).toHaveFocus()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(http.activityCommand).toHaveBeenCalledOnce()
+  })
+
+  it('announces a successful pause through a status line already present beside the controls', async () => {
+    const user = userEvent.setup()
+    let release: (() => void) | undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }),
+      ),
+      activityCommand: vi.fn(
+        () =>
+          new Promise<undefined>((resolve) => {
+            release = () => resolve(undefined)
+          }),
+      ),
+    }
+    renderRoute('/activity', http)
+    await openActivityAuthority(user)
+    // Mounted from the first render, not created by the press it reports.
+    const authority = screen.getByLabelText('Activity authority and recovery')
+    const line = within(authority).getByRole('status')
+    expect(line).toHaveClass('activity-command-status')
+    expect(line).toBeEmptyDOMElement()
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    expect(within(authority).getByRole('status')).toBe(line)
+    expect(line).toBeEmptyDOMElement()
+    if (!release) throw new Error('pause must be pending')
+    release()
+    await waitFor(() =>
+      expect(line).toHaveTextContent('Activity state refreshed from the authoritative server.'),
+    )
+    expect(within(authority).getByRole('status')).toBe(line)
+  })
+
+  it('keeps the reviewed consent selection after a refreshed session so one more press confirms', async () => {
+    const user = userEvent.setup()
+    const initial: ActivityView = activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 0, human: 0, total: 1 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }],
+        },
+      ],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => initial),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(initial)),
+      activityCommand: vi
+        .fn<ReviewHttp['activityCommand']>()
+        .mockRejectedValueOnce(new CsrfRenewedError())
+        .mockResolvedValueOnce(undefined),
+    }
+    renderRoute('/activity#activity-consent', http)
+    await openActivityAuthority(user)
+    const library = await screen.findByRole('checkbox')
+    await user.click(library)
+    const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
+    await user.click(confirm)
+
+    const consent = document.getElementById('activity-consent')
+    if (!consent) throw new Error('consent review must stay open')
+    await waitFor(() =>
+      expect(within(consent).getByRole('alert')).toHaveTextContent(
+        /^Your session was refreshed\. Press again\.$/,
+      ),
+    )
+    expect(within(consent).getByRole('checkbox')).toBeChecked()
+    expect(confirm).toBeEnabled()
+    expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce()
+    await user.click(confirm)
+    await waitFor(() => expect(http.activityCommand).toHaveBeenCalledTimes(2))
+    expect(http.activityCommand).toHaveBeenLastCalledWith('activity/consent', {
+      grants: [{ library: 'fiction', destinations: ['title'] }],
+    })
+    expect(
+      await screen.findByText('Activity state refreshed from the authoritative server.'),
+    ).toBeInTheDocument()
   })
 
   it('keeps ambiguous consent unconfirmed without resending', async () => {

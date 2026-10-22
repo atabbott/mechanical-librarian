@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import { ApiError } from '../src/api/http'
+import { ApiError, CsrfRenewedError } from '../src/api/http'
 import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
@@ -918,48 +918,52 @@ describe('Application shell', () => {
     },
   )
 
-  it('restores the actionable paused connection notice when mutation and refetch fail', async () => {
-    const user = userEvent.setup()
-    const connection = {
-      connection: 'primary',
-      code: 'unavailable' as const,
-      state: 'paused' as const,
-      affected: 2,
-      updated_at: 1,
-    }
-    const paused: PreparationView = {
-      schema_version: 'review-preparation-v2',
-      recovery_required: false,
-      active: true,
-      actionable: false,
-      paused: false,
-      libraries: [],
-      connections: [connection],
-    }
-    let calls = 0
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getPreparation: vi.fn(async () => {
-        calls += 1
-        if (calls > 1) throw new Error('refetch failed')
-        return paused
-      }),
-      preparationAction: vi.fn(async () => {
-        throw new Error('mutation failed')
-      }),
-    }
-    renderRoute('/library?lens=all', http)
-    const check = await screen.findByRole('button', { name: 'Check connection again' })
-    await user.click(check)
+  it.each([
+    [new Error('mutation failed'), 'Connection checking could not be completed'],
+    [new CsrfRenewedError(), 'Your session was refreshed. Press again.'],
+  ])(
+    'restores the actionable paused connection notice when %s and refetch fail',
+    async (failure, copy) => {
+      const user = userEvent.setup()
+      const connection = {
+        connection: 'primary',
+        code: 'unavailable' as const,
+        state: 'paused' as const,
+        affected: 2,
+        updated_at: 1,
+      }
+      const paused: PreparationView = {
+        schema_version: 'review-preparation-v2',
+        recovery_required: false,
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+        connections: [connection],
+      }
+      let calls = 0
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => {
+          calls += 1
+          if (calls > 1) throw new Error('refetch failed')
+          return paused
+        }),
+        preparationAction: vi.fn(async () => {
+          throw failure
+        }),
+      }
+      renderRoute('/library?lens=all', http)
+      const check = await screen.findByRole('button', { name: 'Check connection again' })
+      await user.click(check)
 
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus(),
-    )
-    expect(screen.getByText('Safely paused').parentElement).toHaveTextContent('2')
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      'Connection checking could not be completed',
-    )
-  })
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus(),
+      )
+      expect(screen.getByText('Safely paused').parentElement).toHaveTextContent('2')
+      expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    },
+  )
 
   it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {
     const user = userEvent.setup()

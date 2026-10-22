@@ -984,6 +984,15 @@ export class SessionExpiredError extends ApiError {
     this.name = 'SessionExpiredError'
   }
 }
+export class CsrfRenewedError extends ApiError {
+  constructor() {
+    super(403, 'csrf_renewed')
+    this.name = 'CsrfRenewedError'
+  }
+}
+export const sessionRefreshedCopy = 'Your session was refreshed. Press again.'
+export const refusalCopy = (error: unknown, fallback: string) =>
+  error instanceof CsrfRenewedError ? sessionRefreshedCopy : fallback
 export class BuildMismatchError extends ApiError {
   constructor() {
     super(409, 'frontend_build_mismatch')
@@ -1354,7 +1363,14 @@ export class ReviewApiClient implements ReviewHttp {
       : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
   }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) {
-    const value = await this.mutate(`/api/v1/metadata-policy/${path}`, body, signal)
+    const value = await this.mutate(
+      `/api/v1/metadata-policy/${path}`,
+      body,
+      signal,
+      undefined,
+      'POST',
+      path === 'validate' || path === 'preview',
+    )
     if (!record(value)) throw new ApiError(502, 'invalid_policy_response')
     return value as T
   }
@@ -1451,6 +1467,7 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     extraHeaders?: HeadersInit,
     method = 'POST',
+    sideEffectFree = false,
   ) {
     if (!this.buildIdentity) {
       this.onBuildMismatch()
@@ -1469,27 +1486,41 @@ export class ReviewApiClient implements ReviewHttp {
           ...(signal ? { signal } : {}),
         },
         true,
+        sideEffectFree || headers.has('idempotency-key'),
       )
     } catch (error) {
       if (error instanceof TypeError) throw new AmbiguousMutationError()
       throw error
     }
   }
-  private async request(path: string, init: RequestInit, unsafe: boolean): Promise<unknown> {
+  // A 403 `csrf` challenge renews the page token once. Only a request that is
+  // safe to repeat -- idempotency-keyed or side-effect free -- is then sent
+  // once more; every other one, and a resend refused again, asks the owner to
+  // press again (#1018).
+  private async request(
+    path: string,
+    init: RequestInit,
+    unsafe: boolean,
+    resend = false,
+  ): Promise<unknown> {
     const send = async (token?: string) => {
       const headers = new Headers(init.headers)
       if (token) headers.set('x-csrf-token', token)
       return this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' })
     }
-    const response = await send(unsafe ? this.options.csrf.current() : undefined)
-    if (unsafe && response.status === 403) {
+    let response = await send(unsafe ? this.options.csrf.current() : undefined)
+    if (unsafe && response.status === 403 && (await challengeCode(response)) === 'csrf') {
+      let token: string
       try {
-        await this.options.csrf.renew(init.signal ?? undefined)
+        token = await this.options.csrf.renew(init.signal ?? undefined)
       } catch (error) {
         if (error instanceof SessionExpiredError) this.reportSessionExpiry()
         throw error
       }
-      throw new ApiError(403, 'csrf_renewed')
+      if (!resend) throw new CsrfRenewedError()
+      response = await send(token)
+      if (response.status === 403 && (await challengeCode(response)) === 'csrf')
+        throw new CsrfRenewedError()
     }
     const responseBuild = response.headers.get('x-ml-build-identity')
     if (responseBuild && this.buildIdentity && responseBuild !== this.buildIdentity) {
@@ -4126,6 +4157,9 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     targetFingerprint: stringValue(value.target_fingerprint, 'cover_target_fingerprint'),
   }
 }
+
+// Read on a clone so a non-`csrf` 403 still reaches the ordinary error path.
+const challengeCode = async (response: Response) => (await structuredError(response.clone())).code
 
 const structuredError = async (response: Response) => {
   let value: unknown

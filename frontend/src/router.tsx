@@ -24,7 +24,7 @@ import {
 } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
-import { ApiError, BuildMismatchError, SessionExpiredError } from './api/http'
+import { ApiError, BuildMismatchError, SessionExpiredError, refusalCopy } from './api/http'
 import type {
   ActivitySearch,
   AttentionSearch,
@@ -372,7 +372,7 @@ export const ConnectionNotice = ({
   recovered: NonNullable<PreparationView['connections']>[number] | undefined
   onDismissRecovery: () => void
   onControlFocusChange: (focused: boolean) => void
-  error: boolean
+  error: Error | null
 }) => {
   const condition = data?.connections?.find((item) => item.state !== 'recovered') ?? recovered
   if (!condition) return null
@@ -429,7 +429,10 @@ export const ConnectionNotice = ({
       </button>
       {error ? (
         <p role="alert">
-          Connection checking could not be completed. Preparation remains safely paused.
+          {refusalCopy(
+            error,
+            'Connection checking could not be completed. Preparation remains safely paused.',
+          )}
         </p>
       ) : null}
     </section>
@@ -519,7 +522,7 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
     <ConnectionNotice
       data={data}
       checking={action.isPending}
-      error={action.isError}
+      error={action.error}
       recovered={acknowledgedRecovery}
       onDismissRecovery={() => setRecovered(undefined)}
       onControlFocusChange={(focused) => {
@@ -729,7 +732,9 @@ export const PreparationActivity = () => {
           </button>
           <button onClick={close}>Close</button>
           {action.isError ? (
-            <p role="alert">Preparation control failed safely. Try again.</p>
+            <p role="alert">
+              {refusalCopy(action.error, 'Preparation control failed safely. Try again.')}
+            </p>
           ) : null}
         </section>
       ) : null}
@@ -877,7 +882,8 @@ const Shell = () => {
       await http.logout()
       window.location.assign('/login')
     } catch (error) {
-      if (!(error instanceof BuildMismatchError)) setShellError('Sign out failed. Try again.')
+      if (!(error instanceof BuildMismatchError))
+        setShellError(refusalCopy(error, 'Sign out failed. Try again.'))
     }
   }
   return (

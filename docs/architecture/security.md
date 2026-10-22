@@ -728,20 +728,27 @@ detail/history without resubmitting the mutation. A current-case 409 reloads
 that state, while a stale 409 routes to the authoritative Library; neither
 re-enables obsolete controls. If another authenticated page rotated the sole
 session digest, the client fetches a fresh private/no-store page token into
-memory, but the owner must explicitly retry the unchanged decision. An expired
-session instead crosses to sign-in and never retries a decision without fresh
+memory and sends the unchanged decision once more under its same idempotency
+key; a second refusal asks the owner to press again. An expired session
+instead crosses to sign-in and never retries a decision without fresh
 authentication.
 
 The activated React workspace preserves this boundary. Generated OpenAPI DTOs
 grant no request authority; its handwritten same-origin client keeps CSRF and
-the exact build identity only in page memory, renews CSRF once after a private
-page-token challenge without resending the mutation, converts a 401 into
+the exact build identity only in page memory, and renews CSRF once after a 403
+whose structured code is `csrf` by reading a private page token. It then sends
+the request at most once more, and only when it carries an idempotency key or
+is side-effect free (decision recording, description-advice selection, and
+policy validate and preview). Every other unsafe request, and a resend refused
+again, is not resent: the owner sees "Your session was refreshed. Press again."
+An `origin` or unparsable 403 is an ordinary refusal with no renewal (#1018).
+The client converts a 401 into
 document navigation to `/login`, and passes abort signals through critical and
 progressive reads. Every unsafe
 browser request carries `x-ml-build-identity`; FastAPI rejects a missing or
-mismatched value before application authority. Mutations do not retry
-automatically or claim optimistic success and reconcile ambiguous outcomes from
-authoritative state. The client uses no browser storage, inline script,
+mismatched value before application authority. Apart from that one bounded
+CSRF resend, mutations do not retry automatically; they never claim optimistic
+success and reconcile ambiguous outcomes from authoritative state. The client uses no browser storage, inline script,
 external origin, worker, blob, source map, credential, target client, or write
 adapter. The packaged loader validates bounded exact paths, sizes, digests, a
 content-derived build identity, and the independently emitted expected identity

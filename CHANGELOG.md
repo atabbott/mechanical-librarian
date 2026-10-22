@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A decision or policy validation made after another tab or the setup handoff
+  refreshed the session now succeeds on the first press; other actions say
+  "Your session was refreshed. Press again." instead of a generic failure (#1018).
+
 - Checkpoint numbers now state what each checkpoint delivers, and the history
   is renumbered once; the former numbers are mapped in work management (#1321).
 

@@ -1512,6 +1512,44 @@ it('keeps the draft after a real stale envelope and binds explicit repreview to 
   })
 })
 
+it.each([
+  ['validate', 'Impact preview is current. The active policy is unchanged.', 2],
+  ['drafts', 'Your session was refreshed. Press again.', 1],
+])(
+  'renews a rotated token on the first %s press and resends only a pure command (#1018)',
+  async (refused, copy, sends) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ error: { code: 'csrf' } }, { status: 403 }))
+      .mockResolvedValueOnce(Response.json({ policy_id: 'draft' }))
+    const transport = new ReviewApiClient({
+      buildIdentity: 'a'.repeat(64),
+      csrf: { current: () => 'b'.repeat(32), renew: async () => 'c'.repeat(32) },
+      fetch: fetchMock,
+    })
+    http.policyCommand = async <T,>(path: string, body?: unknown) =>
+      (path === refused
+        ? transport.policyCommand(path, body)
+        : path === 'preview'
+          ? {
+              schema_version: 'metadata-policy-preview-v1',
+              policy_id: 'draft',
+              active_policy_id: 'policy-1',
+              active_generation: 1,
+              libraries: [],
+            }
+          : { policy_id: 'draft', schema_version: 'metadata-policy-profile-v3' }) as T
+    renderRoute('/policy?section=identity', http)
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    expect(await screen.findByText(copy)).toBeVisible()
+    expect(fetchMock).toHaveBeenCalledTimes(sends)
+  },
+)
+
 it('counts a manual availability change without an elected value', async () => {
   const user = userEvent.setup()
   const field = {

@@ -2,6 +2,7 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
+import { refusalCopy } from '../api/http'
 import type { ReviewHttp, SettingsView } from '../api/http'
 import { offOn } from '../fieldControls'
 import { FieldRow } from './FieldRow'
@@ -126,8 +127,10 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
       {mutation.isError || stale ? (
         <div role="alert">
           <p>
-            Description preferences could not be saved against the current settings. Reload the
-            saved preferences before trying again.
+            {refusalCopy(
+              stale ? null : mutation.error,
+              'Description preferences could not be saved against the current settings. Reload the saved preferences before trying again.',
+            )}
           </p>
           <button disabled={reload.isPending} onClick={() => reload.mutate()}>
             {reload.isPending ? 'Reloading preferences…' : 'Reload description preferences'}

@@ -41,7 +41,7 @@ h2 { margin-bottom:.35rem; }
 .shell-actions { margin-left:auto; }
 .shell-actions button { min-height:44px; padding:.45rem .7rem; background:transparent; white-space:nowrap; }
 .theme-toggle { display:inline-flex; min-width:44px; align-items:center; justify-content:center; gap:.4rem; }
-.navigation-status, .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .shell-error { margin:0; padding:.75rem 1rem; color:var(--danger); text-align:center; }
 .build-mismatch { display:flex; gap:1rem; align-items:center; justify-content:center; padding:.75rem; color:#211500; background:#ffd27a; }
 .build-mismatch button { color:#211500; background:#fff; }
@@ -1161,7 +1161,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 
 /* Keep failed commands beside the action that can recover them. */
 .cm-finish-summary > .policy-status:not(.sr-only) { margin:0; padding:.45rem .6rem; font-size:.78rem; }
-.activity-consent-ledger > .activity-command-status:not(:empty) { margin:.7rem 0; padding:.7rem; border-left:3px solid var(--danger); background:color-mix(in srgb,var(--danger) 10%,var(--surface)); }
+.activity-consent-ledger > .activity-command-status:not(:empty),.cm-activity-authority-actions > .activity-command-status[role='alert']:not(:empty) { margin:.7rem 0; padding:.7rem; border-left:3px solid var(--danger); background:color-mix(in srgb,var(--danger) 10%,var(--surface)); }
+.cm-activity-authority-actions > .activity-command-status { flex-basis:100%; margin:0; }
 
 .cover-confirmation { max-width: min(32rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto; padding: 1.5rem; color: inherit; background: var(--surface, Canvas); border: 1px solid currentColor; border-radius: .75rem; }
 .cover-confirmation::backdrop { background: #0008; }
