@@ -15,7 +15,7 @@ selects neither that checkpoint nor its version. After the first published
 release, maintainers may explicitly designate later milestones as release
 trains; release publication does not make that automatic.
 
-### Completed 0.10.1 provider evidence semantics
+### Completed 0.11.0 provider evidence semantics
 
 Issue #315 adds Google Books as a third ordinary, explicitly configured
 metadata provider through the same bounded ISBN-family and complete
@@ -31,7 +31,7 @@ event/manifestation linkage is unresolved. These increments add no ranking,
 retry, cache, scheduler, generic provider framework, service write, media
 write, tag, or release publication.
 
-### Completed 0.10.2 shadow decision qualification
+### Completed 0.12.0 shadow decision qualification
 
 F19 qualifies the provider-independent, report-only deterministic
 shadow-decision preview on a private production-derived corpus, preferring
@@ -44,7 +44,7 @@ application database, or media write, no default recommendation integration,
 no release, and no tag. #384 is the F19 activation tracker; #147 retains F11
 terminal history.
 
-### Completed 0.11.0 authenticated human-exception review
+### Completed 0.13.0 authenticated human-exception review
 
 F16a #152 is delivered through increments #447, #448, #449 and #450, the
 substantiated merged findings corrected through #456-#462, and the protected
@@ -57,7 +57,7 @@ activity and history remain deferred to #195. The checkpoint excludes automatic
 authority, apply/write, bulk/reversal, migrations, release, tag, deployment,
 and production-service access.
 
-### Completed 0.12.0 quiet background metadata decisions
+### Completed 0.14.0 quiet background metadata decisions
 
 New and meaningfully changed Audiobookshelf books are continuously prepared for
 review, the authenticated owner configures one immutable versioned global
@@ -71,12 +71,12 @@ migration, release, or tag. Completion required the three ordered slices F17a,
 F09p, and F19a plus cumulative exact-container qualification; a partial
 milestone is not a release boundary.
 
-### Completed 0.13.0 continuous guarded application
+### Completed 0.15.0 continuous guarded application
 
 Exact-current human and qualified automatic ebook decisions enter one persisted
 guarded apply path through supported Audiobookshelf APIs, with informed
 low-friction consent, unattended application, verification, audit, focused
-recovery, and disposable real-work qualification. The delivered 0.12.0
+recovery, and disposable real-work qualification. The delivered 0.14.0
 decision-side contracts are reused as black boxes and the accepted Library,
 Attention, and Policy experience is preserved; frontend change is limited to
 effect-labelled actions and status required by guarded application plus the
@@ -88,19 +88,19 @@ migration, release, and tag. Audiobook application arrived with F47, #968,
 ADR-0071, which extended the same envelope to the fifteen book-media
 destinations.
 
-### Completed 0.14.0 release-candidate simplification
+### Completed 0.16.0 release-candidate simplification
 
-The completed 0.13 application moves onto a reproducible React/TypeScript
+The completed 0.15 application moves onto a reproducible React/TypeScript
 frontend platform, the supported CLI and contained-reviewer surfaces contract,
 the authenticated browser/application/state seams deepen, superseded machinery
 and tests are deleted, current documentation is reconciled, and one coherent
 wheel/container is qualified. Known interface-fidelity restoration is excluded
-to 0.14.1. This internal checkpoint is not a release, tag, compatibility
+to 0.17.0. This internal checkpoint is not a release, tag, compatibility
 promise, or production-library authorization.
 
-### Completed 0.14.1 interface fidelity restoration
+### Completed 0.17.0 interface fidelity restoration
 
-After the 0.14.0 frontend-platform cutover, the authenticated interface is
+After the 0.16.0 frontend-platform cutover, the authenticated interface is
 restored against selected Variant M Library/Attention/detail, Variant B Policy,
 and Variant B Activity references, including direct
 current-or-specific-candidate outcome selection and installed-artifact
@@ -115,7 +115,7 @@ remains the historical tracker for the completed first pass; it is not evidence
 that those follow-up defects were resolved. The checkpoint adds no new metadata
 capability, authority, release, or tag.
 
-### Completed 0.15.0 semantic cover decision workbench
+### Completed 0.18.0 semantic cover decision workbench
 
 Accepted 2026-08-12. Report-only semantic cover identity, contained
 observation, taxonomy, and policy-guided adjudication are proved through the
@@ -125,9 +125,9 @@ useful medium, promotional-text, tie-in, and deterministic policy results;
 composition remains below the useful band. This internal checkpoint is not a
 release or tag.
 
-### Completed 0.15.1 owner-confirmed semantic cover decisions
+### Completed 0.19.0 owner-confirmed semantic cover decisions
 
-After the 0.15.0 workbench proof and 0.15.2 rich-metadata completion, the
+After the 0.18.0 workbench proof and 0.20.0 rich-metadata completion, the
 owner-confirmed semantic-cover path compares the incumbent with exact bounded
 alternatives, shows contained-reviewer observations and a deterministic
 recommendation as advice, records one explicit owner choice, and applies a
@@ -135,16 +135,16 @@ selected cover through the existing guarded Audiobookshelf effect path with
 immutable history. Automatic cover choice/application, silent learning, bulk
 reevaluation, provider reacquisition campaigns, release, and tag are excluded.
 
-### Completed 0.15.2 complete qualified ebook metadata decisions
+### Completed 0.20.0 complete qualified ebook metadata decisions
 
 Before the first release, subtitle, series, genres, description, ISBN, ASIN,
 explicit, and tags are settled with closed owner policies, exact evidence and
 target semantics, independent field-local qualification, and guarded activation
 only for passing options. This checkpoint is independent of cover milestones
-0.15.0 and 0.15.1; narrators and cover are excluded. It is an internal
+0.18.0 and 0.19.0; narrators and cover are excluded. It is an internal
 checkpoint, not a release or tag.
 
-### Completed 0.15.3 protected interface implementation
+### Completed 0.20.1 protected interface implementation
 
 The owner-selected protected interface reference at commit
 377b8456d6f0070d703b7ed3fd372c5c0ac81366 is implemented through independently
@@ -155,7 +155,7 @@ acceptance, not directional evidence. #589, #590, #591, #607, #608, and #609
 are merged and the installed surfaces verified against the protected reference
 and accepted refinements. No release or deployment is implied.
 
-### Completed 0.15.4 real-library correctness and recovery
+### Completed 0.21.0 real-library correctness and recovery
 
 Every surface tells the truth about a real library rather than about a healthy
 one. A failed provider lane recovers through one scoped canary instead of
@@ -168,7 +168,7 @@ the owner's words and carry the evidence behind that claim. The 24 issues from
 #408 through #644 are merged and verified against the protected reference. No
 release or deployment is implied.
 
-### Completed 0.16.0 engineering health
+### Completed 0.21.1 engineering health
 
 Every check the contributor documentation promises is enforced by the public
 gate, the worst structural debt is paid down, and a clean checkout passes every
@@ -178,7 +178,7 @@ less code: duplication and longhand ceremony are removed wherever a refactor
 already touches them, never at the cost of an invariant, an assertion, or a
 bound.
 
-### Completed 0.16.1 documentation economy
+### Completed 0.21.2 documentation economy
 
 The corpus and the runtime contract shrink to what is load-bearing. Superseded
 historical documents are deleted, git history being the archive and ADRs
@@ -188,7 +188,7 @@ prose becomes pointers, and CI enforces reachability and link integrity
 test-value audit with pruning, and container runtime hardening. Deletion pull
 requests name what they removed and the last SHA containing it.
 
-### Completed 0.16.2 write-path truth and signal integrity
+### Completed 0.21.3 write-path truth and signal integrity
 
 A guarded write that is refused reports the thing that refused it: a storage
 fault is no longer relabelled an unacceptable decision, a withdrawn consent or
@@ -208,19 +208,19 @@ across the test tree, so a double bound into a port it does not satisfy fails
 the gate; the 48 modules carrying findings are named as the burn-down backlog
 (#693).
 
-### 0.22.0 preparation and owner-journey checkpoint
+### 0.27.0 preparation and owner-journey checkpoint
 
 The [expanded delivery checkpoint](delivery-slices.md#delivery-checkpoint-0220-responsive-trustworthy-preparation-and-review)
 is delivered: responsive owner interactions (#1072) and preparation recovery
 (#1085), then the named evidence/decision corrections, Library/Policy trust,
 reviewer/Settings operation and manual retained-cover choice, alongside #1008,
 #1012 and #1068. #1013 completes it with final integrated acceptance and blocks
-#984, the first 0.23.0 Series and structure unit, until it merges. #877 is
+#984, the first Series and structure unit, until it merges. #877 is
 curtailed diagnostic evidence and #1086 closed unplanned; the reviewer-free
-measurement belongs to #990 (a settling stratified sample, 0.23.0) and #1238
+measurement belongs to #990 (a settling stratified sample, Series and structure) and #1238
 (the settled full library on a continuous report-only deployment, 1.0.0),
-separate from #1060's explicitly authorized reviewer collection. 0.19.0 and
-0.21.0 closed on 2026-10-17 with that measurement exit waived.
+separate from #1060's explicitly authorized reviewer collection. 0.24.0 and
+0.26.0 closed on 2026-10-17 with that measurement exit waived.
 
 ## M0: Foundation
 
@@ -338,7 +338,7 @@ The remaining 1.0 outcome set is F08 #144, F15a #151,
 F14 #150, and F17 #153. F10b #240 is delivered; F11 #147 ended in terminal
 non-activation after failed model-review qualification; and F19 #384 was
 delivered by #442 as a provider-independent, read-only, non-persisted preview.
-F16a is the 0.11.0 checkpoint through #447 → #448 → #449 → #450. The retained
+F16a is the 0.13.0 checkpoint through #447 → #448 → #449 → #450. The retained
 1.0 `F` IDs are planned designations rather than `Ready` status. F09o #70 has
 moved into milestone 0.9.0 with #344 as its
 pre-activation evidence-report increment. Open Library #210 is the completed
@@ -510,7 +510,7 @@ explicitly consented libraries with one fair mutation slot, exact-field guards,
 restart recovery, manual holds, and the permanent Activity surface. Release
 publication remains a separate outcome.
 
-The completed 0.12 checkpoint also provides a sealed, decision-only automatic
+The completed 0.14 checkpoint also provides a sealed, decision-only automatic
 policy posture after Preview qualification. Its automatic outcomes are durable
 and origin-labelled, while pause, category/global suspension, and explicit
 recovery route work back to human Attention. It has no apply, target, media,

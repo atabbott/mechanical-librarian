@@ -6,7 +6,7 @@ ticket list; and
 [functional slice delivery](../development/slice-delivery.md) for the branch,
 issue and review mechanics. This document is the ordered plan and its planning
 rules. It records open checkpoints only: the exit ledgers for checkpoints 0.1.0
-through 0.12.0 are closed history, kept in git and in their closed milestones,
+through 0.14.0 are closed history, kept in git and in their closed milestones,
 and are not restated here.
 
 ## Purpose
@@ -60,25 +60,25 @@ and prerequisite tickets are completed or superseded history, not current work.
 
 ## Closed checkpoints
 
-Checkpoints 0.1.0 through 0.12.0 are complete. Their outcome tables and exit
+Checkpoints 0.1.0 through 0.14.0 are complete. Their outcome tables and exit
 criteria are in the closed GitHub milestones of the same names and in this
 file's git history; the last revision carrying them is recorded in the pull
 request that removed them. A closed checkpoint's issue ranges are historical
 context and never permission to reopen a legacy parent or constituent.
 
-## Delivery checkpoint 0.15.1: owner-confirmed semantic cover decisions
+## Delivery checkpoint 0.19.0: owner-confirmed semantic cover decisions
 
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
 | F21 Owner-confirmed cover decisions | #501 | One exact-current cover review shows the incumbent and safe report-bound alternatives, presents contained observation and deterministic policy only as advice, persists an explicit owner keep/select/no-action outcome and its successor history, and applies a selected original through the existing guarded Audiobookshelf path. | Activation candidate open for maintainer review. |
 
-F21 reuses the 0.15.0 packet, identity, observer, policy, containment, and
+F21 reuses the 0.18.0 packet, identity, observer, policy, containment, and
 versioned engineering benchmark evidence. Observation or recommendation
 unavailability keeps identity-admitted manual selection fully supported.
 Automatic model-selected writes, bulk reevaluation, silent learning, new
 providers, release, tag, and deployment work are excluded.
 
-## Delivery checkpoint 0.15.4: completed publication and recoverable advisory covers
+## Delivery checkpoint 0.21.0: completed publication and recoverable advisory covers
 
 This checkpoint composes the next bounded cross-layer capabilities without
 granting a release, tag, deployment, or production operation.
@@ -96,7 +96,7 @@ applicable`. #598 and #599 are focused defects blocked on the final installed
 copied nor modified by this checkpoint. This checkpoint creates no horizontal
 plan or additional constituents.
 
-## Delivery checkpoint 0.17.0: completed full-library experience
+## Delivery checkpoint 0.22.0: completed full-library experience
 
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
@@ -105,7 +105,7 @@ plan or additional constituents.
 | F27 Owner-managed settings | #763 | The owner manages typed configuration through one authenticated API and native Settings surface. | Complete through constituent #764. |
 | F28 Guided browser first run | #745 | An owner progresses from an empty volume through configuration and preparation into the first usable Library handover. | Complete. |
 
-## Delivery checkpoint 0.18.0: covers and responsiveness
+## Delivery checkpoint 0.23.0: covers and responsiveness
 
 This checkpoint makes cover choice useful without an AI reviewer, makes optional
 reviewer setup an owner-managed product flow, and keeps full-library interaction
@@ -134,7 +134,7 @@ reviewer defects only where its qualification consumes reviewer evidence; its
 reviewer-independent owner path remains the slice's required floor. F31 is one
 delivery transaction with #873 as its independently closable constituent.
 
-## Delivery checkpoint 0.19.0: evidence economy and decided fields
+## Delivery checkpoint 0.24.0: evidence economy and decided fields
 
 This checkpoint spends provider request budgets deliberately, widens keyless
 first-run corroboration, and converts the measured classes of stalled owner
@@ -166,14 +166,14 @@ extraction admitting prose fragments as authorship claims, with an
 extraction-only boundary and no corroboration election. #890 and #891 are
 Ready to keep the fields rail and Library rail legible. #877 closed as curtailed diagnostic work and #1086 closed
 unplanned; the reviewer-free joint measurement moved to #990 (a settling stratified
-sample, 0.23.0) and #1238 (the settled full library on a continuous report-only
+sample, Series and structure) and #1238 (the settled full library on a continuous report-only
 deployment, 1.0.0). This checkpoint closed on 2026-10-17 with that exit waived.
 
 The tranche slices F35–F38, F40, and F42 use the #445 qualification route.
 F41 uses that route for its applicable tidy and subtitle tranches. The
 audiobook evidence-source selection (#893) stays outside this checkpoint.
 
-## Delivery checkpoint 0.20.0: audiobook foundation
+## Delivery checkpoint 0.25.0: audiobook foundation
 
 This checkpoint opens audiobooks as a read-only evidence surface: local
 evidence first, provider discovery and enrichment after it, under the keyless
@@ -184,13 +184,13 @@ posture of [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.
 | F43 Local audiobook evidence | #749 | Each single-audio-file item of a mounted audiobook library produces a closed local evidence set — ASIN, narrator, series and sequence, duration, embedded chapters, performance type, language, description, embedded-cover presence — with per-surface provenance, projected read-only to the owner. | Delivered. |
 | F43 Audiobook provider evidence | #749 | The same item is compared against four keyless providers — Audible, Audnexus, AudioSilo, iTunes — configurable from Settings and the first-run wizard. An ASIN is adopted only where a second authority corroborates the recording's own running time, chapter structure, or perceptual cover hash; nothing corroborated leaves the item at `evidence_only`. Read-only throughout. | Delivered. |
 
-## Delivery checkpoint 0.21.0: audiobook decisions
+## Delivery checkpoint 0.26.0: audiobook decisions
 
 This checkpoint takes audiobooks from read-only evidence to decided fields:
 multi-file items join the evidence surface, corroborated evidence becomes
 proposals and owner decisions, qualified classes become automatic decisions,
 and guarded application follows the existing consent and effect path. It is
-shaped from the 0.20.0 production measurement recorded on #749.
+shaped from the 0.25.0 production measurement recorded on #749.
 
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
@@ -208,8 +208,8 @@ Focused work remains outside the slice sequence, each using `Delivery slice:
 Not applicable`. #956 feeds gate-promoted and target-asserted ASINs into the
 per-ASIN lanes within one preparation pass, bounded and corroboration-gated,
 and is the checkpoint's first unit. #940 is delivered inside F45's lane and
-closes with it. #877 was the joint 0.19.0/0.21.0 measurement and closed curtailed; #1086
-closed unplanned, and #990 (0.23.0) and #1238 (1.0.0) own the measurement. This
+closes with it. #877 was the joint 0.24.0/0.26.0 measurement and closed curtailed; #1086
+closed unplanned, and #990 (Series and structure) and #1238 (1.0.0) own the measurement. This
 checkpoint closed on 2026-10-17 with that exit waived. #969 remains closed as superseded.
 
 No release, tag, deployment, chapter or cover or media write, transcription
@@ -217,11 +217,11 @@ No release, tag, deployment, chapter or cover or media write, transcription
 Open Library/Hardcover WORK projections, or ebook format-ladder work
 (#751 rungs 1–2) is included.
 
-## Delivery checkpoint 0.22.0: responsive, trustworthy preparation and review
+## Delivery checkpoint 0.27.0: responsive, trustworthy preparation and review
 
 The expanded milestone 34 checkpoint covers first-run usability, retained-library
 responsiveness, preparation reliability, metadata correctness and the complete
-owner journey before 0.23.0 Series and structure, and every outcome below is
+owner journey before Series and structure, and every outcome below is
 delivered. #1008 first-run setup, #1012 preparation progress/recovery and #1068
 cover model/cost-basis disclosure came first; their recorded residual findings
 remain open. Delivery then ran #1072 responsive owner interactions and #1085
@@ -245,7 +245,7 @@ spend caps were approved.
 
 #877 closed as curtailed diagnostic work, not a passing full-library measurement,
 and #1086 closed unplanned with provider work still queued. The reviewer-free
-joint 0.19.0/0.21.0 measurement now belongs to #990 (a settling stratified sample, 0.23.0) and #1238 (the settled full library on a continuous report-only deployment, 1.0.0); 0.19.0 and 0.21.0
+joint 0.24.0/0.26.0 measurement now belongs to #990 (a settling stratified sample, Series and structure) and #1238 (the settled full library on a continuous report-only deployment, 1.0.0); 0.24.0 and 0.26.0
 closed on 2026-10-17 with that exit waived. It stays separate from #1060 reviewer
 collection; this checkpoint cannot retroactively pass #877. The retained-run
 follow-ups were delivered through Library search #1160, Activity responsiveness #1150 ([ADR-0082](../architecture/decisions/0082-runtime-activity-facts.md)),
@@ -257,7 +257,7 @@ Exit requires each issue contract, actual collection and inspection for #1060,
 and evidenced dispositions for the bounded investigations; each is met. #1013
 completes the checkpoint and reconciles UX-001–UX-038: UX-030 belongs to
 #999/PR #1016 and #1017's regression follow-up, and the other 37 retain their
-original usability owners. It blocks #984, the first 0.23.0 unit, until it merges.
+original usability owners. It blocks #984, the first Series and structure unit, until it merges.
 
 The exact installed walkthrough is setup → preparation → decision/revision →
 policy preview → scoped permission/history, with populated long content during
@@ -267,7 +267,7 @@ envelope applies. Effects use isolated synthetic targets. A static empty view,
 health-route latency or green CI alone cannot satisfy this exit. No later-ticket
 completion, release, deployment or provider/reviewer spend is implied.
 
-## Delivery checkpoint 0.22.2: audiobook discovery and admission
+## Delivery checkpoint 0.28.0: audiobook discovery and admission
 
 This checkpoint makes audiobook discovery reach the recordings the catalogue
 already holds. It is shaped from the verified analysis of the #1086 retained
@@ -313,7 +313,7 @@ credential, transcription (#24), audiobook dispatch beyond the five-provider
 audiobook dispatch set (#962, #1247), series+sequence query (#1262), or
 cover-question suppression is included.
 
-## Delivery checkpoint 0.22.3: owner trust and control
+## Delivery checkpoint 0.29.0: owner trust and control
 
 The owner can trust what the interface says and stays in control of what it
 does. This checkpoint is shaped from the 2026-10-20 frontend audit of a fresh
@@ -322,7 +322,7 @@ slice: every unit is focused work with `Delivery slice: Not applicable`.
 
 | Order | Issues | Outcome |
 | --- | --- | --- |
-| 1 | #1278 | Activity loads after a verified write of any length. It records this checkpoint and is its first unit; as focused work it may land before 0.22.2 closes. |
+| 1 | #1278 | Activity loads after a verified write of any length. It records this checkpoint and is its first unit; as focused work it may land before 0.28.0 closes. |
 | 2 | #1018, #1279, #1280, #1281, #1282, #1284, in any order | CSRF resend for every unsafe request; a write-permission review that survives refocus; a policy preview that evaluates every field it reports; a ledger that leads with changes rather than no-op records; library-level provider throttling, retry, scan and pause; and counts, search and Attention that agree across surfaces. |
 | 3 | #1283 | Degraded candidates are no longer presented as improvements, after the investigation records their cause. |
 | 4 | #1285 | Owner-entered values, changeable decisions and genre subsets. A planned feature that must be promoted to a slice designation before it starts. |
@@ -343,7 +343,7 @@ be reopened or recreated.
 
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
-| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Delivered in 0.21.0; #144 is closed. The row keeps the historical 1.0.0 designation for the same outcome. |
+| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Delivered in 0.26.0; #144 is closed. The row keeps the historical 1.0.0 designation for the same outcome. |
 
 The checkpoint's other outcomes are delivered and their trackers are closed:
 F15a supported container operation #151, F16a authenticated browser review and
@@ -386,7 +386,7 @@ assigned outcome issue, not proof of `Ready` status or authority to begin.
 
 Satisfying this checkpoint exit does not itself publish a release. First-release
 artifact production #94 and publication-readiness audit #43 are separate gates
-in the `first-release` milestone and require an explicit maintainer publication
+in the `Release readiness` milestone and require an explicit maintainer publication
 decision. Post-release migration and older-schema restore recovery remain #57;
 neither is F17 acceptance.
 

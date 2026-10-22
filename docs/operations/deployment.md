@@ -53,7 +53,7 @@ lifetime of up to 30 days (the default); choose a shorter
 `review.session_lifetime_seconds` value when the deployment requires it. A
 remembered browser session is still a bearer credential, so do not use it on an
 untrusted endpoint or transport.
-The 0.18.0 upgrade signs out existing owners once because remembered sessions
+The 0.23.0 upgrade signs out existing owners once because remembered sessions
 are now bound to the exact owner verifier. Sign in again after upgrading;
 otherwise-valid sessions continue across exact-current application and
 repository restarts until logout or absolute expiry. The #912 session
