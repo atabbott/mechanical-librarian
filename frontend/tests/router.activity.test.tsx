@@ -3299,14 +3299,19 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     expect(within(row).getByText('Synthetic checked work')).toBeVisible()
     expect(within(row).getByText('fiction')).toBeVisible()
     expect(within(row).getByText('No change required')).toBeVisible()
-    expect(row.querySelector('.cm-activity-change')).toHaveAttribute(
-      'aria-label',
-      'Checked 3 fields, no changes',
-    )
+    // The sentence is the row's own text in the accessibility tree, with no
+    // label on a generic element.
+    expect(
+      within(row).getByText('Checked 3 fields, no changes').closest('[aria-hidden]'),
+    ).toBeNull()
+    expect(row.querySelector('[aria-label]')).toBeNull()
     // The checks row leads at its newest member's place; the change and the
     // owner keep between members stay rows of their own, in order.
     const order = [...ledger().querySelectorAll(':scope > .cm-activity-event-group > article')].map(
-      (article) => article.querySelector('.cm-activity-change')?.getAttribute('aria-label'),
+      (article) => {
+        const text = article.querySelector('.cm-activity-change')
+        return text?.getAttribute('aria-label') ?? text?.textContent
+      },
     )
     expect(order).toEqual([
       'Checked 3 fields, no changes',
@@ -3488,6 +3493,28 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     await waitFor(() => expect(ledger().querySelector('article.is-checks')).toBeNull())
     await waitFor(() => expect(document.getElementById('activity-ledger-title')).toHaveFocus())
     expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('moves focus to the group toggle when a refetch removes a focused member', async () => {
+    const user = userEvent.setup()
+    let current = activity({ events: [change, ...members] })
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/activity', http)
+    const toggle = within(await waitFor(checksRow)).getByRole('button', { name: 'Details' })
+    await user.click(toggle)
+    const [, member] = within(byId(`activity-checks-${key}`)).getAllByRole('button', {
+      name: 'Details',
+    })
+    if (!member) throw new Error('Expected a second member')
+    member.focus()
+
+    current = activity({ events: [change, checkedTitle, keptIsbn, keptGenres] })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() => expect(member).not.toBeInTheDocument())
+    expect(checksRow()).toBeInTheDocument()
+    await waitFor(() => expect(toggle).toHaveFocus())
   })
 
   it('reaches the checks toggle and then its members by keyboard', async () => {

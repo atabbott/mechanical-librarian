@@ -2575,7 +2575,8 @@ _NAMED_CLIP = """node => {
 
 # Every Activity row's category pill and time, named by the row they belong to.
 # A pill may wrap between words but never inside one, and never runs out of its
-# box; a compact time track is never narrower than the time or day it holds.
+# box; a compact time track is never narrower than the time or day it holds;
+# and no cell runs past the row that holds it.
 _ROW_LABELS = """(compact) => [...document.querySelectorAll('.cm-activity-event-group article')]
   .flatMap(row => {
     const work = row.querySelector('.cm-activity-work');
@@ -2597,6 +2598,15 @@ _ROW_LABELS = """(compact) => [...document.querySelectorAll('.cm-activity-event-
     if (pill.scrollWidth > pill.clientWidth ||
         words.getBoundingClientRect().right > pill.getBoundingClientRect().right + 1)
       found.push(`the ${name} pill "${pill.textContent}" runs out of its box`);
+    const style = getComputedStyle(row);
+    const edge = row.getBoundingClientRect().right - parseFloat(style.borderRightWidth) -
+      parseFloat(style.paddingRight);
+    for (const cell of row.children) {
+      const past = Math.round(cell.getBoundingClientRect().right - edge);
+      if (past > 1)
+        found.push(`the ${name} ${cell.className || cell.tagName.toLowerCase()} ` +
+          `"${cell.textContent.trim().slice(0, 24)}" runs ${past}px past its row`);
+    }
     const time = row.querySelector(':scope > time');
     if (compact && time.scrollWidth > time.clientWidth)
       found.push(`the ${name} time "${time.textContent}" is ` +
@@ -2667,7 +2677,8 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
         toggle = checks.get_by_role("button")
         expect(checks).to_have_count(1)
         expect(checks).to_contain_text("Synthetic checked work")
-        expect(checks.get_by_label("Checked 3 fields, no changes")).to_be_visible()
+        expect(checks.get_by_text("Checked 3 fields, no changes")).to_be_visible()
+        assert "Checked 3 fields, no changes" in checks.aria_snapshot()
         expect(checks).to_contain_text("No change required")
         expect(toggle).to_have_attribute("aria-expanded", "false")
         expect(page.locator(".cm-activity-checks")).to_have_count(0)
@@ -2746,6 +2757,11 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
             page.goto("https://react-platform.invalid/activity?eventType=owner_choice")
             page.locator("article.is-checks").get_by_role("button").click()
             expect(members).to_have_count(3)
+            # An open member's indented row carries the longest label.
+            members.nth(0).get_by_role("button", name="Details").click()
+            expect(
+                members.nth(0).get_by_role("button", name="Hide details")
+            ).to_be_visible()
             expect(page.locator("html")).to_have_attribute("data-theme", scheme)
             for width in (1440, 1100, 884, 761, 760, 390, 320):
                 page.set_viewport_size({"width": width, "height": 900})
