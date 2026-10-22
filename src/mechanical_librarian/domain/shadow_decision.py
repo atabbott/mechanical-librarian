@@ -202,6 +202,7 @@ _RULE_TABLE = {
             "candidate_promotional_title",
             "candidate_strips_marks",
         ],
+        "degraded_preservation_refused_in_combination": True,
         "credit_prefixed_contributor": [
             "credit_line_role_by_names",
             "credit_line_label_colon_names",
@@ -673,6 +674,17 @@ def _degraded_candidate_reason(
     return None
 
 
+def _degraded_reason(proposal: dict[str, object]) -> str | None:
+    """Name a degraded refusal only when it blocked every candidate (#1283)."""
+    candidates = cast("list[dict[str, object]]", proposal["candidates"])
+    degraded = sorted(
+        reason
+        for value in candidates
+        if (reason := _degraded_candidate_reason(proposal, value)) is not None
+    )
+    return degraded[0] if degraded and len(degraded) == len(candidates) else None
+
+
 def _candidate_is_eligible(
     packet: ShadowReviewPacket,
     proposal: dict[str, object],
@@ -895,13 +907,8 @@ def _base_reason(
         return "target_only_preservation"
     if not eligible:
         candidates = cast("list[dict[str, object]]", proposal["candidates"])
-        degraded = sorted(
-            reason
-            for value in candidates
-            if (reason := _degraded_candidate_reason(proposal, value)) is not None
-        )
-        if degraded:
-            return degraded[0]
+        if (degraded := _degraded_reason(proposal)) is not None:
+            return degraded
         if proposal["destination"] == "authors":
             return (
                 "insufficient_support"
@@ -998,7 +1005,14 @@ def _combination_selections(
                     and action.destination == destination
                     and action.recommendation != "manual"
                 )
-                if destination == _COMBINATION_SELECTED_DESTINATION and all_preserve
+                if destination == _COMBINATION_SELECTED_DESTINATION
+                and all_preserve
+                and not any(
+                    _degraded_candidate_reason(proposal, candidate) is not None
+                    for candidate in cast(
+                        "list[dict[str, object]]", proposal["candidates"]
+                    )
+                )
                 else tuple(
                     action
                     for action in catalogue.actions
@@ -1174,7 +1188,7 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
                 catalogue, proposal_id
             )
             reason = (
-                "bibliographic_combination_unresolved"
+                _degraded_reason(proposal) or "bibliographic_combination_unresolved"
                 if combination_failed or proposal_id not in combination_actions
                 else _base_reason(proposal, (action,))
             )
