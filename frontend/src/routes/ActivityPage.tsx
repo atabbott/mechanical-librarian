@@ -2,7 +2,7 @@ import { invalidateForegroundQueries } from '../queryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   AmbiguousMutationError,
   ApiError,
@@ -13,6 +13,7 @@ import {
 } from '../api/http'
 import type {
   ActivityCategory,
+  ActivityEventView,
   ActivityLibraryView,
   ActivityPermissionReadinessView,
   ActivitySearch,
@@ -21,10 +22,10 @@ import type {
   ProviderRecoveryDispatchReason,
   ProviderRecoveryFailureReason,
 } from '../api/http'
-import { activityOutcome } from '../activityState'
+import { activityOutcome, ledgerRows } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
-import { fieldLabel } from '../labels'
+import { fieldLabel, writeFieldLabel } from '../labels'
 import { consentBasis, destinationReason, readWriteConsent } from '../writeConsent'
 import {
   activityRoute,
@@ -142,6 +143,9 @@ const dateParts = (value: number | null) => {
     }).format(date),
   }
 }
+// A label inside a sentence reads lowercased, unless it is an acronym, as the
+// ledger's own sentences do.
+const fieldPhrase = (label: string) => (/^[A-Z]+$/u.test(label) ? label : label.toLowerCase())
 function PageJump({
   page,
   pageCount,
@@ -275,6 +279,113 @@ function ActivityTransitions({
         </li>
       ) : null}
     </ol>
+  )
+}
+// One durable record's row. It stands on its own in the ledger, or as one
+// member of a preparation's checks row, with the same Details either way.
+function ActivityEventRow({
+  event,
+  expanded,
+  onToggle,
+  day,
+}: {
+  event: ActivityEventView
+  expanded: boolean
+  onToggle: () => void
+  /** A member recorded on another day than its checks row says so. */
+  day?: string
+}) {
+  const changeId = event.change_id || event.event_id
+  const advice =
+    event.destination === 'description' && event.origin === 'adviser'
+      ? 'description'
+      : event.event_type !== 'policy' &&
+          event.destination === 'cover' &&
+          ['adviser', 'automatic_pipeline', 'owner_retry'].includes(event.origin)
+        ? 'cover'
+        : undefined
+  return (
+    <article className={expanded ? 'is-expanded' : ''}>
+      <time>
+        {day === undefined ? null : <>{day}&nbsp;· </>}
+        {dateParts(event.occurred_at).time}
+      </time>
+      <span className={`cm-activity-category is-${event.category}`}>
+        {categoryLabel[event.category]}
+      </span>
+      <div className="cm-activity-work">
+        <strong title={event.work_label}>{event.work_label}</strong>
+        <span>
+          {event.field_label} · {event.library}
+        </span>
+      </div>
+      {/*
+      The arrow in `change` is a glyph most screen readers drop,
+      so the announced row carries the same change as a whole
+      sentence. Both come from the one projection, so they
+      cannot come to disagree.
+    */}
+      <div className="cm-activity-change" aria-label={event.change_detail}>
+        <span aria-hidden="true">{event.change}</span>
+      </div>
+      <b>{stateLabel(event.state, advice)}</b>
+      <button
+        data-activity-focus={`details-${changeId}`}
+        aria-expanded={expanded}
+        aria-controls={`activity-evidence-${event.event_id}`}
+        onClick={onToggle}
+      >
+        {expanded ? 'Hide details' : 'Details'}
+      </button>
+      {expanded ? (
+        <div
+          className={`cm-activity-evidence${
+            event.policy_changes.length ? ' has-policy-changes' : ''
+          }`}
+          id={`activity-evidence-${event.event_id}`}
+        >
+          {event.policy_changes.length ? (
+            <section
+              className="cm-activity-policy-changes"
+              aria-label={`${String(event.policy_changes.length)} exact policy changes`}
+            >
+              <header>
+                <strong>
+                  {event.policy_changes.length} exact{' '}
+                  {event.policy_changes.length === 1 ? 'change' : 'changes'}
+                </strong>
+                <span>Field and setting</span>
+                <span>From</span>
+                <span>To</span>
+              </header>
+              <ul>
+                {event.policy_changes.map((change) => (
+                  <li key={`${change.field}-${change.setting}`}>
+                    <span>
+                      <strong>{change.field}</strong>
+                      <small>{change.setting}</small>
+                    </span>
+                    <b>{change.previous}</b>
+                    <b>{change.next}</b>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          <dl>
+            {event.evidence.map((item) => (
+              <div key={item.label}>
+                <dt>{item.label}</dt>
+                <dd>{item.value}</dd>
+              </div>
+            ))}
+          </dl>
+          {event.transition_id ? (
+            <ActivityTransitions key={changeId} eventId={event.transition_id} advice={advice} />
+          ) : null}
+        </div>
+      ) : null}
+    </article>
   )
 }
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
@@ -424,6 +535,37 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const connectionConditions = preparation?.connections ?? []
   const connection = connectionConditions.find((item) => item.state !== 'recovered')
   const ledger = data.ledger
+  const rows = ledgerRows(data.events)
+  const eventsElement = useRef<HTMLDivElement | null>(null)
+  const ledgerFocus = useRef<HTMLElement | null>(null)
+  // A focused ledger control that a changed page removed hands focus to its
+  // replacement, or to the ledger heading; it never falls to the document.
+  useLayoutEffect(() => {
+    const removed = ledgerFocus.current
+    if (!removed || removed.isConnected) return
+    ledgerFocus.current = null
+    if (document.activeElement !== null && document.activeElement !== document.body) return
+    const key = removed.dataset.activityFocus
+    const replacement = key
+      ? [
+          ...(eventsElement.current?.querySelectorAll<HTMLElement>('[data-activity-focus]') ?? []),
+        ].find((control) => control.dataset.activityFocus === key)
+      : undefined
+    ;(replacement ?? document.getElementById('activity-ledger-title'))?.focus({
+      preventScroll: true,
+    })
+  }, [data])
+  // Filled after mount, so the status region exists before what it announces.
+  const unrecognisedFilter = search.filter === 'unrecognised'
+  const [filterNotice, setFilterNotice] = useState('')
+  useEffect(() => {
+    const frame = requestAnimationFrame(() =>
+      setFilterNotice(
+        unrecognisedFilter ? 'That activity filter is not recognised. Showing all events.' : '',
+      ),
+    )
+    return () => cancelAnimationFrame(frame)
+  }, [unrecognisedFilter])
   const [consentOpen, setConsentOpen] = useState(
     () => router.state.location.hash === 'activity-consent',
   )
@@ -576,6 +718,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const selected = permission && draft ? draft.names : new Set<string>()
   const [status, setStatus] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // A checks row opens apart from any one record's Details, and both survive a
+  // refetch; only a new search or page closes them.
+  const [expandedChecks, setExpandedChecks] = useState<string | null>(null)
   const mutation = useMutation({
     mutationFn: async ({ path, body, basis }: { path: string; body?: unknown; basis?: string }) => {
       // Re-read the basis the draft was reviewed against, freshly and before
@@ -685,6 +830,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   }
   const changeSearch = (next: ActivitySearchUpdate, focusKey?: string) => {
     setExpandedId(null)
+    setExpandedChecks(null)
     ++pageNavigationVersion.current
     const resetsPage =
       Object.hasOwn(next, 'q') ||
@@ -737,6 +883,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     requestedPage.current = clamped
     ++pageNavigationVersion.current
     setExpandedId(null)
+    setExpandedChecks(null)
     const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined
     const restoredKey =
       (clamped === 1 && (key === 'first' || key === 'previous')) ||
@@ -744,7 +891,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         ? 'page-jump'
         : key
     const version = ++focusVersion.current
-    const next = { ...search, page: clamped }
+    // Paging is a navigation like any other, so it drops the unrecognised
+    // filter flag along with the notice it raised.
+    const next: ActivitySearch = {
+      eventType: search.eventType,
+      rangeDays: search.rangeDays,
+      pageSize: search.pageSize,
+      page: clamped,
+      ...(search.q ? { q: search.q } : {}),
+    }
     pendingLocalNavigations.current.push({
       q: next.q ?? '',
       draftVersion: queryDraftVersion.current,
@@ -869,7 +1024,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
         <header className="cm-activity-ledger-heading">
           <div>
-            <h2 id="activity-ledger-title">Activity ledger</h2>
+            <h2 id="activity-ledger-title" tabIndex={-1}>
+              Activity ledger
+            </h2>
             <p>
               One record for review decisions, policy changes, safeguards, writes, and verification.
             </p>
@@ -920,6 +1077,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             ))}
           </div>
         </div>
+        <p className="cm-activity-filter-notice" role="status">
+          {filterNotice}
+        </p>
         <div className="cm-activity-columns" aria-hidden="true">
           <span>When</span>
           <span>Type</span>
@@ -928,107 +1088,95 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           <span>Result</span>
           <span />
         </div>
-        <div className="cm-activity-events">
+        <div
+          className="cm-activity-events"
+          ref={eventsElement}
+          onFocus={(event) => {
+            ledgerFocus.current = event.target
+          }}
+          onBlur={(event) => {
+            // A control the user left is forgotten; one a refetch removed is
+            // still remembered, whether or not the engine fired a blur for it.
+            const left = event.target
+            queueMicrotask(() => {
+              if (left.isConnected && ledgerFocus.current === left) ledgerFocus.current = null
+            })
+          }}
+        >
           {data.events.length ? (
-            data.events.map((event, index) => {
-              const changeId = event.change_id || event.event_id
-              const expanded = expandedId === changeId
-              const currentDate = dateParts(event.occurred_at)
-              const advice =
-                event.destination === 'description' && event.origin === 'adviser'
-                  ? 'description'
-                  : event.event_type !== 'policy' &&
-                      event.destination === 'cover' &&
-                      ['adviser', 'automatic_pipeline', 'owner_retry'].includes(event.origin)
-                    ? 'cover'
-                    : undefined
-              const previousDate = index
-                ? dateParts(data.events[index - 1]?.occurred_at ?? null).day
+            rows.map((row, index) => {
+              const first = row.kind === 'event' ? row.event : row.members[0]
+              if (!first) return null
+              const day = dateParts(first.occurred_at).day
+              const previous = rows[index - 1]
+              const previousDay = previous
+                ? dateParts(
+                    (previous.kind === 'event' ? previous.event : previous.members[0])
+                      ?.occurred_at ?? null,
+                  ).day
                 : null
+              const heading = day !== previousDay ? <h3>{day}</h3> : null
+              if (row.kind === 'event') {
+                const changeId = row.event.change_id || row.event.event_id
+                const expanded = expandedId === changeId
+                return (
+                  <div className="cm-activity-event-group" key={changeId}>
+                    {heading}
+                    <ActivityEventRow
+                      event={row.event}
+                      expanded={expanded}
+                      onToggle={() => setExpandedId(expanded ? null : changeId)}
+                    />
+                  </div>
+                )
+              }
+              const open = expandedChecks === row.key
+              const fields = new Set(row.members.map((member) => member.destination)).size
+              const sentence = `Checked ${String(fields)} ${fields === 1 ? 'field' : 'fields'}, no changes`
               return (
-                <div className="cm-activity-event-group" key={changeId}>
-                  {currentDate.day !== previousDate ? <h3>{currentDate.day}</h3> : null}
-                  <article className={expanded ? 'is-expanded' : ''}>
-                    <time>{currentDate.time}</time>
-                    <span className={`cm-activity-category is-${event.category}`}>
-                      {categoryLabel[event.category]}
+                <div className="cm-activity-event-group" key={`checks-${row.key}`}>
+                  {heading}
+                  <article className={`is-checks${open ? ' is-expanded' : ''}`}>
+                    <time>{dateParts(first.occurred_at).time}</time>
+                    <span className="cm-activity-category is-automatic">
+                      {categoryLabel.automatic}
                     </span>
                     <div className="cm-activity-work">
-                      <strong title={event.work_label}>{event.work_label}</strong>
-                      <span>
-                        {event.field_label} · {event.library}
-                      </span>
+                      <strong title={first.work_label}>{first.work_label}</strong>
+                      <span>{first.library}</span>
                     </div>
-                    {/*
-                      The arrow in `change` is a glyph most screen readers drop,
-                      so the announced row carries the same change as a whole
-                      sentence. Both come from the one projection, so they
-                      cannot come to disagree.
-                    */}
-                    <div className="cm-activity-change" aria-label={event.change_detail}>
-                      <span aria-hidden="true">{event.change}</span>
+                    <div className="cm-activity-change" aria-label={sentence}>
+                      <span aria-hidden="true">{sentence}</span>
                     </div>
-                    <b>{stateLabel(event.state, advice)}</b>
+                    <b>{stateLabel('no_change_required')}</b>
                     <button
-                      aria-expanded={expanded}
-                      aria-controls={`activity-evidence-${event.event_id}`}
-                      onClick={() => setExpandedId(expanded ? null : changeId)}
+                      data-activity-focus={`checks-${row.key}`}
+                      aria-expanded={open}
+                      aria-controls={`activity-checks-${row.key}`}
+                      onClick={() => setExpandedChecks(open ? null : row.key)}
                     >
-                      {expanded ? 'Hide details' : 'Details'}
+                      {open ? 'Hide details' : 'Details'}
                     </button>
-                    {expanded ? (
-                      <div
-                        className={`cm-activity-evidence${
-                          event.policy_changes.length ? ' has-policy-changes' : ''
-                        }`}
-                        id={`activity-evidence-${event.event_id}`}
-                      >
-                        {event.policy_changes.length ? (
-                          <section
-                            className="cm-activity-policy-changes"
-                            aria-label={`${String(event.policy_changes.length)} exact policy changes`}
-                          >
-                            <header>
-                              <strong>
-                                {event.policy_changes.length} exact{' '}
-                                {event.policy_changes.length === 1 ? 'change' : 'changes'}
-                              </strong>
-                              <span>Field and setting</span>
-                              <span>From</span>
-                              <span>To</span>
-                            </header>
-                            <ul>
-                              {event.policy_changes.map((change) => (
-                                <li key={`${change.field}-${change.setting}`}>
-                                  <span>
-                                    <strong>{change.field}</strong>
-                                    <small>{change.setting}</small>
-                                  </span>
-                                  <b>{change.previous}</b>
-                                  <b>{change.next}</b>
-                                </li>
-                              ))}
-                            </ul>
-                          </section>
-                        ) : null}
-                        <dl>
-                          {event.evidence.map((item) => (
-                            <div key={item.label}>
-                              <dt>{item.label}</dt>
-                              <dd>{item.value}</dd>
-                            </div>
-                          ))}
-                        </dl>
-                        {event.transition_id ? (
-                          <ActivityTransitions
-                            key={changeId}
-                            eventId={event.transition_id}
-                            advice={advice}
-                          />
-                        ) : null}
-                      </div>
-                    ) : null}
                   </article>
+                  {open ? (
+                    <ul className="cm-activity-checks" id={`activity-checks-${row.key}`}>
+                      {row.members.map((member) => {
+                        const changeId = member.change_id || member.event_id
+                        const expanded = expandedId === changeId
+                        const memberDay = dateParts(member.occurred_at).day
+                        return (
+                          <li key={changeId}>
+                            <ActivityEventRow
+                              event={member}
+                              expanded={expanded}
+                              onToggle={() => setExpandedId(expanded ? null : changeId)}
+                              {...(memberDay === day ? {} : { day: memberDay })}
+                            />
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : null}
                 </div>
               )
             })
@@ -1051,11 +1199,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             </strong>
             <span>of {ledger.total} events</span>
             <label className="cm-activity-page-size">
-              <span>Rows</span>
+              <span>Events</span>
               <Dropdown
                 compact
                 focusKey="page-size"
-                ariaLabel="Rows per activity page"
+                ariaLabel="Events per activity page"
                 value={String(search.pageSize)}
                 options={[
                   { value: '25', label: '25 per page' },
@@ -1173,7 +1321,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       {item.eligible
                         .map(
                           (entry) =>
-                            `${String(entry.prepared)} ${fieldLabel(entry.destination).toLowerCase()} ${entry.prepared === 1 ? 'change' : 'changes'}`,
+                            `${String(entry.prepared)} ${fieldPhrase(writeFieldLabel(entry.destination))} ${entry.prepared === 1 ? 'change' : 'changes'}`,
                         )
                         .join(' · ') || 'No eligible destination'}
                     </span>
@@ -1181,7 +1329,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   <dl>
                     {[...item.eligible, ...item.excluded].map((entry) => (
                       <div key={entry.destination}>
-                        <dt>{fieldLabel(entry.destination)}</dt>
+                        <dt>{writeFieldLabel(entry.destination)}</dt>
                         <dd>
                           {entry.state === 'allowed'
                             ? consentState === 'off' || consentState === 'enabling'
@@ -1257,8 +1405,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </button>
           {permission?.example ? (
             <p>
-              Example: {fieldLabel(permission.example.destination)} for {permission.example.library}{' '}
-              — {displayValue(permission.example.before)} → {displayValue(permission.example.after)}
+              Example: {writeFieldLabel(permission.example.destination)} for{' '}
+              {permission.example.library} — {displayValue(permission.example.before)} →{' '}
+              {displayValue(permission.example.after)}
             </p>
           ) : null}
           {configured.map((library) => {
@@ -1285,7 +1434,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 <ul aria-label={`${name} included and excluded destinations`}>
                   {capability(name)?.destinations.map((entry) => (
                     <li key={entry.destination}>
-                      <span>{fieldLabel(entry.destination)}</span>
+                      <span>{writeFieldLabel(entry.destination)}</span>
                       <small>
                         {entry.state === 'allowed'
                           ? `Included · ${String(entry.prepared)} prepared`
@@ -1426,7 +1575,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <span className="cm-activity-pulse" aria-hidden="true" />
             <div>
               <strong>
-                {waitingEvent.work_label} · {fieldLabel(waitingEvent.destination)} update
+                {waitingEvent.work_label} · {writeFieldLabel(waitingEvent.destination)} update
               </strong>
               <span>
                 {data.paused

@@ -145,7 +145,20 @@ export const normalizeActivitySearch = (search: Record<string, unknown>): Activi
       ? requestedPage
       : 1
   const q = bounded(search.q)
-  return { eventType, rangeDays, pageSize, page, ...(q ? { q } : {}) }
+  // The router rewrites the address to this result on entry, so an unknown
+  // filter is kept as a flag rather than lost; the flag itself is kept so a
+  // second pass agrees with the first.
+  const unrecognised =
+    search.filter === 'unrecognised' ||
+    (search.eventType !== undefined && eventType === 'all' && search.eventType !== 'all')
+  return {
+    eventType,
+    rangeDays,
+    pageSize,
+    page,
+    ...(q ? { q } : {}),
+    ...(unrecognised ? { filter: 'unrecognised' as const } : {}),
+  }
 }
 
 export type SettingsGroup =
