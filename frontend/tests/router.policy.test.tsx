@@ -110,6 +110,44 @@ describe('Policy route', () => {
     expect(screen.getByText(/^Active policy$/u)).toBeVisible()
   })
 
+  it('announces activation progress and its failure from one status region', async () => {
+    let reads = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPolicyTransition: vi.fn(async () => {
+        reads += 1
+        return transition({
+          generation: 2,
+          origin: 'activation',
+          ...(reads === 1
+            ? { state: 'processing', completed: 3, total: 11 }
+            : { state: 'completed_with_failures', completed: 9, total: 11, failed: 2 }),
+        }) as never
+      }),
+    }
+    renderRoute('/policy', http)
+
+    const processing = await screen.findByRole('heading', { name: 'Applying updated policy' })
+    const region = processing.closest('[role="status"]')
+    expect(region).toHaveTextContent(
+      /^Applying updated policy3 of 11 current unapplied items reconciled\. Applied history is untouched\.$/u,
+    )
+    const failed = await screen.findByRole(
+      'heading',
+      { name: 'Activation completed with failures' },
+      { timeout: 4_000 },
+    )
+    // The same live region is updated in place, so the change is announced
+    // once, and no other status repeats the reconciliation.
+    expect(failed.closest('[role="status"]')).toBe(region)
+    expect(region).toHaveTextContent(
+      /^Activation completed with failures9 of 11 current unapplied items reconciled\. Applied history is untouched\.$/u,
+    )
+    expect(
+      screen.getAllByRole('status').filter((node) => node.textContent.includes('reconcil')),
+    ).toEqual([region])
+  })
+
   it('does not carry a clean completion into an unrelated session', async () => {
     const settled = transition({ generation: 2, origin: 'activation', completed: 11, total: 11 })
     const http: ReviewHttp = {
@@ -927,9 +965,7 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
     await user.click(screen.getByRole('button', { name: 'Activate policy' }))
 
-    expect(
-      await screen.findByText('Policy activated. Current unapplied work is being reconciled.'),
-    ).toBeVisible()
+    expect(await screen.findByText('Policy activated.')).toBeVisible()
     const cadence = screen.getByRole('list', { name: 'Policy activation steps' })
     for (const name of ['Validate', 'Preview', 'Activate']) {
       expect(within(cadence).getByText(name).closest('li')).toHaveClass('done')
@@ -1016,9 +1052,36 @@ describe('Policy route', () => {
       media: 'Ebooks: 7 sampled works · 7 changed fields',
     },
     {
+      name: 'a rule previewed in one library and not in another',
+      affected: ['tags'],
+      cases: [previewCase(1, [tagChange])],
+      unsampled: 'Nonfiction',
+      rows: ['Work 1: Policy change', 'Tags: Not previewed.'],
+      title: '1 sampled work with changes',
+      media: 'Ebooks: 1 sampled work · 1 changed field',
+    },
+    {
+      name: 'a library override pinning every edited field',
+      affected: [],
+      cases: [previewCase(1, [isbnSame])],
+      rows: [],
+      title: 'Impact preview ready',
+      media: 'Ebooks: 1 sampled work',
+    },
+    {
       name: 'no sampled work',
       affected: ['tags'],
       cases: [],
+      rows: ['Tags: Not previewed.'],
+      title: 'Impact preview ready',
+      media: null,
+    },
+    {
+      name: 'no sampled work in a truncated sample',
+      affected: ['tags'],
+      cases: [],
+      truncated: true,
+      sample: 'No current unapplied work to sample · Additional works were not previewed',
       rows: ['Tags: Not previewed.'],
       title: 'Impact preview ready',
       media: null,
@@ -1042,10 +1105,24 @@ describe('Policy route', () => {
                 fields: comparisons(item.fields),
               })),
               cases_total: example.cases.length,
-              cases_truncated: false,
+              cases_truncated: example.truncated ?? false,
               current_unapplied_count: example.cases.length,
               resolved_policy_id: 'resolved-policy',
             },
+            ...(example.unsampled
+              ? [
+                  {
+                    library: example.unsampled,
+                    affected_categories: ['tags'],
+                    cases: [],
+                    comparisons: [],
+                    cases_total: 0,
+                    cases_truncated: false,
+                    current_unapplied_count: 0,
+                    resolved_policy_id: 'resolved-policy',
+                  },
+                ]
+              : []),
           ],
         }
       return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
@@ -1061,6 +1138,18 @@ describe('Policy route', () => {
     await screen.findByText('Impact preview is current. The active policy is unchanged.')
 
     expect(outcomeRows()).toEqual(example.rows)
+    expect(
+      [...document.querySelectorAll('.is-unpreviewed > span:nth-child(2) small')].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(
+      example.rows
+        .filter((row) => row.endsWith('Not previewed.'))
+        .map(() => example.unsampled ?? 'Fiction'),
+    )
+    const unchangedEverywhere = screen.queryByText("No library's fields change under this draft.")
+    if (example.affected.length) expect(unchangedEverywhere).toBeNull()
+    else expect(unchangedEverywhere).toBeVisible()
     for (const row of document.querySelectorAll('.is-unpreviewed'))
       expect(row.querySelector('.cm-policy-impact')).toHaveTextContent(
         /^Not previewed\.This rule takes effect on the next preparation\.$/u,
@@ -1075,6 +1164,7 @@ describe('Policy route', () => {
     if (example.media) expect(within(preview).getByText(example.media)).toBeVisible()
     else expect(within(preview).queryByText(/^(Ebooks|Audiobooks):/u)).toBeNull()
     expect(screen.queryByText('No changed fields')).toBeNull()
+    if (example.sample) expect(within(preview).getByText(example.sample)).toBeVisible()
   })
 
   it('names an edited policy as custom and the matching draft by the active name', async () => {
@@ -1142,8 +1232,12 @@ describe('Policy route', () => {
     expect(
       await screen.findByText('Custom policy', { selector: '.cm-policy-sidebar strong' }),
     ).toBeVisible()
-    // The zero-item completion is stated once, in the cutover, with no 0 of 0.
+    // While the cutover is shown it alone states reconciliation: the finish
+    // message keeps only its title, and the zero total reads with no 0 of 0.
     expect(await screen.findByRole('heading', { name: 'Activation complete' })).toBeVisible()
+    expect(document.querySelector('.cm-policy-finish-message')).toHaveTextContent(
+      /^Policy activated$/u,
+    )
     expect(
       screen.getByText(
         'No current unapplied items needed reconciliation. Applied history is untouched.',
@@ -1299,9 +1393,7 @@ describe('Policy route', () => {
         'The activation result is uncertain. Authoritative policy state is refreshing; verify it before trying again.',
       ),
     ).toBeVisible()
-    expect(
-      screen.queryByText('Policy activated. Current unapplied work is being reconciled.'),
-    ).toBeNull()
+    expect(screen.queryByText('Policy activated.')).toBeNull()
   })
 
   it('retains the reviewed preview while an earlier policy transition is processing', async () => {
@@ -1781,9 +1873,7 @@ it('keeps the draft after a real stale envelope and binds explicit repreview to 
   await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
   await user.click(await screen.findByRole('button', { name: 'Review activation' }))
   await user.click(screen.getByRole('button', { name: 'Activate policy' }))
-  expect(
-    await screen.findByText('Policy activated. Current unapplied work is being reconciled.'),
-  ).toBeVisible()
+  expect(await screen.findByText('Policy activated.')).toBeVisible()
   expect(commands).toHaveBeenLastCalledWith('activate', {
     policy_id: 'draft',
     expected_active_policy_id: 'policy-1',

@@ -892,11 +892,13 @@ A changed rule that no sampled work of a library evaluated, including every
 changed rule of a library with no sampled work, follows the previewed rows as
 "Not previewed. This rule takes effect on the next preparation." It is never
 reported as unchanged, counted, or collapsed (#1280). The finish tray states
-draft, preview and activation status once; transition progress appears only in
-the activation section beside its actions, and zero counts are omitted. An
-edited draft is named "Custom policy" and an exact revert keeps the active name.
-Libraries appear by Settings display name, or by slug while Settings is
-unavailable. After activation, focus moves to the success message.
+draft, preview and activation status once. Transition progress and its
+reconciliation count appear only in the activation section beside its actions,
+announced from one status region, and zero counts are omitted. A preview in
+which no library's fields change says so. An edited draft is named "Custom
+policy" and an exact revert keeps the active name. Libraries appear by Settings
+display name, or by slug while Settings is unavailable or the library has none.
+After activation, focus moves to the success message.
 
 Policy media guidance leads with the selected Automatic, Ask me, Ignore or
 unavailable behavior. Eligibility shown for another mode is explicitly labelled

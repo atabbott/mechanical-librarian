@@ -987,7 +987,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       setStage('activated')
       setStatus({
         tone: 'success',
-        message: 'Policy activated. Current unapplied work is being reconciled.',
+        message: 'Policy activated.',
       })
     } catch (error) {
       if (
@@ -1295,9 +1295,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             : draftDisplay.changed
               ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change is' : 'changes are'} ready to validate`
               : 'Draft matches the active policy'
+  // Once the activation progress is shown, it alone states reconciliation.
   const finishDetail =
     stage === 'activated'
-      ? `${impactTotals?.currentWorks ? 'Current unapplied work is being reconciled.' : 'No current unapplied work needed reconciliation.'} Applied history is untouched.`
+      ? activationNotice
+        ? ''
+        : `${impactTotals?.currentWorks ? 'Current unapplied work is being reconciled.' : 'No current unapplied work needed reconciliation.'} Applied history is untouched.`
       : stage === 'activation'
         ? 'Review the unchanged preview before making this draft active.'
         : stage === 'preview'
@@ -1619,17 +1622,25 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     {' · '}up to 20 works across all libraries
                   </>
                 ) : (
-                  'No current unapplied work to sample.'
+                  'No current unapplied work to sample'
                 )}
                 {preview.libraries.some((library) => library.cases_truncated)
                   ? ' · Additional works were not previewed'
-                  : ''}
+                  : sampledWorks
+                    ? ''
+                    : '.'}
               </p>
               {mediaSummary ? <p>{mediaSummary}</p> : null}
               <p>
                 Title, authors, narrators, date, publisher, language and cover are not previewed
                 here.
               </p>
+              {/* A library override can pin every edited field, so a changed draft
+                  may still change nothing in any library. */}
+              {previewLibraries.length > 0 &&
+              previewLibraries.every((library) => !library.affected_categories.length) ? (
+                <p>No library&apos;s fields change under this draft.</p>
+              ) : null}
               <div id="policy-preview-outcomes" className="cm-policy-preview-list">
                 {changedRows.length
                   ? changedRows.slice(0, expandedPreview === preview ? undefined : 6).map((row) => (
@@ -1769,7 +1780,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               {['error', 'warning'].includes(status.tone) ? null : (
                 <div className="cm-policy-finish-message" ref={finishMessageRef} tabIndex={-1}>
                   <strong>{finishTitle}</strong>
-                  <span>{finishDetail}</span>
+                  {finishDetail ? <span>{finishDetail}</span> : null}
                 </div>
               )}
               <p
@@ -1896,19 +1907,21 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       </div>
       {activationNotice ? (
         <section className="policy-cutover" aria-label="Policy activation progress">
-          <h2>
-            {activationNotice.state === 'processing'
-              ? 'Applying updated policy'
-              : activationNotice.failed
-                ? 'Activation completed with failures'
-                : 'Activation complete'}
-          </h2>
-          <p>
-            {activationNotice.total
-              ? `${String(activationNotice.completed)} of ${String(activationNotice.total)} current unapplied items reconciled.`
-              : 'No current unapplied items needed reconciliation.'}{' '}
-            Applied history is untouched.
-          </p>
+          <div role="status">
+            <h2>
+              {activationNotice.state === 'processing'
+                ? 'Applying updated policy'
+                : activationNotice.failed
+                  ? 'Activation completed with failures'
+                  : 'Activation complete'}
+            </h2>
+            <p>
+              {activationNotice.total
+                ? `${String(activationNotice.completed)} of ${String(activationNotice.total)} current unapplied items reconciled.`
+                : 'No current unapplied items needed reconciliation.'}{' '}
+              Applied history is untouched.
+            </p>
+          </div>
           <div className="policy-workflow-actions">
             {activationNotice.failed ? (
               <button
