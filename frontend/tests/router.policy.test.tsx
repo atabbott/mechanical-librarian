@@ -1171,6 +1171,7 @@ describe('Policy route', () => {
     const user = userEvent.setup()
     let active = 'Built-in policy'
     let activated = false
+    let acknowledged = false
     const policyCommand = vi.fn<(path: string, body?: unknown) => Promise<unknown>>(
       async (path) => {
         if (path === 'preview')
@@ -1190,6 +1191,15 @@ describe('Policy route', () => {
             transition: transition({ origin: 'activation', generation: 2, transition_id: 'mine' }),
           }
         }
+        if (path === 'transitions/mine/acknowledge') {
+          acknowledged = true
+          return transition({
+            origin: 'activation',
+            generation: 2,
+            transition_id: 'mine',
+            acknowledged,
+          })
+        }
         return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       },
     )
@@ -1208,7 +1218,12 @@ describe('Policy route', () => {
       getPolicyTransition: vi.fn(
         async () =>
           (activated
-            ? transition({ origin: 'activation', generation: 2, transition_id: 'mine' })
+            ? transition({
+                origin: 'activation',
+                generation: 2,
+                transition_id: 'mine',
+                acknowledged,
+              })
             : transition()) as never,
       ),
       policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
@@ -1244,6 +1259,19 @@ describe('Policy route', () => {
       ),
     ).toBeVisible()
     expect(screen.queryByText(/0 of 0/u)).toBeNull()
+    // Dismissing the read transition removes the cutover without bringing the
+    // tray's own reconciliation sentence back, and the status stays truthful.
+    await user.click(screen.getByRole('button', { name: 'Dismiss update' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Activation complete' })).toBeNull(),
+    )
+    expect(document.querySelector('.cm-policy-finish-message')).toHaveTextContent(
+      /^Policy activated$/u,
+    )
+    expect(document.querySelector('.policy-status')).toHaveTextContent(
+      /^Policy state updated from the authoritative server\.$/u,
+    )
+    expect(screen.queryByText(/reconcil/u)).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Continue editing' }))
     expect(screen.getByText('Draft matches the active policy')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeDisabled()

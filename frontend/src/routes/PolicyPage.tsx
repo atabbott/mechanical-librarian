@@ -1295,10 +1295,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             : draftDisplay.changed
               ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change is' : 'changes are'} ready to validate`
               : 'Draft matches the active policy'
-  // Once the activation progress is shown, it alone states reconciliation.
+  // Once this activation's transition is read, its progress section (or its
+  // dismissal) owns reconciliation, so the tray no longer states it.
   const finishDetail =
     stage === 'activated'
-      ? activationNotice
+      ? activationNotice ||
+        (activatedTransitionId !== undefined &&
+          transition.data?.transition_id === activatedTransitionId)
         ? ''
         : `${impactTotals?.currentWorks ? 'Current unapplied work is being reconciled.' : 'No current unapplied work needed reconciliation.'} Applied history is untouched.`
       : stage === 'activation'
