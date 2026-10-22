@@ -89,6 +89,11 @@ from mechanical_librarian.domain.review_field_classification import (
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
+# A degraded value with nothing proposed beside it is the current one (#1283).
+_CURRENT_VALUE_REFUSAL_TEXT = {
+    "candidate_credit_prefixed": 'The current value carries a credit label such as "Narrated by", so automatic handling never confirms it.',
+    "candidate_promotional_title": 'The current title carries an announcement such as "Now a Major Motion Picture", so automatic handling never confirms it.',
+}
 _AUTOMATIC_REFUSAL_TEXT = {
     "isbn_title_material_conflict": "The sources disagree about the work or title; choose the title yourself.",
     "no_candidate": "No eligible value was found in the retained evidence.",
@@ -99,9 +104,9 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "automatic_unqualified": "This policy option is not qualified for automatic handling.",
     "manifestation_verification_required": "The retained evidence does not verify the ISBN for this edition.",
     "description_quality_floor_not_met": "Retained source text does not meet the automatic synopsis rules.",
-    "candidate_credit_prefixed": 'A value here carries a credit label such as "Narrated by", so automatic handling never writes or confirms it.',
+    "candidate_credit_prefixed": 'The proposed value carries a credit label such as "Narrated by", so automatic handling never writes it.',
     "candidate_strips_marks": "The proposed value drops accents from a name you already have, so automatic handling never writes it.",
-    "candidate_promotional_title": 'A title here carries an announcement such as "Now a Major Motion Picture", so automatic handling never writes or confirms it.',
+    "candidate_promotional_title": 'The proposed title carries an announcement such as "Now a Major Motion Picture", so automatic handling never writes it.',
     "insufficient_support": "The retained evidence is not strong enough for automatic handling to choose a value.",
     "series_membership_incomplete": "Series membership or position evidence is incomplete or malformed.",
     "series_conflicting_membership": "The retained evidence does not resolve series membership for automatic handling.",
@@ -1038,7 +1043,11 @@ class InspectCurrentReviewCase:
                     "manual",
                     "unsupported",
                 }:
-                    message = _AUTOMATIC_REFUSAL_TEXT.get(
+                    message = (
+                        None
+                        if field["proposed_values"]
+                        else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
+                    ) or _AUTOMATIC_REFUSAL_TEXT.get(
                         outcome.reason_code,
                         "The recorded evaluation did not select an automatic action; no more specific reason was recorded.",
                     )

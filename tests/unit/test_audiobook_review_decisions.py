@@ -2702,8 +2702,8 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             },
             "narrators",
             "contributor_names",
-            'A value here carries a credit label such as "Narrated by", so '
-            "automatic handling never writes or confirms it.",
+            'The proposed value carries a credit label such as "Narrated by", so '
+            "automatic handling never writes it.",
         ),
         (
             {
@@ -2741,8 +2741,8 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             _PROMOTIONAL["promotional_candidate"],
             "title",
             "title_layout",
-            'A title here carries an announcement such as "Now a Major Motion '
-            'Picture", so automatic handling never writes or confirms it.',
+            'The proposed title carries an announcement such as "Now a Major '
+            'Motion Picture", so automatic handling never writes it.',
         ),
     ),
     ids=(
@@ -2822,8 +2822,8 @@ def _confirmed_promotional_title_report():
             _confirmed_promotional_title_report,
             "title",
             "title_layout",
-            'A title here carries an announcement such as "Now a Major Motion '
-            'Picture", so automatic handling never writes or confirms it.',
+            'The current title carries an announcement such as "Now a Major '
+            'Motion Picture", so automatic handling never confirms it.',
         ),
         (
             lambda: synthetic_audiobook_bibliographic_report(
@@ -2832,8 +2832,8 @@ def _confirmed_promotional_title_report():
             ),
             "narrators",
             "contributor_names",
-            'A value here carries a credit label such as "Narrated by", so '
-            "automatic handling never writes or confirms it.",
+            'The current value carries a credit label such as "Narrated by", so '
+            "automatic handling never confirms it.",
         ),
     ),
     ids=("promotional_title", "credit_prefixed_cast"),
