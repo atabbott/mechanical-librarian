@@ -8381,8 +8381,6 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     "button", name="Validate and preview", exact=True
                 ).click()
             libraries = previewed.value.json()["libraries"]
-            print("DEBUGPREVIEW", json.dumps(previewed.value.json()))
-            print("DEBUGREQ", previewed.value.request.post_data)
             assert all(
                 "language_rendering" in library["affected_categories"]
                 for library in libraries
@@ -8403,7 +8401,8 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             assert page.locator(".cm-finish-tray .cm-policy-result").count() == 0
             # Language was never evaluated, so it is stated as not previewed
             # (below the collapsed previewed rows, by the library slug while
-            # Settings is unavailable) and never as unchanged.
+            # Settings is unavailable or the library has no display name) and
+            # never as unchanged.
             unpreviewed = result.locator(".cm-policy-preview-list > .is-unpreviewed")
             expect(unpreviewed).to_have_count(1)
             expect(unpreviewed.locator("strong")).to_have_text("Language")
