@@ -519,7 +519,7 @@ throttle without retaining client addresses. The store admits only absence or
 its exact schema and integrity; incompatible or corrupt state fails closed
 without repair. Its clean rebuild deletes only session authority and throttle
 history, requiring every browser to sign in again.
-Pre-0.18 sessions used an unbound digest, so upgrading to 0.18.0 rejects them
+Pre-0.23 sessions used an unbound digest, so upgrading to 0.23.0 rejects them
 once. This deliberate sign-in boundary avoids a legacy lookup fallback that
 could preserve authority after a verifier replacement.
 

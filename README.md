@@ -8,7 +8,7 @@ effect gate passes.
 
 ## Current checkpoint
 
-The 0.17.0 configuration and first-run checkpoint runs one authenticated owner
+The 0.22.0 configuration and first-run checkpoint runs one authenticated owner
 workspace. A first visitor creates the owner password, connects Audiobookshelf,
 selects book libraries and optional metadata providers, verifies read-only
 mounts, optionally configures one cover reviewer, and starts preparation

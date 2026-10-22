@@ -45,7 +45,8 @@ verifiable by users.
 
 Use semantic versioning after the first stable release. Before stability, every
 release still documents breaking configuration, schema, API, and behavior
-changes.
+changes. [Checkpoint versioning](work-management.md#checkpoint-versioning)
+assigns every milestone's number.
 
 ## Build
 

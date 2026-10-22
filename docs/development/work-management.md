@@ -60,8 +60,8 @@ The M0–M7 outcome milestones in the [roadmap](../product/roadmap.md) are a
 separate product progression. `WP` always means implementation work package;
 `M` always means product milestone.
 
-During pre-release development, numbered milestones such as `0.1.0`, `0.2.0`,
-and `1.0.0` are internal delivery checkpoints. They do not duplicate work
+During pre-release development, numbered milestones before `1.0.0` are internal
+delivery checkpoints. They do not duplicate work
 packages, and completing one does not authorize or imply a tag, GitHub Release,
 supported version, or published release artifact. Milestone exit criteria remain
 authoritative independently of release publication.
@@ -69,11 +69,59 @@ authoritative independently of release publication.
 The first release publication requires an explicit maintainer decision selecting
 a checkpoint whose genuinely usable functionality provides value to the owner
 or another user, followed by every applicable release gate and
-release-publication gate. This policy selects neither the checkpoint for the
-first published release nor its version. After the first published release,
+release-publication gate. That release is `1.0.0`; this policy does not select
+which delivered checkpoint it ships or when. After the first published release,
 maintainers may explicitly designate later milestones as release trains;
 neither that first published release nor checkpoint completion converts later
 milestones automatically.
+
+### Checkpoint versioning
+
+A checkpoint's number states what it delivers. Before `1.0.0`, every number is
+`0.MINOR.PATCH`:
+
+- **Minor:** the milestone holds at least one issue whose `Work kind` is
+  `Feature` or `Epic`. MINOR increments and PATCH resets to 0.
+- **Patch:** the milestone holds only `Defect`, `Bug` and `Task` work. PATCH
+  increments on the latest minor.
+
+Before `1.0.0` a required clean rebuild does not raise the number by itself,
+because no install is supported; the changelog states the rebuild. `1.0.0` is
+the first public release. After it semantic versioning governs: MAJOR when an
+operator must act on a breaking configuration, API or persisted-state change or
+a required rebuild, MINOR for new capability, and PATCH for corrections.
+
+Each number is one milestone titled `X.Y.Z — Outcome`, and its `Target release`
+option is exactly `X.Y.Z`. Numbers follow planned delivery order. An unstarted
+milestone is renumbered when it is reordered or when a feature joins a patch
+milestone; a started or closed milestone keeps its number. A theme with no
+scheduled position is an unnumbered milestone named by its outcome and takes a
+number when it is scheduled. `Release readiness` is the unnumbered milestone for
+cross-cutting work that gates `1.0.0`.
+
+The history was renumbered once, in delivery order, on 2026-10-22 (#1321).
+Living documents use the current numbers. ADRs, changelog entries, dated plans
+and reconciliation records keep the number in force when they were written, and
+each renamed milestone's description records its former number. `0.1.0`
+through `0.10.0` are unchanged.
+
+| Former | Current | Former | Current |
+| --- | --- | --- | --- |
+| 0.10.1 | 0.11.0 | 0.17.0 | 0.22.0 |
+| 0.10.2 | 0.12.0 | 0.18.0 | 0.23.0 |
+| 0.11.0 | 0.13.0 | 0.19.0 | 0.24.0 |
+| 0.12.0 | 0.14.0 | 0.20.0 | 0.25.0 |
+| 0.13.0 | 0.15.0 | 0.21.0 | 0.26.0 |
+| 0.14.0 | 0.16.0 | 0.22.0 | 0.27.0 |
+| 0.14.1 | 0.17.0 | 0.22.1 | 0.27.1 |
+| 0.15.0 | 0.18.0 | 0.22.2 | 0.28.0 |
+| 0.15.1 | 0.19.0 | 0.22.3 | 0.29.0 |
+| 0.15.2 | 0.20.0 | 0.22.4 | 0.29.1 |
+| 0.15.3 | 0.20.1 | 0.22.5 | 0.30.0 |
+| 0.15.4 | 0.21.0 | 0.23.0 | Series and structure |
+| 0.16.0 | 0.21.1 | 1.0.0 | 1.0.0 — First public release |
+| 0.16.1 | 0.21.2 | first-release | Release readiness |
+| 0.16.2 | 0.21.3 | | |
 
 ### Unpromoted outcomes and promotion
 

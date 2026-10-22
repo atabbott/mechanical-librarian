@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Checkpoint numbers now state what each checkpoint delivers, and the history
+  is renumbered once; the former numbers are mapped in work management (#1321).
+
+- The frontend test runner moves to Vitest 4.1.12, clearing advisory
+  GHSA-qxg6-89mg-rqv8 that failed the npm audit gate (#1321).
+
 - Hardcover and Open Library no longer fail on an audiobook identified only by
   its ASIN, which neither can look up. They now send no request and record that
   they had nothing to ask, so the audiobook is no longer marked provider-limited

@@ -82,7 +82,7 @@ plus opaque taxonomy, instruction, output-schema, and observer identities. It
 contains no title, creator, source identity, provider value, owner policy,
 eligibility, ranking, preference, or winner.
 
-The reopened 0.15.0 requalification used independent blinded reference
+The reopened 0.18.0 requalification used independent blinded reference
 judgements frozen before tested outputs were opened; these are review
 judgements, not claimed human ground truth. The first development configuration
 admitted all 50 candidates and cleared the predeclared useful agreement
@@ -313,7 +313,7 @@ packet with five exact previews: five ordered observations were admitted with
 zero reference mismatch in 16.263 seconds, within the 180-second supported
 bound, and ephemeral cleanup passed. The source-only/report-only transport
 therefore **QUALIFIED**. This is transport and schema-admission evidence, not a
-semantic-quality or runtime-activation claim. #501 / 0.15.1
+semantic-quality or runtime-activation claim. #501 / 0.19.0
 remains unpromoted.
 
 The subsequent policy-neutral observation qualification used only retained
