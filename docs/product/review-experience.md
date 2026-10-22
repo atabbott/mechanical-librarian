@@ -757,14 +757,15 @@ heading and that card, reading heading, what will be written, then Confirm with
 its requirement beside it; opening grants nothing. The checked response and the
 ticked libraries are kept as one draft through refreshes, live updates, focus
 and visibility changes, connection conditions and same-basis retries. It is
-discarded, with the reason stated, only when a later Activity response or the
-fresh read made on Confirm shows a different consent basis: the configured
-libraries, each destination's capability and consent, or the active policy.
-Cancellation, navigation and command refusal still discard it, and late results
-cannot restore it. A partially consented library returns to the same disclosure when a newly
-eligible destination can be added. Confirmation binds the exact visible subset
-and fails safely if it changes. Collapsed history offers review without a ready
-count; Library likewise describes prepared work without implying write readiness.
+discarded, with the reason stated, only when a later Activity response, a
+retried check or the fresh read made on Confirm shows a different consent basis:
+the configured libraries, each destination's capability and consent, or the
+active policy. Cancellation, navigation and command refusal still discard it,
+and late results cannot restore it. A partially consented library returns to
+the same panel when a newly eligible destination can be added. Confirmation
+binds the exact visible subset and fails safely if it changes. Collapsed history
+offers review without a ready count; Library likewise describes prepared work
+without implying write readiness.
 Qualified automatic outcomes are named clearly, unknown
 origins remain neutral bounded text, and pause/resume/revoke remain the only
 prominent controls. Activity does not expose internal jobs or rates, add a

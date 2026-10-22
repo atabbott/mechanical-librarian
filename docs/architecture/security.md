@@ -1549,9 +1549,9 @@ The browser keeps a permission draft until its consent basis -- the configured
 libraries, each destination's capability state and consent, and the active
 policy -- differs in a later Activity response, and re-reads that basis before
 confirming; a changed basis sends no grant (#1279). Command and preclaim checks
-remain authoritative. A policy activation, or another library's consent change,
+remain authoritative. A policy activation, or a consent change on any library,
 landing between that re-read and the grant is not detected by the browser; a
-destination or library change in that window is still refused by the server.
+capability or library change in that window is still refused by the server.
 There is no TTL or cross-system atomicity claim.
 
 Library's write-ready notice reads authenticated `GET /api/v1/activity/consent-state`
