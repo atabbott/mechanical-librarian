@@ -823,6 +823,17 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     retry: false,
     refetchInterval: (query) => (query.state.data?.state === 'processing' ? 1_500 : false),
   })
+  // The preview names a library by its settings slug. The owner's display name
+  // comes from the Settings read this route already shares, issued only once a
+  // preview exists; while it is pending or unavailable the slug stands.
+  const settings = useQuery({
+    queryKey: ['settings'],
+    queryFn: (queryContext) => http.getSettings(queryContext.signal, queryWorkClass(queryContext)),
+    retry: false,
+    enabled: preview !== undefined,
+  })
+  const libraryName = (name: string) =>
+    settings.data?.document.libraries.find((library) => library.name === name)?.display_name ?? name
   const refresh = async () => {
     await Promise.all([
       invalidateBackgroundQueries(queryClient, { queryKey: ['policy'] }),
@@ -849,17 +860,20 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     },
   })
 
-  const editDraft = (next: PolicyDraft) => {
-    setDraft(next)
+  // The name is part of the policy document, and only this notebook activates
+  // one, so an edited draft has to say it is custom or it activates under the
+  // seeded built-in name. An exact revert takes the active name back.
+  const editDraft = (edited: PolicyDraft) => {
+    const active = { ...edited, name: data.state.profile.name }
+    const changed = derivePolicyDraftDisplay(data.state, active, fieldDefaults).changed
+    setDraft(changed ? { ...edited, name: 'Custom policy' } : active)
     setSnapshotId(undefined)
     setPreviewActivePolicyId(undefined)
     setPreview(undefined)
     setStage('editing')
     setStatus({
       tone: 'neutral',
-      message: derivePolicyDraftDisplay(data.state, next, fieldDefaults).changed
-        ? 'Draft has unreviewed changes.'
-        : 'Draft matches active policy.',
+      message: changed ? 'Draft has unreviewed changes.' : 'Draft matches active policy.',
     })
   }
   const safetySummaryRef = useRef<HTMLElement>(null)
@@ -875,6 +889,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             : 'Policy state updated from the authoritative server.',
       })
       if (action === 'automatic-safety/recover') safetySummaryRef.current?.focus()
+      // The dismissed update took its focused button with it.
+      if (action.endsWith('/acknowledge')) finishMessageRef.current?.focus()
     } catch (error) {
       setStatus(
         error instanceof AmbiguousMutationError
@@ -973,7 +989,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       setStage('activated')
       setStatus({
         tone: 'success',
-        message: 'Policy activated. Current unapplied work is being reconciled.',
+        message: 'Policy activated.',
       })
     } catch (error) {
       if (
@@ -1051,41 +1067,77 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const changedChapterLabels = chapters
     .filter((chapter) => changedFields.some((field) => field.chapter === chapter.key))
     .map((chapter) => chapter.label)
-  const previewRows = useMemo(
-    () =>
-      preview?.libraries
-        .flatMap((library) =>
-          library.cases.flatMap((item, caseIndex) => {
-            const comparison = library.comparisons[caseIndex]
-            if (!comparison) return []
-            return comparison.fields.map((field, fieldIndex) => {
-              const projected = policyImpactDisplay(field.draft)
-              const before = policyImpactDisplay(field.active)
-              return {
-                caseId: item.report_id,
-                order: fieldIndex,
-                id: `${item.report_id}:${field.draft.field}`,
-                library: library.library,
-                media: comparison.media_kind,
-                work: item.work_label,
-                field: readableCategory(field.draft.field),
-                projected,
-                impact: {
-                  changed: field.changed,
-                  title: field.changed ? ('Policy change' as const) : ('No policy change' as const),
-                  detail: field.changed
-                    ? `${field.active_destination === 'ask' ? 'Ask me' : field.active_destination}: ${before.detail} → ${field.draft_destination === 'ask' ? 'Ask me' : field.draft_destination}: ${projected.detail}`
-                    : projected.detail,
-                  technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
-                },
-              }
-            })
-          }),
+  // A library's changed rules are previewed only where one of its sampled
+  // comparisons evaluated that field. Any other changed rule was not previewed
+  // at all, so it can be reported neither as unchanged nor as a change.
+  const { previewLibraries, previewRows } = useMemo(
+    () => ({
+      previewLibraries: (preview?.libraries ?? []).map((library) => {
+        const evaluated = new Set(
+          library.comparisons.flatMap((comparison) =>
+            comparison.fields.map((field) => field.draft.field),
+          ),
         )
-        .sort((a, b) => a.order - b.order) ?? [],
+        return {
+          ...library,
+          previewed: library.affected_categories.filter((field) => evaluated.has(field)),
+          unpreviewed: library.affected_categories.filter((field) => !evaluated.has(field)),
+        }
+      }),
+      previewRows:
+        preview?.libraries
+          .flatMap((library) =>
+            library.cases.flatMap((item, caseIndex) => {
+              const comparison = library.comparisons[caseIndex]
+              if (!comparison) return []
+              return comparison.fields.map((field, fieldIndex) => {
+                const projected = policyImpactDisplay(field.draft)
+                const before = policyImpactDisplay(field.active)
+                return {
+                  caseId: item.report_id,
+                  order: fieldIndex,
+                  id: `${item.report_id}:${field.draft.field}`,
+                  library: library.library,
+                  media: comparison.media_kind,
+                  work: item.work_label,
+                  field: readableCategory(field.draft.field),
+                  projected,
+                  impact: {
+                    changed: field.changed,
+                    title: field.changed
+                      ? ('Policy change' as const)
+                      : ('No policy change' as const),
+                    detail: field.changed
+                      ? `${field.active_destination === 'ask' ? 'Ask me' : field.active_destination}: ${before.detail} → ${field.draft_destination === 'ask' ? 'Ask me' : field.draft_destination}: ${projected.detail}`
+                      : projected.detail,
+                    technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
+                  },
+                }
+              })
+            }),
+          )
+          .sort((a, b) => a.order - b.order) ?? [],
+    }),
     [preview],
   )
   const changedRows = previewRows.filter((row) => row.impact.changed)
+  const sampledWorks = previewLibraries.reduce((count, library) => count + library.cases.length, 0)
+  const mediaSummary = (['ebook', 'audiobook'] as const)
+    .flatMap((media) => {
+      const rows = changedRows.filter((row) => row.media === media).length
+      const works = previewLibraries.reduce(
+        (count, library) =>
+          count +
+          library.comparisons.filter((comparison) => comparison.media_kind === media).length,
+        0,
+      )
+      return works
+        ? [
+            `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(works)} sampled ${works === 1 ? 'work' : 'works'}${rows ? ` · ${String(rows)} changed ${rows === 1 ? 'field' : 'fields'}` : ''}`,
+          ]
+        : []
+    })
+    .join(' · ')
   const unchangedRows = previewRows.filter((row) => !row.impact.changed)
   const mediaQualification = (
     field: FieldDefinition,
@@ -1181,11 +1233,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     activationReviewRef.current?.focus({ preventScroll: true })
     activationReviewRef.current?.scrollIntoView({ block: 'center' })
   }, [stage])
-  const transitionCopy = activationNotice
-    ? activationNotice.state === 'processing'
-      ? `Applying updated policy · ${String(activationNotice.completed)} of ${String(activationNotice.total)}`
-      : `${activationNotice.failed ? 'Completed with failures' : 'Policy update complete'} · ${String(activationNotice.completed)} of ${String(activationNotice.total)}`
-    : undefined
+  // Activating unmounts the focused Activate button; the success message it
+  // produced is where focus belongs next, not the document body.
+  const finishMessageRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (stage !== 'activated') return
+    finishMessageRef.current?.focus({ preventScroll: true })
+    finishMessageRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [stage])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -1234,19 +1289,27 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Ready to activate'
         : stage === 'preview'
-          ? `${String(impactTotals?.changedWorks ?? 0)} sampled ${(impactTotals?.changedWorks ?? 0) === 1 ? 'work' : 'works'} with changes`
+          ? impactTotals?.changedWorks
+            ? `${String(impactTotals.changedWorks)} sampled ${impactTotals.changedWorks === 1 ? 'work' : 'works'} with changes`
+            : 'Impact preview ready'
           : stage === 'validating'
             ? 'Validating the working draft…'
             : draftDisplay.changed
               ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change is' : 'changes are'} ready to validate`
               : 'Draft matches the active policy'
+  // Once this activation's transition is read, its progress section (or its
+  // dismissal) owns reconciliation, so the tray no longer states it.
   const finishDetail =
     stage === 'activated'
-      ? `${String(impactTotals?.currentWorks ?? 0)} current unapplied ${(impactTotals?.currentWorks ?? 0) === 1 ? 'work is' : 'works are'} queued for guarded reconciliation. Applied history is untouched.`
+      ? activationNotice ||
+        (activatedTransitionId !== undefined &&
+          transition.data?.transition_id === activatedTransitionId)
+        ? ''
+        : `${impactTotals?.currentWorks ? 'Current unapplied work is being reconciled.' : 'No current unapplied work needed reconciliation.'} Applied history is untouched.`
       : stage === 'activation'
         ? 'Review the unchanged preview before making this draft active.'
         : stage === 'preview'
-          ? `Validated across all chapters · ${String(impactTotals?.materialChanges ?? 0)} material ${(impactTotals?.materialChanges ?? 0) === 1 ? 'change' : 'changes'} in the bounded sample${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · snapshot saved automatically.`
+          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} material ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the bounded sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · snapshot saved automatically.`
           : stage === 'validating'
             ? 'Checking every chapter, Automatic qualification, and exact library scope.'
             : draftDisplay.changed
@@ -1260,13 +1323,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           <h1>Library policy</h1>
           <p>Choose how metadata is stored and when you want to review it.</p>
         </div>
-        <span className="cm-policy-state">
-          {stage === 'activated'
-            ? 'Active policy updated'
-            : draftDisplay.changed
-              ? `${String(changedFields.length)} draft ${changedFields.length === 1 ? 'change' : 'changes'}`
-              : 'Draft matches active policy'}
-        </span>
       </header>
       <div className="cm-policy-editor" ref={editorRef}>
         <aside className="cm-policy-sidebar">
@@ -1274,11 +1330,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             <strong>{data.state.profile.name}</strong>
             <small>{baselinePolicy ? 'Active baseline' : 'Active policy'}</small>
           </header>
-          {transitionCopy ? (
-            <p className="cm-policy-transition" role="status">
-              {transitionCopy}
-            </p>
-          ) : null}
           <nav aria-label="Policy chapters">
             {chapters.map((chapter) => {
               const chapterFields = fields.filter((field) => field.chapter === chapter.key)
@@ -1291,19 +1342,21 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   type="button"
                   aria-current={activeChapter === chapter.key ? 'page' : undefined}
                   aria-labelledby={`${labelId} ${descriptionId}`}
-                  aria-describedby={`policy-${chapter.key}-changes`}
+                  aria-describedby={changes ? `policy-${chapter.key}-changes` : undefined}
                   onClick={() => void openChapter(chapter.key)}
                 >
                   <span>
                     <strong id={labelId}>{chapter.label}</strong>
                     <small id={descriptionId}>{chapter.description}</small>
                   </span>
-                  <ChangeCount id={`policy-${chapter.key}-changes`} count={changes} />
+                  {changes ? (
+                    <ChangeCount id={`policy-${chapter.key}-changes`} count={changes} />
+                  ) : null}
                 </button>
               )
             })}
           </nav>
-          <p className="cm-policy-chapter-legend">Changed fields</p>
+          {changedFields.length ? <p className="cm-policy-chapter-legend">Changed fields</p> : null}
           <details className="cm-policy-mode">
             <summary ref={safetySummaryRef}>
               <strong>
@@ -1559,41 +1612,40 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   <strong>Impact preview</strong>
                   <small>Current unapplied work only · no metadata writes</small>
                 </div>
-                <b
-                  aria-label={`${String(impactTotals?.changedWorks ?? 0)} sampled works with changes`}
-                >
-                  {String(impactTotals?.changedWorks ?? 0)}
-                </b>
+                {impactTotals?.changedWorks ? (
+                  <b aria-label={`${String(impactTotals.changedWorks)} sampled works with changes`}>
+                    {String(impactTotals.changedWorks)}
+                  </b>
+                ) : null}
               </header>
               <p>
-                {preview.libraries.reduce((count, library) => count + library.cases.length, 0)}{' '}
-                sampled works
-                {' · '}
-                {impactTotals?.currentWorks} total current unapplied works
-                {' · '}up to 20 works across all libraries
+                {sampledWorks ? (
+                  <>
+                    {sampledWorks} sampled works
+                    {' · '}
+                    {impactTotals?.currentWorks} total current unapplied works
+                    {' · '}up to 20 works across all libraries
+                  </>
+                ) : (
+                  'No current unapplied work to sample'
+                )}
                 {preview.libraries.some((library) => library.cases_truncated)
                   ? ' · Additional works were not previewed'
-                  : ''}
+                  : sampledWorks
+                    ? ''
+                    : '.'}
               </p>
-              <p>
-                {(['ebook', 'audiobook'] as const)
-                  .map((media) => {
-                    const rows = changedRows.filter((row) => row.media === media)
-                    const works = preview.libraries.reduce(
-                      (count, library) =>
-                        count +
-                        library.comparisons.filter((comparison) => comparison.media_kind === media)
-                          .length,
-                      0,
-                    )
-                    return `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(works)} sampled ${works === 1 ? 'work' : 'works'} · ${String(rows.length)} changed ${rows.length === 1 ? 'field' : 'fields'}`
-                  })
-                  .join(' · ')}
-              </p>
+              {mediaSummary ? <p>{mediaSummary}</p> : null}
               <p>
                 Title, authors, narrators, date, publisher, language and cover are not previewed
                 here.
               </p>
+              {/* A library override can pin every edited field, so a changed draft
+                  may still change nothing in any library. */}
+              {previewLibraries.length > 0 &&
+              previewLibraries.every((library) => !library.affected_categories.length) ? (
+                <p>No library&apos;s fields change under this draft.</p>
+              ) : null}
               <div id="policy-preview-outcomes" className="cm-policy-preview-list">
                 {changedRows.length
                   ? changedRows.slice(0, expandedPreview === preview ? undefined : 6).map((row) => (
@@ -1604,8 +1656,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                         <span>
                           <strong>{row.work}</strong>
                           <small>
-                            {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} · {row.library} ·{' '}
-                            {row.field}
+                            {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} ·{' '}
+                            {libraryName(row.library)} · {row.field}
                           </small>
                         </span>
                         <span className="cm-policy-impact">
@@ -1618,29 +1670,45 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                         </span>
                       </div>
                     ))
-                  : preview.libraries.map((library) => (
-                      <div key={library.library}>
-                        <span className="cm-policy-work-mark" aria-hidden="true">
-                          {library.library.slice(0, 2).toUpperCase()}
-                        </span>
-                        <span>
-                          <strong>{library.library}</strong>
-                          <small>
-                            {library.affected_categories.map(readableCategory).join(', ') ||
-                              'No changed fields'}
-                          </small>
-                        </span>
-                        <span className="cm-policy-impact">
-                          <b>No policy-caused changes in this sample</b>
-                          <small>
-                            ·{' '}
-                            {library.current_unapplied_count === 0
-                              ? 'No current unapplied work remains to inspect'
-                              : `${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'}; unchanged outcomes are separate context`}
-                          </small>
-                        </span>
-                      </div>
-                    ))}
+                  : previewLibraries
+                      .filter((library) => library.previewed.length)
+                      .map((library) => (
+                        <div key={library.library}>
+                          <span className="cm-policy-work-mark" aria-hidden="true">
+                            {libraryName(library.library).slice(0, 2).toUpperCase()}
+                          </span>
+                          <span>
+                            <strong>{libraryName(library.library)}</strong>
+                            <small>{library.previewed.map(readableCategory).join(', ')}</small>
+                          </span>
+                          <span className="cm-policy-impact">
+                            <b>No policy-caused changes in this sample</b>
+                            <small>
+                              ·{' '}
+                              {library.current_unapplied_count === 0
+                                ? 'No current unapplied work remains to inspect'
+                                : `${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'}; unchanged outcomes are separate context`}
+                            </small>
+                          </span>
+                        </div>
+                      ))}
+                {previewLibraries.flatMap((library) =>
+                  library.unpreviewed.map((field) => (
+                    <div key={`${library.library}:${field}`} className="is-unpreviewed">
+                      <span className="cm-policy-work-mark" aria-hidden="true">
+                        {libraryName(library.library).slice(0, 2).toUpperCase()}
+                      </span>
+                      <span>
+                        <strong>{readableCategory(field)}</strong>
+                        <small>{libraryName(library.library)}</small>
+                      </span>
+                      <span className="cm-policy-impact">
+                        <b>Not previewed.</b>
+                        <small>This rule takes effect on the next preparation.</small>
+                      </span>
+                    </div>
+                  )),
+                )}
               </div>
               {changedRows.length > 6 ? (
                 <footer>
@@ -1715,10 +1783,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           summary={
             <>
               {['error', 'warning'].includes(status.tone) ? null : (
-                <>
+                <div className="cm-policy-finish-message" ref={finishMessageRef} tabIndex={-1}>
                   <strong>{finishTitle}</strong>
-                  <span>{finishDetail}</span>
-                </>
+                  {finishDetail ? <span>{finishDetail}</span> : null}
+                </div>
               )}
               <p
                 className={`policy-status ${status.tone} ${['error', 'warning'].includes(status.tone) ? '' : 'sr-only'}`}
@@ -1840,36 +1908,35 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               </ul>
             </section>
           ) : null}
-          {stage === 'activated' ? (
-            <section className="cm-policy-activated">
-              <span>
-                <Check />
-              </span>
-              <div>
-                <strong>The reviewed policy is now active</strong>
-                <small>
-                  {String(impactTotals?.currentWorks ?? 0)} current unapplied{' '}
-                  {(impactTotals?.currentWorks ?? 0) === 1 ? 'work can' : 'works can'} enter
-                  separately guarded reconciliation.
-                </small>
-              </div>
-            </section>
-          ) : null}
         </FinishTray>
       </div>
-      {activationNotice ? (
-        <section className="policy-cutover" aria-label="Policy activation progress">
-          <h2>
-            {activationNotice.state === 'processing'
-              ? 'Applying updated policy'
-              : activationNotice.failed
-                ? 'Activation completed with failures'
-                : 'Activation complete'}
-          </h2>
-          <p>
-            {String(activationNotice.completed)} of {String(activationNotice.total)} current
-            unapplied items reconciled. Applied history is untouched.
-          </p>
+      {/* The status region stays mounted, so a transition that is already
+          finished when first read is inserted into a live region that exists
+          and is announced. Empty, the section has no class, name or height. */}
+      <section
+        className={activationNotice ? 'policy-cutover' : undefined}
+        aria-label={activationNotice ? 'Policy activation progress' : undefined}
+      >
+        <div role="status">
+          {activationNotice ? (
+            <>
+              <h2>
+                {activationNotice.state === 'processing'
+                  ? 'Applying updated policy'
+                  : activationNotice.failed
+                    ? 'Activation completed with failures'
+                    : 'Activation complete'}
+              </h2>
+              <p>
+                {activationNotice.total
+                  ? `${String(activationNotice.completed)} of ${String(activationNotice.total)} current unapplied items reconciled.`
+                  : 'No current unapplied items needed reconciliation.'}{' '}
+                Applied history is untouched.
+              </p>
+            </>
+          ) : null}
+        </div>
+        {activationNotice ? (
           <div className="policy-workflow-actions">
             {activationNotice.failed ? (
               <button
@@ -1892,8 +1959,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               </button>
             ) : null}
           </div>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
     </div>
   )
 }

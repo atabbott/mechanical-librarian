@@ -2167,12 +2167,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     exact=True,
                 ).wait_for()
                 policy_chapters = page.get_by_role("navigation", name="Policy chapters")
-                assert policy_chapters.locator("button b").all_inner_texts() == [
-                    "0",
-                    "0",
-                    "0",
-                    "0",
-                ]
+                # A chapter with no draft change carries no count at all.
+                assert policy_chapters.locator("button b").all_inner_texts() == []
+                assert page.locator(".cm-policy-chapter-legend").count() == 0
                 assert (
                     policy_chapters.evaluate(
                         "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
@@ -2183,7 +2180,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     policy_chapters.get_by_role(
                         "button", name="Curation"
                     ).get_attribute("aria-describedby")
-                    == "policy-curation-changes"
+                    is None
                 )
                 page.get_by_text(
                     "Choose how metadata is stored and when you want to review it.",
@@ -2249,38 +2246,30 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     if button.get_attribute("aria-pressed") == "true"
                 )
                 genres.get_by_role("button", name="Ignore").click()
-                assert policy_chapters.locator("button b").all_inner_texts() == [
-                    "0",
-                    "0",
-                    "1",
-                    "0",
-                ]
+                assert policy_chapters.locator("button b").all_inner_texts() == ["1"]
                 # An exact revert returns every surface to the clean state: no
-                # chapter count, no dirty header, no validation action.
+                # chapter count, no dirty status, no validation action. The
+                # tray states it once; only the live region repeats it.
                 genres.get_by_role("button", name=original_mode, exact=True).click()
-                assert policy_chapters.locator("button b").all_inner_texts() == [
-                    "0",
-                    "0",
-                    "0",
-                    "0",
-                ]
+                assert policy_chapters.locator("button b").all_inner_texts() == []
                 page.locator(".cm-finish-tray").get_by_text(
                     "Draft matches the active policy", exact=True
                 ).wait_for()
                 page.get_by_text("Draft matches active policy.", exact=True).wait_for()
-                page.locator(".cm-policy-route > header").get_by_text(
-                    "Draft matches active policy", exact=True
-                ).wait_for()
+                assert (
+                    page.evaluate("""() => [...document.querySelectorAll('body *')]
+                        .filter(node => !node.closest('.sr-only')
+                            && node.checkVisibility()
+                            && [...node.childNodes].some(text => text.nodeType === 3
+                                && text.data.includes('Draft matches')))
+                        .length""")
+                    == 1
+                )
                 assert page.get_by_role(
                     "button", name="Validate and preview"
                 ).is_disabled()
                 genres.get_by_role("button", name="Ignore").click()
-                assert policy_chapters.locator("button b").all_inner_texts() == [
-                    "0",
-                    "0",
-                    "1",
-                    "0",
-                ]
+                assert policy_chapters.locator("button b").all_inner_texts() == ["1"]
 
                 def assert_text_zoom_policy_layout(width: int) -> None:
                     page.set_viewport_size({"width": width, "height": 844})
@@ -8282,6 +8271,55 @@ def test_ebook_isbn_owner_journey(destination):
         browser.close()
 
 
+# Clipped overflow escapes a check that only reads `overflow: visible` boxes, so
+# this reads every rendered box: one that scrolls its own content, and one that
+# ends past its parent's content edge. Visually hidden text is skipped because
+# an sr-only node always reports a scroll width larger than its 1 px client box.
+_POLICY_CLIPPED = """root => [...root.querySelectorAll('*')].flatMap(node => {
+    if (!(node instanceof HTMLElement) || node.closest('.sr-only')
+        || !node.getClientRects().length) return [];
+    const owner = node.parentElement?.closest('[class]');
+    const name = `${node.tagName}.${node.className} in ${owner?.className ?? 'root'}`
+        + ` "${node.textContent.trim().slice(0, 32)}"`;
+    const found = [];
+    if (getComputedStyle(node).display !== 'inline'
+        && node.scrollWidth > node.clientWidth + 1)
+        found.push(`${name} scrolls ${node.scrollWidth} > ${node.clientWidth}`);
+    const parent = node.parentElement;
+    const style = parent && getComputedStyle(parent);
+    if (parent && node !== root && !['inline', 'contents'].includes(style.display)) {
+        const edge = parent.getBoundingClientRect().right
+            - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+        const right = node.getBoundingClientRect().right;
+        if (right > edge + 1)
+            found.push(`${name} ends ${right} past ${parent.className} ${edge}`);
+    }
+    return found;
+})"""
+# A label word that renders on two lines has client rects with two tops.
+_POLICY_LABELS = (
+    ".cm-policy-sidebar nav button strong, .cm-policy-field > header strong, "
+    ".cm-segmented button, .cm-policy-representation > span, "
+    ".cm-policy-control-heading strong, .cm-finish-tray > ol small, "
+    ".cm-finish-actions button, .cm-finish-summary strong, .cm-policy-impact > b, "
+    ".cm-policy-route h1, .cm-policy-route h2"
+)
+_POLICY_MID_WORD = """selector => [...document.querySelectorAll(selector)].flatMap(node => {
+    const words = [];
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+        for (const match of text.data.matchAll(/[^\\s\\u2010-\\u2014-]+/g)) {
+            const range = document.createRange();
+            range.setStart(text, match.index);
+            range.setEnd(text, match.index + match[0].length);
+            const tops = new Set([...range.getClientRects()]
+                .filter(rect => rect.width > 0).map(rect => Math.round(rect.top)));
+            if (tops.size > 1) words.push(match[0]);
+        }
+    return words;
+})"""
+
+
 def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_path):
     hash_path = tmp_path / "owner.hash"
     hash_path.write_text(PasswordHasher().hash(_PASSWORD))
@@ -8319,18 +8357,67 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     "No eligible value was found in the retained evidence.", exact=True
                 )
             ).to_be_visible()
-            page.goto(f"{origin}/policy?section=curation")
+            # Language is a rule the preview does not evaluate, ISBN one it
+            # evaluates without a change here, and Tags one it evaluates with
+            # changes: the mixed case a truthful preview has to keep apart.
+            page.goto(f"{origin}/policy?section=identity")
+            chapters = page.get_by_role("navigation", name="Policy chapters")
+            for chapter, field, option in (
+                (None, "Language", "Preserve supported form"),
+                ("Publication", "ISBN", "Prefer ISBN-13"),
+                ("Curation", "Tags", "Fill only when empty"),
+            ):
+                if chapter:
+                    chapters.get_by_role(
+                        "button", name=re.compile(f"^{chapter}")
+                    ).click()
+                region = page.get_by_role("region", name=field, exact=True)
+                region.get_by_role("combobox", name=f"{field} representation").click()
+                page.get_by_role("option", name=option, exact=True).click()
             tags = page.get_by_role("region", name="Tags", exact=True)
-            tags.get_by_role("combobox", name="Tags representation").click()
-            page.get_by_role("option", name="Fill only when empty", exact=True).click()
             tags.get_by_role("button", name="Automatic", exact=True).click()
-            page.get_by_role("button", name="Validate and preview", exact=True).click()
+            with page.expect_response(
+                lambda response: response.url.endswith("/metadata-policy/preview")
+            ) as previewed:
+                page.get_by_role(
+                    "button", name="Validate and preview", exact=True
+                ).click()
+            libraries = previewed.value.json()["libraries"]
+            assert all(
+                "language_rendering" in library["affected_categories"]
+                for library in libraries
+            )
+            evaluated = {
+                field["draft"]["field"]
+                for library in libraries
+                for comparison in library["comparisons"]
+                for field in comparison["fields"]
+            }
+            assert "language_rendering" not in evaluated
+            assert {"isbn_form", "tags"} <= evaluated
             result = page.locator(".cm-policy-result")
             expect(result).to_be_visible()
             assert (
                 result.locator("xpath=..").get_attribute("class") == "cm-policy-editor"
             )
             assert page.locator(".cm-finish-tray .cm-policy-result").count() == 0
+            # Language was never evaluated, so it is stated as not previewed
+            # (below the collapsed previewed rows, by the library slug while
+            # Settings is unavailable or the library has no display name) and
+            # never as unchanged.
+            unpreviewed = result.locator(".cm-policy-preview-list > .is-unpreviewed")
+            expect(unpreviewed).to_have_count(1)
+            expect(unpreviewed.locator("strong")).to_have_text("Language")
+            expect(unpreviewed.locator("small").first).to_have_text("ebooks")
+            expect(unpreviewed.locator(".cm-policy-impact")).to_have_text(
+                "Not previewed.This rule takes effect on the next preparation."
+            )
+            expect(
+                result.get_by_text("No policy-caused changes in this sample")
+            ).to_have_count(0)
+            assert page.locator(".cm-policy-preview-list > div").last.evaluate(
+                "node => node.classList.contains('is-unpreviewed')"
+            )
             for theme in ("light", "dark"):
                 page.locator("html").evaluate(
                     "(node, theme) => node.dataset.theme = theme", theme
@@ -8371,6 +8458,23 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     )
+                    if width < 1440:
+                        # The fixture's work titles are short; a long one is
+                        # the title that a truncating cell would clip.
+                        page.locator(
+                            ".cm-policy-preview-list > div > span:nth-child(2) strong"
+                        ).first.evaluate(
+                            "node => { node.textContent = 'The Exceptionally Long "
+                            "Collected Chronicle of the Synthetic Voyage, Volume "
+                            "Twelve'; }"
+                        )
+                        editor = page.locator(".cm-policy-editor")
+                        assert (
+                            width,
+                            theme,
+                            editor.evaluate(_POLICY_CLIPPED),
+                            page.evaluate(_POLICY_MID_WORD, _POLICY_LABELS),
+                        ) == (width, theme, [], [])
                     collapse = result.get_by_role("button", name="Show fewer outcomes")
                     collapse.focus()
                     page.keyboard.press("Enter")

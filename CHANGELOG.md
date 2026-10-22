@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Policy's impact preview now marks a changed rule it did not evaluate, such
+  as Language, "Not previewed" instead of reporting no change. The page states
+  each status once, hides zero counts, names an activated edited policy
+  "Custom policy", shows library display names, focuses the success message
+  after Activate, and clips or splits no label at 320 px (#1280).
+
 - A decision or policy validation made after another tab or the setup handoff
   refreshed the session now succeeds on the first press; other actions say
   "Your session was refreshed. Press again." instead of a generic failure (#1018).
