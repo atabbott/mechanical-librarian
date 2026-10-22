@@ -128,7 +128,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         <div role="alert">
           <p>
             {refusalCopy(
-              mutation.error,
+              stale ? null : mutation.error,
               'Description preferences could not be saved against the current settings. Reload the saved preferences before trying again.',
             )}
           </p>
