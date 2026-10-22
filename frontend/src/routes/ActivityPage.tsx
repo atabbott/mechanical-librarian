@@ -307,7 +307,7 @@ function ActivityEventRow({
   return (
     <article className={expanded ? 'is-expanded' : ''}>
       <time>
-        {day === undefined ? null : <>{day}&nbsp;· </>}
+        {day === undefined ? null : <span className="cm-activity-day">{day} </span>}
         {dateParts(event.occurred_at).time}
       </time>
       <span className={`cm-activity-category is-${event.category}`}>

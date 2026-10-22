@@ -2641,6 +2641,8 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
         members = page.locator(".cm-activity-checks > li")
         expect(members).to_have_count(3)
         expect(members.locator("article")).to_have_count(3)
+        expect(members.nth(2).locator("time")).to_contain_text("2025")
+        expect(members.nth(1).locator("time")).not_to_contain_text("2025")
         assert members.locator("article").all_inner_texts()[1].count("Left ISBN") == 1
         for index in range(3):
             expect(
@@ -2705,6 +2707,14 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                     for failure in node.evaluate(_NAMED_CLIP)
                 ]
                 assert failures == [], f"{where}: {failures}"
+                # A check on another day names that day without running into
+                # the category beside it.
+                overlaps = page.locator(".cm-activity-checks time").evaluate_all(
+                    """times => times.filter(time => time.getBoundingClientRect().right >
+                        time.nextElementSibling.getBoundingClientRect().left)
+                        .map(time => time.textContent)"""
+                )
+                assert overlaps == [], f"{where}: {overlaps} overlap their category"
                 split = page.evaluate(
                     _POLICY_MID_WORD,
                     ".is-checks .cm-activity-change, .cm-activity-filter-notice, "
