@@ -210,7 +210,7 @@ the gate; the 48 modules carrying findings are named as the burn-down backlog
 
 ### 0.27.0 preparation and owner-journey checkpoint
 
-The [expanded delivery checkpoint](delivery-slices.md#delivery-checkpoint-0220-responsive-trustworthy-preparation-and-review)
+The [expanded delivery checkpoint](delivery-slices.md#delivery-checkpoint-0270-responsive-trustworthy-preparation-and-review)
 is delivered: responsive owner interactions (#1072) and preparation recovery
 (#1085), then the named evidence/decision corrections, Library/Policy trust,
 reviewer/Settings operation and manual retained-cover choice, alongside #1008,
