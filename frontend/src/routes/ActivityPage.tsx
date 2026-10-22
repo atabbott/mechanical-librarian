@@ -14,6 +14,7 @@ import {
 import type {
   ActivityCategory,
   ActivityLibraryView,
+  ActivityPermissionReadinessView,
   ActivitySearch,
   ActivityTransitionView,
   ActivityView,
@@ -24,7 +25,7 @@ import { activityOutcome } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel } from '../labels'
-import { destinationReason, readWriteConsent } from '../writeConsent'
+import { consentBasis, destinationReason, readWriteConsent } from '../writeConsent'
 import {
   activityRoute,
   normalizeActivitySearch,
@@ -106,6 +107,18 @@ const recoveryDispatchLabel: Record<ProviderRecoveryDispatchReason, string> = {
   settleable_disagreement: 'evidence disagreement',
   blanket_scan: 'general recovery scan',
 }
+// A permission draft is the readiness check and the ticked libraries, kept
+// against the consent basis it was checked on (#1279).
+interface PermissionCheck extends ActivityPermissionReadinessView {
+  readonly policyId: string
+  readonly basis: string
+}
+// Raised by the verification read made on Confirm, before any grant is sent.
+class ConsentBasisChanged extends Error {}
+class ConsentBasisUnavailable extends Error {}
+const basisChangedCopy = 'Your library settings changed. Review the permissions again.'
+const readinessUnavailableCopy =
+  'Permission readiness is unavailable. No permission was granted. Try again.'
 const typeOptions = [
   { id: 'all', label: 'All' },
   { id: 'review', label: 'Owner choices' },
@@ -265,7 +278,7 @@ function ActivityTransitions({
   )
 }
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
-  const { http, queryClient, updates } = useReviewContext()
+  const { http, queryClient } = useReviewContext()
   const router = useRouter()
   const navigate = useNavigate({ from: activityRoute.fullPath })
   const search = activityRoute.useSearch()
@@ -410,7 +423,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const preparation = usePreparation().data
   const connectionConditions = preparation?.connections ?? []
   const connection = connectionConditions.find((item) => item.state !== 'recovered')
-  const connectionState = JSON.stringify(connectionConditions)
   const ledger = data.ledger
   const [consentOpen, setConsentOpen] = useState(
     () => router.state.location.hash === 'activity-consent',
@@ -419,15 +431,19 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const openingPermissionCheck = useRef(consentOpen)
   const nextPermissionRequest = useRef(0)
   const [permissionRequest, setPermissionRequest] = useState<number | null>(null)
-  const previousConnectionState = useRef(connectionState)
-  useEffect(() => {
-    if (previousConnectionState.current !== connectionState) setPermissionRequest(null)
-    previousConnectionState.current = connectionState
-  }, [connectionState])
   const permissions = useQuery({
     queryKey: ['activity-permissions', permissionRequest],
-    queryFn: (context) =>
-      http.getActivityPermissionReadiness(context.signal, queryWorkClass(context)),
+    queryFn: async (context): Promise<PermissionCheck> => {
+      const [readiness, policy] = await Promise.all([
+        http.getActivityPermissionReadiness(context.signal, queryWorkClass(context)),
+        http.getPolicyState(context.signal, queryWorkClass(context)),
+      ])
+      return {
+        ...readiness,
+        policyId: policy.policy_id,
+        basis: consentBasis(readiness, policy.policy_id),
+      }
+    },
     enabled: consentOpen && permissionRequest !== null,
     retry: false,
     staleTime: Infinity,
@@ -435,39 +451,57 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   })
-  const permission = permissionRequest === null ? undefined : permissions.data
-  const discardPermissions = () => setPermissionRequest(null)
-  useEffect(() => {
-    const discard = () => {
-      openingPermissionCheck.current = false
-      setPermissionRequest(null)
-    }
-    const unsubscribe = updates?.subscribe(discard)
-    const unobserve = updates?.observeState(discard)
-    const unwatch = queryClient.getQueryCache().subscribe((event) => {
-      const queryKey: unknown = event.query.queryKey
-      if (
-        event.type === 'updated' &&
-        Array.isArray(queryKey) &&
-        queryKey[0] === 'activity' &&
-        ['fetch', 'invalidate', 'success', 'error'].includes(event.action.type)
-      )
-        setPermissionRequest(null)
+  // The draft outlives refetches, focus, live updates and same-basis retries;
+  // only a result for the current request establishes or replaces it, and a
+  // replacement keeps the ticks while the basis holds.
+  const checked = permissionRequest === null ? undefined : permissions.data
+  const [draft, setDraft] = useState<{
+    check: PermissionCheck
+    checkedAt: number
+    names: ReadonlySet<string>
+  } | null>(null)
+  if (checked && draft?.check !== checked)
+    setDraft({
+      check: checked,
+      checkedAt: permissions.dataUpdatedAt,
+      names: draft?.check.basis === checked.basis ? draft.names : new Set(),
     })
-    document.addEventListener('visibilitychange', discard)
-    window.addEventListener('offline', discard)
-    return () => {
-      unsubscribe?.()
-      unobserve?.()
-      unwatch()
-      document.removeEventListener('visibilitychange', discard)
-      window.removeEventListener('offline', discard)
-    }
-  }, [queryClient, updates])
+  const permission = permissionRequest === null || permissions.isError ? undefined : draft?.check
+  const discardPermissions = () => {
+    setPermissionRequest(null)
+    setDraft(null)
+  }
+  const checkButton = useRef<HTMLButtonElement>(null)
+  const [discarded, setDiscarded] = useState<object | null>(null)
+  const discardChangedDraft = () => {
+    discardPermissions()
+    setDiscarded({})
+  }
+  // An Activity response settled after the check states other libraries or
+  // destinations than the draft was checked against.
+  if (
+    draft &&
+    query.dataUpdatedAt > draft.checkedAt &&
+    consentBasis(data, draft.check.policyId) !== draft.check.basis
+  )
+    discardChangedDraft()
+  useEffect(() => {
+    if (!discarded) return
+    // Focus that was in the panel, or fell when its controls unmounted, goes to
+    // the one control that can start the next check.
+    const active = document.activeElement
+    if (
+      active === null ||
+      active === document.body ||
+      document.getElementById('activity-consent')?.contains(active)
+    )
+      checkButton.current?.focus({ preventScroll: true })
+  }, [discarded])
   useEffect(() => {
     if (!openingPermissionCheck.current || query.isFetching) return
     // Let the entering history query publish its final cache event before the
-    // hash handoff starts a check. Later history events still discard proof.
+    // hash handoff starts a check. Later history keeps the draft unless its
+    // consent basis changed.
     const frame = requestAnimationFrame(() => {
       if (!openingPermissionCheck.current) return
       openingPermissionCheck.current = false
@@ -477,6 +511,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   }, [query.isFetching])
   const checkPermissions = () => {
     openingPermissionCheck.current = false
+    setDiscarded(null)
     setPermissionRequest(++nextPermissionRequest.current)
   }
   const openConsentReview = () => {
@@ -491,13 +526,23 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     section?.focus({ preventScroll: true })
     section?.scrollIntoView({ block: 'nearest' })
   }, [consentOpen])
-  const closeConsentReview = () => {
+  const closeConsentReview = (succeeded = false) => {
     openingPermissionCheck.current = false
     setConsentOpen(false)
+    setDiscarded(null)
     discardPermissions()
+    // A hash handoff has no trigger of its own; the page's entry stands in.
     const trigger =
-      consentTrigger.current ?? document.querySelector<HTMLElement>('[data-route-focus]')
-    requestAnimationFrame(() => trigger?.focus({ preventScroll: true }))
+      consentTrigger.current ?? document.querySelector<HTMLElement>('[data-consent-entry]')
+    requestAnimationFrame(() => {
+      const target =
+        trigger?.isConnected && !trigger.matches(':disabled')
+          ? trigger
+          : document.querySelector<HTMLElement>(
+              succeeded ? '.cm-activity-route > .activity-command-status' : '[data-route-focus]',
+            )
+      target?.focus({ preventScroll: true })
+    })
     if (router.state.location.hash === 'activity-consent')
       void navigate({ search: (current) => current, hash: '', replace: true })
   }
@@ -521,23 +566,33 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     )
   })
   const selectableNames = new Set(selectable.map((item) => item.library))
-  const [selection, setSelection] = useState(() => ({
-    source: permission,
-    names: new Set<string>(),
-  }))
-  if (selection.source !== permission) setSelection({ source: permission, names: new Set() })
-  const selected = selection.source === permission ? selection.names : new Set<string>()
+  const selected = permission && draft ? draft.names : new Set<string>()
   const [status, setStatus] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const mutation = useMutation({
-    mutationFn: ({ path, body }: { path: string; body?: unknown }) =>
-      http.activityCommand(path, body),
+    mutationFn: async ({ path, body, basis }: { path: string; body?: unknown; basis?: string }) => {
+      // Re-read the basis the draft was reviewed against, freshly and before
+      // any grant is sent; the server still checks the grant itself.
+      if (basis !== undefined) {
+        let current: string
+        try {
+          const [state, policy] = await Promise.all([
+            http.getActivityConsent(),
+            http.getPolicyState(),
+          ])
+          current = consentBasis(state, policy.policy_id)
+        } catch {
+          throw new ConsentBasisUnavailable()
+        }
+        if (current !== basis) throw new ConsentBasisChanged()
+      }
+      return http.activityCommand(path, body)
+    },
     retry: false,
     // A new command starts silent, so even an identical outcome is announced.
     onMutate: () => setStatus(''),
     onSuccess: async () => {
-      closeConsentReview()
-      setSelection({ source: permission, names: new Set() })
+      closeConsentReview(true)
       setStatus('Activity state refreshed from the authoritative server.')
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
@@ -546,6 +601,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       // the same press can be repeated, and confirmation re-validates them (#1018).
       if (error instanceof CsrfRenewedError) {
         setStatus(sessionRefreshedCopy)
+        return
+      }
+      if (error instanceof ConsentBasisUnavailable) {
+        setStatus(readinessUnavailableCopy)
+        return
+      }
+      if (error instanceof ConsentBasisChanged) {
+        discardChangedDraft()
+        await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
         return
       }
       discardPermissions()
@@ -601,10 +665,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       : []
   })
   const toggle = (library: string) => {
+    if (!draft) return
     const next = new Set(selected)
     if (next.has(library)) next.delete(library)
     else next.add(library)
-    setSelection({ source: permission, names: next })
+    setDraft({ ...draft, names: next })
   }
   const restoreFocus = (key: string, version: number) => {
     if (focusVersion.current !== version) return
@@ -720,7 +785,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // work requires consent, and three cascades each deciding that separately is
   // how one of them came to say it directly above the count that refutes it.
   const permissionNeeded = consentState === 'off' && reasons.awaiting_permission > 0
-  const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
+  // The disclosure holds pause, removal and recovery only; reviewing write
+  // permissions has one entry, outside it (#1279).
+  const hasAuthority = enabled.length > 0 || suspensions.length > 0
+  const cardOffers = consentActionable && (consentState === 'off' || consentState === 'enabling')
+  const statusEntry = needsConsent && !cardOffers
   const showOperationalSummary =
     !permissionNeeded || Boolean(connection) || recoveryCount > 0 || data.paused
   const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
@@ -732,6 +801,19 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     hasAuthority &&
     mutation.variables !== undefined &&
     mutation.variables.path !== 'activity/consent'
+  // The entry moves between the card and the status section as the state
+  // changes; focus on the one that left follows it to the one that arrived.
+  const focusedEntry = useRef<Element | null>(null)
+  useEffect(() => {
+    const last = focusedEntry.current
+    if (!last || (last.isConnected && last.hasAttribute('data-consent-entry'))) return
+    const active = document.activeElement
+    if (last.isConnected && active !== last && active !== document.body) return
+    ;(
+      document.querySelector<HTMLElement>('[data-consent-entry]') ??
+      document.querySelector<HTMLElement>('[data-route-focus]')
+    )?.focus({ preventScroll: true })
+  }, [cardOffers, statusEntry])
   const commandStatus = (owner: boolean) => (
     <p
       className="activity-command-status"
@@ -745,8 +827,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   return (
     <div
       className="cm-activity-route"
-      onFocusCapture={() => {
+      onFocusCapture={(event) => {
         ++focusVersion.current
+        focusedEntry.current = event.target.hasAttribute('data-consent-entry') ? event.target : null
       }}
     >
       <header className="cm-page-heading" tabIndex={-1} data-route-focus>
@@ -1108,6 +1191,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <button
               className="cm-primary"
               type="button"
+              data-consent-entry={cardOffers ? '' : undefined}
               disabled={consentState !== 'off' || consentOpen}
               aria-expanded={consentOpen}
               aria-controls="activity-consent"
@@ -1140,19 +1224,22 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             </p>
           </div>
           <p role="status">
-            {permissionRequest === null
-              ? 'Permission readiness has not been checked, or the library changed. Check again before selecting destinations.'
-              : permissions.isFetching
-                ? 'Checking backup readiness and write permissions…'
-                : permissions.isError
-                  ? 'Permission readiness is unavailable. No permission was granted. Try again.'
-                  : permission?.backup_ready === null
-                    ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
-                    : permission?.backup_ready === false
-                      ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
-                      : 'Backup readiness checked. Review the included and excluded destinations.'}
+            {discarded
+              ? basisChangedCopy
+              : permissionRequest === null
+                ? 'Permission readiness has not been checked, or the library changed. Check again before selecting destinations.'
+                : permissions.isFetching
+                  ? 'Checking backup readiness and write permissions…'
+                  : permissions.isError
+                    ? readinessUnavailableCopy
+                    : permission?.backup_ready === null
+                      ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
+                      : permission?.backup_ready === false
+                        ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
+                        : 'Backup readiness checked. Review the included and excluded destinations.'}
           </p>
           <button
+            ref={checkButton}
             type="button"
             onClick={checkPermissions}
             disabled={permissions.isFetching && permissionRequest !== null}
@@ -1201,28 +1288,47 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </div>
             )
           })}
-          <p>
-            Only the included destinations shown above are enabled. Excluded destinations remain
-            off. Backup and service capability are checked again on confirmation.
-          </p>
+          {configured.some((library) =>
+            capability(library.library)?.destinations.some((entry) => entry.state === 'allowed'),
+          ) ? (
+            <p>
+              Only the included destinations shown above are enabled. Excluded destinations remain
+              off. Backup and service capability are checked again on confirmation.
+            </p>
+          ) : null}
           {consentFeedback ? commandStatus(true) : null}
-          <button type="button" onClick={closeConsentReview} disabled={mutation.isPending}>
-            Cancel permission review
-          </button>
-          <button
-            className="primary-action"
-            disabled={
-              mutation.isPending || permission?.backup_ready !== true || selectedGrants.length === 0
-            }
-            onClick={() =>
-              mutation.mutate({
-                path: 'activity/consent',
-                body: { grants: selectedGrants },
-              })
-            }
-          >
-            Confirm write permissions
-          </button>
+          <div className="activity-consent-actions">
+            <button
+              type="button"
+              onClick={() => closeConsentReview()}
+              disabled={mutation.isPending}
+            >
+              Cancel permission review
+            </button>
+            <p id="activity-consent-requirement">
+              Select each library you want to include, then confirm.
+            </p>
+            <button
+              className="primary-action"
+              aria-describedby="activity-consent-requirement"
+              disabled={
+                mutation.isPending ||
+                permissions.isFetching ||
+                permission?.backup_ready !== true ||
+                selectedGrants.length === 0
+              }
+              onClick={() =>
+                draft &&
+                mutation.mutate({
+                  path: 'activity/consent',
+                  body: { grants: selectedGrants },
+                  basis: draft.check.basis,
+                })
+              }
+            >
+              Confirm write permissions
+            </button>
+          </div>
         </section>
       ) : null}
       <section
@@ -1255,6 +1361,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                         ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
                         : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
             </p>
+            {statusEntry ? (
+              <button
+                type="button"
+                data-consent-entry=""
+                onClick={() => (consentOpen ? closeConsentReview() : openConsentReview())}
+                aria-expanded={consentOpen}
+                aria-controls="activity-consent"
+              >
+                Review write permissions
+              </button>
+            ) : null}
           </div>
         ) : null}
         {!consentActionable ? (
@@ -1391,16 +1508,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   Remove write permission for {library.library}
                 </button>
               ))}
-              {needsConsent ? (
-                <button
-                  id="review-write-permissions"
-                  onClick={() => (consentOpen ? closeConsentReview() : openConsentReview())}
-                  aria-expanded={consentOpen}
-                  aria-controls="activity-consent"
-                >
-                  Review write permissions
-                </button>
-              ) : null}
               {commandStatus(authorityFeedback)}
               {suspensions.length ? (
                 <div className="cm-activity-recovery-facts" aria-label="Recovery facts">
@@ -1418,7 +1525,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         ) : null}
       </section>
       <PreparationNotice routeIdentity={routeIdentity} />
-      {!consentFeedback ? commandStatus(!authorityFeedback) : null}
+      {commandStatus(!authorityFeedback && !consentFeedback)}
     </div>
   )
 }
