@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   AmbiguousMutationError,
+  CsrfRenewedError,
   MEDIA_HEALTH_KINDS,
   PageCsrfTokenStore,
   ReviewApiClient,
@@ -16,6 +17,7 @@ import {
   derivePolicyDraftDisplay,
   policyAutomaticQualification,
   SessionExpiredError,
+  refusalCopy,
   mapLibrary,
   mapEvidence,
   mapHistory,
@@ -1999,14 +2001,22 @@ describe('ReviewApiClient', () => {
     ).toMatchObject({ changed: true })
   })
 
-  it('renews CSRF once but requires an explicit retry of an unsafe request', async () => {
+  const csrfChallenge = () => Response.json({ error: { code: 'csrf' } }, { status: 403 })
+
+  it('renews CSRF once but requires an explicit retry of a request it cannot resend', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ error: { code: 'csrf' } }, { status: 403 }))
+      .mockResolvedValueOnce(csrfChallenge())
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
-    await expect(client.logout()).rejects.toMatchObject({ status: 403, code: 'csrf_renewed' })
+    const refused = client.logout()
+    await expect(refused).rejects.toBeInstanceOf(CsrfRenewedError)
+    await expect(refused).rejects.toMatchObject({ status: 403, code: 'csrf_renewed' })
+    expect(refusalCopy(await refused.catch((error: unknown) => error), 'fallback')).toBe(
+      'Your session was refreshed. Press again.',
+    )
+    expect(refusalCopy(new ApiError(403, 'csrf_renewed'), 'fallback')).toBe('fallback')
 
     expect(csrf.renew).toHaveBeenCalledOnce()
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -2015,6 +2025,95 @@ describe('ReviewApiClient', () => {
     expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('x-csrf-token')).toBe(
       renewedToken,
     )
+  })
+
+  it('resends an idempotency-keyed decision once with the renewed token', async () => {
+    const { default: payload } = await import('./descriptionAdviceFixture.json')
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(csrfChallenge())
+      .mockResolvedValueOnce(
+        Response.json({
+          schema_version: 'review-decision-v1',
+          invalidation_sequences: [],
+          confirmation: { status: 'confirmed', case: { ...payload, review_case_id: 'case-1' } },
+        }),
+      )
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+
+    const result = await client.recordDecision('case-1', {
+      destination: 'title',
+      outcome: 'keep_current',
+      proposalId: 'proposal-1',
+      targetFingerprint: 'fingerprint-1',
+      idempotencyKey: 'same-decision',
+    })
+
+    expect(result.confirmation.status).toBe('confirmed')
+    expect(csrf.renew).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [first, second] = fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers))
+    expect(first?.get('x-csrf-token')).toBe(token)
+    expect(second?.get('x-csrf-token')).toBe(renewedToken)
+    expect(second?.get('idempotency-key')).toBe('same-decision')
+    expect(first?.get('idempotency-key')).toBe('same-decision')
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body)
+  })
+
+  it.each([
+    ['validate', 2],
+    ['preview', 2],
+    ['drafts', 1],
+    ['activate', 1],
+    ['automatic-safety/pause', 1],
+  ])('resends policy %s only when it is side-effect free', async (action, sends) => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(csrfChallenge())
+      .mockResolvedValueOnce(Response.json({ policy_id: 'policy-2' }))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+
+    const command = client.policyCommand(action, { name: 'Draft' })
+    if (sends === 2) await expect(command).resolves.toEqual({ policy_id: 'policy-2' })
+    else await expect(command).rejects.toBeInstanceOf(CsrfRenewedError)
+    expect(csrf.renew).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(sends)
+  })
+
+  it('renews and resends at most once when the resend is refused again', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => csrfChallenge())
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+
+    await expect(client.policyCommand('validate', {})).rejects.toBeInstanceOf(CsrfRenewedError)
+    expect(csrf.renew).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a lost resend ambiguous rather than resending again', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(csrfChallenge())
+      .mockRejectedValueOnce(new TypeError('network'))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+
+    await expect(client.policyCommand('validate', {})).rejects.toBeInstanceOf(
+      AmbiguousMutationError,
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    [Response.json({ error: { code: 'origin' } }, { status: 403 }), 'origin'],
+    [new Response('not json', { status: 403 }), 'invalid_error_response'],
+  ])('treats a non-csrf 403 as an ordinary refusal with no renewal', async (response, code) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(response)
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+
+    const refused = client.policyCommand('validate', {})
+    await expect(refused).rejects.toMatchObject({ status: 403, code })
+    await expect(refused).rejects.not.toBeInstanceOf(CsrfRenewedError)
+    expect(csrf.renew).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('maps the server build-mismatch code to the controlled shell recovery', async () => {
@@ -2671,15 +2770,18 @@ it('sends an ordinary chooser authored command only to the bound authored select
     throw new Error('description fixture requires its candidate')
   const advice = field.descriptionAdvice
   const candidate = field.descriptionAdvice.candidate
-  const fetchMock = vi.fn<typeof fetch>(async () =>
-    Response.json({
-      schema_version: 'description-selection-ack-v1',
-      confirmation: { status: 'confirmed', case: { ...payload, review_case_id: 'case-1' } },
-      decision_id: 'human_decision_' + 'a'.repeat(64),
-      advised: true,
-      invalidation_sequences: [],
-    }),
-  )
+  // A rotated token is renewed and the keyed selection is sent once more (#1018).
+  const fetchMock = vi
+    .fn<typeof fetch>(async () =>
+      Response.json({
+        schema_version: 'description-selection-ack-v1',
+        confirmation: { status: 'confirmed', case: { ...payload, review_case_id: 'case-1' } },
+        decision_id: 'human_decision_' + 'a'.repeat(64),
+        advised: true,
+        invalidation_sequences: [],
+      }),
+    )
+    .mockResolvedValueOnce(Response.json({ error: { code: 'csrf' } }, { status: 403 }))
   const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
   await client.recordDecision('case-1', {
     destination: 'description',
@@ -2690,15 +2792,17 @@ it('sends an ordinary chooser authored command only to the bound authored select
     idempotencyKey: 'owner-choice-idempotency',
     authoredDescription: { candidateId: candidate.candidate_id, binding: advice.binding },
   })
-  const call = fetchMock.mock.calls[0]
-  if (!call?.[1]) throw new Error('description request was not sent')
-  const [url, options] = call
-  expect(url).toBe('/api/v1/review-cases/case-1/description-advice/selection')
-  expect(JSON.parse(options.body as string)).toEqual({
-    candidate_id: candidate.candidate_id,
-    binding: advice.binding,
-  })
-  expect(new Headers(options.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  for (const call of fetchMock.mock.calls) {
+    if (!call[1]) throw new Error('description request was not sent')
+    const [url, options] = call
+    expect(url).toBe('/api/v1/review-cases/case-1/description-advice/selection')
+    expect(JSON.parse(options.body as string)).toEqual({
+      candidate_id: candidate.candidate_id,
+      binding: advice.binding,
+    })
+    expect(new Headers(options.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
+  }
 })
 
 it.each([undefined, 'applying', 'verified'])(
