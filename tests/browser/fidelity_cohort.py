@@ -1019,6 +1019,8 @@ _COHORT_FIELD_LABELS = {
     "authors": "Authors",
     "cover": "Cover",
     "description": "Description",
+    "genres": "Genres",
+    "isbn": "ISBN",
     "policy": "Policy",
     "series": "Series",
     "title": "Title",
@@ -1051,6 +1053,25 @@ _COHORT_CHANGES = {
     ),
     "policy": ("3 changes activated", "3 changes activated", "Updated"),
 }
+# One preparation's automatic checks of a single work, across three fields.
+# They share the preparation key the ledger gathers them by into one row (#1281).
+CHECKED_WORK = "Synthetic checked work"
+CHECK_GROUP = "report_" + "c" * 64
+_COHORT_CHECKS = {
+    "title": (
+        "Kept Paper Moons over Larkspur Station",
+        "Kept Title as Paper Moons over Larkspur Station",
+        "Paper Moons over Larkspur Station",
+    ),
+    "isbn": ("Left ISBN unchanged", "Left ISBN unchanged", "9780000000002"),
+    "genres": ("Kept Fantasy", "Kept Genres as Fantasy", "Fantasy"),
+}
+
+
+def _cohort_change(work: str, destination: str) -> tuple[str, str, str]:
+    return (_COHORT_CHECKS if work == CHECKED_WORK else _COHORT_CHANGES)[destination]
+
+
 _COHORT_POLICY_CHANGES = [
     {
         "field": "Title layout",
@@ -1213,6 +1234,21 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             "policy",
             None,
         ),
+        *(
+            (
+                CHECKED_WORK,
+                "Household ebooks",
+                destination,
+                state,
+                "automatic_policy",
+                None,
+            )
+            for destination, state in (
+                ("title", "no_change_required"),
+                ("isbn", "recorded"),
+                ("genres", "recorded"),
+            )
+        ),
     ]
     return {
         "schema_version": "continuous-field-activity-v3",
@@ -1304,8 +1340,9 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "event_id": f"activity-event-{index}",
                 "event_type": _cohort_event_type(destination, origin, failure),
                 "category": _cohort_category(destination, origin, failure),
-                "change": _COHORT_CHANGES[destination][0],
-                "change_detail": _COHORT_CHANGES[destination][1],
+                "change": _cohort_change(work, destination)[0],
+                "change_detail": _cohort_change(work, destination)[1],
+                "check_group": CHECK_GROUP if work == CHECKED_WORK else None,
                 "field_label": _COHORT_FIELD_LABELS[destination],
                 "policy_changes": (
                     _COHORT_POLICY_CHANGES if destination == "policy" else []
@@ -1313,11 +1350,16 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "evidence": [
                     {
                         "label": "Previous value",
-                        "value": "Paper Moons: Larkspur"
+                        "value": _cohort_change(work, destination)[2]
+                        if work == CHECKED_WORK
+                        else "Paper Moons: Larkspur"
                         if destination == "title"
                         else "Not set",
                     },
-                    {"label": "New value", "value": _COHORT_CHANGES[destination][2]},
+                    {
+                        "label": "New value",
+                        "value": _cohort_change(work, destination)[2],
+                    },
                     {
                         "label": "Chosen by",
                         "value": "Automatic policy"

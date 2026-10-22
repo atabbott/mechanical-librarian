@@ -30,6 +30,8 @@ from tests.browser.fidelity_cohort import (
     UNBROKEN_TITLE_SEGMENT,
     rich_payload,
 )
+from tests.browser.test_live_updates_browser import _ROW_PROMISES, _WIDER_TEXT
+from tests.browser.test_review_browser import _POLICY_MID_WORD
 from tests.support.cover_images import synthetic_image
 
 # The outcome the review controller renders when a decision request is lost
@@ -1243,7 +1245,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     assert page_url == page.url
                     expect(page_number).to_be_focused()
                     page_size = page.get_by_role(
-                        "combobox", name="Rows per activity page"
+                        "combobox", name="Events per activity page"
                     )
                     page_size.click()
                     page.get_by_role("option", name="50 per page").click()
@@ -2557,3 +2559,160 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             for failure in failed_requests
             if failure[2] not in {"net::ERR_ABORTED", "net::ERR_FAILED"}
         ] == []
+
+
+_NAMED_CLIP = """node => {
+  const clipped = node.scrollWidth - node.clientWidth;
+  const box = node.getBoundingClientRect();
+  const viewport = document.documentElement.clientWidth;
+  const name = `${node.className || node.tagName} "${node.textContent.trim().slice(0, 32)}"`;
+  return [
+    ...(clipped > 0 ? [`${name} is clipped by ${clipped}px`] : []),
+    ...(box.left < 0 || box.right > viewport ? [`${name} is off screen`] : []),
+  ];
+}"""
+
+
+def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() -> None:
+    """One preparation's automatic checks read as one row that opens onto each
+    check, and an address naming no known filter says so (#1281)."""
+    bundle = load_react_asset_bundle(Path(os.environ["ML_REACT_ASSET_DIR"]))
+    assert isinstance(bundle, ReactAssetBundle)
+    widened = False
+
+    def fulfill(route: Route) -> None:
+        path = urlsplit(route.request.url).path
+        if path == "/api/v1/updates":
+            route.fulfill(status=204, body="")
+        elif path == "/api/v1/appearance":
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps({"reduced_motion": "follow_system"}),
+            )
+        elif path.startswith("/api/v1/"):
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps(rich_payload(route.request.url)),
+            )
+        elif path.startswith("/assets/review-app/"):
+            relative = path.removeprefix("/assets/review-app/")
+            css = relative.endswith(".css")
+            body = bundle.read(relative)
+            route.fulfill(
+                content_type="text/css" if css else "text/javascript",
+                body=body + _WIDER_TEXT.encode() if css and widened else body,
+            )
+        elif route.request.resource_type == "document":
+            route.fulfill(
+                content_type="text/html",
+                headers={
+                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                },
+                body=bundle.read(bundle.entry)
+                .decode("utf-8")
+                .replace(
+                    "<body>",
+                    f'<body data-build-identity="{_BUILD_IDENTITY}" data-csrf-token="{"b" * 32}">',
+                ),
+            )
+        else:
+            route.fulfill(status=404, body="")
+
+    capture = os.environ.get("ML_VISUAL_CAPTURE_DIR")
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.route("**/*", fulfill)
+        page.goto("https://react-platform.invalid/activity")
+        page.get_by_role("heading", name="Activity and recovery").wait_for()
+        checks = page.locator("article.is-checks")
+        toggle = checks.get_by_role("button")
+        expect(checks).to_have_count(1)
+        expect(checks).to_contain_text("Synthetic checked work")
+        expect(checks.get_by_label("Checked 3 fields, no changes")).to_be_visible()
+        expect(checks).to_contain_text("No change required")
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        expect(page.locator(".cm-activity-checks")).to_have_count(0)
+
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        members = page.locator(".cm-activity-checks > li")
+        expect(members).to_have_count(3)
+        expect(members.locator("article")).to_have_count(3)
+        assert members.locator("article").all_inner_texts()[1].count("Left ISBN") == 1
+        for index in range(3):
+            expect(
+                members.nth(index).get_by_role("button", name="Details")
+            ).to_have_count(1)
+        member = members.nth(1).get_by_role("button", name="Details")
+        member.click()
+        expect(member).to_have_attribute("aria-expanded", "true")
+        expect(members.nth(1).locator(".cm-activity-evidence")).to_be_visible()
+        member.click()
+        expect(members.nth(1).locator(".cm-activity-evidence")).to_have_count(0)
+
+        toggle.click()
+        expect(page.locator(".cm-activity-checks")).to_have_count(0)
+        expect(toggle).to_be_focused()
+        page.keyboard.press("Enter")
+        expect(members).to_have_count(3)
+        page.keyboard.press("Tab")
+        expect(members.nth(0).get_by_role("button", name="Details")).to_be_focused()
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Enter")
+        expect(page.locator(".cm-activity-checks")).to_have_count(0)
+        expect(toggle).to_be_focused()
+
+        notice = page.locator(".cm-activity-filter-notice")
+        expect(notice).to_have_text("")
+        page.goto("https://react-platform.invalid/activity?eventType=owner_choice")
+        expect(
+            page.get_by_role("status").filter(has_text="not recognised")
+        ).to_have_text("That activity filter is not recognised. Showing all events.")
+        page.get_by_role("button", name="Policy changes").click()
+        expect(notice).to_have_text("")
+
+        # Every row's promises, the new row's whole labels, and the R2
+        # pagination, with each glyph widened as hosted Linux fonts render.
+        widened = True
+        for scheme, motion in (("light", "no-preference"), ("dark", "reduce")):
+            page.emulate_media(color_scheme=scheme, reduced_motion=motion)
+            page.goto("https://react-platform.invalid/activity?eventType=owner_choice")
+            page.locator("article.is-checks").get_by_role("button").click()
+            expect(members).to_have_count(3)
+            expect(page.locator("html")).to_have_attribute("data-theme", scheme)
+            for width in (1440, 1100, 884, 761, 760, 390, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.evaluate("() => document.documentElement.offsetWidth")
+                where = f"{scheme} at {width}px"
+                assert page.evaluate(_ROW_PROMISES, width <= 760) == [], where
+                failures = [
+                    failure
+                    for selector in (
+                        ".is-checks .cm-activity-change",
+                        ".is-checks button",
+                        ".cm-activity-filter-notice",
+                        ".cm-activity-pagination-nav button",
+                    )
+                    for node in page.locator(selector).all()
+                    for failure in node.evaluate(_NAMED_CLIP)
+                ]
+                assert failures == [], f"{where}: {failures}"
+                split = page.evaluate(
+                    _POLICY_MID_WORD,
+                    ".is-checks .cm-activity-change, .cm-activity-filter-notice, "
+                    ".cm-activity-pagination-nav",
+                )
+                assert split == [], f"{where}: words split {split}"
+                document = page.evaluate("() => document.documentElement.scrollWidth")
+                assert document <= width, f"{where}: the page is {document}px wide"
+                if capture is not None:
+                    Path(capture).mkdir(parents=True, exist_ok=True)
+                    page.screenshot(
+                        path=str(
+                            Path(capture) / f"activity-checks-{width}-{scheme}.png"
+                        ),
+                        full_page=True,
+                    )

@@ -2519,7 +2519,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 expect(
                     page.get_by_role("spinbutton", name="Activity page number")
                 ).to_be_focused()
-                rows = page.get_by_role("combobox", name="Rows per activity page")
+                rows = page.get_by_role("combobox", name="Events per activity page")
                 rows.click()
                 with page.expect_console_message(
                     predicate=lambda message: (
