@@ -45,6 +45,28 @@ from tests.unit.test_pending_field_effect_lookup import (  # noqa: F401
 )
 
 CONSENT_KEYS = ("backup_ready", "capabilities", "configured_libraries", "waiting")
+BASIS_KEYS = ("capabilities", "configured_libraries")
+
+
+def _basis(view: dict[str, object]) -> object:
+    """The browser's `consentBasis` over one view, less the policy it adds (#1279)."""
+    libraries = cast("list[dict[str, str]]", view["configured_libraries"])
+    capabilities = cast("list[dict[str, object]]", view["capabilities"])
+    return (
+        sorted((item["connection"], item["library"]) for item in libraries),
+        sorted(
+            (
+                item["connection"],
+                item["library"],
+                item["state"],
+                sorted(
+                    (entry["destination"], entry["state"], entry["consented"])
+                    for entry in cast("list[dict[str, object]]", item["destinations"])
+                ),
+            )
+            for item in capabilities
+        ),
+    )
 
 
 def _configuration() -> ApplicationConfiguration:
@@ -123,9 +145,18 @@ def test_the_consent_read_states_what_activity_states_in_every_queue_state(
     writer, _, value = readers
     states: list[str] = []
     unavailable: list[str] = []
+    bases: list[object] = []
 
     def step() -> dict[str, object]:
         consent = _assert_oracle(value.permissions, value.history)
+        # The browser keeps a permission draft while its basis holds, and reads
+        # it off readiness at check time but off this read at confirmation, so
+        # the two must agree at rest (#1279).
+        readiness = value.permissions.activity_permission_readiness()
+        assert {key: readiness[key] for key in BASIS_KEYS} == {
+            key: consent[key] for key in BASIS_KEYS
+        }
+        bases.append(_basis(consent))
         # The same projection answers on the history reader's own lock.
         assert value.history.activity_consent() == consent
         waiting = cast("dict[str, int]", consent["waiting"])
@@ -167,6 +198,10 @@ def test_the_consent_read_states_what_activity_states_in_every_queue_state(
     step()
     assert states == ["off", "off", "complete", "enabled", "applying", "complete"]
     assert unavailable == ["allowed", "connection_unavailable", *["allowed"] * 4]
+    # The queue moving leaves the basis alone; a connection condition and a
+    # grant each change it.
+    assert bases[0] != bases[1] and bases[0] != bases[2]
+    assert bases[2:] == [bases[2]] * 4
 
 
 def test_the_consent_read_takes_no_activity_history_step(
