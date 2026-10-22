@@ -89,6 +89,22 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Degraded candidate successor (#1283)
+
+The current F19a, F20 and F46 records move to semantic revision 60 over
+predecessor `8bed9dff`, whose record bytes the archive index keeps. Their
+runtime digests join the prior-manifest histories with their frozen permission
+sets, so decisions minted under them stay readable without current authority.
+Operation membership and historical measurements are unchanged.
+
+Only automatic authority narrows. An author or narrator candidate that only
+strips a current member's accents now preserves that spelling, so a former
+replacement is a preservation. Any other contributor candidate that strips a
+current member's accents, a credit-prefixed contributor candidate, a title
+candidate with an announcement part and a mostly quoted praise description are
+withdrawn from automatic selection and recommendation and remain owner choices.
+Proposal policy v36 and decision policy v23 require a clean rebuild.
+
 ## ASIN-only plan successor (#1306)
 
 The current F19a, F20 and F46 records move to semantic revision 59 over

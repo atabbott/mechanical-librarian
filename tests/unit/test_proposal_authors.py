@@ -5,6 +5,7 @@ package-creator placeholder.
 
 import pytest
 
+from mechanical_librarian.domain import proposal_set
 from mechanical_librarian.domain.field_value_comparison import creator_list_reordered
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -1162,3 +1163,126 @@ def test_a_recordings_author_reorder_preserves_its_target(
     assert outcome is None or result.outcome is outcome
     # The preserving alternative states the target's own order.
     assert outcome is None or result.alternatives[0].value.value == target
+
+
+@pytest.mark.parametrize(
+    "current,candidate,stripped",
+    (
+        ("Seán Example", "Sean Example", True),
+        ("Seán Example", "SEAN EXAMPLE", True),
+        ("Séan Example", "Seán Example", True),
+        ("Zoë Sample", "Zoe Sample", True),
+        ("Sean Example", "Seán Example", False),
+        ("Seán Example", "Seán Example", False),
+        ("Seán Example", "Shaun Example", False),
+        ("Seán Example", "Sean Examples", False),
+        ("Sean Example", "Sean Example", False),
+    ),
+)
+def test_a_mark_stripped_member_drops_a_current_mark_from_the_same_letters(
+    current: str, candidate: str, stripped: bool
+) -> None:
+    assert proposal_set.mark_stripped_member(current, candidate) is stripped
+
+
+@pytest.mark.parametrize(
+    "current,candidate,kept",
+    (
+        (("Seán Example",), ("Sean Example",), ("Seán Example",)),
+        (
+            ("Seán Example",),
+            ("Sean Example", "New Reader"),
+            ("Seán Example", "New Reader"),
+        ),
+        (
+            ("Zoë Sample", "Seán Example"),
+            ("Sean Example", "Zoe Sample"),
+            ("Seán Example", "Zoë Sample"),
+        ),
+        # The first equal-base member pairs; the second is left as sourced.
+        (
+            ("Seán Example",),
+            ("Seán Example", "Sean Example"),
+            ("Seán Example", "Sean Example"),
+        ),
+        (("Sean Example",), ("Seán Example",), ("Seán Example",)),
+        (("Seán Example",), ("Shaun Example",), ("Shaun Example",)),
+    ),
+    ids=("strip", "membership", "reorder", "paired_once", "adds_marks", "other"),
+)
+def test_incumbent_spellings_pair_each_current_member_at_most_once(
+    current: tuple[str, ...], candidate: tuple[str, ...], kept: tuple[str, ...]
+) -> None:
+    assert proposal_set._incumbent_spellings(current, candidate) == kept
+
+
+@pytest.mark.parametrize(
+    "target,sourced,assessment,value",
+    (
+        (
+            ("Seán Example",),
+            ("Sean Example",),
+            ProposalAssessment.PRESERVES_TARGET,
+            ("Seán Example",),
+        ),
+        # Only a respelling that preserves the target states its spelling.
+        (
+            ("Seán Example",),
+            ("Sean Example", "New Writer"),
+            ProposalAssessment.REPLACES_TARGET,
+            ("Sean Example", "New Writer"),
+        ),
+        (
+            ("Sean Example",),
+            ("Seán Example",),
+            ProposalAssessment.REPLACES_TARGET,
+            ("Seán Example",),
+        ),
+    ),
+    ids=("mark_strip", "membership_change_keeps_its_own", "adds_marks"),
+)
+def test_an_ebook_mark_stripped_author_keeps_the_incumbent_spelling(
+    target: tuple[str, ...],
+    sourced: tuple[str, ...],
+    assessment: ProposalAssessment,
+    value: tuple[str, ...],
+) -> None:
+    providers = tuple(
+        _provider(
+            name,
+            name + "-edition",
+            tuple(
+                _claim(
+                    name,
+                    name + "-edition",
+                    ClaimKind.CREATOR,
+                    author,
+                    scope=ClaimScope.WORK,
+                    role="author",
+                    order=index,
+                )
+                for index, author in enumerate(sourced)
+            ),
+            authority=name,
+        )
+        for name in ("hardcover", "open_library")
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    None,
+                    authors=TargetField(
+                        TargetDestination.AUTHORS, TargetFieldState.VALUE, target
+                    ),
+                ),
+                providers=providers,
+            )
+        ),
+        TargetDestination.AUTHORS,
+    )
+    assert [(alt.assessment, alt.value.value) for alt in result.alternatives] == [
+        (assessment, value)
+    ]
+    if assessment is ProposalAssessment.PRESERVES_TARGET:
+        assert result.outcome is ProposalOutcome.KEEP

@@ -151,6 +151,18 @@ the same complete cast. A missing or malformed cast cannot be omitted from that
 agreement, and narrator agreement grants no identifier authority. A narrator
 replacement whose cast shares nobody with the recording's own file credits
 reaches the owner, because it points at another recording.
+An author or narrator candidate that only drops or moves the accents of the
+current members, on either medium, names the same people, so it is a
+preservation that keeps the current spelling. Any other candidate that drops or
+moves a current member's accents, such as one that also adds or replaces
+someone, keeps its own spelling and is never automatic; it reaches the owner
+unchanged. A candidate that adds accents is still a replacement. A contributor
+candidate any of whose members is a credit line ("Narrated by …", "Read by",
+"Narrator: …") is never automatic and stays the provider's exact text for the
+owner to choose; a credit-line incumbent is still replaced by a plain cast.
+Because the refusal reads the candidate, a credit-line incumbent that a source
+confirms word for word is no longer kept automatically. The field says why, and
+it joins the attention queue only when another value is offered (#1283).
 
 Title and author preservation records one durable no-change, removes the
 decision from pending application work, and calls no target or effect guards.
@@ -167,6 +179,12 @@ equivalent current value do not create a choice, and Ignore remains excluded.
 
 Audiobook subtitles may fill an empty value or replace a recognized whole-field
 award, bestseller or adaptation announcement with supported descriptive text.
+A title candidate on either medium with any part (between a colon, a spaced
+dash, a comma, a semicolon or an enclosure) that is such an announcement is
+never automatic and remains the owner's choice; a current title holding one may
+still be replaced by a plain title. A current title holding one that a source
+confirms word for word is no longer kept automatically. The field says why, and
+it joins the attention queue only when another value is offered (#1283).
 Descriptive collisions and materially different subtitles remain visible. A
 corroborated title/subtitle split requires both options Automatic and both
 current decisions and consents. One PATCH applies the pair, both read-backs are
@@ -193,6 +211,11 @@ may fill it and a format-only candidate is no candidate and never makes a real
 genre list ambiguous; adding a genre beside a format-only list is recorded as a
 fill (`genres:add:audiobook_genres_fill`); a list naming any real genre is kept.
 Ebook genres are unchanged.
+On both media, a description candidate that is mostly attributed praise -- quoted
+spans with their attribution holding at least half its non-whitespace
+characters, one attributed by a dash -- or that opens with "Praise for" is never
+automatic or recommended, and stays choosable. A praise incumbent is not a
+placeholder, so it is preserved (#1283).
 Compatible complete explicit tag lists may form a source-bound union
 for fill/Add, preserving owner members and all contributing references. Tags
 remain off by default. Tag replacement retains its separate election and never

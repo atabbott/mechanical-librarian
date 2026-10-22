@@ -2460,3 +2460,414 @@ def test_a_recordings_author_reorder_is_a_preservation_not_a_write(
         report, ("contributor_names",), {"contributor_names": "canonical"}
     )["authors"]
     assert _routing(authors) == routing
+
+
+_CONTRIBUTORS = {"contributor_names": "canonical"}
+
+
+@pytest.mark.parametrize(
+    "source,target,routing,kept",
+    (
+        (
+            ("Sean Example",),
+            ("Seán Example",),
+            ("automatic", "keep_current", "canonical:audiobook_narrators_preserve"),
+            ("Seán Example",),
+        ),
+        # A cast that also adds someone keeps its own spelling and is never
+        # automatic, because it strips a current member's marks.
+        (
+            ("Sean Example", "New Reader"),
+            ("Seán Example",),
+            ("automatic", "abstention", "canonical:audiobook_narrators_replace"),
+            ("Sean Example", "New Reader"),
+        ),
+        # A candidate that adds marks is still a replacement.
+        (
+            ("Seán Example",),
+            ("Sean Example",),
+            ("automatic", "candidate", "canonical:audiobook_narrators_replace"),
+            ("Seán Example",),
+        ),
+    ),
+    ids=("mark_strip", "membership_change", "adds_marks"),
+)
+def test_a_mark_stripped_narrator_keeps_the_incumbent_spelling(
+    source, target, routing, kept
+):
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=source, target_narrators=target, local_narrators=()
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert _routing(narrators) == routing
+    (result,) = (
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.NARRATORS
+    )
+    assert [value.value.value for value in result.alternatives] == [kept]
+
+
+def test_a_mark_stripped_recording_author_is_preserved():
+    report = synthetic_audiobook_bibliographic_report(
+        source_authors=("Zoe Sample",), target_authors=("Zoë Sample",)
+    )
+    authors = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "authors"
+    ]
+    assert _routing(authors) == (
+        "automatic",
+        "keep_current",
+        "canonical:audiobook_authors_preserve",
+    )
+
+
+@pytest.mark.parametrize(
+    "source,target",
+    (
+        (("Narrated by Example Reader",), ("Example Reader",)),
+        (("Read by Example Reader", "Other Reader"), ()),
+        (("Narrator: Example Reader",), ("Old Reader",)),
+    ),
+    ids=("replace", "fill", "label"),
+)
+def test_a_credit_prefixed_narrator_candidate_is_never_automatic(source, target):
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=source, target_narrators=target
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert narrators.disposition == "abstention"
+    assert narrators.reason_code == "candidate_credit_prefixed"
+    assert not narrators.combination_ids
+    # The candidate stays the provider's exact text for the owner to choose.
+    (result,) = (
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.NARRATORS
+    )
+    assert [value.value.value for value in result.alternatives] == [source]
+
+
+def test_a_credit_prefixed_incumbent_is_still_cleaned_by_a_plain_cast():
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=("Example Reader",),
+        target_narrators=("Narrated by Example Reader",),
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert _routing(narrators) == (
+        "automatic",
+        "candidate",
+        "canonical:audiobook_narrators_replace",
+    )
+
+
+_PROMOTIONAL: dict[str, dict[str, Any]] = {
+    "promotional_candidate": {
+        "source_title": "Synthetic Journey: Now a Major Motion Picture",
+        "source_subtitle": None,
+    },
+    "promotional_incumbent": {
+        "title": "Synthetic Journey: The Number One Bestseller",
+        "source_title": "Synthetic Journey",
+        "source_subtitle": None,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "variant,disposition",
+    (("promotional_candidate", "abstention"), ("promotional_incumbent", "candidate")),
+)
+def test_a_promotional_title_candidate_is_never_automatic(variant, disposition):
+    report = synthetic_audiobook_bibliographic_report(**_PROMOTIONAL[variant])
+    title = _recording_outcomes(report, ("title_layout",))["title"]
+    assert _routing(title) == (
+        "automatic",
+        disposition,
+        "title_and_subtitle:audiobook_title_replace",
+    )
+    if disposition == "abstention":
+        assert title.reason_code == "candidate_promotional_title"
+
+
+@pytest.mark.parametrize(
+    "source,target,local,reason",
+    (
+        (
+            ("Sean Example", "New Reader"),
+            ("Seán Example",),
+            ("Rory Sample",),
+            "insufficient_support",
+        ),
+        (
+            ("Sean Example", "New Reader"),
+            ("Seán Example",),
+            ("Seán Example",),
+            "candidate_strips_marks",
+        ),
+        (
+            ("Sean Example", "New Reader"),
+            ("Seán Example", "Old Reader"),
+            ("Seán Example",),
+            "insufficient_support",
+        ),
+    ),
+    ids=("disjoint_local", "accented_local", "replaced_member"),
+)
+def test_a_mark_stripping_cast_change_is_never_written_automatically(
+    source, target, local, reason
+):
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=source, target_narrators=target, local_narrators=local
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert narrators.disposition in {"abstention", "manual"}
+    # A file tag that differs from the current cast is a proposed change of
+    # its own and lacks support, so the support reason explains the refusal;
+    # one equal to the current cast proposes nothing and leaves the accent rule.
+    assert narrators.reason_code == reason
+    (result,) = (
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.NARRATORS
+    )
+    # The provider cast is offered as sourced, never respelled.
+    assert source in [value.value.value for value in result.alternatives]
+
+
+def test_a_pure_strip_beside_the_files_accented_tag_is_one_preservation():
+    report = synthetic_audiobook_bibliographic_report(
+        source_narrators=("Sean Example",),
+        target_narrators=("Seán Example",),
+        local_narrators=("Seán Example",),
+    )
+    narrators = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        "narrators"
+    ]
+    assert _routing(narrators) == (
+        "automatic",
+        "keep_current",
+        "canonical:audiobook_narrators_preserve",
+    )
+    (result,) = (
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.NARRATORS
+    )
+    # The respelled provider cast and the file's own tag are one alternative.
+    assert [value.value.value for value in result.alternatives] == [("Seán Example",)]
+    assert len(result.alternatives[0].evidence_references) >= 2
+
+
+@pytest.mark.parametrize("destination", ("narrators", "authors"))
+def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination):
+    members = ("Sean Example", "Seán Example")
+    report = (
+        synthetic_audiobook_bibliographic_report(
+            source_narrators=members, target_narrators=("Seán Example",)
+        )
+        if destination == "narrators"
+        else synthetic_audiobook_bibliographic_report(
+            source_authors=members, target_authors=("Seán Example",)
+        )
+    )
+    outcome = _recording_outcomes(report, ("contributor_names",), _CONTRIBUTORS)[
+        destination
+    ]
+    assert outcome.disposition in {"abstention", "manual"}
+    assert outcome.reason_code == "candidate_strips_marks"
+    (result,) = (
+        value
+        for value in evaluate_report(report).results
+        if value.destination.value == destination
+    )
+    assert [value.value.value for value in result.alternatives] == [members]
+
+
+@pytest.mark.parametrize(
+    "variant,destination,automatic,message",
+    (
+        (
+            {
+                "source_narrators": ("Narrated by Example Reader",),
+                "target_narrators": ("Example Reader",),
+            },
+            "narrators",
+            "contributor_names",
+            'The proposed value carries a credit label such as "Narrated by", so '
+            "automatic handling never writes it.",
+        ),
+        (
+            {
+                "source_narrators": ("Sean Example", "New Reader"),
+                "target_narrators": ("Seán Example",),
+            },
+            "narrators",
+            "contributor_names",
+            "The proposed value drops accents from a name you already have, so "
+            "automatic handling never writes it.",
+        ),
+        (
+            {
+                "source_narrators": ("Sean Example", "New Reader"),
+                "target_narrators": ("Seán Example",),
+                "local_narrators": ("Seán Example",),
+            },
+            "narrators",
+            "contributor_names",
+            "The proposed value drops accents from a name you already have, so "
+            "automatic handling never writes it.",
+        ),
+        (
+            {
+                "source_narrators": ("Sean Example", "New Reader"),
+                "target_narrators": ("Seán Example",),
+                "local_narrators": ("Rory Sample",),
+            },
+            "narrators",
+            "contributor_names",
+            "The retained evidence is not strong enough for automatic handling to "
+            "choose a value.",
+        ),
+        (
+            _PROMOTIONAL["promotional_candidate"],
+            "title",
+            "title_layout",
+            'The proposed title carries an announcement such as "Now a Major '
+            'Motion Picture", so automatic handling never writes it.',
+        ),
+    ),
+    ids=(
+        "credit_prefixed",
+        "strips_marks",
+        "strips_marks_beside_the_files_accented_tag",
+        "insufficient_support_beside_an_unsupported_tag",
+        "promotional_title",
+    ),
+)
+def test_a_degraded_candidate_tells_the_owner_why_it_was_withheld(
+    tmp_path, variant, destination, automatic, message
+):
+    from contextlib import closing
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.audiobook_reports import publish_audiobook_preview
+
+    with closing(open_repository(tmp_path / "degraded.sqlite3")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            synthetic_audiobook_bibliographic_report(**variant),
+            (automatic,),
+            selected_options=_CONTRIBUTORS
+            if automatic == "contributor_names"
+            else None,
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        field = next(
+            value
+            for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if value["destination"] == destination
+        )
+    assert field["automatic_decision"] is None
+    assert field["automatic_withheld_reason"] == message
+    assert field["needs_attention"]
+
+
+def _confirmed_promotional_title_report():
+    from tests.support.proposal_evidence import _claim, _fields, _provider, _report
+
+    title = "Synthetic Journey: Now a Major Motion Picture"
+    source = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue", "edition-1", ClaimKind.TITLE, title, scope=ClaimScope.WORK
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.SUBTITLE,
+                "A Novel",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+                order=1,
+            ),
+        ),
+    )
+    return _report(
+        fields=_fields(
+            title,
+            subtitle=TargetField(TargetDestination.SUBTITLE, TargetFieldState.MISSING),
+        ),
+        providers=(source,),
+    )
+
+
+@pytest.mark.parametrize(
+    "report,destination,automatic,message",
+    (
+        (
+            _confirmed_promotional_title_report,
+            "title",
+            "title_layout",
+            'The current title carries an announcement such as "Now a Major '
+            'Motion Picture", so automatic handling never confirms it.',
+        ),
+        (
+            lambda: synthetic_audiobook_bibliographic_report(
+                source_narrators=("Narrated by Example Reader",),
+                target_narrators=("Narrated by Example Reader",),
+            ),
+            "narrators",
+            "contributor_names",
+            'The current value carries a credit label such as "Narrated by", so '
+            "automatic handling never confirms it.",
+        ),
+    ),
+    ids=("promotional_title", "credit_prefixed_cast"),
+)
+def test_a_confirmed_degraded_incumbent_is_explained_as_the_current_value(
+    tmp_path, report, destination, automatic, message
+):
+    from contextlib import closing
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.audiobook_reports import publish_audiobook_preview
+
+    with closing(open_repository(tmp_path / "incumbent.sqlite3")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report(),
+            (automatic,),
+            selected_options=_CONTRIBUTORS
+            if automatic == "contributor_names"
+            else None,
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        field = next(
+            value
+            for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if value["destination"] == destination
+        )
+    # Nothing is proposed, so the sentence speaks of the value itself and the
+    # field neither confirms it automatically nor queues an empty choice.
+    assert field["automatic_decision"] is None
+    assert field["automatic_withheld_reason"] == message
+    assert field["proposed_values"] == []
+    assert field["decision_actions"] == []
+    assert not field["needs_attention"]

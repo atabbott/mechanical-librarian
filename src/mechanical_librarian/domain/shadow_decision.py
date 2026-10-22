@@ -8,10 +8,18 @@ import re
 from dataclasses import dataclass
 from typing import Any, TypedDict, cast
 
+from mechanical_librarian.domain.field_value_comparison import (
+    PRAISE_OPENING,
+    PRAISE_QUOTED_SHARE,
+    contributor_credit_prefixed,
+    promotional_announcement,
+)
 from mechanical_librarian.domain.proposal_set import (
+    _TITLE_PART_BOUNDARY,
     DECORATION_TIDY_TITLE_REASONS,
     EVIDENCE_LED_TITLE_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
+    mark_stripped_member,
 )
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_review_actions import (
@@ -23,7 +31,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v22"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v23"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -39,6 +47,9 @@ _REASON_CODES = frozenset(
     {
         "ambiguous_eligible_actions",
         "bibliographic_combination_unresolved",
+        "candidate_credit_prefixed",
+        "candidate_promotional_title",
+        "candidate_strips_marks",
         "evidence_sufficiency_manual",
         "insufficient_support",
         "isbn_title_material_conflict",
@@ -49,6 +60,15 @@ _REASON_CODES = frozenset(
         "unsupported_destination",
     }
 )
+# Both media's synopsis rules refuse the same praise shape (#1283).
+_PRAISE_RULE = {
+    "mostly_quoted_praise_refused": True,
+    "praise_quote_block": "balanced_double_quoted_span_and_dash_attribution",
+    "praise_attribution_ends": ["line_end", "next_quote", "full_stop_after_word"],
+    "praise_quoted_non_whitespace_share_minimum": PRAISE_QUOTED_SHARE,
+    "praise_dash_attribution": ["em_dash", "en_dash", "spaced_hyphen"],
+    "praise_opening": PRAISE_OPENING,
+}
 _RULE_TABLE = {
     "scalar_incumbent_title": {
         "sole_eligible_candidate_equals_current": True,
@@ -72,6 +92,7 @@ _RULE_TABLE = {
         "source_record_tiebreak": ["provider", "candidate_identity"],
         "safety_identity_and_source_conflict_precede_fitness": True,
         "explicit_owner_choice_unchanged": True,
+        **_PRAISE_RULE,
     },
     "audiobook_synopsis": {
         "execution": "rich_metadata_preview",
@@ -110,6 +131,7 @@ _RULE_TABLE = {
         "optional_final_full_stop": True,
         "preserve_other_safe_plain_incumbents": True,
         "safety_and_identity_precede_comparison": True,
+        **_PRAISE_RULE,
     },
     "audiobook_genres": {
         "execution": "rich_metadata_preview",
@@ -172,6 +194,33 @@ _RULE_TABLE = {
         "target_only_preservation": 0,
         "authors": "complete_set_proposal_sufficiency_and_recording_or_local_or_two_independent_providers",
         "unique_action_required": True,
+        "credit_prefixed_contributor_refused_for": ["authors", "narrators"],
+        "mark_stripping_contributor_refused_for": ["authors", "narrators"],
+        "mark_stripping_contributor": "member_equal_to_a_current_member_with_marks_folded_and_losing_one",
+        "degraded_candidate_reasons": [
+            "candidate_credit_prefixed",
+            "candidate_promotional_title",
+            "candidate_strips_marks",
+        ],
+        "degraded_preservation_refused_in_combination": True,
+        "credit_prefixed_contributor": [
+            "credit_line_role_by_names",
+            "credit_line_label_colon_names",
+            "credit_line_bare_role_by_optional_colon",
+        ],
+        "promotional_title_part_refused": True,
+        "promotional_title_part": [
+            "winner_of_award_or_prize_optional_year",
+            "optionally_qualified_bestseller",
+            "now_a_major_motion_picture_film_or_series",
+        ],
+        "title_parts_split_at": [
+            "enclosure",
+            "colon",
+            "spaced_dash",
+            "comma",
+            "semicolon",
+        ],
     },
     "combinations": {
         "exact_destination_order": list(_COMBINATION_DESTINATIONS),
@@ -583,6 +632,69 @@ def _candidate_for_action(
     return matches[0] if len(matches) == 1 else None
 
 
+def _packet_value(wrapped: object) -> object:
+    return wrapped.get("value") if type(wrapped) is dict else wrapped
+
+
+def _current_value(proposal: dict[str, object]) -> object:
+    return _packet_value(
+        cast("dict[str, object]", proposal["current"]).get("value")
+        if type(proposal["current"]) is dict
+        else None
+    )
+
+
+def _degraded_candidate_reason(
+    proposal: dict[str, object], candidate: dict[str, object]
+) -> str | None:
+    """Name why a candidate would degrade its field, if it would (#1283).
+
+    A contributor member that is a credit line, a contributor member that
+    strips a current member's marks, or a title part that is an announcement
+    is never automatic; the candidate stays the owner's choice, unrewritten.
+    """
+    destination = proposal["destination"]
+    value = _packet_value(candidate["value"])
+    current = _current_value(proposal)
+    if destination in {"authors", "narrators"} and type(value) is list:
+        if any(contributor_credit_prefixed(member) for member in value):
+            return "candidate_credit_prefixed"
+        if type(current) is list and any(
+            type(member) is str
+            and type(incumbent) is str
+            and mark_stripped_member(incumbent, member)
+            for member in value
+            for incumbent in current
+        ):
+            return "candidate_strips_marks"
+    if (
+        destination == "title"
+        and type(value) is str
+        and any(
+            promotional_announcement(part) for part in _TITLE_PART_BOUNDARY.split(value)
+        )
+    ):
+        return "candidate_promotional_title"
+    return None
+
+
+def _degraded_reason(proposal: dict[str, object]) -> str | None:
+    """Name a degraded refusal only when it blocked every proposed change (#1283).
+
+    A clean candidate equal to the current value proposes no change, so it
+    never displaces the refusal that blocked the candidates that do.
+    """
+    candidates = cast("list[dict[str, object]]", proposal["candidates"])
+    current = _current_value(proposal)
+    reasons = [_degraded_candidate_reason(proposal, value) for value in candidates]
+    if any(
+        reason is None and _packet_value(value["value"]) != current
+        for reason, value in zip(reasons, candidates, strict=True)
+    ):
+        return None
+    return min((reason for reason in reasons if reason is not None), default=None)
+
+
 def _candidate_is_eligible(
     packet: ShadowReviewPacket,
     proposal: dict[str, object],
@@ -620,6 +732,8 @@ def _candidate_is_eligible(
         and len(reasons) == 1
         and reasons[0] in DECORATION_TIDY_TITLE_REASONS
     )
+    if _degraded_candidate_reason(proposal, candidate) is not None:
+        return False
     recording_support = summary["recording_support"]
     narrator_agreement = destination == "narrators" and summary["narrator_agreement"]
     field_support = recording_support or narrator_agreement or work_publication
@@ -803,6 +917,8 @@ def _base_reason(
         return "target_only_preservation"
     if not eligible:
         candidates = cast("list[dict[str, object]]", proposal["candidates"])
+        if (degraded := _degraded_reason(proposal)) is not None:
+            return degraded
         if proposal["destination"] == "authors":
             return (
                 "insufficient_support"
@@ -899,7 +1015,14 @@ def _combination_selections(
                     and action.destination == destination
                     and action.recommendation != "manual"
                 )
-                if destination == _COMBINATION_SELECTED_DESTINATION and all_preserve
+                if destination == _COMBINATION_SELECTED_DESTINATION
+                and all_preserve
+                and not any(
+                    _degraded_candidate_reason(proposal, candidate) is not None
+                    for candidate in cast(
+                        "list[dict[str, object]]", proposal["candidates"]
+                    )
+                )
                 else tuple(
                     action
                     for action in catalogue.actions
@@ -1075,7 +1198,7 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
                 catalogue, proposal_id
             )
             reason = (
-                "bibliographic_combination_unresolved"
+                _degraded_reason(proposal) or "bibliographic_combination_unresolved"
                 if combination_failed or proposal_id not in combination_actions
                 else _base_reason(proposal, (action,))
             )

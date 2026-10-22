@@ -379,6 +379,82 @@ def _credit_names(
     return len(names)
 
 
+def contributor_credit_prefixed(value: object) -> bool:
+    """Whether one contributor member reads as a credit line, not a name.
+
+    The canonical member is a role verb and "by" with or without names
+    ("Narrated by Example Reader", "Read by:"), or a role label and a colon
+    ("Narrator: Example Reader"), by the synopsis credit grammar. A name that
+    merely holds a role word, such as "Byron Read", is a name. Pure, and never
+    rewrites the value (#1283).
+    """
+    if type(value) is not str:
+        return False
+    text = canonical_text(TargetDestination.NARRATORS, value)
+    return any(
+        pattern.fullmatch(text) is not None
+        for pattern in (_CREDIT_BY, _CREDIT_LABEL, _CREDIT_BARE)
+    )
+
+
+def promotional_announcement(value: object) -> bool:
+    """Recognize a whole-segment announcement while retaining descriptive wording."""
+    if type(value) is not str:
+        return False
+    normalized = " ".join(value.split())
+    return (
+        re.fullmatch(
+            r"(?:winner of (?:the )?.+\b(?:award|prize)(?: \d{4})?"
+            r"|(?:the |a |an )?(?:(?:international|new york times|sunday times|#1|number one) )?bestseller"
+            r"|now (?:a|an) (?:major )?(?:motion picture|film|television series|tv series|netflix series))",
+            normalized,
+            re.IGNORECASE,
+        )
+        is not None
+    )
+
+
+# A quoted span and the dash attribution that may follow it. The attribution
+# stops at a line end, the next quote, or a full stop that ends a word longer
+# than one letter, so an initial stays inside it and a following synopsis
+# sentence does not.
+_QUOTE_BLOCK: Final = re.compile(
+    r'(?:"[^"]+"|“[^“”]+”)'
+    r'(?P<attribution>(?:\s*[—–]|\s+-\s)(?:[^"“\n.]|(?<=\b[^\W\d_])\.)*)?'
+)
+PRAISE_QUOTED_SHARE: Final = 0.5
+PRAISE_OPENING: Final = "praise for"
+
+
+def mostly_quoted_praise(value: object) -> bool:
+    """Whether a description is a run of attributed praise, not a synopsis.
+
+    A quote block is one balanced straight or curly double-quoted span with
+    the dash attribution after it, read as the comment above `_QUOTE_BLOCK`
+    bounds it. The value is praise when its blocks
+    hold at least half its non-whitespace characters and at least one block is
+    attributed by a dash (an em or en dash, or a spaced hyphen), or when its
+    canonical text opens with "praise for". Shape only: an attributed dialogue
+    excerpt can read as praise, and the owner may still choose it. Pure, and
+    never raises (#1283).
+    """
+    if type(value) is not str:
+        return False
+    folded = " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+    if folded.startswith(PRAISE_OPENING):
+        return True
+    blocks = list(_QUOTE_BLOCK.finditer(value))
+    quoted = sum(
+        not character.isspace() for block in blocks for character in block.group()
+    )
+    total = sum(not character.isspace() for character in value)
+    return (
+        total > 0
+        and quoted >= PRAISE_QUOTED_SHARE * total
+        and any(block.group("attribution") for block in blocks)
+    )
+
+
 def plain_audiobook_synopsis(value: object) -> TypeGuard[str]:
     """Admit plain incumbent/candidate text before any replacement comparison."""
     if type(value) is not str:
@@ -461,14 +537,19 @@ def _work_genres(value: object) -> frozenset[str] | None:
 
 __all__ = [
     "DESCRIPTION_VISIBLE_CUTOFFS",
+    "PRAISE_OPENING",
+    "PRAISE_QUOTED_SHARE",
     "SYNOPSIS_MARKUP_TAG",
     "audiobook_format_only_genres",
     "audiobook_format_word",
     "canonical_text",
+    "contributor_credit_prefixed",
     "creator_list_reordered",
     "description_alternative_immaterial",
     "genre_alternative_immaterial",
+    "mostly_quoted_praise",
     "plain_audiobook_synopsis",
+    "promotional_announcement",
     "recognized_synopsis_placeholder",
     "values_match",
 ]

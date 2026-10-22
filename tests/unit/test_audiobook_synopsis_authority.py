@@ -1572,3 +1572,69 @@ def test_a_format_only_genre_list_is_filled_through_the_persisted_decision(
             if json.loads(document)["destination"] == "genres"
         )
     assert (decision.outcome, decision.policy_option) == (outcome, option)
+
+
+_PRAISE = (
+    '"A triumph of quiet suspense." — Example Review '
+    '"I could not put it down." — Sample Times'
+)
+
+
+def test_praise_is_never_recommended_but_stays_choosable(tmp_path):
+    """A run of attributed praise describes no work, so it is never automatic,
+    even over a recognized placeholder; the owner may still accept it (#1283)."""
+    report = synopsis_report("Read by", (_PRAISE,))
+    with closing(open_repository(tmp_path / "praise.sqlite")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("description_fill",),
+            selected_options={"description_fill": "replace_safe_plain_text"},
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "description"
+        )
+        assert field["automatic_decision"] is None
+        assert field["automatic_withheld_reason"] == (
+            "Retained source text does not meet the automatic synopsis rules."
+        )
+        assert field["proposed_values"] == [{"kind": "text", "value": _PRAISE}]
+        assert "accept" in field["decision_actions"]
+        assert [c["recommendation"] for c in field["choice_contexts"]] == [
+            "no_recommendation",
+            "no_recommendation",
+        ]
+        assert all(
+            json.loads(document)["destination"] != "description"
+            for document in repository.get_review_case_decisions(case_id)
+        )
+
+
+@pytest.mark.parametrize("current", [None, "Read by Example Narrator"])
+def test_persisted_reconstruction_refuses_praise(current):
+    with pytest.raises(RichMetadataPreviewError):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_"
+            + ("fill" if current is None else "replace"),
+            {"kind": "text", "value": _PRAISE},
+            current,
+        )
+
+
+def test_a_praise_incumbent_is_not_a_placeholder():
+    """Praise is refused as a candidate only; as an incumbent it is preserved,
+    so a synopsis never replaces it automatically (#1283)."""
+    assert not recognized_synopsis_placeholder(_PRAISE)
+    with pytest.raises(RichMetadataPreviewError):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_replace",
+            {"kind": "text", "value": "A voyage reveals a hidden city."},
+            _PRAISE,
+        )

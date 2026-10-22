@@ -16,6 +16,9 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     FieldState,
     LocalClaim,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import (
     DECORATION_TIDY_TITLE_REASONS,
@@ -42,6 +45,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
     _exclude,
     compile_shadow_review_actions,
 )
+from tests.support.proposal_evidence import _claim, _fields, _provider, _report
 from tests.unit.shadow_packet_fixtures import synthetic_packet
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 
@@ -845,7 +849,7 @@ def test_the_decoration_tidy_rule_states_its_own_closed_thresholds() -> None:
 
 
 def test_v14_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v22" == DECISION_POLICY_VERSION
+    assert "deterministic-shadow-decision-policy-v23" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"
@@ -971,3 +975,194 @@ def test_scalar_incumbent_selection_requires_exact_compiled_keep(variant):
         2 if variant == "nonunique" else 0 if variant == "candidate_combination" else 1
     )
     assert all(action.recommendation == "recommend_candidate" for action in eligible)
+
+
+@pytest.mark.parametrize(
+    "destination,value,recommendation,reason",
+    (
+        (
+            "authors",
+            {"kind": "list", "value": ["Written by Example Author"]},
+            "manual",
+            "candidate_credit_prefixed",
+        ),
+        (
+            "authors",
+            {"kind": "list", "value": ["Example Author", "Author: Second Writer"]},
+            "manual",
+            "candidate_credit_prefixed",
+        ),
+        (
+            "authors",
+            {"kind": "list", "value": ["Byron Read"]},
+            "recommend_candidate",
+            "unique_supported_candidate",
+        ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey: Now a Major Motion Picture"},
+            "manual",
+            "candidate_promotional_title",
+        ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey (The Number One Bestseller)"},
+            "manual",
+            "candidate_promotional_title",
+        ),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey: A Bestselling Life"},
+            "recommend_candidate",
+            "unique_supported_candidate",
+        ),
+    ),
+    ids=(
+        "written_by",
+        "credit_label_member",
+        "name_holding_a_role_word",
+        "announcement_subtitle",
+        "enclosed_announcement",
+        "descriptive_subtitle",
+    ),
+)
+def test_credit_lines_and_announcements_are_never_eligible_candidates(
+    destination, value, recommendation, reason
+) -> None:
+    data = json.loads(_packet(destination).to_json())
+    data["proposals"][0]["candidates"][0]["value"] = value
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert (decision.recommendation, decision.reason_code) == (recommendation, reason)
+
+
+def test_the_candidate_rule_names_its_credit_and_announcement_refusals() -> None:
+    rule = shadow_decision_module._RULE_TABLE["candidate"]
+    assert rule["credit_prefixed_contributor_refused_for"] == ["authors", "narrators"]
+    assert rule["promotional_title_part_refused"] is True
+    assert rule["degraded_preservation_refused_in_combination"] is True
+    for name in ("ebook_synopsis", "audiobook_synopsis"):
+        synopsis = shadow_decision_module._RULE_TABLE[name]
+        assert synopsis["mostly_quoted_praise_refused"] is True
+        assert synopsis["praise_quoted_non_whitespace_share_minimum"] == 0.5
+        assert synopsis["praise_opening"] == "praise for"
+
+
+@pytest.mark.parametrize(
+    "title,recommendation,reason",
+    (
+        (
+            "Synthetic Journey",
+            "recommend_keep_current",
+            "unique_supported_preservation",
+        ),
+        (
+            "Synthetic Journey: Now a Major Motion Picture",
+            "manual",
+            "candidate_promotional_title",
+        ),
+        (
+            "Synthetic Journey (Now a Major Motion Picture)",
+            "manual",
+            "candidate_promotional_title",
+        ),
+    ),
+    ids=("plain_title", "announcement_subtitle", "enclosed_announcement"),
+)
+def test_a_degraded_title_confirmed_beside_a_generic_subtitle_is_not_kept_automatically(
+    title, recommendation, reason
+) -> None:
+    source = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue", "edition-1", ClaimKind.TITLE, title, scope=ClaimScope.WORK
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.SUBTITLE,
+                "A Novel",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+                order=1,
+            ),
+        ),
+    )
+    report = _report(
+        fields=_fields(
+            title,
+            subtitle=TargetField(TargetDestination.SUBTITLE, TargetFieldState.MISSING),
+        ),
+        providers=(source,),
+    )
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert [
+        [selection["kind"] for selection in combination["selections"]]
+        for combination in packet.bibliographic_combinations
+    ] == [["preserve_target"] * 3]
+    decision = next(
+        value
+        for value in decide_shadow_packet(packet).decisions
+        if value.destination == "title"
+    )
+    assert (decision.recommendation, decision.reason_code) == (recommendation, reason)
+
+
+@pytest.mark.parametrize(
+    "second,reason",
+    (
+        ("Synthetic Journey Revised", "insufficient_support"),
+        (
+            "Synthetic Journey: Winner of the Example Prize",
+            "candidate_promotional_title",
+        ),
+        ("Current synthetic title", "candidate_promotional_title"),
+    ),
+    ids=(
+        "one_degraded_one_unsupported",
+        "every_candidate_degraded",
+        "the_other_candidate_is_the_current_value",
+    ),
+)
+def test_a_degraded_reason_is_named_only_when_it_blocked_every_proposed_change(
+    second, reason
+) -> None:
+    data = json.loads(_packet("title", candidate_count=2).to_json())
+    first, other = data["proposals"][0]["candidates"]
+    first["value"] = {
+        "kind": "text",
+        "value": "Synthetic Journey: Now a Major Motion Picture",
+    }
+    other["value"] = {"kind": "text", "value": second}
+    other["decision_summary"]["support"]["independent_provider_correlations"] = 0
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert (decision.recommendation, decision.reason_code) == ("manual", reason)
+
+
+@pytest.mark.parametrize(
+    "candidate,recommendation,reason",
+    (
+        (["Sean Example", "New Writer"], "manual", "candidate_strips_marks"),
+        (["Sean Example"], "manual", "candidate_strips_marks"),
+        (
+            ["Seán Example", "New Writer"],
+            "recommend_candidate",
+            "unique_supported_candidate",
+        ),
+        (["Shaun Example"], "recommend_candidate", "unique_supported_candidate"),
+    ),
+    ids=("strip_and_add", "strip_only", "kept_marks_and_add", "different_name"),
+)
+def test_a_contributor_candidate_stripping_a_current_mark_is_ineligible(
+    candidate, recommendation, reason
+) -> None:
+    data = json.loads(_packet("authors").to_json())
+    proposal = data["proposals"][0]
+    proposal["current"]["value"] = ["Seán Example"]
+    proposal["candidates"][0]["value"] = {"kind": "list", "value": candidate}
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert (decision.recommendation, decision.reason_code) == (recommendation, reason)

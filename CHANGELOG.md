@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- An author or narrator that only loses its accents now keeps your spelling;
+  any other accent-dropping or credit-prefixed contributor, a title carrying a
+  "Now a Major Motion Picture"-style announcement, or a description that is
+  mostly quoted praise is never written automatically or recommended; each
+  stays your choice. Upgrading requires a clean rebuild (#1283).
+
 - Policy's impact preview now marks a changed rule it did not evaluate, such
   as Language, "Not previewed" instead of reporting no change. The page states
   each status once, hides zero counts, names an activated edited policy

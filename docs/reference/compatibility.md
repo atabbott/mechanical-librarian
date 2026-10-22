@@ -1,5 +1,14 @@
 # Pre-release compatibility policy
 
+#1283 advances the proposal policy to `fixed-conservative-v36` and the shadow
+decision policy to `deterministic-shadow-decision-policy-v23`: an accent-only
+contributor respelling is a preservation, and other accent-dropping or
+credit-prefixed contributors, announcement title parts and mostly quoted praise descriptions are never
+automatic. **Clean rebuild required** for every predecessor application
+database; startup refuses v35 proposals and v22 outcomes before mutation. No
+migration, adoption, conversion, import or downgrade is supplied; F19a/F20/F46
+records are displaced with their permission sets unchanged.
+
 #1260 advances the report to `metadata-report-v57`: an audiobook's asserted
 lane may admit a product through a band-corroborated production. **Clean
 rebuild required** for every predecessor application database; startup refuses
@@ -81,10 +90,10 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v57` plus `proposal-set-v8` under
-  `fixed-conservative-v35`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v36`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v22`,
+  `deterministic-shadow-decision-policy-v23`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v10`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
