@@ -345,11 +345,14 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
     await openActivityAuthority(user)
-    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
-
+    // Mounted from the first render, not created by the press it reports.
     const authority = screen.getByLabelText('Activity authority and recovery')
     const line = within(authority).getByRole('status')
     expect(line).toHaveClass('activity-command-status')
+    expect(line).toBeEmptyDOMElement()
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    expect(within(authority).getByRole('status')).toBe(line)
     expect(line).toBeEmptyDOMElement()
     if (!release) throw new Error('pause must be pending')
     release()
