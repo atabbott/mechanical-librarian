@@ -15,7 +15,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, use
 import type { SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { displayValue } from '../api/http'
+import { CsrfRenewedError, displayValue, refusalCopy, sessionRefreshedCopy } from '../api/http'
 import type {
   CaseDetailView,
   ChoiceContextView,
@@ -1727,7 +1727,10 @@ function LibraryCoverChoicesContent({
         </button>
         {cover.prepare.isError ? (
           <p role="alert">
-            The comparison could not be prepared. The existing cover remains unchanged.
+            {refusalCopy(
+              cover.prepare.error,
+              'The comparison could not be prepared. The existing cover remains unchanged.',
+            )}
           </p>
         ) : null}
       </section>
@@ -2003,7 +2006,10 @@ function LibraryCoverChoicesContent({
       ) : null}
       {cover.prepare.isError ? (
         <p role="alert">
-          The advisory retry failed safely. The existing cover and manual choices are unchanged.
+          {refusalCopy(
+            cover.prepare.error,
+            'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
+          )}
         </p>
       ) : null}
       {expanded && incumbent ? (
@@ -2347,7 +2353,7 @@ export default function LibraryPage({
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
   const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
   const [automaticResults, setAutomaticResults] = useState<
-    Readonly<Record<string, 'success' | 'error'>>
+    Readonly<Record<string, 'success' | 'error' | 'refreshed'>>
   >({})
   const staleCoverRecoveryButton = useRef<HTMLButtonElement>(null)
   const [staleCoverReview, setStaleCoverReview] = useState<{
@@ -2933,8 +2939,11 @@ export default function LibraryPage({
     onSuccess: (_value, request) => {
       setAutomaticResults((current) => ({ ...current, [request.key]: 'success' }))
     },
-    onError: (_error, request) =>
-      setAutomaticResults((current) => ({ ...current, [request.key]: 'error' })),
+    onError: (error, request) =>
+      setAutomaticResults((current) => ({
+        ...current,
+        [request.key]: error instanceof CsrfRenewedError ? 'refreshed' : 'error',
+      })),
   })
 
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
@@ -3285,7 +3294,7 @@ export default function LibraryPage({
     const closingKey = automaticPanel
     restoreAutomaticTrigger.current = true
     setAutomaticPanel(null)
-    if (closingKey && automaticResults[closingKey] === 'error')
+    if (closingKey && ['error', 'refreshed'].includes(automaticResults[closingKey] ?? ''))
       setAutomaticResults((current) => {
         return Object.fromEntries(Object.entries(current).filter(([key]) => key !== closingKey))
       })
@@ -4369,6 +4378,8 @@ export default function LibraryPage({
                             <p role="alert">
                               Fresh checks could not be requested. Manual handling is unchanged.
                             </p>
+                          ) : automaticResult === 'refreshed' ? (
+                            <p role="alert">{sessionRefreshedCopy}</p>
                           ) : null}
                           <div className="automatic-handling-actions">
                             <button

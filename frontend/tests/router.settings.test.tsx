@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
+  CsrfRenewedError,
   ApiError,
   settingsAudibleMarketplaceOrder,
   settingsEndpointValid,
@@ -1422,19 +1423,22 @@ describe('owner settings route', () => {
     )
   })
 
-  it('keeps every edit when the server rejects a save', async () => {
+  it.each([
+    [new ApiError(422, 'invalid_settings'), /Nothing was saved; your changes are still here/],
+    [new CsrfRenewedError(), /^Your session was refreshed\. Press again\.$/],
+  ])('keeps every edit when the server rejects a save with %s', async (failure, copy) => {
     const user = userEvent.setup()
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())
     http.writeSettings = vi.fn(async () => {
-      throw new ApiError(422, 'invalid_settings')
+      throw failure
     })
     renderRoute('/settings', http)
     const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
     await user.type(endpoint, '/edited')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
-    expect(await screen.findByText(/Nothing was saved; your changes are still here/)).toBeVisible()
+    expect(await screen.findByText(copy)).toBeVisible()
     expect(endpoint).toHaveValue('https://library.invalid/edited')
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled()
   })

@@ -1,5 +1,6 @@
 import { invalidateForegroundQueries } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { refusalCopy } from '../api/http'
 import type { DescriptionAdviceView } from '../api/http'
 import { useReviewContext } from '../router'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
@@ -43,7 +44,10 @@ export const DescriptionAdvicePreparation = ({
       ) : null}
       {retry.isError ? (
         <p role="alert">
-          Description preparation could not be requested. Reload the current case and retry.
+          {refusalCopy(
+            retry.error,
+            'Description preparation could not be requested. Reload the current case and retry.',
+          )}
         </p>
       ) : null}
     </div>

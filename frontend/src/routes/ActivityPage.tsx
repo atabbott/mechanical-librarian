@@ -3,7 +3,13 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-import { AmbiguousMutationError, ApiError, BuildMismatchError, displayValue } from '../api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  BuildMismatchError,
+  displayValue,
+  refusalCopy,
+} from '../api/http'
 import type {
   ActivityCategory,
   ActivityLibraryView,
@@ -561,7 +567,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               command.path === 'activity/consent' &&
               error.code === 'backup'
             ? 'Backup readiness changed. No permission was granted. Restore backup readiness before confirming again.'
-            : 'The requested activity change failed safely. Try again.',
+            : refusalCopy(error, 'The requested activity change failed safely. Try again.'),
       )
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },

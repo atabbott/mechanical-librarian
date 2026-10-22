@@ -4159,8 +4159,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
 }
 
 // Read on a clone so a non-`csrf` 403 still reaches the ordinary error path.
-const challengeCode = async (response: Response) =>
-  (await structuredError(response.clone())).code
+const challengeCode = async (response: Response) => (await structuredError(response.clone())).code
 
 const structuredError = async (response: Response) => {
   let value: unknown

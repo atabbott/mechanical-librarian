@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   AmbiguousMutationError,
   ApiError,
+  refusalCopy,
   settingsAudibleMarketplaceOrder,
   settingsEndpointValid,
   settingsIntegerValid,
@@ -848,7 +849,10 @@ const SettingsEditor = ({
     : status === 'uncertain'
       ? 'Save outcome uncertain. Waiting for current settings.'
       : status === 'failed'
-        ? 'The server rejected these values. Nothing was saved; your changes are still here.'
+        ? refusalCopy(
+            mutation.error,
+            'The server rejected these values. Nothing was saved; your changes are still here.',
+          )
         : status === 'stale'
           ? 'Settings changed elsewhere. Loading the newer saved values under your changes.'
           : status === 'unconfirmed'

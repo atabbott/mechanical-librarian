@@ -4,6 +4,7 @@ import { useState } from 'react'
 
 import { ModelPicker } from './ModelPicker'
 
+import { refusalCopy } from '../api/http'
 import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 
 export const DescriptionReviewerSettings = ({
@@ -227,9 +228,10 @@ export const DescriptionReviewerSettings = ({
           ) : null}
           {contained.isError || test.isError || selection.isError || refresh.isError ? (
             <p role="alert">
-              Description adviser setup could not complete. Check the model, key and available
-              pricing, then retry. Reload the current status before retrying a selection whose
-              result is uncertain.
+              {refusalCopy(
+                contained.error ?? test.error ?? selection.error ?? refresh.error,
+                'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
+              )}
             </p>
           ) : null}
         </div>

@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
 import { ModelPicker } from './ModelPicker'
 import { coverReviewerLabel } from '../labels'
-import { ApiError } from '../api/http'
+import { ApiError, CsrfRenewedError, sessionRefreshedCopy } from '../api/http'
 import type {
   CodexDeviceAuthState,
   ReviewHttp,
@@ -240,12 +240,14 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   // selection, so it never describes a model the page is no longer offering.
   const disclosedCoverModel = effectiveModel || (view.openrouter.model ?? '')
   const mutationFailure =
-    mutation.variables?.kind === 'codex-clear' || mutation.variables?.kind === 'codex-start'
-      ? 'The change could not be fully confirmed. Your prior sign-in or reviewer selection may have changed. Reload reviewer access before trying again.'
-      : mutation.error instanceof ApiError
-        ? (failureCopy[mutation.error.code] ??
-          'The reviewer change was refused. Reload and try again.')
-        : 'The reviewer change was not applied. Reload and try again.'
+    mutation.error instanceof CsrfRenewedError
+      ? sessionRefreshedCopy
+      : mutation.variables?.kind === 'codex-clear' || mutation.variables?.kind === 'codex-start'
+        ? 'The change could not be fully confirmed. Your prior sign-in or reviewer selection may have changed. Reload reviewer access before trying again.'
+        : mutation.error instanceof ApiError
+          ? (failureCopy[mutation.error.code] ??
+            'The reviewer change was refused. Reload and try again.')
+          : 'The reviewer change was not applied. Reload and try again.'
   return (
     <div className="settings-reviewer">
       <div className="settings-field-row">

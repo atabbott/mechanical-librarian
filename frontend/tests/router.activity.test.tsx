@@ -2,7 +2,13 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AmbiguousMutationError, ApiError, BuildMismatchError, mapActivity } from '../src/api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  BuildMismatchError,
+  CsrfRenewedError,
+  mapActivity,
+} from '../src/api/http'
 import type { ActivitySearch, ActivityView, ReviewHttp } from '../src/api/http'
 import type { LiveUpdate, LiveStreamState, LiveUpdateStream } from '../src/liveUpdates'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
@@ -291,6 +297,29 @@ describe('Activity route', () => {
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent(
         'The activity outcome could not be confirmed. No command was resent.',
+      ),
+    )
+    expect(http.activityCommand).toHaveBeenCalledOnce()
+  })
+
+  it('asks for a second press after a refreshed session without resending the pause', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({ enabled_libraries: [{ connection: 'primary', library: 'fiction' }] }),
+      ),
+      activityCommand: vi.fn(async () => {
+        throw new CsrfRenewedError()
+      }),
+    }
+    renderRoute('/activity', http)
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Pause new work' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /^Your session was refreshed\. Press again\.$/,
       ),
     )
     expect(http.activityCommand).toHaveBeenCalledOnce()
