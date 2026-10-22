@@ -41,9 +41,10 @@ same registry. Work facts may use a complete full-title/full-author canonical
 successful ASIN lookup or an independent local ASIN anchor without inheriting
 recording authority. Recording identifiers retain their separate association
 requirements. Complete plausible narrator-set agreement may supply narrators
-without electing an ASIN or ISBN. A narrator or author candidate that only drops a
-current member's accents preserves that member's spelling, and one naming a
-credit line ("Narrated by …") is never automatic (#1283). One reliable applicable source may suffice;
+without electing an ASIN or ISBN. A narrator or author candidate that only drops the
+current members' accents preserves their spelling; any other candidate that
+drops one, and any naming a credit line ("Narrated by …"), is never automatic
+and is offered unchanged (#1283). One reliable applicable source may suffice;
 provider count is not a vote.
 
 A supported title/subtitle split is one paired effect when both policy members

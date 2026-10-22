@@ -3,8 +3,9 @@
 #1283 advances the proposal policy to `fixed-conservative-v36` and the shadow
 decision policy to `deterministic-shadow-decision-policy-v23`: an author or
 narrator that only drops a current name's accents keeps the current spelling,
-and a credit-prefixed contributor, an announcement in a title part, or a mostly
-quoted praise description is never automatic or recommended. **Clean rebuild
+and any other accent-dropping or credit-prefixed contributor, an announcement in
+a title part, or a mostly quoted praise description is never automatic or
+recommended. **Clean rebuild
 required** for every predecessor application database; startup refuses v35
 proposals and v22 outcomes before mutation. No migration, adoption, conversion,
 import or downgrade is supplied; F19a/F20/F46 records are displaced to revision

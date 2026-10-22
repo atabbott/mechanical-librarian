@@ -1182,7 +1182,7 @@ def test_a_recordings_author_reorder_preserves_its_target(
 def test_a_mark_stripped_member_drops_a_current_mark_from_the_same_letters(
     current: str, candidate: str, stripped: bool
 ) -> None:
-    assert proposal_set._mark_stripped_member(current, candidate) is stripped
+    assert proposal_set.mark_stripped_member(current, candidate) is stripped
 
 
 @pytest.mark.parametrize(
@@ -1225,11 +1225,12 @@ def test_incumbent_spellings_pair_each_current_member_at_most_once(
             ProposalAssessment.PRESERVES_TARGET,
             ("Seán Example",),
         ),
+        # Only a respelling that preserves the target states its spelling.
         (
             ("Seán Example",),
             ("Sean Example", "New Writer"),
             ProposalAssessment.REPLACES_TARGET,
-            ("Seán Example", "New Writer"),
+            ("Sean Example", "New Writer"),
         ),
         (
             ("Sean Example",),
@@ -1238,7 +1239,7 @@ def test_incumbent_spellings_pair_each_current_member_at_most_once(
             ("Seán Example",),
         ),
     ),
-    ids=("mark_strip", "membership_change", "adds_marks"),
+    ids=("mark_strip", "membership_change_keeps_its_own", "adds_marks"),
 )
 def test_an_ebook_mark_stripped_author_keeps_the_incumbent_spelling(
     target: tuple[str, ...],

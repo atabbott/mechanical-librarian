@@ -187,8 +187,9 @@ Issue #1283 also takes the clean-rebuild branch. The proposal policy moves to
 `fixed-conservative-v36`, because an author or narrator that only drops a
 current member's accents now preserves the current spelling where a v35
 proposal replaced it, and the decision policy moves to
-`deterministic-shadow-decision-policy-v23`, because credit-prefixed contributor
-and announcement title candidates are ineligible and the synopsis rules refuse
-mostly quoted praise. A v35 proposal or a v22 outcome cannot be read as current.
+`deterministic-shadow-decision-policy-v23`, because credit-prefixed and
+accent-stripping contributor candidates and announcement title candidates are
+ineligible under new reason codes, and the synopsis rules refuse mostly quoted
+praise. A v35 proposal or a v22 outcome cannot be read as current.
 Every earlier application database is rejected before mutation and needs a
 clean rebuild; no adoption is supplied.

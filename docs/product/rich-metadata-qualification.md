@@ -99,7 +99,8 @@ Operation membership and historical measurements are unchanged.
 
 Only automatic authority narrows. An author or narrator candidate that only
 strips a current member's accents now preserves that spelling, so a former
-replacement is a preservation. A credit-prefixed contributor candidate, a title
+replacement is a preservation. Any other contributor candidate that strips a
+current member's accents, a credit-prefixed contributor candidate, a title
 candidate with an announcement part and a mostly quoted praise description are
 withdrawn from automatic selection and recommendation and remain owner choices.
 Proposal policy v36 and decision policy v23 require a clean rebuild.

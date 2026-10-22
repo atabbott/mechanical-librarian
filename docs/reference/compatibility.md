@@ -2,8 +2,8 @@
 
 #1283 advances the proposal policy to `fixed-conservative-v36` and the shadow
 decision policy to `deterministic-shadow-decision-policy-v23`: an accent-only
-contributor respelling is a preservation, and credit-prefixed contributors,
-announcement title parts and mostly quoted praise descriptions are never
+contributor respelling is a preservation, and other accent-dropping or
+credit-prefixed contributors, announcement title parts and mostly quoted praise descriptions are never
 automatic. **Clean rebuild required** for every predecessor application
 database; startup refuses v35 proposals and v22 outcomes before mutation. No
 migration, adoption, conversion, import or downgrade is supplied; F19a/F20/F46

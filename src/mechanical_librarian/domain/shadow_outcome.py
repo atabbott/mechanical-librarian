@@ -228,6 +228,9 @@ _REASON_CODES = _RICH_REASON_CODES | frozenset(
     {
         "ambiguous_eligible_actions",
         "bibliographic_combination_unresolved",
+        "candidate_credit_prefixed",
+        "candidate_promotional_title",
+        "candidate_strips_marks",
         "evidence_sufficiency_manual",
         "insufficient_support",
         "isbn_title_material_conflict",

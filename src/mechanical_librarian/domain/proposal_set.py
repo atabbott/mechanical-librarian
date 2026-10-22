@@ -1273,7 +1273,7 @@ def _folded_bases(text: str) -> list[str]:
     return [base for base, _ in _mark_clusters(text)]
 
 
-def _mark_stripped_member(current: str, candidate: str) -> bool:
+def mark_stripped_member(current: str, candidate: str) -> bool:
     """Whether a candidate spells the current member with fewer of its marks.
 
     The two must read the same with every mark folded away, while the current
@@ -1310,7 +1310,7 @@ def _incumbent_spellings(
             unpaired.remove(match)
         members.append(
             match
-            if match is not None and _mark_stripped_member(match, member)
+            if match is not None and mark_stripped_member(match, member)
             else member
         )
     return tuple(members)
@@ -4677,7 +4677,7 @@ def _alternatives(
             ),
             [],
         ).append(value)
-    alternatives: list[ProposalAlternative] = []
+    entries: list[tuple[ProposalValue, ProposalAssessment, list[_Observed], bool]] = []
     for key in sorted(
         grouped,
         key=lambda item: (
@@ -4705,6 +4705,7 @@ def _alternatives(
             proposal_values,
             key=lambda value: canonical_json(value.to_data()),
         )
+        respelled = False
         if (
             destination in {TargetDestination.AUTHORS, TargetDestination.NARRATORS}
             and target.state is TargetFieldState.VALUE
@@ -4712,14 +4713,26 @@ def _alternatives(
             and type(proposal_value.value) is tuple
         ):
             # A candidate that only strips a current member's marks names the
-            # same person less exactly, so the member keeps its spelling
-            # (#1283).
-            spellings = _incumbent_spellings(
-                cast("tuple[str, ...]", target.value),
-                cast("tuple[str, ...]", proposal_value.value),
+            # same people less exactly, so it states the current spelling and
+            # preserves it. Any other candidate keeps its own value; one that
+            # strips a mark is never automatic (#1283).
+            spellings = _value(
+                destination,
+                _incumbent_spellings(
+                    cast("tuple[str, ...]", target.value),
+                    cast("tuple[str, ...]", proposal_value.value),
+                ),
             )
-            if spellings != proposal_value.value:
-                proposal_value = _value(destination, spellings)
+            if spellings != proposal_value and (
+                _matches(destination, target.value, spellings)
+                or (
+                    report.audio is not None
+                    and destination is TargetDestination.AUTHORS
+                    and creator_list_reordered(target.value, spellings.value)
+                )
+            ):
+                proposal_value = spellings
+                respelled = True
         if (
             report.audio is not None
             and destination is TargetDestination.AUTHORS
@@ -4741,21 +4754,45 @@ def _alternatives(
             assessment = ProposalAssessment.REPLACES_TARGET
         else:
             assessment = ProposalAssessment.FILLS_EMPTY
-        scope = values[0].scope
-        date_event = values[0].date_event
-        date_precision = values[0].date_precision
-        alternatives.append(
-            ProposalAlternative.create(
-                proposal_value,
-                assessment,
-                tuple(reference for value in values for reference in value.references),
-                tuple(value.correlation for value in values),
-                scope,
-                date_event,
-                date_precision,
-            )
+        entries.append((proposal_value, assessment, values, respelled))
+    # A respelled preservation states a value another group may already hold;
+    # equal values are one alternative carrying both groups' evidence.
+    respelled_keys = {
+        _entry_key(value, values)
+        for value, _, values, respelled in entries
+        if respelled
+    }
+    merged: dict[tuple[object, ...], int] = {}
+    combined: list[tuple[ProposalValue, ProposalAssessment, list[_Observed]]] = []
+    for proposal_value, assessment, values, _ in entries:
+        entry_key = _entry_key(proposal_value, values)
+        if entry_key in respelled_keys and entry_key in merged:
+            combined[merged[entry_key]][2].extend(values)
+            continue
+        merged[entry_key] = len(combined)
+        combined.append((proposal_value, assessment, list(values)))
+    alternatives = [
+        ProposalAlternative.create(
+            proposal_value,
+            assessment,
+            tuple(reference for value in values for reference in value.references),
+            tuple(value.correlation for value in values),
+            values[0].scope,
+            values[0].date_event,
+            values[0].date_precision,
         )
+        for proposal_value, assessment, values in combined
+    ]
     return tuple(sorted(alternatives, key=lambda value: value.alternative_id))
+
+
+def _entry_key(value: ProposalValue, values: list[_Observed]) -> tuple[object, ...]:
+    return (
+        canonical_json(value.to_data()),
+        values[0].scope,
+        values[0].date_event,
+        values[0].date_precision,
+    )
 
 
 def _value(
@@ -6124,6 +6161,7 @@ __all__ = [
     "ProposalValueKind",
     "case_series_names",
     "evaluate_report",
+    "mark_stripped_member",
     "provider_candidate_represents_target_work",
     "segment_corroboration",
     "subtitle_segment_evidence",

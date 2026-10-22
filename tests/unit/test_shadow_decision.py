@@ -980,13 +980,13 @@ def test_scalar_incumbent_selection_requires_exact_compiled_keep(variant):
             "authors",
             {"kind": "list", "value": ["Written by Example Author"]},
             "manual",
-            "no_eligible_action",
+            "candidate_credit_prefixed",
         ),
         (
             "authors",
             {"kind": "list", "value": ["Example Author", "Author: Second Writer"]},
             "manual",
-            "no_eligible_action",
+            "candidate_credit_prefixed",
         ),
         (
             "authors",
@@ -998,13 +998,13 @@ def test_scalar_incumbent_selection_requires_exact_compiled_keep(variant):
             "title",
             {"kind": "text", "value": "Synthetic Journey: Now a Major Motion Picture"},
             "manual",
-            "no_eligible_action",
+            "candidate_promotional_title",
         ),
         (
             "title",
             {"kind": "text", "value": "Synthetic Journey (The Number One Bestseller)"},
             "manual",
-            "no_eligible_action",
+            "candidate_promotional_title",
         ),
         (
             "title",
@@ -1040,3 +1040,28 @@ def test_the_candidate_rule_names_its_credit_and_announcement_refusals() -> None
         assert synopsis["mostly_quoted_praise_refused"] is True
         assert synopsis["praise_quoted_non_whitespace_share_minimum"] == 0.5
         assert synopsis["praise_opening"] == "praise for"
+
+
+@pytest.mark.parametrize(
+    "candidate,recommendation,reason",
+    (
+        (["Sean Example", "New Writer"], "manual", "candidate_strips_marks"),
+        (["Sean Example"], "manual", "candidate_strips_marks"),
+        (
+            ["Seán Example", "New Writer"],
+            "recommend_candidate",
+            "unique_supported_candidate",
+        ),
+        (["Shaun Example"], "recommend_candidate", "unique_supported_candidate"),
+    ),
+    ids=("strip_and_add", "strip_only", "kept_marks_and_add", "different_name"),
+)
+def test_a_contributor_candidate_stripping_a_current_mark_is_ineligible(
+    candidate, recommendation, reason
+) -> None:
+    data = json.loads(_packet("authors").to_json())
+    proposal = data["proposals"][0]
+    proposal["current"]["value"] = ["Seán Example"]
+    proposal["candidates"][0]["value"] = {"kind": "list", "value": candidate}
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert (decision.recommendation, decision.reason_code) == (recommendation, reason)

@@ -151,14 +151,18 @@ the same complete cast. A missing or malformed cast cannot be omitted from that
 agreement, and narrator agreement grants no identifier authority. A narrator
 replacement whose cast shares nobody with the recording's own file credits
 reaches the owner, because it points at another recording.
-An author or narrator candidate that only drops or moves the accents of a
-current member, on either medium, keeps that member's current spelling, so an
-otherwise equal cast is a preservation and a cast that also adds someone is an
-Add; a candidate that adds accents is still a replacement. A contributor
+An author or narrator candidate that only drops or moves the accents of the
+current members, on either medium, names the same people, so it is a
+preservation that keeps the current spelling. Any other candidate that drops or
+moves a current member's accents, such as one that also adds or replaces
+someone, keeps its own spelling and is never automatic; it reaches the owner
+unchanged. A candidate that adds accents is still a replacement. A contributor
 candidate any of whose members is a credit line ("Narrated by …", "Read by",
 "Narrator: …") is never automatic and stays the provider's exact text for the
-owner to choose; a credit-line incumbent is still replaced by a plain cast
-(#1283).
+owner to choose; a credit-line incumbent is still replaced by a plain cast.
+Because the refusal reads the candidate, a credit-line incumbent that a source
+confirms word for word is no longer kept automatically: it needs the owner's
+review (#1283).
 
 Title and author preservation records one durable no-change, removes the
 decision from pending application work, and calls no target or effect guards.
@@ -178,7 +182,9 @@ award, bestseller or adaptation announcement with supported descriptive text.
 A title candidate on either medium with any part (between a colon, a spaced
 dash, a comma, a semicolon or an enclosure) that is such an announcement is
 never automatic and remains the owner's choice; a current title holding one may
-still be replaced by a plain title (#1283).
+still be replaced by a plain title. A current title holding one that a source
+confirms word for word is no longer kept automatically: it needs the owner's
+review (#1283).
 Descriptive collisions and materially different subtitles remain visible. A
 corroborated title/subtitle split requires both options Automatic and both
 current decisions and consents. One PATCH applies the pair, both read-backs are

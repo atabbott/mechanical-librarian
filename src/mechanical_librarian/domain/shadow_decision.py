@@ -19,6 +19,7 @@ from mechanical_librarian.domain.proposal_set import (
     DECORATION_TIDY_TITLE_REASONS,
     EVIDENCE_LED_TITLE_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
+    mark_stripped_member,
 )
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_review_actions import (
@@ -46,6 +47,9 @@ _REASON_CODES = frozenset(
     {
         "ambiguous_eligible_actions",
         "bibliographic_combination_unresolved",
+        "candidate_credit_prefixed",
+        "candidate_promotional_title",
+        "candidate_strips_marks",
         "evidence_sufficiency_manual",
         "insufficient_support",
         "isbn_title_material_conflict",
@@ -191,6 +195,13 @@ _RULE_TABLE = {
         "authors": "complete_set_proposal_sufficiency_and_recording_or_local_or_two_independent_providers",
         "unique_action_required": True,
         "credit_prefixed_contributor_refused_for": ["authors", "narrators"],
+        "mark_stripping_contributor_refused_for": ["authors", "narrators"],
+        "mark_stripping_contributor": "member_equal_to_a_current_member_with_marks_folded_and_losing_one",
+        "degraded_candidate_reasons": [
+            "candidate_credit_prefixed",
+            "candidate_promotional_title",
+            "candidate_strips_marks",
+        ],
         "credit_prefixed_contributor": [
             "credit_line_role_by_names",
             "credit_line_label_colon_names",
@@ -620,6 +631,48 @@ def _candidate_for_action(
     return matches[0] if len(matches) == 1 else None
 
 
+def _packet_value(wrapped: object) -> object:
+    return wrapped.get("value") if type(wrapped) is dict else wrapped
+
+
+def _degraded_candidate_reason(
+    proposal: dict[str, object], candidate: dict[str, object]
+) -> str | None:
+    """Name why a candidate would degrade its field, if it would (#1283).
+
+    A contributor member that is a credit line, a contributor member that
+    strips a current member's marks, or a title part that is an announcement
+    is never automatic; the candidate stays the owner's choice, unrewritten.
+    """
+    destination = proposal["destination"]
+    value = _packet_value(candidate["value"])
+    current = _packet_value(
+        cast("dict[str, object]", proposal["current"]).get("value")
+        if type(proposal["current"]) is dict
+        else None
+    )
+    if destination in {"authors", "narrators"} and type(value) is list:
+        if any(contributor_credit_prefixed(member) for member in value):
+            return "candidate_credit_prefixed"
+        if type(current) is list and any(
+            type(member) is str
+            and type(incumbent) is str
+            and mark_stripped_member(incumbent, member)
+            for member in value
+            for incumbent in current
+        ):
+            return "candidate_strips_marks"
+    if (
+        destination == "title"
+        and type(value) is str
+        and any(
+            promotional_announcement(part) for part in _TITLE_PART_BOUNDARY.split(value)
+        )
+    ):
+        return "candidate_promotional_title"
+    return None
+
+
 def _candidate_is_eligible(
     packet: ShadowReviewPacket,
     proposal: dict[str, object],
@@ -657,21 +710,7 @@ def _candidate_is_eligible(
         and len(reasons) == 1
         and reasons[0] in DECORATION_TIDY_TITLE_REASONS
     )
-    wrapped = candidate["value"]
-    value = wrapped.get("value") if type(wrapped) is dict else wrapped
-    if (
-        destination in {"authors", "narrators"}
-        and type(value) is list
-        and any(contributor_credit_prefixed(member) for member in value)
-    ) or (
-        destination == "title"
-        and type(value) is str
-        and any(
-            promotional_announcement(part) for part in _TITLE_PART_BOUNDARY.split(value)
-        )
-    ):
-        # A credit line in a contributor or an announcement in a title is
-        # never automatic; the owner may still choose it (#1283).
+    if _degraded_candidate_reason(proposal, candidate) is not None:
         return False
     recording_support = summary["recording_support"]
     narrator_agreement = destination == "narrators" and summary["narrator_agreement"]
@@ -856,6 +895,13 @@ def _base_reason(
         return "target_only_preservation"
     if not eligible:
         candidates = cast("list[dict[str, object]]", proposal["candidates"])
+        degraded = sorted(
+            reason
+            for value in candidates
+            if (reason := _degraded_candidate_reason(proposal, value)) is not None
+        )
+        if degraded:
+            return degraded[0]
         if proposal["destination"] == "authors":
             return (
                 "insufficient_support"
