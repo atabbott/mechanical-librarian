@@ -3139,6 +3139,33 @@ describe('preparation scan identity', () => {
   })
 })
 
+describe('Activity check group (#1281)', () => {
+  const key = `report_${'c'.repeat(64)}`
+  const withGroup = (value: unknown) => ({
+    ...currentActivity,
+    events: currentActivity.events.map((event) =>
+      value === undefined ? event : { ...event, check_group: value },
+    ),
+  })
+  it.each([
+    ['absent', undefined, null],
+    ['null', null, null],
+    ['a preparation key', key, key],
+  ])('maps %s to the event view', (_name, value, expected) => {
+    const events = mapActivity(withGroup(value)).events
+    expect(events.length).toBeGreaterThan(0)
+    expect(events.every((event) => event.check_group === expected)).toBe(true)
+  })
+  it('refuses a key that is not a string', () => {
+    expect(() => mapActivity(withGroup(7))).toThrow(
+      new ApiError(502, 'invalid_activity_check_group'),
+    )
+  })
+  it('maps the recorded fixture, which carries no key', () => {
+    expect(currentActivity.events.some((event) => 'check_group' in event)).toBe(false)
+  })
+})
+
 describe('deferred Activity permission contract', () => {
   it('refuses a genuine earlier producer and requires both nullable fields', () => {
     expect(() => mapActivity(activityV2Predecessor)).toThrow(ApiError)

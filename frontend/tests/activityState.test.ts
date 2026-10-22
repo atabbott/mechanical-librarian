@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { activityEventKeys, activityOutcome } from '../src/activityState'
+import { activityEventKeys, activityOutcome, ledgerRows } from '../src/activityState'
 
 describe('activity ledger state', () => {
   it('fails closed while classifying every authoritative Activity command outcome', () => {
@@ -110,5 +110,44 @@ describe('activity ledger state', () => {
     expect(new Set(activityEventKeys([duplicate, ...duplicateWindow.slice(0, 49)]))).toEqual(
       new Set(activityEventKeys(duplicateWindow)),
     )
+  })
+})
+
+describe('ledger rows (#1281)', () => {
+  const event = (id: string, check_group: string | null = null) => ({ id, check_group })
+  const shape = (events: ReturnType<typeof event>[]) =>
+    ledgerRows(events).map((row) =>
+      row.kind === 'event'
+        ? row.event.id
+        : `${row.key}[${row.members.map((member) => member.id).join(',')}]`,
+    )
+  it.each([
+    ['no keys', [event('a'), event('b')], ['a', 'b']],
+    ['one key, adjacent', [event('a', 'k'), event('b', 'k'), event('c')], ['k[a,b]', 'c']],
+    [
+      'one key around a change that keeps its place',
+      [event('a', 'k'), event('change'), event('b', 'k')],
+      ['k[a,b]', 'change'],
+    ],
+    [
+      'two keys',
+      [event('a', 'k'), event('b', 'j'), event('c', 'k'), event('d', 'j')],
+      ['k[a,c]', 'j[b,d]'],
+    ],
+    ['a lone member still forms a checks row', [event('a'), event('b', 'k')], ['a', 'k[b]']],
+    [
+      'page order is kept within and between rows',
+      [event('x'), event('a', 'k'), event('y'), event('b', 'k'), event('z')],
+      ['x', 'k[a,b]', 'y', 'z'],
+    ],
+  ])('%s', (_name, events, expected) => {
+    expect(shape(events)).toEqual(expected)
+  })
+  it('keeps every event exactly once', () => {
+    const events = [event('a', 'k'), event('b'), event('c', 'j'), event('d', 'k')]
+    const reached = ledgerRows(events).flatMap((row) =>
+      row.kind === 'event' ? [row.event] : row.members,
+    )
+    expect(reached.map((item) => item.id).sort()).toEqual(['a', 'b', 'c', 'd'])
   })
 })

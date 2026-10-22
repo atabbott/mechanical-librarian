@@ -12,7 +12,7 @@ import {
 } from '../src/api/http'
 import type { ActivitySearch, ActivityView, PreparationView, ReviewHttp } from '../src/api/http'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
-import { activityRoute } from '../src/router'
+import { activityRoute, normalizeActivitySearch } from '../src/router'
 import {
   activity,
   consentOf,
@@ -1823,11 +1823,11 @@ describe('Activity route', () => {
       expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus(),
     )
 
-    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    const rows = screen.getByRole('combobox', { name: 'Events per activity page' })
     await user.click(rows)
     await user.click(screen.getByRole('option', { name: '50 per page' }))
     await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: 'Rows per activity page' })).toHaveFocus(),
+      expect(screen.getByRole('combobox', { name: 'Events per activity page' })).toHaveFocus(),
     )
 
     await user.click(screen.getByRole('button', { name: 'Last' }))
@@ -2200,7 +2200,7 @@ describe('Activity route', () => {
     renderRoute('/activity', http)
 
     await screen.findByRole('heading', { name: 'Activity and recovery' })
-    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    const rows = screen.getByRole('combobox', { name: 'Events per activity page' })
     await user.click(rows)
     await user.click(screen.getByRole('option', { name: '50 per page' }))
     await waitFor(() => expect(deferred.has('rows-50')).toBe(true))
@@ -2285,7 +2285,7 @@ describe('Activity route', () => {
     renderRoute('/activity?q=ab', http)
 
     const search = await screen.findByRole('searchbox', { name: 'Search activity' })
-    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    const rows = screen.getByRole('combobox', { name: 'Events per activity page' })
     await user.click(rows)
     await user.click(screen.getByRole('option', { name: '50 per page' }))
     await waitFor(() => expect(resolveRows).toBeTypeOf('function'))
@@ -3213,3 +3213,427 @@ it.each([false, true])(
     expect(http.activityCommand).not.toHaveBeenCalled()
   },
 )
+
+describe('Activity checks rows and filter notice (#1281)', () => {
+  const key = `report_${'c'.repeat(64)}`
+  const dayOf = (seconds: number) =>
+    new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(seconds * 1000))
+  const check = (
+    id: string,
+    destination: string,
+    field: string,
+    change: string,
+    extra: Partial<ActivityView['events'][number]> = {},
+  ): Partial<ActivityView['events'][number]> => ({
+    event_id: id,
+    check_group: key,
+    category: 'automatic',
+    event_type: 'metadata',
+    origin: 'automatic_policy',
+    destination,
+    field_label: field,
+    state: 'recorded',
+    change,
+    change_detail: change,
+    occurred_at: 1786000000,
+    work_label: 'Synthetic checked work',
+    library: 'fiction',
+    evidence: [
+      { label: 'Chosen by', value: 'Automatic policy' },
+      { label: 'Policy setting', value: 'Title layout: Leave as it is' },
+    ],
+    ...extra,
+  })
+  const checkedTitle = check('check-title', 'title', 'Title', 'Kept Secret History', {
+    state: 'no_change_required',
+  })
+  const keptTitle = check('check-title-kept', 'title', 'Title', 'Kept Secret History')
+  const keptIsbn = check('check-isbn', 'isbn', 'ISBN', 'Left ISBN unchanged')
+  const keptGenres = check('check-genres', 'genres', 'Genres', 'Kept Mystery', {
+    occurred_at: 1785800000,
+  })
+  const members = [checkedTitle, keptTitle, keptIsbn, keptGenres]
+  const byId = (id: string) => {
+    const node = document.getElementById(id)
+    if (!node) throw new Error(`Expected #${id}`)
+    return node
+  }
+  const change = {
+    event_id: 'owner-write',
+    field_label: 'Subtitle',
+    destination: 'subtitle',
+    change: 'Old → New',
+    change_detail: 'Set Subtitle from Old to New',
+    occurred_at: 1786000000,
+  }
+  const ownerKeep = {
+    event_id: 'owner-keep',
+    state: 'keep_current',
+    field_label: 'Title',
+    destination: 'title',
+    change: 'Kept Secret History',
+    change_detail: 'Kept Title as Secret History',
+    occurred_at: 1786000000,
+  }
+  const ledger = () => {
+    const events = document.querySelector('.cm-activity-events')
+    if (!events) throw new Error('Expected the ledger')
+    return events
+  }
+  const checksRow = () => {
+    const row = ledger().querySelector('article.is-checks')
+    if (!(row instanceof HTMLElement)) throw new Error('Expected a checks row')
+    return row
+  }
+
+  it('gathers one preparation into a checks row that leaves every change in place', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({ events: [checkedTitle, change, keptTitle, ownerKeep, keptIsbn, keptGenres] }),
+    )
+    renderRoute('/activity', http)
+    await screen.findByText('Checked 3 fields, no changes')
+    const row = checksRow()
+    expect(within(row).getByText('Automatic choice')).toBeVisible()
+    expect(within(row).getByText('Synthetic checked work')).toBeVisible()
+    expect(within(row).getByText('fiction')).toBeVisible()
+    expect(within(row).getByText('No change required')).toBeVisible()
+    expect(row.querySelector('.cm-activity-change')).toHaveAttribute(
+      'aria-label',
+      'Checked 3 fields, no changes',
+    )
+    // The checks row leads at its newest member's place; the change and the
+    // owner keep between members stay rows of their own, in order.
+    const order = [...ledger().querySelectorAll(':scope > .cm-activity-event-group > article')].map(
+      (article) => article.querySelector('.cm-activity-change')?.getAttribute('aria-label'),
+    )
+    expect(order).toEqual([
+      'Checked 3 fields, no changes',
+      'Set Subtitle from Old to New',
+      'Kept Title as Secret History',
+    ])
+    expect(screen.getAllByRole('heading', { level: 3 }).map((node) => node.textContent)).toEqual([
+      dayOf(1786000000),
+    ])
+
+    const toggle = within(row).getByRole('button', { name: 'Details' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveAttribute('aria-controls', `activity-checks-${key}`)
+    expect(document.getElementById(`activity-checks-${key}`)).toBeNull()
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle).toHaveTextContent('Hide details')
+    const list = document.getElementById(`activity-checks-${key}`)
+    if (!list) throw new Error('Expected the members')
+    expect(list).toHaveClass('cm-activity-checks')
+    expect(list.previousElementSibling).toBe(row)
+    expect(row.contains(list)).toBe(false)
+    const memberRows = [...list.querySelectorAll(':scope > li > article')]
+    expect(
+      memberRows.map((article) => article.querySelector('.cm-activity-change')?.textContent),
+    ).toEqual(['Kept Secret History', 'Kept Secret History', 'Left ISBN unchanged', 'Kept Mystery'])
+    expect(memberRows[3]?.querySelector('time')).toHaveTextContent(dayOf(1785800000))
+    expect(memberRows[0]?.querySelector('time')).not.toHaveTextContent(dayOf(1786000000))
+
+    const isbn = memberRows[2] as HTMLElement
+    await user.click(within(isbn).getByRole('button', { name: 'Details' }))
+    expect(within(isbn).getByText('Automatic policy')).toBeVisible()
+    expect(within(isbn).getByText('Title layout: Leave as it is')).toBeVisible()
+    await user.click(within(isbn).getByRole('button', { name: 'Hide details' }))
+    expect(within(isbn).queryByText('Automatic policy')).toBeNull()
+
+    // Every durable record is reachable exactly once, as a row or a member.
+    const controls = [...ledger().querySelectorAll('[aria-controls^="activity-evidence-"]')].map(
+      (control) => control.getAttribute('aria-controls')?.replace('activity-evidence-', ''),
+    )
+    expect(controls.sort()).toEqual([
+      'check-genres',
+      'check-isbn',
+      'check-title',
+      'check-title-kept',
+      'owner-keep',
+      'owner-write',
+    ])
+
+    await user.click(toggle)
+    expect(toggle).toHaveFocus()
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(document.getElementById(`activity-checks-${key}`)).toBeNull()
+  })
+
+  it('counts each page of a split preparation by its own members and closes on paging', async () => {
+    const user = userEvent.setup()
+    const others = (page: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        event_id: `other-${String(page)}-${String(index)}`,
+        occurred_at: 1786000000,
+      }))
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) =>
+        activity({
+          ledger: {
+            event_type: 'all',
+            page: search.page,
+            page_count: 2,
+            page_size: 25,
+            query: null,
+            range_days: 30,
+            total: 30,
+          },
+          events:
+            search.page === 1
+              ? [...others(1, 23), checkedTitle, keptIsbn]
+              : [
+                  keptTitle,
+                  keptGenres,
+                  check('check-tags', 'tags', 'Tags', 'Kept Spy'),
+                  ...others(2, 2),
+                ],
+        }),
+      ),
+    }
+    renderRoute('/activity', http)
+    await screen.findByText('Checked 2 fields, no changes')
+    expect(screen.getByText('of 30 events').previousElementSibling).toHaveTextContent('1–25')
+    expect(screen.getByText('Events')).toBeVisible()
+    await user.click(within(checksRow()).getByRole('button', { name: 'Details' }))
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('Checked 3 fields, no changes')
+    expect(screen.getByText('of 30 events').previousElementSibling).toHaveTextContent('26–30')
+    expect(within(checksRow()).getByRole('button', { name: 'Details' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(ledger().querySelectorAll('article.is-checks')).toHaveLength(1)
+  })
+
+  it('keeps focus through a refetch and moves it to the ledger heading when its row leaves', async () => {
+    const user = userEvent.setup()
+    let current = activity({ events: [change, ...members] })
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/activity', http)
+    await user.click(within(await waitFor(checksRow)).getByRole('button', { name: 'Details' }))
+    const [, member] = within(byId(`activity-checks-${key}`)).getAllByRole('button', {
+      name: 'Details',
+    })
+    if (!member) throw new Error('Expected a second member')
+    member.focus()
+
+    current = activity({
+      events: [
+        { ...change, event_id: 'newer-write', change_id: 'newer-write' },
+        change,
+        ...members,
+      ],
+    })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() =>
+      expect(ledger().querySelectorAll(':scope > .cm-activity-event-group')).toHaveLength(3),
+    )
+    expect(member).toHaveFocus()
+    expect(checksRow().querySelector('button')).toHaveAttribute('aria-expanded', 'true')
+
+    current = activity({ events: [change] })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() => expect(ledger().querySelector('article.is-checks')).toBeNull())
+    await waitFor(() => expect(document.getElementById('activity-ledger-title')).toHaveFocus())
+    expect(document.activeElement).not.toBe(document.body)
+
+    // A standalone row's Details falls back the same way.
+    current = activity({ events: [change, ownerKeep] })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    const keep = await screen.findByText('Kept Secret History')
+    const keepDetails = within(keep.closest('article') ?? keep).getByRole('button', {
+      name: 'Details',
+    })
+    keepDetails.focus()
+    current = activity({ events: [change] })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() => expect(screen.queryByText('Kept Secret History')).toBeNull())
+    await waitFor(() => expect(document.getElementById('activity-ledger-title')).toHaveFocus())
+  })
+
+  it('reaches the checks toggle and then its members by keyboard', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(activity({ events: members }))
+    renderRoute('/activity', http)
+    const toggle = within(await waitFor(checksRow)).getByRole('button', { name: 'Details' })
+    toggle.focus()
+    await user.keyboard('{Enter}')
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await user.tab()
+    const list = byId(`activity-checks-${key}`)
+    expect(within(list).getAllByRole('button', { name: 'Details' })[0]).toHaveFocus()
+    await user.tab()
+    expect(within(list).getAllByRole('button', { name: 'Details' })[1]).toHaveFocus()
+  })
+
+  it.each([
+    ['an unknown filter', { eventType: 'owner_choice' }, 'unrecognised'],
+    ['a kept flag', { eventType: 'all', filter: 'unrecognised' }, 'unrecognised'],
+    ['a known filter', { eventType: 'policy' }, undefined],
+    ['all', { eventType: 'all' }, undefined],
+    ['no filter', {}, undefined],
+  ])('normalises %s once and for all', (_name, raw, flag) => {
+    const once = normalizeActivitySearch(raw)
+    expect(once.filter).toBe(flag)
+    const again: Record<string, unknown> = { ...once }
+    expect(normalizeActivitySearch(again)).toEqual(once)
+    expect(once.eventType).toBe('eventType' in raw && raw.eventType === 'policy' ? 'policy' : 'all')
+  })
+
+  const notice = 'That activity filter is not recognised. Showing all events.'
+  const watchNotice = () => {
+    const seen: string[] = []
+    const observer = new MutationObserver(() => {
+      const region = document.querySelector('.cm-activity-filter-notice')
+      if (region && seen.length === 0) seen.push(region.textContent)
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    return { seen, stop: () => observer.disconnect() }
+  }
+  const noticeRegion = () => {
+    const region = document.querySelector('.cm-activity-filter-notice')
+    if (!region) throw new Error('Expected the notice region')
+    return region
+  }
+  const paged = (): ReviewHttp => ({
+    ...createHttp(),
+    getActivity: vi.fn(async (search: ActivitySearch) =>
+      activity({
+        ledger: {
+          event_type: search.eventType,
+          page: search.page,
+          page_count: 2,
+          page_size: search.pageSize,
+          query: search.q ?? null,
+          range_days: search.rangeDays,
+          total: 30,
+        },
+        events: [change],
+      }),
+    ),
+  })
+
+  it('says an unknown filter shows all events, from a status region mounted first', async () => {
+    const watched = watchNotice()
+    const { router } = renderRoute('/activity?eventType=owner_choice', paged())
+    await waitFor(() => expect(noticeRegion()).toHaveTextContent(notice))
+    watched.stop()
+    expect(watched.seen).toEqual([''])
+    expect(noticeRegion()).toHaveAttribute('role', 'status')
+    expect(noticeRegion().previousElementSibling).toHaveClass('cm-activity-tools')
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
+    expect(router.state.location.search).toMatchObject({ eventType: 'all', filter: 'unrecognised' })
+  })
+
+  it.each(['policy', 'all', 'review'])('shows no notice for the known filter %s', async (value) => {
+    renderRoute(`/activity?eventType=${value}`, paged())
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(noticeRegion()).toHaveTextContent('')
+  })
+
+  it('keeps the notice on reload while the address carries the flag', async () => {
+    renderRoute('/activity?eventType=all&filter=unrecognised', paged())
+    await waitFor(() => expect(noticeRegion()).toHaveTextContent(notice))
+  })
+
+  it.each([
+    [
+      'a chip',
+      async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.click(screen.getByRole('button', { name: 'Owner choices' }))
+      },
+    ],
+    [
+      'a search',
+      async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.type(screen.getByRole('searchbox', { name: 'Search activity' }), 'moons')
+      },
+    ],
+    [
+      'a date range',
+      async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.click(screen.getByRole('combobox', { name: 'Activity date range' }))
+        await user.click(screen.getByRole('option', { name: 'Last 90 days' }))
+      },
+    ],
+    [
+      'a page size',
+      async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.click(screen.getByRole('combobox', { name: 'Events per activity page' }))
+        await user.click(screen.getByRole('option', { name: '50 per page' }))
+      },
+    ],
+    [
+      'a page',
+      async (user: ReturnType<typeof userEvent.setup>) => {
+        await user.click(screen.getByRole('button', { name: 'Next' }))
+      },
+    ],
+  ])('clears the notice after %s', async (_name, navigate) => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/activity?eventType=owner_choice', paged())
+    await waitFor(() => expect(noticeRegion()).toHaveTextContent(notice))
+    await navigate(user)
+    await waitFor(() => expect(router.state.location.search).not.toHaveProperty('filter'))
+    await waitFor(() => expect(noticeRegion()).toHaveTextContent(''))
+    expect(noticeRegion()).toBeInTheDocument()
+  })
+
+  it('names write-card fields the way the ledger names them', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const history = activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 4, human: 0, total: 4 },
+        },
+      ],
+      waiting: {
+        applying: 0,
+        awaiting_permission: 4,
+        held_for_recovery: 0,
+        retrying: 0,
+        scheduled: 0,
+      },
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [
+            { destination: 'isbn', state: 'allowed', consented: false, prepared: 3 },
+            { destination: 'publishedYear', state: 'allowed', consented: false, prepared: 1 },
+          ],
+        },
+      ],
+    })
+    vi.mocked(http.getActivity).mockResolvedValue(history)
+    vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(permissionReadiness(history))
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    const destinations = await screen.findByRole('list', {
+      name: 'fiction included and excluded destinations',
+    })
+    expect(
+      within(destinations)
+        .getAllByRole('listitem')
+        .map((item) => item.querySelector('span')?.textContent),
+    ).toEqual(['ISBN', 'Published year'])
+  })
+})
