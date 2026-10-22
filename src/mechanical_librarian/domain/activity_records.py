@@ -37,6 +37,7 @@ from mechanical_librarian.domain.readable_activity import (
     chooser_label,
     destination_label,
     failure_reason,
+    field_phrase,
     keep_change,
     policy_option_label,
     policy_setting_label,
@@ -346,14 +347,21 @@ def _decision_facts(
 
 def _automatic_facts(
     record: dict[str, object], destination: str, report: MetadataReport | None
-) -> tuple[ReadableChange, list[dict[str, str]]]:
+) -> tuple[ReadableChange, list[dict[str, str]], bool]:
+    """Return the automatic row's change, its facts, and whether it was a check.
+
+    A check is an automatic outcome that left the pinned value as it was: a
+    keep, an ignore, or a candidate exactly equal to the reported value.
+    """
     current = _reported_value(_pinned_report(record, report), destination)
+    outcome = record.get("outcome")
     selected_value = record.get("selected_value")
+    chosen = type(selected_value) is dict
     selected = (
         current
-        if record.get("outcome") in {"keep_current", "ignore"}
+        if outcome in {"keep_current", "ignore"}
         else cast("dict[str, object]", selected_value).get("value")
-        if type(selected_value) is dict
+        if chosen
         else None
     )
     field = destination_label(destination)
@@ -373,15 +381,24 @@ def _automatic_facts(
     ]
     if type(generation) is int:
         facts.append({"label": "Policy generation", "value": str(generation)})
-    return (
-        keep_change(destination, current)
-        if record.get("outcome") == "keep_current"
-        else ReadableChange(
-            f"Chose a {field.lower()} value automatically",
-            f"Chose a {field} value automatically",
-        ),
-        facts,
+    if outcome == "keep_current":
+        change = keep_change(destination, current)
+    elif outcome == "ignore":
+        change = ReadableChange(
+            f"Left {field_phrase(field)} unchanged", f"Left {field} unchanged"
+        )
+    elif outcome == "candidate" and chosen:
+        change = set_change(destination, current, selected, named=True)
+    else:
+        article = "an" if field[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
+        change = ReadableChange(
+            f"Chose {article} {field_phrase(field)} value automatically",
+            f"Chose {article} {field} value automatically",
+        )
+    checked = outcome in {"keep_current", "ignore"} or (
+        outcome == "candidate" and selected is not None and selected == current
     )
+    return change, facts, checked
 
 
 def _cover_facts(state: str) -> tuple[ReadableChange, list[dict[str, str]]]:
@@ -432,6 +449,12 @@ def readable_activity_event(
     origin = cast(str, event.get("origin", "unknown"))
     state = cast(str, event.get("state", ""))
     failure = cast(str, record.get("failure") or "")
+    # An automatic check that changed nothing is gathered with its
+    # preparation's other checks under that preparation's own report; a
+    # change, and anything an owner chose, never is.
+    checked = source_kind == "isbn_refusal" or (
+        source_kind == "field_effect_no_change" and origin == "automatic_policy"
+    )
     if source_kind == "field_effect":
         change, facts = _write_facts(record, destination, origin, state, failure)
     elif source_kind == "human_decision":
@@ -479,7 +502,7 @@ def readable_activity_event(
             },
         ]
     elif source_kind == "automatic_decision":
-        change, facts = _automatic_facts(record, destination, report)
+        change, facts, checked = _automatic_facts(record, destination, report)
     elif source_kind == "isbn_refusal":
         change = ReadableChange("Left ISBN unchanged", "Left ISBN unchanged")
         facts = [
@@ -568,6 +591,8 @@ def readable_activity_event(
     event["change"] = change.compact
     event["change_detail"] = change.sentence
     event["evidence"] = facts
+    if checked and report is not None:
+        event["check_group"] = report.report_id
 
 
 def activity_search_text(
