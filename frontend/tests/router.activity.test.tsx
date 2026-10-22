@@ -2815,6 +2815,26 @@ it.each([
   )
 })
 
+it('keeps keyboard focus on Retry while its check runs, and ignores a second press', async () => {
+  const { http, user } = await renderDraft()
+  let finish!: (value: ReturnType<typeof permissionReadiness>) => void
+  vi.mocked(http.getActivityPermissionReadiness).mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  )
+  const retry = screen.getByRole('button', { name: 'Retry permission check' })
+  retry.focus()
+  await user.keyboard('{Enter}')
+  await screen.findByText('Checking backup readiness and write permissions…')
+  expect(retry).toHaveFocus()
+  expect(retry).toHaveAttribute('aria-disabled', 'true')
+  await user.keyboard('{Enter}')
+  expect(http.getActivityPermissionReadiness).toHaveBeenCalledTimes(2)
+  await act(async () => finish(permissionReadiness(permissionHistory)))
+  await waitFor(() => expect(retry).not.toHaveAttribute('aria-disabled'))
+  expect(retry).toHaveFocus()
+  expect(screen.getByRole('checkbox')).toBeChecked()
+})
+
 it('holds the ticks behind a connection condition and frees them on recovery', async () => {
   const { http, queryClient } = await renderDraft()
   vi.mocked(http.getPreparation).mockResolvedValue(pausedConnection('paused'))
@@ -3086,6 +3106,14 @@ it.each([false, true])(
     await screen.findByText('Checking backup readiness and write permissions…')
     expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce()
     expect(signal?.aborted).toBe(false)
+    // The busy check stays in the tab order, announced as unavailable, so a
+    // keyboard owner who pressed it never loses focus to <body>.
+    await user.tab()
+    expect(within(review).getByRole('button', { name: 'Retry permission check' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(within(review).getByRole('button', { name: 'Retry permission check' })).toHaveFocus()
     await user.tab()
     expect(within(review).getByRole('button', { name: 'Cancel permission review' })).toHaveFocus()
     await act(async () => finishPermissions(permissionReadiness(history)))

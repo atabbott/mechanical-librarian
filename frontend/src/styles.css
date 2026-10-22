@@ -1170,6 +1170,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 
 /* One review entry beside the status copy, and the requirement beside Confirm (#1279). */
 .cm-activity-status-copy > button { margin-top:.7rem; }
+#activity-consent > button[aria-disabled='true'] { cursor:progress; opacity:.55; }
 /* The section stays mounted; with nothing to say it takes no space. */
 .cm-activity-status:empty { display:none; }
 .activity-consent-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; }

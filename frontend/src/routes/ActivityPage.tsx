@@ -467,6 +467,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       names: draft?.check.basis === checked.basis ? draft.names : new Set(),
     })
   const permission = permissionRequest === null || permissions.isError ? undefined : draft?.check
+  const checking = permissions.isFetching && permissionRequest !== null
   const discardPermissions = () => {
     setPermissionRequest(null)
     setDraft(null)
@@ -1238,11 +1239,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                         ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
                         : 'Backup readiness checked. Review the included and excluded destinations.'}
           </p>
+          {/* Busy, not disabled: a disabled button would drop a keyboard owner's focus to <body>. */}
           <button
             ref={checkButton}
             type="button"
-            onClick={checkPermissions}
-            disabled={permissions.isFetching && permissionRequest !== null}
+            onClick={checking ? undefined : checkPermissions}
+            aria-disabled={checking || undefined}
           >
             {permissionRequest === null ? 'Check write permissions' : 'Retry permission check'}
           </button>
