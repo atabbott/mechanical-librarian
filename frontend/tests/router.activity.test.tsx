@@ -317,12 +317,70 @@ describe('Activity route', () => {
     await openActivityAuthority(user)
     await user.click(screen.getByRole('button', { name: 'Pause new work' }))
 
+    const authority = screen.getByLabelText('Activity authority and recovery')
     await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(
+      expect(within(authority).getByRole('alert')).toHaveTextContent(
         /^Your session was refreshed\. Press again\.$/,
       ),
     )
+    expect(within(authority).getByRole('alert')).toHaveFocus()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(http.activityCommand).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the reviewed consent selection after a refreshed session so one more press confirms', async () => {
+    const user = userEvent.setup()
+    const initial: ActivityView = activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 0, human: 0, total: 1 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }],
+        },
+      ],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => initial),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(initial)),
+      activityCommand: vi
+        .fn<ReviewHttp['activityCommand']>()
+        .mockRejectedValueOnce(new CsrfRenewedError())
+        .mockResolvedValueOnce(undefined),
+    }
+    renderRoute('/activity#activity-consent', http)
+    await openActivityAuthority(user)
+    const library = await screen.findByRole('checkbox')
+    await user.click(library)
+    const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
+    await user.click(confirm)
+
+    const consent = document.getElementById('activity-consent')
+    if (!consent) throw new Error('consent review must stay open')
+    await waitFor(() =>
+      expect(within(consent).getByRole('alert')).toHaveTextContent(
+        /^Your session was refreshed\. Press again\.$/,
+      ),
+    )
+    expect(within(consent).getByRole('checkbox')).toBeChecked()
+    expect(confirm).toBeEnabled()
+    expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce()
+    await user.click(confirm)
+    await waitFor(() => expect(http.activityCommand).toHaveBeenCalledTimes(2))
+    expect(http.activityCommand).toHaveBeenLastCalledWith('activity/consent', {
+      grants: [{ library: 'fiction', destinations: ['title'] }],
+    })
+    expect(
+      await screen.findByText('Activity state refreshed from the authoritative server.'),
+    ).toBeInTheDocument()
   })
 
   it('keeps ambiguous consent unconfirmed without resending', async () => {

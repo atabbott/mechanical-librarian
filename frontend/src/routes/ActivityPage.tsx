@@ -7,8 +7,9 @@ import {
   AmbiguousMutationError,
   ApiError,
   BuildMismatchError,
+  CsrfRenewedError,
   displayValue,
-  refusalCopy,
+  sessionRefreshedCopy,
 } from '../api/http'
 import type {
   ActivityCategory,
@@ -539,6 +540,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
     onError: async (error, command) => {
+      // Refused before any effect: keep the reviewed selection and readiness so
+      // the same press can be repeated, and confirmation re-validates them (#1018).
+      if (error instanceof CsrfRenewedError) {
+        setStatus(sessionRefreshedCopy)
+        return
+      }
       discardPermissions()
       if (
         error instanceof AmbiguousMutationError ||
@@ -567,7 +574,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               command.path === 'activity/consent' &&
               error.code === 'backup'
             ? 'Backup readiness changed. No permission was granted. Restore backup readiness before confirming again.'
-            : refusalCopy(error, 'The requested activity change failed safely. Try again.'),
+            : 'The requested activity change failed safely. Try again.',
       )
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
@@ -715,6 +722,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const showOperationalSummary =
     !permissionNeeded || Boolean(connection) || recoveryCount > 0 || data.paused
   const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
+  // Pause, resume and revoke report beside the controls that issued them.
+  const authorityFeedback =
+    hasAuthority &&
+    mutation.variables !== undefined &&
+    mutation.variables.path !== 'activity/consent'
   const commandStatus = (
     <p
       className="activity-command-status"
@@ -1384,6 +1396,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   Review write permissions
                 </button>
               ) : null}
+              {authorityFeedback ? commandStatus : null}
               {suspensions.length ? (
                 <div className="cm-activity-recovery-facts" aria-label="Recovery facts">
                   {suspensions.map((item, index) => (
@@ -1400,7 +1413,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         ) : null}
       </section>
       <PreparationNotice routeIdentity={routeIdentity} />
-      {!consentFeedback ? commandStatus : null}
+      {!consentFeedback && !authorityFeedback ? commandStatus : null}
     </div>
   )
 }
