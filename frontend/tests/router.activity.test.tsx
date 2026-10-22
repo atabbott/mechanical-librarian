@@ -444,6 +444,7 @@ describe('Activity route', () => {
       ...createHttp(),
       getActivity: vi.fn(async () => current),
       getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(current)),
+      // The read on Confirm sees the reviewed basis, so the ambiguous POST is reached.
       getActivityConsent: vi.fn(async () => consentOf(initial)),
       activityCommand: vi.fn(async () => {
         throw new AmbiguousMutationError()
@@ -1460,7 +1461,7 @@ describe('Activity route', () => {
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
     expect(
       await screen.findByText(
-        'Write permissions changed during confirmation. No permission was granted. Review the refreshed included and excluded destinations, then confirm again.',
+        'The destinations changed since you reviewed them. No permission was granted. Check write permissions again, then confirm.',
       ),
     ).toBeVisible()
     expect(http.activityCommand).toHaveBeenCalledTimes(1)
@@ -2714,7 +2715,10 @@ it('keeps history usable during checking and discards a late result after close 
   await user.click(trigger)
   expect(await screen.findByText('Checking backup readiness and write permissions…')).toBeVisible()
   expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBeEnabled()
-  expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
   expect(http.getActivity).toHaveBeenCalledOnce()
   await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
   await waitFor(() => expect(trigger).toHaveFocus())
@@ -2986,11 +2990,81 @@ it('announces success through a page status already mounted and moves focus to i
   expect(document.querySelector('.cm-activity-route > .activity-command-status')).toBe(page)
   await waitFor(() => expect(page).toHaveFocus())
   expect(screen.queryByRole('region', { name: 'Enable guarded writes' })).toBeNull()
+  // It reads directly under the card, and the next Tab continues from there.
+  expect(page?.previousElementSibling).toHaveClass('cm-write-consent')
+  await user.tab()
+  expect(document.activeElement?.closest('.cm-activity-status')).not.toBeNull()
+})
+
+it('keeps focus on a busy Confirm and sends one grant for a double press', async () => {
+  const { http } = await renderDraft()
+  let finish!: () => void
+  vi.mocked(http.activityCommand).mockImplementation(
+    () => new Promise<never>((resolve) => (finish = () => resolve(undefined as never))),
+  )
+  const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
+  confirm.focus()
+  // Both presses land before the pending state can render.
+  act(() => {
+    confirm.click()
+    confirm.click()
+  })
+  await waitFor(() => expect(http.activityCommand).toHaveBeenCalledOnce())
+  expect(confirm).toHaveAttribute('aria-disabled', 'true')
+  expect(confirm).toBeEnabled()
+  expect(confirm).toHaveFocus()
+  await userEvent.setup().keyboard('{Enter}')
+  expect(http.activityCommand).toHaveBeenCalledOnce()
+  await act(async () => finish())
+  expect(http.activityCommand).toHaveBeenCalledOnce()
+})
+
+it('says so when a retry finds another basis and clears the ticks', async () => {
+  const { http, user } = await renderDraft()
+  const changed = {
+    ...permissionHistory,
+    capabilities: permissionHistory.capabilities.map((item) => ({
+      ...item,
+      destinations: item.destinations.map((entry) => ({ ...entry, state: 'not_ready' })),
+    })),
+  }
+  vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(permissionReadiness(changed))
+  const retry = screen.getByRole('button', { name: 'Retry permission check' })
+  await user.click(retry)
+  const review = screen.getByRole('region', { name: 'Enable guarded writes' })
+  await waitFor(() =>
+    expect(within(review).getAllByRole('status')[0]).toHaveTextContent(basisChanged),
+  )
+  expect(within(review).queryAllByRole('checkbox', { checked: true })).toHaveLength(0)
+  expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
+  expect(retry).toHaveFocus()
 })
 
 const waitingFor = (waiting: Partial<ActivityView['waiting']>): ActivityView => ({
   ...permissionHistory,
   waiting: { ...permissionHistory.waiting, ...waiting },
+})
+
+it('leaves focus on a shell control when the entry moves', async () => {
+  const http = createHttp()
+  vi.mocked(http.getActivity).mockResolvedValue({
+    ...waitingFor({ scheduled: 1 }),
+    enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+  })
+  const { queryClient } = renderRoute('/activity', http)
+  const status = await screen.findByRole('button', { name: 'Review write permissions' })
+  status.focus()
+  // The owner moves to a control in the shell, outside the Activity route.
+  const shell = screen.getByRole('button', { name: /Use (dark|light) mode/ })
+  expect(shell.closest('.cm-activity-route')).toBeNull()
+  shell.focus()
+  vi.mocked(http.getActivity).mockResolvedValue(waitingFor({ awaiting_permission: 1 }))
+  await act(async () => {
+    await queryClient.invalidateQueries({ queryKey: ['activity'] })
+  })
+  await waitFor(() => expect(status).not.toBeInTheDocument())
+  await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+  expect(shell).toHaveFocus()
 })
 
 it.each([

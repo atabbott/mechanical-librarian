@@ -455,25 +455,30 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // only a result for the current request establishes or replaces it, and a
   // replacement keeps the ticks while the basis holds.
   const checked = permissionRequest === null ? undefined : permissions.data
+  const [discarded, setDiscarded] = useState<object | null>(null)
   const [draft, setDraft] = useState<{
     check: PermissionCheck
     checkedAt: number
     names: ReadonlySet<string>
   } | null>(null)
-  if (checked && draft?.check !== checked)
+  if (checked && draft?.check !== checked) {
+    const kept = draft?.check.basis === checked.basis
     setDraft({
       check: checked,
       checkedAt: permissions.dataUpdatedAt,
-      names: draft?.check.basis === checked.basis ? draft.names : new Set(),
+      names: kept ? draft.names : new Set(),
     })
+    // A retry that finds another basis clears the ticks, and says so.
+    if (draft && !kept) setDiscarded({})
+  }
   const permission = permissionRequest === null || permissions.isError ? undefined : draft?.check
   const checking = permissions.isFetching && permissionRequest !== null
+  const confirming = useRef(false)
   const discardPermissions = () => {
     setPermissionRequest(null)
     setDraft(null)
   }
   const checkButton = useRef<HTMLButtonElement>(null)
-  const [discarded, setDiscarded] = useState<object | null>(null)
   const discardChangedDraft = () => {
     discardPermissions()
     setDiscarded({})
@@ -543,6 +548,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               succeeded ? '.cm-activity-route > .activity-command-status' : '[data-route-focus]',
             )
       target?.focus({ preventScroll: true })
+      if (target !== trigger) target?.scrollIntoView({ block: 'nearest' })
     })
     if (router.state.location.hash === 'activity-consent')
       void navigate({ search: (current) => current, hash: '', replace: true })
@@ -636,7 +642,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         error instanceof ApiError &&
           command.path === 'activity/consent' &&
           error.code === 'capability'
-          ? 'Write permissions changed during confirmation. No permission was granted. Review the refreshed included and excluded destinations, then confirm again.'
+          ? 'The destinations changed since you reviewed them. No permission was granted. Check write permissions again, then confirm.'
           : error instanceof ApiError &&
               command.path === 'activity/consent' &&
               error.code === 'backup'
@@ -646,6 +652,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
   })
+  const confirmBusy = mutation.isPending || permissions.isFetching
   const commandStatusRef = useRef<HTMLParagraphElement>(null)
   useEffect(() => {
     if (!mutation.isError || !status) return
@@ -809,7 +816,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     const last = focusedEntry.current
     if (!last || (last.isConnected && last.hasAttribute('data-consent-entry'))) return
     const active = document.activeElement
-    if (last.isConnected && active !== last && active !== document.body) return
+    if (active !== last && active !== document.body) return
     ;(
       document.querySelector<HTMLElement>('[data-consent-entry]') ??
       document.querySelector<HTMLElement>('[data-route-focus]')
@@ -1313,26 +1320,36 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <button
               className="primary-action"
               aria-describedby="activity-consent-requirement"
+              // Busy, not disabled, so focus stays here; the ref refuses a
+              // second press that lands before the pending state renders.
+              aria-disabled={confirmBusy || undefined}
               disabled={
-                mutation.isPending ||
-                permissions.isFetching ||
-                permission?.backup_ready !== true ||
-                selectedGrants.length === 0
+                !confirmBusy && (permission?.backup_ready !== true || selectedGrants.length === 0)
               }
-              onClick={() =>
-                draft &&
-                mutation.mutate({
-                  path: 'activity/consent',
-                  body: { grants: selectedGrants },
-                  basis: draft.check.basis,
-                })
-              }
+              onClick={() => {
+                if (confirmBusy || confirming.current || !draft) return
+                confirming.current = true
+                mutation.mutate(
+                  {
+                    path: 'activity/consent',
+                    body: { grants: selectedGrants },
+                    basis: draft.check.basis,
+                  },
+                  {
+                    onSettled: () => {
+                      confirming.current = false
+                    },
+                  },
+                )
+              }}
             >
               Confirm write permissions
             </button>
           </div>
         </section>
       ) : null}
+      {/* Outcomes the card or a closed panel leave behind read directly under them. */}
+      {commandStatus(!authorityFeedback && !consentFeedback)}
       <section
         className="cm-activity-status"
         aria-labelledby={showOperationalSummary ? 'activity-status-title' : undefined}
@@ -1527,7 +1544,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         ) : null}
       </section>
       <PreparationNotice routeIdentity={routeIdentity} />
-      {commandStatus(!authorityFeedback && !consentFeedback)}
     </div>
   )
 }
