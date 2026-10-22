@@ -1099,7 +1099,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             // still remembered, whether or not the engine fired a blur for it.
             const left = event.target
             queueMicrotask(() => {
-              if (left.isConnected && ledgerFocus.current === left) ledgerFocus.current = null
+              // A window blur fires this while the control keeps focus; keep it.
+              if (
+                left.isConnected &&
+                ledgerFocus.current === left &&
+                document.activeElement !== left
+              )
+                ledgerFocus.current = null
             })
           }}
         >
