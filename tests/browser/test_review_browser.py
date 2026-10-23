@@ -384,6 +384,8 @@ def _server(
     genre_fixture: tuple[str, ...] | None = None,
     genre_destination: str = "automatic",
     genre_current: tuple[str, ...] | None = None,
+    owner_write: bool = False,
+    owner_library_change: bool = False,
     language_fixture: tuple[str, ...] | None = None,
     language_current: str | None = None,
     language_audio: bool = False,
@@ -933,6 +935,10 @@ def _server(
         case_id, proposal_set = publish_genre_case(
             repository, report, genre_destination
         )
+        if owner_write:
+            case_id, report = _seed_owner_write(
+                repository, database.parent, report, case_id, genre_destination
+            )
     elif language_fixture is not None:
         from tests.support.language_reports import (
             language_report,
@@ -1543,6 +1549,28 @@ def _server(
         settings=settings,
         reviewer_access=reviewer_access,
     )
+    if owner_library_change:
+        owner_changed = False
+
+        @app.middleware("http")
+        async def change_title_before_restore(request, call_next):
+            # The library edits the written title just before the restore
+            # arrives, so the panel the owner confirmed is now stale.
+            nonlocal owner_changed
+            if (
+                request.method == "POST"
+                and request.url.path.endswith("/decisions")
+                and not owner_changed
+            ):
+                owner_changed = True
+                current = ReviewCase.create_from_data(
+                    json.loads(repository.get_review_case(case_id))["case"]
+                )
+                _read_back_title(
+                    repository, report, current, genre_destination, OWNER_EDIT, 910
+                )
+            return await call_next(request)
+
     stale_cover_published = False
     if stale_cover_successor or stale_cover_same_case:
         if cover_considerations is None:
@@ -1672,6 +1700,106 @@ def _server(
             server.force_exit = True
             thread.join(timeout=5)
         session_store.close()
+
+
+OWNER_TITLE = "Real Tigers Revisited"
+OWNER_EDIT = "Real Tigers: Library Edition"
+
+
+def _seed_owner_write(repository, root: Path, report, case_id: str, destination: str):
+    """Write an owner-entered title through the guarded pipeline over a fake
+    library, then read the work back as its successor case (#1285)."""
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from tests.support.description_advice import _guarded_application
+
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "title"
+    )
+    decision = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="title",
+        actor="owner",
+        outcome="owner_entered",
+        selected_value={"kind": "text", "value": OWNER_TITLE},
+        idempotency_key="browser-owner-entered-title",
+        occurred_at=900,
+    )
+    repository.record_human_decision(decision)
+    authority = PersistedFieldEffectAuthority(repository)
+    service, target = _guarded_application(repository, root, authority)
+    repository.grant_field_effect_consents(
+        report.target.connection, (report.target.library,), ("title",), 12
+    )
+    snapshot = authority.resolve(decision)
+    operation = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest="c" * 64,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    assert service.apply(operation.plan.plan_id).state == "verified"
+    return _read_back_title(repository, report, case, destination, OWNER_TITLE, 905)
+
+
+def _read_back_title(
+    repository, report, case: ReviewCase, destination: str, title: str, at: int
+):
+    """Publish the work as the library now reads it, with this title, under
+    the policy `publish_genre_case` activated, and admit its successor case."""
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.owner_values import rewritten
+
+    successor = rewritten(report, title=title)
+    repository.publish(successor, lambda: True, report.report_id)
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    } | {"genres": destination}
+    resolved = resolve_policy(
+        MetadataPolicyProfile.create(
+            "Genre evidence",
+            dict(DEFAULT_OPTIONS) | {"genres": "fill_empty"},
+            destinations,
+        ),
+        report.target.library,
+    )
+    assert (
+        resolved.resolved_id
+        == json.loads(repository.get_proposal(case.proposal_set_id))[
+            "resolved_policy_id"
+        ]
+    )
+    successor_proposal = evaluate_report(
+        successor, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish_proposal(successor_proposal)
+    admitted = json.loads(repository.admit_review_case(successor_proposal))
+    assert admitted["status"] == "superseded", admitted
+    repository.persist_shadow_outcome(admitted["review_case_id"], at)
+    return admitted["review_case_id"], successor
 
 
 def _login(page: Page, origin: str) -> None:
@@ -7948,6 +8076,235 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 expect(event.get_by_text("Fantasy", exact=True)).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
+
+
+@contextmanager
+def _owner_page(**fixture) -> Iterator[tuple[Page, str, str]]:
+    """A signed-in page over a genre work the owner reviews by hand (#1285)."""
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+        )
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "owner.sqlite",
+                hash_path=hash_path,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                genre_destination="ask",
+                **fixture,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            yield page, origin, case_id
+        browser.close()
+
+
+def _owner_layout_holds(page: Page) -> None:
+    """Every owner control word stays whole and the page never scrolls sideways."""
+    for width in (1440, 761, 390, 320):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => "
+            "requestAnimationFrame(resolve)))"
+        )
+        assert page.locator(".owner-controls").count(), width
+        assert not page.evaluate(_POLICY_MID_WORD, ".owner-controls"), width
+        assert page.evaluate("document.documentElement.scrollWidth") <= width
+        heights = page.evaluate(
+            "() => [...document.querySelectorAll('.owner-controls button')]"
+            ".map(node => node.getBoundingClientRect().height)"
+        )
+        assert all(height >= 44 for height in heights), (width, heights)
+
+
+def _attention_destinations(page: Page, case_id: str) -> list[str]:
+    return page.evaluate(
+        """async (caseId) => {
+          const response = await fetch('/api/v1/attention?page_size=100')
+          const body = await response.json()
+          return body.items.filter(item => item.review_case_id === caseId)
+            .map(item => item.destination)
+        }""",
+        case_id,
+    )
+
+
+def test_owner_enters_a_title_at_enlarged_text():
+    """B1: enter a value, see it recorded, with words whole at every width."""
+    from tests.browser.test_live_updates_browser import _widen_text
+
+    with _owner_page(genre_fixture=("Fantasy",), genre_current=("Drama",)) as (
+        page,
+        origin,
+        case_id,
+    ):
+        _widen_text(page)
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        panel = page.get_by_role("region", name="Your value for Title")
+        expect(
+            page.get_by_text("There’s no other value to choose from.")
+        ).to_have_count(0)
+        panel.get_by_role("button", name="Enter a value", exact=True).click()
+        field = panel.get_by_role("textbox", name="Your value for Title")
+        expect(field).to_be_focused()
+        field.fill(OWNER_TITLE)
+        expect(panel.locator(".owner-count")).to_have_text(
+            f"{len(OWNER_TITLE)} of 512 characters"
+        )
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as recorded:
+            panel.get_by_role("button", name="Record this value", exact=True).click()
+        assert recorded.value.status == 200
+        entered = panel.get_by_text(f"You entered “{OWNER_TITLE}”.", exact=True)
+        expect(entered).to_be_focused()
+        expect(panel.get_by_role("button", name="Withdraw", exact=True)).to_be_visible()
+        _owner_layout_holds(page)
+
+
+def test_owner_chooses_a_genre_subset_then_withdraws_it():
+    """B2 and B3: a union-order subset records; withdrawing returns the field
+    to Attention with focus on its heading."""
+    with _owner_page(
+        genre_fixture=("Fantasy", "Mystery"), genre_current=("Drama",)
+    ) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.get_by_role("region", name="Your value for Genres")
+        panel.get_by_role("button", name="Choose genres", exact=True).click()
+        group = panel.get_by_role("group", name="Choose genres")
+        expect(group.get_by_role("checkbox")).to_have_count(3)
+        expect(group.locator(".owner-option").first).to_contain_text("DramaCurrent")
+        group.get_by_role("checkbox", name=re.compile("^Mystery")).check()
+        group.get_by_role("checkbox", name=re.compile("^Drama")).uncheck()
+        group.get_by_role("checkbox", name=re.compile("^Fantasy")).check()
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        with page.expect_request(
+            lambda request: request.url.endswith("/decisions")
+        ) as sent:
+            panel.get_by_role("button", name="Record these genres", exact=True).click()
+        body = json.loads(sent.value.post_data or "{}")
+        assert (body["outcome"], body["selected_value"]) == (
+            "owner_entered",
+            {"kind": "list", "value": ["Fantasy", "Mystery"]},
+        )
+        expect(panel.get_by_text("You chose 2 genres.", exact=True)).to_be_focused()
+        assert "genres" not in _attention_destinations(page, case_id)
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as withdrawn:
+            panel.get_by_role("button", name="Withdraw", exact=True).click()
+        assert withdrawn.value.status == 200
+        expect(
+            page.get_by_text(
+                "Withdrawn. This field needs a decision again.", exact=True
+            )
+        ).to_be_visible()
+        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        assert "genres" in _attention_destinations(page, case_id)
+        page.get_by_role("link", name="History", exact=True).click()
+        expect(page.get_by_text("Owner withdrew the decision.")).to_be_visible()
+        expect(page.get_by_text("Owner entered a value.")).to_be_visible()
+
+
+def _open_restore(page: Page, origin: str, case_id: str):
+    page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+    panel = page.get_by_role("region", name="Your value for Title")
+    expect(
+        panel.get_by_text(
+            re.compile(
+                f"^Written .+: changed from “Real Tigers” to “{OWNER_TITLE}”\\.$"
+            )
+        )
+    ).to_be_visible()
+    panel.get_by_role("button", name="Restore earlier value…", exact=True).click()
+    confirm = panel.get_by_role("group", name="Confirm restore")
+    expect(
+        confirm.get_by_text(
+            "Restore “Real Tigers” to Title? This writes to your library.", exact=True
+        )
+    ).to_be_visible()
+    restore = confirm.get_by_role("button", name="Restore", exact=True)
+    expect(restore).to_be_focused()
+    return panel, restore
+
+
+def test_owner_restores_a_written_title():
+    """B4: the case that read the write back offers its pre-image, and the
+    restore is recorded as an ordinary guarded decision."""
+    with _owner_page(
+        genre_fixture=("Fantasy",), genre_current=("Drama",), owner_write=True
+    ) as (page, origin, case_id):
+        panel, restore = _open_restore(page, origin, case_id)
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        with page.expect_request(
+            lambda request: request.url.endswith("/decisions")
+        ) as sent:
+            restore.click()
+        body = json.loads(sent.value.post_data or "{}")
+        assert (body["outcome"], body["selected_value"]) == (
+            "revert",
+            {"kind": "text", "value": "Real Tigers"},
+        )
+        assert re.fullmatch(r"effect_plan_[0-9a-f]{64}", body["reverts_plan_id"])
+        expect(
+            panel.get_by_text("You restored “Real Tigers”.", exact=True)
+        ).to_be_focused()
+        expect(
+            panel.get_by_text("The restore is recorded.", exact=True)
+        ).to_be_visible()
+
+
+def test_a_restore_confirmed_after_the_library_changed_is_refused():
+    """B4: the library edits the title while the confirmation is open; the
+    store refuses the stale restore and the current case says why."""
+    with _owner_page(
+        genre_fixture=("Fantasy",),
+        genre_current=("Drama",),
+        owner_write=True,
+        owner_library_change=True,
+    ) as (page, origin, case_id):
+        _panel, restore = _open_restore(page, origin, case_id)
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as refused:
+            restore.click()
+        assert refused.value.status == 409
+        assert refused.value.json()["error"]["code"] == "stale"
+        page.wait_for_url(re.compile(r"lens=needs_attention"))
+        current = page.evaluate(
+            """async (caseId) => (await (await fetch(
+              `/api/v1/review-cases/${caseId}/successor`)).json()).review_case_id""",
+            case_id,
+        )
+        assert current and current != case_id
+        page.goto(f"{origin}/library?lens=all&preview={current}&field=title")
+        panel = page.get_by_role("region", name="Your value for Title")
+        expect(
+            panel.get_by_text(
+                "This field has changed since it was written, so the earlier "
+                "value can’t be restored safely.",
+                exact=True,
+            )
+        ).to_be_visible()
+        expect(
+            panel.get_by_role("button", name="Restore earlier value…")
+        ).to_have_count(0)
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))

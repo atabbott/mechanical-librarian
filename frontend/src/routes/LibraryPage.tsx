@@ -1664,9 +1664,8 @@ function OwnerControls({
       {revert ? (
         <div className="owner-revert">
           <p>
-            {revert.state === 'reverted'
-              ? `Restored ${writtenDate(revert.writtenAt)}: changed from ${quotedValue(revert.previousValue)} back to ${quotedValue(revert.writtenValue)}.`
-              : `Written ${writtenDate(revert.writtenAt)}: changed from ${quotedValue(revert.previousValue)} to ${quotedValue(revert.writtenValue)}.`}
+            {`Written ${writtenDate(revert.writtenAt)}: changed from ${quotedValue(revert.previousValue)} to ${quotedValue(revert.writtenValue)}.`}
+            {revert.state === 'reverted' ? ' The earlier value has been restored.' : ''}
           </p>
           {revert.state === 'available' ? (
             mode === 'restore' ? (

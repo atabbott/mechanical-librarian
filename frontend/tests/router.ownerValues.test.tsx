@@ -388,6 +388,17 @@ describe('guarded revert', () => {
     expect(within(panel).getByText(copy)).toBeVisible()
     expect(within(panel).queryByRole('button', { name: 'Restore earlier value…' })).toBeNull()
   })
+
+  it('V7 keeps the write it restored and says the earlier value is back', async () => {
+    const http = owner(() => [written('reverted')])
+    const panel = await open(http)
+    expect(
+      within(panel).getByText(
+        /^Written .+: changed from “THE SILENT ORCHARD \(Disc 2\)” to “The Silent Orchard”\. The earlier value has been restored\.$/u,
+      ),
+    ).toBeVisible()
+    expect(within(panel).queryByRole('button', { name: 'Restore earlier value…' })).toBeNull()
+  })
 })
 
 describe('owner command labels', () => {
