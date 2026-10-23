@@ -26,7 +26,7 @@ import { FinishTray } from '../components/FinishTray'
 import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { controlId, descriptionId, errorId, offOn } from '../fieldControls'
-import { settingsRoute, useReviewContext } from '../router'
+import { ProviderThrottleNotice, settingsRoute, useReviewContext } from '../router'
 import type { SettingsGroup } from '../router'
 
 type Mutable<T> = T extends readonly (infer Item)[]
@@ -123,12 +123,6 @@ const numberFields: readonly NumberField[] = [
     minimum: 1,
     maximum: 300,
     unit: 'seconds',
-  },
-  {
-    fieldId: 'provider_recovery_generation',
-    label: 'Provider recovery generation',
-    description: 'Raise by one after fixing a source’s key or settings so deferred lookups retry.',
-    minimum: 1,
   },
   {
     fieldId: 'limits.target_response_bytes',
@@ -616,6 +610,10 @@ export default function SettingsPage() {
     )
   return (
     <>
+      {/* A Retry now moves the revision; an open draft rebases over it. */}
+      <ProviderThrottleNotice
+        onRetried={(value) => queryClient.setQueryData(['settings'], value)}
+      />
       {saved ? (
         <p className="settings-saved" role="status">
           Settings saved and in use.

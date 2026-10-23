@@ -2293,6 +2293,72 @@ describe('ReviewApiClient', () => {
       expect(() => mapPreparation(invalid)).toThrow(ApiError)
   })
 
+  it('maps only closed, bounded provider throttling (#1282)', () => {
+    const base = {
+      schema_version: 'review-preparation-v2',
+      recovery_required: false,
+      active: false,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [],
+    }
+    const entry = {
+      library: 'Synthetic ebooks',
+      adapter: 'google_books',
+      state: 'waiting',
+      reasons: ['burst_throttled'],
+      deferred: 214,
+      next_retry_at: 1_800_000_000,
+      remedy: 'add_api_key',
+    }
+    const throttling = { generation: 3, retry: 'available', entries: [entry] }
+    expect(mapPreparation(base).provider_throttling).toBeNull()
+    expect(mapPreparation({ ...base, provider_throttling: null }).provider_throttling).toBeNull()
+    expect(
+      mapPreparation({ ...base, provider_throttling: throttling }).provider_throttling,
+    ).toEqual(throttling)
+    const maximal = { ...throttling, entries: Array.from({ length: 256 }, () => entry) }
+    expect(
+      mapPreparation({ ...base, provider_throttling: maximal }).provider_throttling?.entries,
+    ).toHaveLength(256)
+    for (const invalid of [
+      { ...throttling, entries: Array.from({ length: 257 }, () => entry) },
+      { ...throttling, entries: [{ ...entry, adapter: 'unknown_source' }] },
+      { ...throttling, entries: [{ ...entry, deferred: -1 }] },
+      { ...throttling, entries: [{ ...entry, deferred: 1.5 }] },
+      { ...throttling, entries: [{ ...entry, state: 'recovered' }] },
+      { ...throttling, entries: [{ ...entry, reasons: ['unknown'] }] },
+      { ...throttling, entries: [{ ...entry, remedy: 'buy_more' }] },
+      { ...throttling, entries: [{ ...entry, library: '' }] },
+      { ...throttling, entries: [{ ...entry, library: 'x'.repeat(65) }] },
+      { ...throttling, entries: [{ ...entry, connection: 'primary-google' }] },
+      { ...throttling, retry: 'later' },
+      { ...throttling, generation: 0 },
+      { ...throttling, extra: true },
+    ])
+      expect(() => mapPreparation({ ...base, provider_throttling: invalid })).toThrow(
+        expect.objectContaining({ status: 502 }),
+      )
+  })
+
+  it('posts Retry now with the expected generation and resends it once after CSRF renewal', async () => {
+    const { view } = await import('./settingsFixtures')
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(csrfChallenge())
+      .mockResolvedValueOnce(Response.json(view()))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+
+    await expect(client.retryProviderRecovery(7)).resolves.toMatchObject({ authority: 'store' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const [url, init] = fetchMock.mock.calls[1] ?? []
+    expect(url).toBe('/api/v1/provider-recovery/retry')
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBe(JSON.stringify({ expected_generation: 7 }))
+    expect(new Headers(init?.headers).get('x-csrf-token')).toBe(renewedToken)
+  })
+
   it('accepts only ordered and bounded preparation presentation content', () => {
     const presentation = {
       run_id: `preparation_run_${'a'.repeat(64)}`,

@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -16,7 +16,13 @@ import {
   settingsSecretValid,
   settingsTextValid,
 } from '../src/api/http'
-import type { ReviewHttp, ReviewerAccessView, SettingsView, SettingsWrite } from '../src/api/http'
+import type {
+  PreparationView,
+  ReviewHttp,
+  ReviewerAccessView,
+  SettingsView,
+  SettingsWrite,
+} from '../src/api/http'
 import { coverReviewerLabel } from '../src/labels'
 import { createHttp, renderRoute } from './fixtures'
 import { document, view } from './settingsFixtures'
@@ -1838,4 +1844,100 @@ it('separates measured cover cost from observed rates and never lends prices to 
   expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
   expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   expect(cover.queryByText(/0.000001 per input token/u)).toBeNull()
+})
+
+describe('settings provider throttling (#1282)', () => {
+  const throttled = (retry: 'available' | 'managed_by_file' = 'available'): PreparationView => ({
+    schema_version: 'review-preparation-v2',
+    recovery_required: false,
+    active: false,
+    actionable: false,
+    paused: false,
+    libraries: [],
+    provider_throttling: {
+      generation: 1,
+      retry,
+      entries: [
+        {
+          library: 'Synthetic ebooks',
+          adapter: 'google_books',
+          state: 'waiting',
+          reasons: ['quota_exhausted'],
+          deferred: 5,
+          next_retry_at: null,
+          remedy: 'add_api_key',
+        },
+      ],
+    },
+  })
+
+  it('replaces the generation number with Retry now and leaves the other number rows', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getPreparation = vi.fn(async () => throttled())
+    renderRoute('/settings?group=background', http)
+    for (const name of ['Request timeout', 'Library polling interval', 'Shutdown budget'])
+      expect(await screen.findByRole('spinbutton', { name })).toBeVisible()
+    expect(screen.queryByText('Provider recovery generation')).toBeNull()
+    expect(screen.queryByRole('spinbutton', { name: /recovery/i })).toBeNull()
+    expect(await screen.findByRole('button', { name: 'Retry now' })).toBeVisible()
+  })
+
+  it('rebases an open draft over Retry now, keeps the edit and saves at the new revision', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    const retried: SettingsView = {
+      ...view(),
+      document: { ...document, revision: 4, provider_recovery_generation: 2 },
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getPreparation = vi.fn(async () => throttled())
+    http.retryProviderRecovery = vi.fn(async () => retried)
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...view(), document: { ...request.document, revision: 5 } }
+    })
+    renderRoute('/settings', http)
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await user.clear(endpoint)
+    await user.type(endpoint, 'https://other.invalid')
+    await user.click(await screen.findByRole('button', { name: 'Retry now' }))
+
+    expect(http.retryProviderRecovery).toHaveBeenCalledWith(1)
+    expect(
+      await screen.findByText(
+        'Settings changed elsewhere. Your changes were kept on top of the newer saved values.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
+      'https://other.invalid',
+    )
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.expected_revision).toBe(4)
+    expect(savedRequest?.document.provider_recovery_generation).toBe(2)
+  })
+
+  it('shows the file instruction under file authority and no command when settings are unavailable', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view('file'))
+    http.getPreparation = vi.fn(async () => throttled('managed_by_file'))
+    renderRoute('/settings', http)
+    expect(
+      await screen.findByText(
+        'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull()
+    cleanup()
+
+    const failing = createHttp()
+    failing.getPreparation = vi.fn(async () => throttled())
+    renderRoute('/settings', failing)
+    expect(await screen.findByText('Settings are unavailable.')).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry now' })).toBeNull()
+    expect(failing.retryProviderRecovery).not.toHaveBeenCalled()
+  })
 })

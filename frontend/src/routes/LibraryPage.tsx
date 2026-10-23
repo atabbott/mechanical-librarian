@@ -44,6 +44,7 @@ import {
   libraryQuery,
   libraryRoute,
   PreparationNotice,
+  ProviderThrottleNotice,
   usePreparation,
   useReviewContext,
   normalizeDetailSearch,
@@ -3453,6 +3454,7 @@ export default function LibraryPage({
         </div>
       )}
       <PreparationNotice routeIdentity={routeIdentity} />
+      <ProviderThrottleNotice />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >
