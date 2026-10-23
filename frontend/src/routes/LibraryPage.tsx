@@ -2592,29 +2592,27 @@ export default function LibraryPage({
   }, [attentionItems])
   // Load more keeps its place: once the page lands, focus moves to the first row
   // it added, even when that row joins a work already in the rail (#1284). The
-  // press ends when a page is added or a newer error arrives, whether or not a
-  // render saw it fetching; a new search drops it, and focus the owner moved
-  // elsewhere stays put.
+  // press ends at the query's next data or error update, whether or not a render
+  // saw it fetching, so a refetch that cancels the page ends it too; a new search
+  // drops it, and focus moves only for an added page the owner has not left.
   const attentionKey = `${search.q ?? ''} ${search.attentionCursor ?? ''}`
   const loadMore = useRef<{
     key: string
     pages: number
+    updated: number
     errors: number
     from: number
   } | null>(null)
   useEffect(() => {
     const pending = loadMore.current
     if (!pending) return
-    if (pending.key !== attentionKey) {
+    if (pending.key !== attentionKey || attentionQuery.errorUpdateCount > pending.errors) {
       loadMore.current = null
       return
     }
-    if (attentionQuery.errorUpdateCount > pending.errors) {
-      loadMore.current = null
-      return
-    }
-    if ((attention.data?.pages.length ?? 0) <= pending.pages) return
+    if (attentionQuery.dataUpdatedAt === pending.updated) return
     loadMore.current = null
+    if ((attention.data?.pages.length ?? 0) <= pending.pages) return
     const active = document.activeElement
     if (active && active !== document.body && !attentionRail.current?.contains(active)) return
     const first = attentionItems[pending.from]
@@ -2624,7 +2622,13 @@ export default function LibraryPage({
         ].find((node) => node.dataset.attentionRow === `${first.id}:${first.destination}`)
       : undefined
     ;(row ?? attentionRail.current)?.focus()
-  }, [attention.data, attentionItems, attentionKey, attentionQuery.errorUpdateCount])
+  }, [
+    attention.data,
+    attentionItems,
+    attentionKey,
+    attentionQuery.dataUpdatedAt,
+    attentionQuery.errorUpdateCount,
+  ])
   const selectedIdentity = useMemo(
     () =>
       search.preview
@@ -4749,6 +4753,7 @@ export default function LibraryPage({
                       loadMore.current = {
                         key: attentionKey,
                         pages: attention.data.pages.length,
+                        updated: attentionQuery.dataUpdatedAt,
                         errors: attentionQuery.errorUpdateCount,
                         from: attentionItems.length,
                       }

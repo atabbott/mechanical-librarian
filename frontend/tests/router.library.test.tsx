@@ -10564,6 +10564,35 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     ])
   })
 
+  it('CR-d: Load more still loads the next page after a refetch cancels it', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let secondPages = 0
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) => {
+      if (cursor !== 'attention-page-2')
+        return {
+          total: 2,
+          items: [railItem('case-1', 'title', 'Work A', 1)],
+          nextCursor: 'attention-page-2',
+        }
+      secondPages += 1
+      // The first request for page 2 is still loading when the refetch cancels it.
+      if (secondPages === 1) return new Promise(() => undefined)
+      return { total: 2, items: [railItem('case-2', 'title', 'Work B', 1)] }
+    })
+    const { queryClient } = renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await waitFor(() => expect(rail).toHaveFocus())
+    const more = within(rail).getByRole('button', { name: 'Load more attention' })
+    await user.click(more)
+    await waitFor(() => expect(more).toHaveAttribute('aria-disabled', 'true'))
+    await queryClient.invalidateQueries({ queryKey: ['attention'] })
+    await waitFor(() => expect(more).not.toHaveAttribute('aria-disabled'))
+    await user.click(more)
+    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work B' })
+    expect(secondPages).toBe(2)
+  })
+
   it('CR-a: Load more leaves focus in the search field the owner moved to', async () => {
     const user = userEvent.setup()
     const http = createHttp()
