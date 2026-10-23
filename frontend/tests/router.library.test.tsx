@@ -1502,7 +1502,7 @@ describe('Library route', () => {
       attention.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(screen.getByRole('heading', { level: 1, name: 'Library' })).toBeInTheDocument()
-    // One Attention control, in the toolbar; Back opens the workspace (#1284).
+    // One Attention control, in the toolbar; Back to works leads the workspace (#1284).
     expect(screen.getAllByRole('button', { name: /^Attention/u })).toEqual([attention])
     expect(attention.closest('header[aria-label="Library controls"]')).not.toBeNull()
     expect(back).toHaveClass('compact-workspace-back')
@@ -8744,7 +8744,7 @@ describe('Library route', () => {
     })
 
     // Selected work keeps the same toolbar, in the same order, with one notice;
-    // Back to works opens the workspace instead (#1284).
+    // Back to works leads the workspace instead (#1284).
     cleanup()
     renderRoute('/library?lens=all&preview=case-1', http)
     expect(
@@ -10480,6 +10480,57 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(rail.querySelectorAll('button.attention-queue-item')).toHaveLength(5)
   })
 
+  it('M2: Load more moves focus to the first row it added, even inside an existing work', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let release: () => void = () => undefined
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) =>
+      cursor === 'attention-page-2'
+        ? new Promise((resolve) => {
+            release = () => {
+              resolve({
+                total: 3,
+                items: [
+                  railItem('case-2', 'authors', 'Work B', 2),
+                  railItem('case-3', 'title', 'Work C', 1),
+                ],
+              })
+            }
+          })
+        : {
+            total: 3,
+            items: [
+              railItem('case-1', 'title', 'Work A', 1),
+              railItem('case-2', 'title', 'Work B', 2),
+            ],
+            nextCursor: 'attention-page-2',
+          },
+    )
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    const more = await within(rail).findByRole('button', { name: 'Load more attention' })
+    more.focus()
+    await user.keyboard('{Enter}')
+    // While the page loads the control keeps focus, and a second press is ignored.
+    await waitFor(() => expect(more).toHaveAttribute('aria-disabled', 'true'))
+    expect(more).toHaveFocus()
+    await user.keyboard('{Enter}')
+    release()
+    const added = await within(rail).findByRole('button', { name: /^Authors/u })
+    await waitFor(() => expect(added).toHaveFocus())
+    expect(added).toHaveAccessibleDescription('Work B')
+    expect(
+      vi
+        .mocked(http.getAttention)
+        .mock.calls.filter(([read]) => read.cursor === 'attention-page-2'),
+    ).toHaveLength(1)
+    await user.tab()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement).toBe(
+      within(rail).getByRole('button', { name: /^Title/u, description: 'Work C' }),
+    )
+  })
+
   it.each([
     ['with a later page', true, 'Work 1 of 2 loaded'],
     ['fully loaded', false, 'Work 1 of 2'],
@@ -10545,6 +10596,20 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(screen.getByRole('button', { name: 'Attention' })).toBeVisible()
     expect(badge()).toBeNull()
     expect(worksStatus()).toHaveTextContent(/^Count unavailable$/u)
+  })
+
+  it.each([
+    ['', 'Count unavailable'],
+    ['&q=needle', 'Matching: 1 work needing a decision'],
+  ] as const)('V3: a failed summary never leaves the rail counting (%s)', async (query, copy) => {
+    const http = createHttp()
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+      search.q ? counted(1, 1) : Promise.reject(new Error('synthetic summary failure')),
+    )
+    renderRoute(`/library?lens=all&attention=open${query}`, http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await waitFor(() => expect(rail.querySelector('header p')).toHaveTextContent(copy))
+    expect(badge()).toBeNull()
   })
 
   const settledTitle = (): CaseDetailView => {
@@ -10733,6 +10798,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(toggle).toBeInTheDocument()
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(screen.queryByRole('button', { name: 'Back to works' })).toBeNull()
+    expect(children()).toEqual(before)
     await user.click(within(rail).getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'false'))
     await waitFor(() => expect(document.activeElement).not.toBe(document.body))

@@ -361,9 +361,11 @@ write handoff and a connection notice state the works in Library. A search
 narrows only the work list and the Attention rail, never these figures, and a
 filtered completion states how many works still need a decision outside it. A
 count whose source has not resolved shows an ellipsis or a counting line, never
-zero. Counts that belong to a preparation run say so. The Library toolbar is one
-element whether or not a work is selected, so selecting a work never moves the
-workspace; Back to works opens the workspace at compact widths.
+zero, and one whose source failed is left out or reads "Count unavailable", never
+"Counting". Counts that belong to a preparation run say so. The Library toolbar
+is one element whether or not a work is selected, so selecting a work never moves
+the workspace; at compact widths Back to works leads the workspace and returns to
+the list. Load more in the Attention rail moves focus to the first row it adds.
 
 The authenticated Library is the complete work surface. It opens on the `all`
 lens with server-authoritative attention counts, presents readable title,

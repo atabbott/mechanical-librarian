@@ -2586,6 +2586,27 @@ export default function LibraryPage({
     }
     return [...groups.values()]
   }, [attentionItems])
+  // Load more keeps its place: once the page lands, focus moves to the first row
+  // it added, even when that row joins a work already in the rail (#1284).
+  const loadMore = useRef<{ from: number; started: boolean } | null>(null)
+  useEffect(() => {
+    const pending = loadMore.current
+    if (!pending) return
+    if (attention.isFetchingNextPage) {
+      pending.started = true
+      return
+    }
+    if (!pending.started) return
+    loadMore.current = null
+    if (attention.isFetchNextPageError) return
+    const first = attentionItems[pending.from]
+    const row = first
+      ? [
+          ...(attentionRail.current?.querySelectorAll<HTMLElement>('[data-attention-row]') ?? []),
+        ].find((node) => node.dataset.attentionRow === `${first.id}:${first.destination}`)
+      : undefined
+    ;(row ?? attentionRail.current)?.focus()
+  }, [attention.isFetchingNextPage, attention.isFetchNextPageError, attentionItems])
   const selectedIdentity = useMemo(
     () =>
       search.preview
@@ -3444,7 +3465,7 @@ export default function LibraryPage({
   const writesActive = detail.data?.writesConsented === true
 
   return (
-    <div className={`library-page variant-m-workspace${hasSelection ? ' has-selected-work' : ''}`}>
+    <div className="library-page variant-m-workspace">
       <h1 className="sr-only">Library</h1>
       {/* One toolbar in both states, so selecting a work never moves the workspace. */}
       <header
@@ -4584,11 +4605,19 @@ export default function LibraryPage({
               <div>
                 <h2>Attention</h2>
                 <p>
-                  {summaryAttention === undefined || (search.q && !data)
-                    ? 'Counting works…'
-                    : !search.q
-                      ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
-                      : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
+                  {search.q && !data
+                    ? failed
+                      ? 'Count unavailable'
+                      : 'Counting works…'
+                    : summaryAttention === undefined
+                      ? !summary.isError
+                        ? 'Counting works…'
+                        : search.q
+                          ? `Matching: ${workCount(data?.counts.attention ?? 0)} needing a decision`
+                          : 'Count unavailable'
+                      : !search.q
+                        ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
+                        : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
                 </p>
               </div>
               <button onClick={() => changeAttention(false)}>Close</button>
@@ -4642,6 +4671,7 @@ export default function LibraryPage({
                               }
                               aria-describedby={titleId}
                               aria-disabled={attention.isPlaceholderData || undefined}
+                              data-attention-row={`${item.id}:${item.destination}`}
                               onClick={() =>
                                 selectFromQueue(item.id, item.destination, item.attentionCursor)
                               }
@@ -4663,8 +4693,12 @@ export default function LibraryPage({
                   <button
                     className="attention-load-more"
                     type="button"
-                    disabled={attention.isFetchingNextPage}
-                    onClick={() => void attention.fetchNextPage()}
+                    aria-disabled={attention.isFetchingNextPage || undefined}
+                    onClick={() => {
+                      if (loadMore.current || attention.isFetchingNextPage) return
+                      loadMore.current = { from: attentionItems.length, started: false }
+                      void attention.fetchNextPage()
+                    }}
                   >
                     {attention.isFetchingNextPage ? 'Loading more…' : 'Load more attention'}
                   </button>

@@ -3366,6 +3366,86 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         )
 
 
+@pytest.mark.parametrize("cohort", [24, 30])
+def test_load_more_attention_keeps_focus_on_the_first_row_it_added(
+    cohort: int,
+) -> None:
+    """Load more never drops focus: the first row the next page adds takes it,
+    even when that row joins a work already in the rail (#1284).
+
+    24 works put one work's last field alone on the second 25-row page; 30 put
+    seven rows there, so the next Tab continues through the rail.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1440, "height": 900}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    provider_recovery=True,
+                    cohort=cohort,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&attention=open")
+                rail = page.get_by_label("Attention queue", exact=True)
+                rows = rail.locator("button.attention-queue-item")
+                expect(rows.first).to_be_visible()
+                keys = "rows => rows.map(row => row.dataset.attentionRow)"
+                before = rows.evaluate_all(keys)
+                titles = rail.locator(".attention-work-identity strong")
+                before_titles = titles.all_text_contents()
+                more = rail.get_by_role(
+                    "button", name="Load more attention", exact=True
+                )
+                more.focus()
+                page.keyboard.press("Enter")
+                expect(rows).not_to_have_count(len(before))
+                page.evaluate(_TWO_FRAMES)
+                added = [key for key in rows.evaluate_all(keys) if key not in before]
+                assert added, "the next page added no row"
+                focused = page.evaluate(
+                    "() => document.activeElement?.dataset?.attentionRow ?? null"
+                )
+                assert focused == added[0], (focused, added)
+                work = page.evaluate(
+                    "() => document.getElementById(document.activeElement"
+                    ".getAttribute('aria-describedby')).textContent"
+                )
+                assert titles.all_text_contents().count(work) == 1
+                if cohort == 24:
+                    # The page continued a work already shown, inside its group.
+                    assert added == [focused]
+                    assert work in before_titles, (work, before_titles)
+                else:
+                    assert work not in before_titles, (work, before_titles)
+                    page.keyboard.press("Tab")
+                    assert page.evaluate(_FOCUSED) == "BUTTON.attention-queue-item"
+                    assert (
+                        page.evaluate(
+                            "() => document.activeElement.dataset.attentionRow"
+                        )
+                        == added[1]
+                    )
+                context.close()
+            browser.close()
+
+
 @pytest.mark.parametrize("identity", [False, True])
 @pytest.mark.parametrize("dark", [False, True])
 def test_library_description_controls_preserve_words_at_enlarged_text(

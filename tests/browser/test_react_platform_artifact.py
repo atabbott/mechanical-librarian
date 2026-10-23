@@ -1996,10 +1996,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         assert page.get_by_role("button", name="Previous").count() == 0
         assert page.get_by_role("button", name="Next").count() == 0
-        # One toolbar in both states; Back to works opens the workspace (#1284).
+        # One toolbar in both states; Back to works leads the workspace (#1284).
         expect(page.locator(".library-header button")).to_have_count(1)
         expect(
-            page.locator(".library-workspace > .compact-workspace-back")
+            page.locator(".library-workspace > .compact-workspace-back:first-child")
         ).to_be_visible()
         expect(page.get_by_role("button", name="Back to works")).to_be_visible()
         for control in (
@@ -3298,17 +3298,57 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                 assert document <= width, f"{where}: the page is {document}px wide"
 
 
+# The review server's own policy, so nothing the shell needs is admitted here
+# that production would refuse.
+_PRODUCTION_CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
+    "frame-ancestors 'none'; base-uri 'none'"
+)
+
+# Writes are off and one library may be enabled, so the Library handoff shows.
+_WRITES_OFF_CONSENT = {
+    "backup_ready": None,
+    "configured_libraries": [{"connection": "primary", "library": "Household ebooks"}],
+    "capabilities": [
+        {
+            "connection": "primary",
+            "library": "Household ebooks",
+            "state": "allowed",
+            "destinations": [
+                {
+                    "destination": "title",
+                    "state": "allowed",
+                    "consented": False,
+                    "prepared": 2,
+                }
+            ],
+        }
+    ],
+    "waiting": {
+        "applying": 0,
+        "awaiting_permission": 2,
+        "held_for_recovery": 0,
+        "retrying": 0,
+        "scheduled": 0,
+    },
+}
+
+
 def _serve_cohort(
     page: Page,
     *,
-    widened: Callable[[], bool] = lambda: False,
+    stylesheet: Callable[[], str] = lambda: "",
+    writes_off_handoff: bool = False,
     held_library: list[Route] | None = None,
     library_requests: list[str] | None = None,
 ) -> None:
-    """Serve the exact built shell over the mocked cohort.
+    """Serve the exact built shell over the mocked cohort, under the production CSP.
 
-    `held_library` keeps every `/api/v1/library` request until the test fulfils
-    it, and `library_requests` records each one's query string.
+    `stylesheet` is appended to the served CSS, `writes_off_handoff` serves a
+    consent state and connections that show the writes-off handoff, `held_library` keeps every
+    `/api/v1/library` request until the test fulfils it, and `library_requests`
+    records each one's query string.
     """
 
     bundle = load_react_asset_bundle(Path(os.environ["ML_REACT_ASSET_DIR"]))
@@ -3323,6 +3363,10 @@ def _serve_cohort(
             route.fulfill(
                 content_type="application/json",
                 body=json.dumps({"reduced_motion": "follow_system"}),
+            )
+        elif path == "/api/v1/activity/consent-state" and writes_off_handoff:
+            route.fulfill(
+                content_type="application/json", body=json.dumps(_WRITES_OFF_CONSENT)
             )
         elif path == "/api/v1/library" and (
             library_requests is not None or held_library is not None
@@ -3342,6 +3386,10 @@ def _serve_cohort(
             except AssertionError:
                 route.fulfill(status=404, body="")
                 return
+            if writes_off_handoff and path == "/api/v1/review-preparation":
+                # A paused connection withholds the handoff, so none is paused.
+                assert isinstance(payload, dict)
+                payload["connections"] = []
             route.fulfill(content_type="application/json", body=json.dumps(payload))
         elif path.startswith("/assets/review-app/"):
             relative = path.removeprefix("/assets/review-app/")
@@ -3349,11 +3397,12 @@ def _serve_cohort(
             body = bundle.read(relative)
             route.fulfill(
                 content_type="text/css" if css else "text/javascript",
-                body=body + _WIDER_TEXT.encode() if css and widened() else body,
+                body=body + stylesheet().encode() if css else body,
             )
         elif route.request.resource_type == "document":
             route.fulfill(
                 content_type="text/html",
+                headers={"content-security-policy": _PRODUCTION_CSP},
                 body=bundle.read(bundle.entry)
                 .decode("utf-8")
                 .replace(
@@ -3462,7 +3511,9 @@ _WORKSPACE_GEOMETRY = """async () => {
     return {
       top: workspace.top + window.scrollY,
       header: header.getBoundingClientRect().height,
-      controls: [...header.querySelectorAll('button, a'), ...document.querySelectorAll('.compact-workspace-back')]
+      // The toolbar's buttons and the handoff's primary action; its secondary
+      // text link is the handoff's own (#1241) and is not a toolbar control.
+      controls: [...header.querySelectorAll('button, a.cm-primary'), ...document.querySelectorAll('.compact-workspace-back')]
         .filter(node => node.getClientRects().length > 0)
         .map(node => [node.textContent.trim().slice(0, 24), node.getBoundingClientRect().height]),
     };
@@ -3482,22 +3533,28 @@ _WORKSPACE_GEOMETRY = """async () => {
 def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> None:
     """Selecting or leaving a work never moves the workspace, at every width,
     theme and text size; the toolbar's labels never clip or split (#1284)."""
-    widened = [False]
+    styles = {
+        "default": "",
+        "widened": _WIDER_TEXT,
+        # Important, so the shell's own root style writes keep it.
+        "200%": "html { font-size: 200% !important; }",
+    }
+    text = "default"
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
         stack.callback(browser.close)
         page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
-        _serve_cohort(page, widened=lambda: widened[0])
+        _serve_cohort(page, stylesheet=lambda: styles[text], writes_off_handoff=True)
 
-        def load(route: str, text: str) -> None:
+        def load(route: str) -> None:
             page.goto(f"https://react-platform.invalid{route}")
             page.locator(".attention-toggle strong").filter(
                 has_text=re.compile(r"works?$")
             ).wait_for()
-            if text == "200%":
-                # A stylesheet rule, so the shell's own root style writes keep it.
-                page.add_style_tag(content="html { font-size: 200% !important; }")
+            expect(page.locator(".cm-library-handoff h2")).to_have_text(
+                "20 works are in Library. Writes are off."
+            )
             page.evaluate(_TWO_FRAMES)
 
         def probe(where: str, width: int) -> None:
@@ -3509,6 +3566,7 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                     ".library-works-heading [role='status']",
                     ".cm-library-handoff h2",
                     ".attention-rail header p",
+                    ".attention-rail header button",
                     ".attention-work-count",
                     ".attention-queue-item",
                 )
@@ -3523,6 +3581,7 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                     ".attention-toggle",
                     ".library-works-heading [role='status']",
                     ".attention-rail header p",
+                    ".attention-rail header button",
                     ".attention-work-count",
                 )
                 for word in page.evaluate(_POLICY_MID_WORD, selector)
@@ -3536,8 +3595,7 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                 color_scheme="dark" if dark else "light",
                 reduced_motion="reduce" if dark else "no-preference",
             )
-            for text in ("default", "widened", "200%"):
-                widened[0] = text == "widened"
+            for text in styles:
                 for width in (1440, 1100, 884, 761, 760, 390, 320):
                     where = f"{'dark' if dark else 'light'} {text} at {width}px"
                     page.set_viewport_size({"width": width, "height": 900})
@@ -3545,12 +3603,12 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                     if width > 900:
                         # Wide Library selects a work on arrival; a search with
                         # no match is the landing without that selection.
-                        load("/library?lens=all&q=zzz-no-match", text)
+                        load("/library?lens=all&q=zzz-no-match")
                         states.append(("landing", page.evaluate(_WORKSPACE_GEOMETRY)))
-                        load("/library?lens=all&q=zzz-no-match&preview=case-1", text)
+                        load("/library?lens=all&q=zzz-no-match&preview=case-1")
                         states.append(("selected", page.evaluate(_WORKSPACE_GEOMETRY)))
                     else:
-                        load("/library?lens=all", text)
+                        load("/library?lens=all")
                         if width > 760:
                             # Selected on arrival; Back leaves it, a row returns.
                             expect(page).to_have_url(re.compile(r"preview=case-1"))
