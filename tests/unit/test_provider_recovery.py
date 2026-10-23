@@ -5150,3 +5150,139 @@ def test_a_settlement_the_store_refused_names_no_transition(
     events = _recovery_events(capsys)
     store.close()
     assert [("canary", "started", None)] == _transitions(events)
+
+
+def _scoped_job(
+    connection: str, adapter: str, scope: str, member_id: str, generation: int = 1
+) -> ProviderRecoveryJob:
+    return replace(
+        _job(member_id),
+        connection=connection,
+        adapter=adapter,
+        scope=scope,
+        generation=generation,
+    )
+
+
+def test_throttling_snapshot_counts_each_unrecovered_row_and_its_reason(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    store.observe_failure(
+        connection="google",
+        adapter="google_books",
+        scope="books",
+        generation=1,
+        failure="burst_throttled",
+        now=10,
+        retry_after=60,
+    )
+    store.observe_failure(
+        connection="hardcover",
+        adapter="hardcover",
+        scope="books",
+        generation=1,
+        failure="authentication",
+        now=10,
+    )
+    store.observe_failure(
+        connection="open-library",
+        adapter="open_library",
+        scope="audio",
+        generation=1,
+        failure="transient",
+        now=10,
+    )
+    store.record(
+        ProviderRecovery("inventaire", "inventaire", "books", 1, "recovered", 0, None),
+        occurred_at=10,
+    )
+    store.enqueue_jobs(
+        tuple(
+            _scoped_job("google", "google_books", "books", f"g{n}") for n in range(3)
+        ),
+        enqueued_at=10,
+    )
+    store.enqueue_jobs(
+        (
+            _scoped_job("google", "google_books", "books", "other", generation=2),
+            _scoped_job("hardcover", "hardcover", "books", "h0"),
+            _scoped_job("hardcover", "hardcover", "books", "h1"),
+        ),
+        enqueued_at=10,
+    )
+    before = store._connection.total_changes
+
+    snapshot = store.throttling_snapshot()
+
+    assert store._connection.total_changes == before
+    assert not store._connection.in_transaction
+    assert [
+        {
+            "connection": "open-library",
+            "adapter": "open_library",
+            "scope": "audio",
+            "state": "waiting",
+            "next_eligible_at": 7_210,
+            "reason": "transient",
+            "deferred": 0,
+        },
+        {
+            "connection": "google",
+            "adapter": "google_books",
+            "scope": "books",
+            "state": "waiting",
+            "next_eligible_at": 70,
+            "reason": "burst_throttled",
+            "deferred": 3,
+        },
+        {
+            "connection": "hardcover",
+            "adapter": "hardcover",
+            "scope": "books",
+            "state": "dormant",
+            "next_eligible_at": None,
+            "reason": "authentication",
+            "deferred": 2,
+        },
+    ] == list(snapshot)
+    # A completed job is no longer deferred.
+    store._connection.execute(
+        "UPDATE provider_recovery_jobs SET state='complete' WHERE member_id='g0'"
+    )
+    assert [0, 2, 2] == [row["deferred"] for row in store.throttling_snapshot()]
+    store.close()
+
+
+def test_throttling_reason_is_the_latest_event_matching_current_health(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    for failure, now in (("burst_throttled", 10), ("quota_exhausted", 20)):
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="books",
+            generation=1,
+            failure=failure,
+            now=now,
+            retry_after=3_600,
+        )
+    ((row),) = store.throttling_snapshot()
+    assert ("quota_exhausted", 3_620) == (row["reason"], row["next_eligible_at"])
+    # An ordinary event that no longer describes the health row names nothing.
+    store._connection.execute(
+        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,"
+        "attempt,next_eligible_at,occurred_at,outcome) VALUES('google','google_books',"
+        "'books',1,'waiting',3,99,30,'rate_limited')"
+    )
+    ((row),) = store.throttling_snapshot()
+    assert row["reason"] is None
+    store.close()
+
+
+def test_throttling_snapshot_failure_is_a_store_error(tmp_path: Path) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    store._connection.close()
+    with pytest.raises(ProviderRecoveryStoreError, match="unavailable"):
+        store.throttling_snapshot()

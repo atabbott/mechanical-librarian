@@ -14,7 +14,7 @@ from contextlib import AbstractContextManager, ExitStack, contextmanager, nullco
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import uvicorn
 
@@ -234,6 +234,7 @@ from mechanical_librarian.application.provider_retry_successor import (
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
     compose_review_application,
+    provider_throttling_view,
 )
 from mechanical_librarian.application.review_cases import (
     AdmitReviewCase,
@@ -449,6 +450,8 @@ class _StoreRuntimeActivation:
         self._repository_authority = repository_authority
         self._dispatcher: MutableRuntimeDispatcher | None = None
         self._lock = threading.RLock()
+        # The candidate's recovery cutover, held until its authority commits.
+        self._cutover: Callable[[], None] | None = None
         self._codex_auth = _CodexAuthLeaseCoordinator()
         self.activity_facts = ActivityFactStore()
         # What root validation and Activity parsed, kept by exact bytes so a
@@ -472,9 +475,13 @@ class _StoreRuntimeActivation:
             raise RuntimeError("runtime dispatcher is already bound")
         self._dispatcher = dispatcher
 
+    def defer_cutover(self, cutover: Callable[[], None]) -> None:
+        self._cutover = cutover
+
     def prepare(
         self, document: object, revision: int, secrets: object
     ) -> RuntimeGeneration:
+        self._cutover = None
         snapshot = self._settings_store.activation_snapshot(document, revision, secrets)
         candidate, _review = compose_store_runtime_generation(
             self._bootstrap,
@@ -501,10 +508,21 @@ class _StoreRuntimeActivation:
     def _activate(
         self, candidate: RuntimeGeneration, commit: Callable[[], object]
     ) -> object:
+        cutover, self._cutover = self._cutover, None
         dispatcher = self.dispatcher
         expected = dispatcher.current()
         dispatcher.prepare(candidate)
-        return dispatcher.transition(expected, candidate, commit)
+
+        def committed() -> object:
+            # A recovery store never moves past an authority that did not
+            # commit: a failed commit leaves it where a restart accepts it, and
+            # a failed cutover after the commit is completed by that restart.
+            result = commit()
+            if cutover is not None:
+                cutover()
+            return result
+
+        return dispatcher.transition(expected, candidate, committed)
 
     def activate_setup(
         self,
@@ -512,6 +530,7 @@ class _StoreRuntimeActivation:
         commit: Callable[[], None],
     ) -> None:
         with self._lock:
+            self._cutover = None
             candidate, _review = compose_store_runtime_generation(
                 self._bootstrap,
                 self._database_path,
@@ -2351,6 +2370,7 @@ def create_review_pipeline(
     credentials: dict[str, str] | None = None,
     first_boot: bool = False,
     admission: OperationAdmission | None = None,
+    defer_cutover: Callable[[Callable[[], None]], None] | None = None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -2916,10 +2936,18 @@ def create_review_pipeline(
     provider_recovery.require_generation_compatible(
         generation=configuration.provider_recovery_generation
     )
-    activation.drain_outbox()
-    provider_recovery.reconcile_generation(
-        generation=configuration.provider_recovery_generation, now=int(time.time())
-    )
+
+    def cutover() -> None:
+        activation.drain_outbox()
+        provider_recovery.reconcile_generation(
+            generation=configuration.provider_recovery_generation, now=int(time.time())
+        )
+
+    # A Settings or setup candidate defers this until its authority commits.
+    if defer_cutover is None:
+        cutover()
+    else:
+        defer_cutover(cutover)
     # This composition root reads the review configuration unconditionally, so
     # an absent one is already a configuration failure before this point.
     review_configuration = cast("ReviewWebConfiguration", configuration.review)
@@ -3362,6 +3390,25 @@ def _load_batch_credentials(
     return values
 
 
+def _provider_throttling_reader(
+    provider_recovery: SQLiteProviderRecoveryStore,
+    configuration: ApplicationConfiguration,
+    credentials: dict[str, str],
+    retry: Literal["available", "managed_by_file"],
+) -> Callable[[], dict[str, object]]:
+    """Bind the preparation read to this generation's recovery and keys."""
+    keyed = {
+        item.name: "provider:" + item.name in credentials
+        for item in configuration.providers
+    }
+    return lambda: provider_throttling_view(
+        provider_recovery.throttling_snapshot(),
+        keyed,
+        configuration.provider_recovery_generation,
+        retry,
+    )
+
+
 def compose_store_runtime_generation(
     bootstrap: ReviewBootstrap,
     database_path: Path,
@@ -3449,6 +3496,11 @@ def compose_store_runtime_generation(
             credentials=credentials,
             first_boot=first_boot,
             admission=repository.operation_admission,
+            defer_cutover=(
+                None
+                if activation is None or authority_snapshot is None
+                else activation.defer_cutover
+            ),
         )
         field_application = (
             compose_continuous_guarded_application(
@@ -3554,6 +3606,9 @@ def compose_store_runtime_generation(
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
                 validated_documents=(
                     None if activation is None else activation.validated_documents
+                ),
+                provider_throttling=_provider_throttling_reader(
+                    provider_recovery, configuration, credentials, "available"
                 ),
             )
             review_app = create_review_app(review_application, review)
@@ -4063,6 +4118,9 @@ def run_review_server(
                     settings=settings,
                     reviewer_access=reviewer_access,
                     first_boot=first_boot,
+                    provider_throttling=_provider_throttling_reader(
+                        provider_recovery, configuration, credentials, "managed_by_file"
+                    ),
                 )
                 active_review_application = review_application
                 app = create_review_app(review_application, review)

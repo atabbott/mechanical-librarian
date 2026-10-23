@@ -93,6 +93,7 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
+    ProviderAdapter,
     SecretWrite,
     SettingsView,
 )
@@ -192,6 +193,10 @@ class _SettingsWriteRequest(_ClosedModel):
     expected_revision: StrictInt = Field(ge=1)
     document: OwnerSettingsDocument
     secrets: list[SecretWrite] = Field(max_length=32)
+
+
+class _ProviderRecoveryRetryRequest(_ClosedModel):
+    expected_generation: StrictInt = Field(ge=1)
 
 
 class _AppearanceResponse(_ClosedModel):
@@ -1252,6 +1257,32 @@ class _PreparationDismissRequest(_ClosedModel):
     run_id: StrictStr = Field(pattern=r"^preparation_run_[0-9a-f]{64}$")
 
 
+class _PreparationThrottleEntry(_ClosedModel):
+    library: StrictStr = Field(min_length=1, max_length=64)
+    adapter: ProviderAdapter
+    state: Literal["waiting", "dormant", "checking", "exhausted"]
+    reasons: list[
+        Literal[
+            "authentication",
+            "authorization",
+            "configuration",
+            "rate_limited",
+            "burst_throttled",
+            "quota_exhausted",
+            "transient",
+        ]
+    ] = Field(max_length=7)
+    deferred: int = Field(ge=0)
+    next_retry_at: int | None = Field(ge=0, le=8_640_000_000_000)
+    remedy: Literal["add_api_key", "check_api_key"] | None
+
+
+class _PreparationThrottling(_ClosedModel):
+    generation: int = Field(ge=1)
+    retry: Literal["available", "managed_by_file", "unavailable"]
+    entries: list[_PreparationThrottleEntry] = Field(max_length=256)
+
+
 class _PreparationResponse(_ClosedModel):
     libraries: list[_PreparationProgress]
     connections: list[_PreparationConnection] = Field(default_factory=list)
@@ -1263,6 +1294,7 @@ class _PreparationResponse(_ClosedModel):
     first_boot_complete: bool = False
     first_boot_works: int | None = Field(default=None, ge=0)
     presentation: _PreparationPresentation | None = None
+    provider_throttling: _PreparationThrottling | None = None
     schema_version: Literal["review-preparation-v2"] = "review-preparation-v2"
 
 
@@ -2065,6 +2097,7 @@ def create_review_app(
         hsts=origin.scheme == "https",
         path_limits={
             "/api/v1/review-preparation/dismiss": 2048,
+            "/api/v1/provider-recovery/retry": 2048,
             "/api/v1/reviewer-access/openrouter/refresh": 2048,
             # The write contract permits a 2,048-character key plus its
             # model, revision, and JSON framing.
@@ -2291,22 +2324,50 @@ def _register_settings_routes(
                 request.document, request.expected_revision, tuple(request.secrets)
             )
         except ReviewApplicationError as error:
-            status = (
-                409
-                if error.code in {"settings_stale", "settings_locked"}
-                else (422 if error.code == "settings_invalid" else 503)
-            )
-            detail = {
-                "code": (
-                    "settings_managed_by_file"
-                    if error.code == "settings_locked"
-                    else error.code
-                )
-            }
-            if error.code == "settings_locked":
-                detail["managed_by_file"] = "/data/config.json"
-            raise HTTPException(status, detail=detail) from None
+            raise _settings_write_error(error) from None
         return cast(SettingsView, value)
+
+    @app.post(
+        "/api/v1/provider-recovery/retry",
+        response_model=SettingsView,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def retry_provider_recovery(
+        request: _ProviderRecoveryRetryRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> SettingsView:
+        _require_session(application, ml_session, x_csrf_token)
+        if not application.settings_available:
+            raise HTTPException(503, detail={"code": "settings_unavailable"})
+        try:
+            value = application.retry_provider_recovery(request.expected_generation)
+        except ReviewApplicationError as error:
+            raise _settings_write_error(error) from None
+        return cast(SettingsView, value)
+
+
+def _settings_write_error(error: ReviewApplicationError) -> HTTPException:
+    """One closed refusal table for every owner write that composes Settings."""
+    status = (
+        409
+        if error.code
+        in {"settings_stale", "settings_locked", "provider_recovery_stale"}
+        else (422 if error.code == "settings_invalid" else 503)
+    )
+    detail = {
+        "code": (
+            "settings_managed_by_file"
+            if error.code == "settings_locked"
+            else error.code
+        )
+    }
+    if error.code == "settings_locked":
+        detail["managed_by_file"] = "/data/config.json"
+    return HTTPException(status, detail=detail)
 
 
 def reviewer_failure_response(error: Exception) -> tuple[int, str]:

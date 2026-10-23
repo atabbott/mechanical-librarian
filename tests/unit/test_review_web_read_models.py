@@ -3763,3 +3763,408 @@ def test_attention_nonconsecutive_pair_is_parsed_again(canonical_attention_pair)
         )
     assert parse.call_count == 3
     assert [item["title"] for item in page["items"]] == ["Title", "Other", "Title"]
+
+
+def _throttle_row(
+    connection: str,
+    adapter: str,
+    scope: str,
+    state: str,
+    reason: str | None,
+    deferred: int,
+    next_eligible_at: int | None = None,
+) -> dict[str, object]:
+    return {
+        "connection": connection,
+        "adapter": adapter,
+        "scope": scope,
+        "state": state,
+        "next_eligible_at": next_eligible_at,
+        "reason": reason,
+        "deferred": deferred,
+    }
+
+
+@pytest.mark.parametrize(
+    ("rows", "providers", "entries"),
+    (
+        pytest.param(
+            (
+                _throttle_row(
+                    "google-a",
+                    "google_books",
+                    "books",
+                    "waiting",
+                    "burst_throttled",
+                    3,
+                    90,
+                ),
+                _throttle_row(
+                    "google-b",
+                    "google_books",
+                    "books",
+                    "waiting",
+                    "quota_exhausted",
+                    4,
+                    70,
+                ),
+            ),
+            {"google-a": False, "google-b": False},
+            [("books", "google_books", "waiting", 7, 70, "add_api_key")],
+            id="two-keyless-google-instances-summed",
+        ),
+        pytest.param(
+            (
+                _throttle_row(
+                    "google",
+                    "google_books",
+                    "books",
+                    "waiting",
+                    "burst_throttled",
+                    1,
+                    9,
+                ),
+                _throttle_row(
+                    "google", "google_books", "audio", "dormant", "authentication", 2
+                ),
+            ),
+            {"google": False},
+            [
+                ("audio", "google_books", "dormant", 2, None, "check_api_key"),
+                ("books", "google_books", "waiting", 1, 9, "add_api_key"),
+            ],
+            id="split-by-library",
+        ),
+        pytest.param(
+            (
+                _throttle_row(
+                    "google-a", "google_books", "books", "exhausted", None, 1
+                ),
+                _throttle_row("google-b", "google_books", "books", "dormant", None, 1),
+                _throttle_row(
+                    "google-c", "google_books", "books", "waiting", None, 1, 5
+                ),
+                _throttle_row("google-d", "google_books", "books", "fanout", None, 1),
+            ),
+            {},
+            [("books", "google_books", "checking", 4, 5, None)],
+            id="checking-precedes-waiting-dormant-exhausted",
+        ),
+        pytest.param(
+            (
+                _throttle_row(
+                    "google-a", "google_books", "books", "exhausted", None, 1
+                ),
+                _throttle_row("google-b", "google_books", "books", "dormant", None, 1),
+            ),
+            {},
+            [("books", "google_books", "dormant", 2, None, None)],
+            id="dormant-precedes-exhausted",
+        ),
+        pytest.param(
+            (
+                _throttle_row(
+                    "google", "google_books", "books", "waiting", "rate_limited", 0, 4
+                ),
+            ),
+            {"google": True},
+            [("books", "google_books", "waiting", 0, 4, None)],
+            id="google-with-a-key-has-no-remedy",
+        ),
+        pytest.param(
+            (
+                _throttle_row(
+                    "google", "google_books", "books", "waiting", "rate_limited", 2, 4
+                ),
+            ),
+            {},
+            [("books", "google_books", "waiting", 2, 4, None)],
+            id="unknown-instance-has-no-remedy",
+        ),
+        pytest.param(
+            (
+                _throttle_row(
+                    "hc", "hardcover", "books", "waiting", "burst_throttled", 2, 4
+                ),
+            ),
+            {"hc": False},
+            [("books", "hardcover", "waiting", 2, 4, None)],
+            id="throttled-hardcover-has-no-remedy",
+        ),
+        pytest.param(
+            (_throttle_row("hc", "hardcover", "books", "dormant", "authorization", 2),),
+            {"hc": True},
+            [("books", "hardcover", "dormant", 2, None, "check_api_key")],
+            id="hardcover-key-check",
+        ),
+        pytest.param(
+            (
+                _throttle_row(
+                    "ol", "open_library", "books", "waiting", "transient", 0, 4
+                ),
+                _throttle_row(
+                    "ol", "open_library", "audio", "dormant", "authentication", 0
+                ),
+            ),
+            {"ol": False},
+            [],
+            id="nothing-deferred-and-not-throttled-is-dropped",
+        ),
+    ),
+)
+def test_provider_throttling_view_totals_each_library_and_source(
+    rows: tuple[dict[str, object], ...],
+    providers: dict[str, bool],
+    entries: list[tuple[object, ...]],
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    view = provider_throttling_view(rows, providers, 4, "available")
+
+    assert (4, "available") == (view["generation"], view["retry"])
+    assert entries == [
+        (
+            entry["library"],
+            entry["adapter"],
+            entry["state"],
+            entry["deferred"],
+            entry["next_retry_at"],
+            entry["remedy"],
+        )
+        for entry in cast("list[dict[str, object]]", view["entries"])
+    ]
+    assert all(
+        set(entry)
+        == {
+            "library",
+            "adapter",
+            "state",
+            "reasons",
+            "deferred",
+            "next_retry_at",
+            "remedy",
+        }
+        for entry in cast("list[dict[str, object]]", view["entries"])
+    )
+
+
+def test_preparation_read_carries_value_free_provider_throttling(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(web.hash_path),
+    )
+    rows = (
+        _throttle_row(
+            "private-google-instance",
+            "google_books",
+            "books",
+            "waiting",
+            "burst_throttled",
+            214,
+            90,
+        ),
+    )
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            configuration,
+            clock=lambda: web.now,
+            review_preparation=FakePreparation(),
+            provider_throttling=lambda: provider_throttling_view(
+                rows, {"private-google-instance": False}, 3, "available"
+            ),
+        ),
+        base_url="https://review.test",
+    )
+    web.login()
+    response = web.client.get("/api/v1/review-preparation")
+    assert response.status_code == 200
+    assert response.json()["schema_version"] == "review-preparation-v2"
+    assert response.json()["provider_throttling"] == {
+        "generation": 3,
+        "retry": "available",
+        "entries": [
+            {
+                "library": "books",
+                "adapter": "google_books",
+                "state": "waiting",
+                "reasons": ["burst_throttled"],
+                "deferred": 214,
+                "next_retry_at": 90,
+                "remedy": "add_api_key",
+            }
+        ],
+    }
+    assert "private-google-instance" not in response.text
+
+
+def _retry_client(
+    web: ReviewWebContext[_CloseRecordingRepository], settings: object | None
+) -> None:
+    configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(web.hash_path),
+    )
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            configuration,
+            clock=lambda: web.now,
+            settings=cast("Any", settings),
+        ),
+        base_url="https://review.test",
+    )
+
+
+def _retry_settings_document(generation: int):
+    from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+
+    return OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v4",
+            "revision": 1,
+            "connections": [
+                {"name": "primary", "endpoint": "https://library.example.invalid"}
+            ],
+            "libraries": [
+                {
+                    "name": "books",
+                    "connection": "primary",
+                    "library_id": "library-1",
+                    "media_kind": "ebook",
+                }
+            ],
+            "provider_recovery_generation": generation,
+        }
+    )
+
+
+def test_provider_recovery_retry_raises_the_generation_exactly_once(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    import sqlite3
+
+    from mechanical_librarian.adapters.persistence.documents import _canonical_json
+    from mechanical_librarian.adapters.persistence.owner_settings import (
+        OwnerSettingsStore,
+    )
+    from mechanical_librarian.application.owner_settings import (
+        OwnerSettingsOperations,
+    )
+
+    connection = sqlite3.connect(":memory:", check_same_thread=False)
+    connection.execute(
+        "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY,revision INTEGER NOT NULL,document TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO owner_settings VALUES(1,1,?)",
+        (_canonical_json(_retry_settings_document(4).model_dump()),),
+    )
+    connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES('connection.primary.key','old-secret-1234')"
+    )
+    connection.commit()
+    _retry_client(web, OwnerSettingsOperations(OwnerSettingsStore(connection)))
+    route = "/api/v1/provider-recovery/retry"
+    body = {"expected_generation": 4}
+    assert web.client.post(route, json=body, headers=web.origin).status_code == 401
+    session = web.login()
+    csrf = {**web.origin, "x-csrf-token": session["csrf_token"]}
+    assert web.client.post(route, json=body, headers=web.origin).status_code == 422
+    assert (
+        web.client.post(
+            route, json=body, headers={**web.origin, "x-csrf-token": "bad"}
+        ).status_code
+        == 403
+    )
+    for invalid in (
+        {"expected_generation": True},
+        {"expected_generation": 0},
+        {"expected_generation": "4"},
+        {"expected_generation": 4, "generation": 5},
+        {},
+    ):
+        assert web.client.post(route, json=invalid, headers=csrf).status_code == 422
+    oversized = web.client.post(
+        route,
+        content=b"{" + b"x" * 4096,
+        headers={**csrf, "content-type": "application/json"},
+    )
+    assert oversized.status_code == 413
+    assert OwnerSettingsStore(connection).read().document.revision == 1
+
+    raised = web.client.post(route, json=body, headers=csrf)
+    assert raised.status_code == 200, raised.text
+    assert raised.json()["document"]["provider_recovery_generation"] == 5
+    assert raised.json()["document"]["revision"] == 2
+    assert "old-secret" not in raised.text
+    repeated = web.client.post(route, json=body, headers=csrf)
+    assert repeated.status_code == 409
+    assert repeated.json()["error"] == {"code": "provider_recovery_stale"}
+    stored = OwnerSettingsStore(connection).read().document
+    assert (stored.revision, stored.provider_recovery_generation) == (2, 5)
+    # Nothing but the generation and its revision moved.
+    assert stored.model_dump() == _retry_settings_document(5).model_dump() | {
+        "revision": 2
+    }
+    connection.close()
+    unavailable = web.client.post(route, json={"expected_generation": 5}, headers=csrf)
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"] == {"code": "settings_unavailable"}
+
+
+@pytest.mark.parametrize("expected", (3, 4), ids=("current", "mismatched"))
+def test_provider_recovery_retry_refuses_file_authority_first(
+    web: ReviewWebContext[_CloseRecordingRepository], expected: int
+) -> None:
+    from mechanical_librarian.application.owner_settings import (
+        FileOwnerSettingsRepository,
+        OwnerSettingsOperations,
+    )
+
+    _retry_client(
+        web,
+        OwnerSettingsOperations(
+            FileOwnerSettingsRepository(_retry_settings_document(3))
+        ),
+    )
+    session = web.login()
+    locked = web.client.post(
+        "/api/v1/provider-recovery/retry",
+        json={"expected_generation": expected},
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert locked.status_code == 409
+    assert locked.json()["error"] == {
+        "code": "settings_managed_by_file",
+        "managed_by_file": "/data/config.json",
+    }
+
+
+def test_provider_recovery_retry_without_settings_is_unavailable(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    _retry_client(web, None)
+    session = web.login()
+    response = web.client.post(
+        "/api/v1/provider-recovery/retry",
+        json={"expected_generation": 1},
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert response.status_code == 503
+    assert response.json()["error"] == {"code": "settings_unavailable"}

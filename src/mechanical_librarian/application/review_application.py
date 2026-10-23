@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from _thread import RLock
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from threading import Condition
@@ -75,6 +75,7 @@ from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     OwnerSettingsError,
     SecretWrite,
+    SettingsView,
 )
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
@@ -272,6 +273,7 @@ class PreparationView:
     presentation: dict[str, object] | None = None
     schema_version: str = "review-preparation-v2"
     recovery_required: bool = False
+    provider_throttling: dict[str, object] | None = None
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -287,8 +289,73 @@ class PreparationView:
             "presentation": None
             if self.presentation is None
             else dict(self.presentation),
+            "provider_throttling": self.provider_throttling,
             "schema_version": self.schema_version,
         }
+
+
+_THROTTLE_REASONS = frozenset({"rate_limited", "burst_throttled", "quota_exhausted"})
+_KEY_REASONS = frozenset({"authentication", "authorization"})
+# Reported state, in the precedence one library and source takes: a check in
+# flight first, then a scheduled retry, then a wait on the owner, then nothing.
+_THROTTLE_STATES = ("checking", "waiting", "dormant", "exhausted")
+
+
+def provider_throttling_view(
+    rows: Iterable[Mapping[str, object]],
+    providers: Mapping[str, bool],
+    generation: int,
+    retry: Literal["available", "managed_by_file", "unavailable"],
+) -> dict[str, object]:
+    """Total deferred provider lookups per library and source, value-free.
+
+    ``providers`` maps each configured provider instance to whether it holds an
+    API key; it is read only to choose a remedy, and no instance name leaves.
+    """
+    groups: dict[tuple[str, str], list[Mapping[str, object]]] = {}
+    for row in rows:
+        if cast("int", row["deferred"]) > 0 or row["reason"] in _THROTTLE_REASONS:
+            key = (cast("str", row["scope"]), cast("str", row["adapter"]))
+            groups.setdefault(key, []).append(row)
+    entries: list[dict[str, object]] = []
+    for (library, adapter), members in sorted(groups.items())[:256]:
+        reasons = sorted(
+            {cast("str", item["reason"]) for item in members if item["reason"]}
+        )
+        states = {
+            "checking" if item["state"] == "fanout" else item["state"]
+            for item in members
+        }
+        due = [
+            cast("int", item["next_eligible_at"])
+            for item in members
+            if item["state"] == "waiting"
+        ]
+        remedy = (
+            "add_api_key"
+            if adapter == "google_books"
+            and _THROTTLE_REASONS.intersection(reasons)
+            and all(
+                providers.get(cast("str", item["connection"])) is False
+                for item in members
+            )
+            else "check_api_key"
+            if adapter in {"google_books", "hardcover"}
+            and _KEY_REASONS.intersection(reasons)
+            else None
+        )
+        entries.append(
+            {
+                "library": library,
+                "adapter": adapter,
+                "state": next(state for state in _THROTTLE_STATES if state in states),
+                "reasons": reasons,
+                "deferred": sum(cast("int", item["deferred"]) for item in members),
+                "next_retry_at": min(due) if due else None,
+                "remedy": remedy,
+            }
+        )
+    return {"generation": generation, "retry": retry, "entries": entries}
 
 
 class PolicyOperations:
@@ -457,6 +524,7 @@ class ReviewApplication:
         ) = None,
         first_boot: bool = False,
         acknowledge_first_boot: Callable[[], None] | None = None,
+        provider_throttling: Callable[[], dict[str, object]] | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -492,6 +560,7 @@ class ReviewApplication:
         self._settings_activation = settings_activation
         self._first_boot = first_boot
         self._acknowledge_first_boot = acknowledge_first_boot
+        self._provider_throttling = provider_throttling
 
     def _reviewer_changed(self) -> None:
         if self._preparation is not None:
@@ -619,6 +688,25 @@ class ReviewApplication:
             raise ReviewApplicationError(code) from error
         except Exception as error:
             raise ReviewApplicationError("settings_unavailable") from error
+
+    def retry_provider_recovery(self, expected_generation: int) -> object:
+        """Raise the recovery generation by exactly one, as one Settings write."""
+        view = cast("SettingsView", self.owner_settings())
+        if view.authority == "file":
+            raise ReviewApplicationError("settings_locked")
+        current = view.document
+        if current.provider_recovery_generation != expected_generation:
+            raise ReviewApplicationError("provider_recovery_stale")
+        document = OwnerSettingsDocument.model_validate(
+            {
+                **current.model_dump(),
+                "revision": current.revision + 1,
+                "provider_recovery_generation": expected_generation + 1,
+            }
+        )
+        value = self.write_owner_settings(document, current.revision, ())
+        self._updates.publish("preparation")
+        return value
 
     def start(self) -> None:
         if self._operations is not None:
@@ -1275,6 +1363,9 @@ class ReviewApplication:
         presentation = self.serialized(
             lambda: self._state_owner.preparation_presentation(self._clock())
         )
+        throttling = (
+            None if self._provider_throttling is None else self._provider_throttling()
+        )
         if self._preparation is None:
             return PreparationView(
                 (),
@@ -1282,6 +1373,7 @@ class ReviewApplication:
                 False,
                 False,
                 presentation=None if presentation is None else presentation.to_data(),
+                provider_throttling=throttling,
             )
         progress_values, paused = self._preparation.status()
         if len(progress_values) != len(self._preparation.libraries):
@@ -1356,6 +1448,7 @@ class ReviewApplication:
             else None,
             None if presentation is None else presentation.to_data(),
             recovery_required=recovery_required,
+            provider_throttling=throttling,
         )
 
     def dismiss_preparation(self, run_id: str) -> PreparationView:
@@ -1624,6 +1717,7 @@ def compose_review_application(
     first_boot: bool = False,
     acknowledge_first_boot: Callable[[], None] | None = None,
     validated_documents: ValidatedDocumentCache | None = None,
+    provider_throttling: Callable[[], dict[str, object]] | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = operation_lock or RLock()
@@ -1706,6 +1800,7 @@ def compose_review_application(
         settings_activation=settings_activation,
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,
+        provider_throttling=provider_throttling,
     )
     return application
 
@@ -1723,4 +1818,5 @@ __all__ = [
     "ReviewApplicationError",
     "compose_review_application",
     "prepare_cover_consideration",
+    "provider_throttling_view",
 ]
