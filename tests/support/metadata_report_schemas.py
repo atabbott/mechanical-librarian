@@ -272,6 +272,29 @@ PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
 )
 
 
+# Every producer before #1285 admitted only the three original human outcomes.
+PRIOR_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
+    "'reject','owner_entered','withdraw','revert')", "'reject')"
+)
+# Before #1285 any owner decision settled a field; now only its latest one
+# does, unless it withdrew the field.
+HUMAN_DECIDED_SQL = (
+    " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
+    "WHERE decision.review_case_id=rc.review_case_id "
+    "AND decision.destination=result.destination "
+    "ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
+)
+PRIOR_HUMAN_DECIDED_SQL = (
+    " AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    "WHERE decision.review_case_id=rc.review_case_id "
+    "AND decision.destination=result.destination) "
+)
+PRIOR_ATTENTION_FACT_OBJECTS = tuple(
+    (kind, name, sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL))
+    for kind, name, sql in persistence_schema._ATTENTION_FACT_OBJECTS
+)
+
+
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(

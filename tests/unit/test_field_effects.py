@@ -5394,6 +5394,20 @@ def test_audiobook_pair_companion_serialized_tamper_refuses(audiobook_pair, key,
     assert not audiobook_pair.patches()
 
 
+def test_audiobook_pair_write_offers_neither_field_a_revert(audiobook_pair):
+    """A paired write is automatic and carries a companion: no revert (#1285)."""
+    op = audiobook_pair.plan()
+    assert audiobook_pair.service.apply(op.plan.plan_id).state == "verified"
+    assert op.plan.subtitle_companion is not None
+    target = audiobook_pair.report.target
+    assert (
+        audiobook_pair.repo.revert_candidates(
+            target.connection, target.library, target.item
+        )
+        == ()
+    )
+
+
 def test_audiobook_pair_competing_claim_only_one_wins(audiobook_pair):
     op = audiobook_pair.plan()
     one = audiobook_pair.repo.claim_field_effect(

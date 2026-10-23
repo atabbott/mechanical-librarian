@@ -1699,7 +1699,7 @@ def test_automatic_history_values_require_an_exact_decision_identity(
     expected = (
         {"kind": "text", "value": "Existing description."} if mismatch is None else None
     )
-    assert history["schema_version"] == "review-case-history-v2"
+    assert history["schema_version"] == "review-case-history-v3"
     assert history["items"][0]["previous_value"] == expected
     assert history["items"][0]["selected_value"] == expected
     assert history["items"][1]["previous_value"] is None
@@ -3003,7 +3003,7 @@ def test_chapter_runtime_admission_is_attributed_in_case_and_report(
     basis = response.json()["recording_identity_basis"]
     assert (basis is None) is omitted
     assert _report_detail(report.to_data(), report)["recording_identity_basis"] == basis
-    assert response.json()["schema_version"] == "review-case-detail-v5"
+    assert response.json()["schema_version"] == "review-case-detail-v6"
     if basis is not None:
         assert basis == {
             "basis": "chapter_runtime_and_structure",

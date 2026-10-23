@@ -1780,7 +1780,7 @@ class ContinuousGuardedApplication:
             raise FieldEffectError("authority_binding")
         if raw.get("schema_version") == "authored-description-decision-v1":
             return AuthoredDescriptionDecision.from_json(document)
-        if raw.get("schema_version") == "human-decision-v2":
+        if raw.get("schema_version") == "human-decision-v3":
             return HumanDecision.from_json(document)
         if raw.get("schema_version") == "automatic-decision-v1":
             return AutomaticDecision.from_json(document)

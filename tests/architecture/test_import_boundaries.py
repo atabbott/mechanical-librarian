@@ -193,3 +193,45 @@ def test_runtime_has_only_the_closed_installed_command_set() -> None:
     )
     assert "DELETE FROM metadata_reports" not in source
     assert "UPDATE metadata_reports" not in source
+
+
+def test_learning_and_policy_code_never_reads_owner_entered_or_revert() -> None:
+    """An owner-typed value or a restore is never evidence (#1285, ADR-0085).
+
+    Policy, shadow, qualification, provider, automatic-decision and proposal
+    modules may neither name the two outcomes, in code or in SQL text, nor
+    import the owner-value vocabulary that carries them.
+    """
+    import re
+
+    learning = re.compile(r"polic|shadow|qualif|provider|automatic_decision|proposal")
+    owner = re.compile(
+        r"\b(owner_entered|revert|reverts_plan_id|revert_candidates|"
+        r"owner_value_\w+|owner_text|list_union|UNREVERSIBLE_DESTINATIONS)\b"
+    )
+    modules = [
+        path
+        for path in PACKAGE_ROOT.rglob("*.py")
+        if learning.search(str(path.relative_to(PACKAGE_ROOT)))
+    ]
+    assert len(modules) >= 30
+    found = []
+    for path in modules:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names = (
+                [node.value]
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                else [node.id]
+                if isinstance(node, ast.Name)
+                else [node.attr]
+                if isinstance(node, ast.Attribute)
+                else [node.name]
+                if isinstance(node, ast.alias)
+                else []
+            )
+            found += [
+                f"{path.relative_to(PACKAGE_ROOT)}:{node.lineno}"
+                for name in names
+                if owner.search(name)
+            ]
+    assert found == []

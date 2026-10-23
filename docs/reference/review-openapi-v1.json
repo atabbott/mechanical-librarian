@@ -3355,7 +3355,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v5",
+            "const": "review-case-detail-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -4816,7 +4816,10 @@
             "enum": [
               "accept",
               "keep_current",
-              "reject"
+              "reject",
+              "owner_entered",
+              "withdraw",
+              "revert"
             ],
             "title": "Outcome",
             "type": "string"
@@ -4825,6 +4828,18 @@
             "pattern": "^review_proposal_[0-9a-f]{64}$",
             "title": "Proposal Id",
             "type": "string"
+          },
+          "reverts_plan_id": {
+            "anyOf": [
+              {
+                "pattern": "^effect_plan_[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reverts Plan Id"
           },
           "selected_value": {
             "anyOf": [
@@ -5674,7 +5689,10 @@
             "enum": [
               "accept",
               "keep_current",
-              "reject"
+              "reject",
+              "owner_entered",
+              "withdraw",
+              "revert"
             ],
             "title": "Outcome",
             "type": "string"
@@ -5865,7 +5883,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v2",
+            "const": "review-case-history-v3",
             "title": "Schema Version",
             "type": "string"
           }
@@ -6737,6 +6755,224 @@
           "timings"
         ],
         "title": "_OperationalResponse",
+        "type": "object"
+      },
+      "_OwnerControl": {
+        "additionalProperties": false,
+        "description": "F59's owner controls for one field; each part is offered or null.",
+        "properties": {
+          "entry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_OwnerEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revert": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_OwnerRevert"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_OwnerSubset"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "withdraw": {
+            "anyOf": [
+              {
+                "enum": [
+                  "available",
+                  "automatic_hold",
+                  "in_progress",
+                  "written"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Withdraw"
+          }
+        },
+        "required": [
+          "entry",
+          "subset",
+          "withdraw",
+          "revert"
+        ],
+        "title": "_OwnerControl",
+        "type": "object"
+      },
+      "_OwnerEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "max_characters": {
+            "const": 512,
+            "title": "Max Characters",
+            "type": "integer"
+          },
+          "suggestions": {
+            "items": {
+              "$ref": "#/components/schemas/_OwnerSuggestion"
+            },
+            "maxItems": 4,
+            "title": "Suggestions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "max_characters",
+          "suggestions"
+        ],
+        "title": "_OwnerEntry",
+        "type": "object"
+      },
+      "_OwnerRevert": {
+        "additionalProperties": false,
+        "properties": {
+          "plan_id": {
+            "pattern": "^effect_plan_[0-9a-f]{64}$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "previous_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "available",
+              "field_changed",
+              "no_previous_value",
+              "unavailable",
+              "reverted"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "written_at": {
+            "minimum": 0.0,
+            "title": "Written At",
+            "type": "integer"
+          },
+          "written_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ProposedValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "plan_id",
+          "written_value",
+          "previous_value",
+          "written_at"
+        ],
+        "title": "_OwnerRevert",
+        "type": "object"
+      },
+      "_OwnerSubset": {
+        "additionalProperties": false,
+        "properties": {
+          "max_items": {
+            "const": 32,
+            "title": "Max Items",
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/_OwnerSubsetOption"
+            },
+            "maxItems": 160,
+            "minItems": 1,
+            "title": "Options",
+            "type": "array"
+          }
+        },
+        "required": [
+          "max_items",
+          "options"
+        ],
+        "title": "_OwnerSubset",
+        "type": "object"
+      },
+      "_OwnerSubsetOption": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "proposed": {
+            "title": "Proposed",
+            "type": "boolean"
+          },
+          "value": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "current",
+          "proposed"
+        ],
+        "title": "_OwnerSubsetOption",
+        "type": "object"
+      },
+      "_OwnerSuggestion": {
+        "additionalProperties": false,
+        "properties": {
+          "rule": {
+            "enum": [
+              "title_case",
+              "strip_part",
+              "split_author",
+              "combined"
+            ],
+            "title": "Rule",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "value"
+        ],
+        "title": "_OwnerSuggestion",
         "type": "object"
       },
       "_PolicyActivationRequest": {
@@ -8779,6 +9015,16 @@
             "title": "Notices",
             "type": "array"
           },
+          "owner_control": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_OwnerControl"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "preservation_only": {
             "title": "Preservation Only",
             "type": "boolean"
@@ -8831,6 +9077,7 @@
           "needs_attention",
           "navigation_role",
           "notices",
+          "owner_control",
           "proposed_values",
           "choice_contexts",
           "provenance",

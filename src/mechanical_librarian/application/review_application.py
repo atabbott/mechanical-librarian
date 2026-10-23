@@ -1110,6 +1110,7 @@ class ReviewApplication:
         idempotency_key: str,
         consideration_id: str | None = None,
         cover_confirmation: dict[str, object] | None = None,
+        reverts_plan_id: str | None = None,
     ) -> dict[str, object]:
         if destination == "cover" and (
             self._cover_considerations is None or consideration_id is None
@@ -1130,6 +1131,7 @@ class ReviewApplication:
                 idempotency_key=idempotency_key,
                 consideration_id=consideration_id,
                 cover_confirmation=cover_confirmation,
+                reverts_plan_id=reverts_plan_id,
             )
             return {
                 **result,

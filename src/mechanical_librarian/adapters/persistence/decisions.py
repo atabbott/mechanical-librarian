@@ -63,11 +63,13 @@ from mechanical_librarian.domain.description_advice import (
 from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     decision_value_kind,
+    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import (
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    target_value,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
@@ -136,6 +138,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         validate_shadow_outcome_row: Callable[
             [tuple[object, ...] | sqlite3.Row], tuple[str, int]
         ],
+        revert_candidates: Callable[[str, str, str], tuple[dict[str, object], ...]],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
@@ -148,6 +151,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         )
         self._set_field_effect_manual_hold = set_field_effect_manual_hold
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
+        self._revert_candidates = revert_candidates
 
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
@@ -508,6 +512,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )
+            if decision.outcome == "withdraw":
+                self._require_withdrawable(decision)
+            elif decision.outcome == "revert":
+                self._require_revertible(decision, case)
             cover_automatic = None
             if decision.destination == "cover":
                 target = case.target
@@ -662,6 +670,73 @@ class SQLiteDecisionRepository(ConnectionScoped):
         ) as error:
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
+
+    def _require_withdrawable(self, decision: HumanDecision) -> None:
+        """Refuse a withdraw in its fixed order; nothing is written (ADR-0085)."""
+        latest = self._connection.execute(
+            "SELECT decision_id,outcome FROM human_decisions "
+            "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
+            (decision.review_case_id, decision.destination),
+        ).fetchone()
+        if latest is None or latest[1] in {"withdraw", "reject"}:
+            raise HumanDecisionError("nothing_to_withdraw")
+        if self._connection.execute(
+            "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+            (decision.review_case_id, decision.destination),
+        ).fetchone():
+            raise HumanDecisionError("automatic_hold")
+        states = {
+            row[0]
+            for row in self._connection.execute(
+                "SELECT state FROM field_effects WHERE rowid IN (SELECT rowid FROM "
+                "field_effects WHERE decision_id=? UNION ALL SELECT rowid FROM "
+                "field_effects WHERE " + _FIELD_EFFECT_COMPANION_DECISION_SQL + "=?)",
+                (latest[0], latest[0]),
+            )
+        }
+        if states & {"claimed", "applying", "reconciling"}:
+            raise HumanDecisionError("already_decided")
+        if "verified" in states:
+            raise HumanDecisionError("decision_written")
+
+    def _require_revertible(self, decision: HumanDecision, case: ReviewCase) -> None:
+        """Refuse a revert in its fixed order, before anything is written.
+
+        Only the work's latest write, made from a human decision, may be
+        reverted, and only while this case says the field still holds what it
+        wrote. The value restored is the plan's recorded pre-image and must be
+        exactly what the command carries (ADR-0085).
+        """
+        target = case.target
+        candidate = next(
+            (
+                value
+                for value in self._revert_candidates(
+                    str(target["connection"]),
+                    str(target["library"]),
+                    str(target["item"]),
+                )
+                if value["destination"] == decision.destination
+            ),
+            None,
+        )
+        if (
+            candidate is None
+            or candidate["plan_id"] != decision.reverts_plan_id
+            or candidate["eligibility"] not in {"eligible", "no_previous_value"}
+        ):
+            raise HumanDecisionError("revert_unavailable")
+        if candidate["eligibility"] == "no_previous_value":
+            raise HumanDecisionError("revert_no_previous_value")
+        if json.loads(_canonical_json(decision.selected_value)) != {
+            "kind": decision_value_kind(decision.destination),
+            "value": candidate["pre_value"],
+        }:
+            raise HumanDecisionError("revert_unavailable")
+        if field_value_version(
+            decision.destination, target_value(case, decision.destination)
+        ) != field_value_version(decision.destination, candidate["desired_value"]):
+            raise HumanDecisionError("revert_field_changed")
 
     @local_operation
     def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
@@ -1082,7 +1157,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 )
                 value["selected_value"] = (
                     decision.selected_value
-                    if decision.outcome == "accept"
+                    if decision.outcome in {"accept", "owner_entered", "revert"}
                     else {"kind": kind, "value": target.get("value")}
                     if decision.outcome == "keep_current"
                     and target.get("state") == "value"

@@ -178,7 +178,11 @@ class FakeAuthorityCurrentness:
         target_version: str,
         source: Literal["persisted_review_case", "fake_service"] = "fake_service",
     ) -> None:
-        if type(decision) is HumanDecision and decision.outcome == "accept":
+        if type(decision) is HumanDecision and decision.outcome in {
+            "accept",
+            "owner_entered",
+            "revert",
+        }:
             value: object = decision.selected_value
         elif type(decision) is AuthoredDescriptionDecision:
             value = self.authored_values[decision.decision_id]

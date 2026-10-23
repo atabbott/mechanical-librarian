@@ -136,10 +136,13 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     + _SHADOW_ABSTENTION_SQL
     + ")"
 )
+# A field is decided by its latest owner decision unless that withdrew it
+# (ADR-0085); an earlier decision never settles a field the owner took back.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
-    " AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=result.destination) "
+    "AND decision.destination=result.destination "
+    "ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description') "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "

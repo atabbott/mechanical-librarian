@@ -117,6 +117,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         current_resolved_metadata_policy: Callable[
             [str], ResolvedMetadataPolicy | None
         ],
+        revert_candidates: Callable[[str, str, str], tuple[dict[str, object], ...]],
     ) -> None:
         super().__init__(connection, binding)
         self._require_staged_shadow_projection_current = (
@@ -133,6 +134,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.read_current_attention_page = read_current_attention_page
         self._current_cover_authority = current_cover_authority
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
+        self._revert_candidates = revert_candidates
 
     @contextmanager
     def _consistent_review_read(self) -> Iterator[None]:
@@ -302,8 +304,37 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 current_cover_automatic_decision_id=(
                     self._current_cover_automatic_decision_id(review_case_id)
                 ),
+                decision_effect_states=self._decision_effect_states(review_case_id),
+                revert_candidates=self._revert_candidates(
+                    report.target.connection,
+                    report.target.library,
+                    report.target.item,
+                ),
             )
         return snapshot
+
+    def _decision_effect_states(
+        self, review_case_id: str
+    ) -> tuple[tuple[str, str], ...]:
+        """Whether each latest owner decision's write is in flight or written."""
+        rows = self._connection.execute(
+            "SELECT human.destination,MAX(CASE WHEN effect.state IN "
+            "('claimed','applying','reconciling') THEN 2 WHEN effect.state='verified' "
+            "THEN 1 ELSE 0 END) FROM human_decisions human JOIN field_effects effect "
+            "ON effect.rowid IN (SELECT rowid FROM field_effects WHERE "
+            "decision_id=human.decision_id UNION ALL SELECT rowid FROM field_effects "
+            "WHERE " + _FIELD_EFFECT_COMPANION_DECISION_SQL + "=human.decision_id) "
+            "WHERE human.review_case_id=? AND human.ordinal=(SELECT MAX(latest.ordinal) "
+            "FROM human_decisions latest WHERE latest.review_case_id=human.review_case_id "
+            "AND latest.destination=human.destination) GROUP BY human.destination "
+            "ORDER BY human.destination",
+            (review_case_id,),
+        ).fetchall()
+        return tuple(
+            (row[0], "in_progress" if row[1] == 2 else "written")
+            for row in rows
+            if row[1] in {1, 2}
+        )
 
     def _latest_final_outcome_document(
         self, case_document: str, policy: ResolvedMetadataPolicy | None

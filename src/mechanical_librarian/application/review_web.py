@@ -45,14 +45,26 @@ from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceBinding,
 )
-from mechanical_librarian.domain.field_effect import decision_value_kind
+from mechanical_librarian.domain.field_effect import (
+    decision_value_kind,
+    field_value_version,
+)
 from mechanical_librarian.domain.field_outcomes import language_is_unknown
 from mechanical_librarian.domain.human_decision import (
+    OWNER_SUBSET_DESTINATION,
+    OWNER_SUBSET_MAXIMUM,
+    OWNER_TEXT_DESTINATIONS,
+    OWNER_TEXT_MAXIMUM,
     RECORDED_ONLY_REASON,
+    UNREVERSIBLE_DESTINATIONS,
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
     decision_actions,
+    genre_subset_available,
+    list_union,
+    owner_value_admitted,
+    owner_value_suggestions,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
@@ -217,6 +229,10 @@ class CurrentReviewCaseSnapshot:
     current_cover_automatic_decision_id: str | None = None
     resolved_policy_document: str | None = None
     description_advice: dict[str, object] | None = None
+    # F59's owner controls: each latest owner decision's write state, and the
+    # work's revertible writes as `revert_candidates` states them (ADR-0085).
+    decision_effect_states: tuple[tuple[str, str], ...] = ()
+    revert_candidates: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -623,6 +639,9 @@ class InspectCurrentReviewCase:
                 if projected is None:
                     decision = HumanDecision.from_json(document)
                     decisions[decision.destination] = decision
+                    if decision.outcome == "withdraw":
+                        # A withdrawn field is undecided again (ADR-0085).
+                        del decisions[decision.destination]
                 else:
                     destination = str(projected["destination"])
                     if (
@@ -801,6 +820,19 @@ class InspectCurrentReviewCase:
                 )
             )
             actions = () if cover_preparation_available else decision_actions(proposal)
+            owner_control = _owner_control(
+                proposal,
+                case,
+                target_fields,
+                proposals,
+                decision,
+                automatic_decision is not None,
+                snapshot,
+            )
+            owner_entry = owner_control is not None and (
+                owner_control["entry"] is not None
+                or owner_control["subset"] is not None
+            )
             classification = classify_review_field(
                 attention_candidate=(
                     (
@@ -865,6 +897,8 @@ class InspectCurrentReviewCase:
                 and case.media_kind == "audiobook"
                 and automatic_decision is None
                 and bool(actions),
+                changeable=bool(actions) or owner_entry,
+                owner_entry=owner_entry,
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
@@ -911,6 +945,7 @@ class InspectCurrentReviewCase:
                     references,
                     reasons,
                 ),
+                "owner_control": owner_control,
                 "proposal_id": proposal["proposal_id"],
                 "target_fingerprint": case.target_fingerprint,
                 "uncertainty": (
@@ -949,7 +984,7 @@ class InspectCurrentReviewCase:
                 "recording_identity_basis": recording_identity_basis(report),
                 "audiobook_review_scope": audiobook_review_scope(report),
                 "review_case_id": case.review_case_id,
-                "schema_version": "review-case-detail-v5",
+                "schema_version": "review-case-detail-v6",
                 # Read models never learn write authority. The composition root
                 # stamps the truth before the view leaves the application, and
                 # the default keeps a surface that never asks honest.
@@ -1279,7 +1314,7 @@ class InspectCurrentReviewCase:
             "items": list(items),
             "next_cursor": None,
             "review_case_id": review_case_id,
-            "schema_version": "review-case-history-v2",
+            "schema_version": "review-case-history-v3",
         }
 
 
@@ -1353,6 +1388,7 @@ class RecordHumanDecision:
         idempotency_key: str,
         consideration_id: str | None = None,
         cover_confirmation: dict[str, object] | None = None,
+        reverts_plan_id: str | None = None,
     ) -> dict[str, object]:
         try:
             idempotency_digest = HumanDecision.idempotency_digest_for(idempotency_key)
@@ -1377,6 +1413,7 @@ class RecordHumanDecision:
                     outcome=outcome,
                     selected_value=selected_value,
                     idempotency_key=idempotency_key,
+                    reverts_plan_id=reverts_plan_id,
                 ):
                     raise ReviewWebError("idempotency_conflict")
                 try:
@@ -1435,6 +1472,7 @@ class RecordHumanDecision:
                 selected_value=selected_value,
                 idempotency_key=idempotency_key,
                 occurred_at=self._clock(),
+                reverts_plan_id=reverts_plan_id,
             )
             try:
                 stored = HumanDecision.from_json(
@@ -1972,6 +2010,127 @@ def _decision_projection(decision: HumanDecision) -> dict[str, object]:
         "selected_value": decision.selected_value,
         "target_fingerprint": decision.target_fingerprint,
     }
+
+
+def _proposed(destination: str, value: object) -> dict[str, object] | None:
+    return (
+        None
+        if value is None
+        else {"kind": decision_value_kind(destination), "value": value}
+    )
+
+
+def _owner_control(
+    proposal: dict[str, object],
+    case: ReviewCase,
+    target_fields: dict[str, dict[str, object]],
+    proposals: tuple[dict[str, object], ...],
+    decision: HumanDecision | None,
+    automatic: bool,
+    snapshot: CurrentReviewCaseSnapshot,
+) -> dict[str, object] | None:
+    """Project F59's owner controls for one field, or ``None`` when it has none.
+
+    Each part is offered only where the store would accept that command now;
+    the store still decides, and refuses a stale panel inline (ADR-0085).
+    """
+    destination = cast(str, proposal["destination"])
+    current = target_fields[destination]["value"]
+    open_ = (
+        destination not in snapshot.suspended_destinations
+        and destination not in snapshot.override_blocked_destinations
+    )
+    entry = None
+    if (
+        open_
+        and destination in OWNER_TEXT_DESTINATIONS
+        and owner_value_admitted(proposal)
+    ):
+        # The union of current and eligible proposed authors, which is what
+        # `split_author` may recognise beside a title (ADR-0085).
+        authors = next(
+            (
+                tuple(
+                    item
+                    for item, _, _ in list_union(
+                        value, target_fields["authors"]["value"]
+                    )
+                )
+                for value in proposals
+                if value["destination"] == "authors"
+            ),
+            (),
+        )
+        entry = {
+            "max_characters": OWNER_TEXT_MAXIMUM,
+            "suggestions": [
+                {"rule": suggestion.rule, "value": suggestion.value}
+                for suggestion in owner_value_suggestions(
+                    destination,
+                    current if type(current) is str else None,
+                    authors,
+                )
+            ],
+        }
+    subset = None
+    if (
+        open_
+        and destination == OWNER_SUBSET_DESTINATION
+        and genre_subset_available(proposal, current)
+    ):
+        subset = {
+            "max_items": OWNER_SUBSET_MAXIMUM,
+            "options": [
+                {"value": value, "current": in_current, "proposed": proposed}
+                for value, in_current, proposed in list_union(proposal, current)
+            ],
+        }
+    withdraw = None
+    if (
+        decision is not None
+        and decision.outcome != "reject"
+        and destination not in UNREVERSIBLE_DESTINATIONS
+    ):
+        withdraw = (
+            "automatic_hold"
+            if automatic
+            else dict(snapshot.decision_effect_states).get(destination, "available")
+        )
+    candidate = next(
+        (
+            value
+            for value in snapshot.revert_candidates
+            if value["destination"] == destination
+        ),
+        None,
+    )
+    revert = None
+    if (
+        candidate is not None
+        and candidate["eligibility"] != "pending"
+        # A write is reverted from the case that read it back: until the work
+        # is re-read, this case still holds the value from before the write.
+        and candidate["review_case_id"] != case.review_case_id
+    ):
+        state = {
+            "eligible": "available",
+            "no_previous_value": "no_previous_value",
+            "reverted": "reverted",
+        }.get(cast(str, candidate["eligibility"]), "unavailable")
+        if state == "available" and field_value_version(
+            destination, current
+        ) != field_value_version(destination, candidate["desired_value"]):
+            state = "field_changed"
+        revert = {
+            "state": state,
+            "plan_id": candidate["plan_id"],
+            "written_value": _proposed(destination, candidate["desired_value"]),
+            "previous_value": _proposed(destination, candidate["pre_value"]),
+            "written_at": candidate["written_at"],
+        }
+    if (entry, subset, withdraw, revert) == (None, None, None, None):
+        return None
+    return {"entry": entry, "subset": subset, "withdraw": withdraw, "revert": revert}
 
 
 def _corroboration_source_labels(
@@ -2964,7 +3123,10 @@ def _library_item(
                     else DecisionScope.of(canonical_case)
                 )
             decision.validate_in(scope)
-            decisions.add(decision.destination)
+            if decision.outcome == "withdraw":
+                decisions.discard(decision.destination)
+            else:
+                decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])
             automatic_outcomes[destination] = str(automatic["outcome"])

@@ -483,6 +483,46 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
     queued: Literal[True]
 
 
+class _OwnerSuggestion(_ClosedModel):
+    rule: Literal["title_case", "strip_part", "split_author", "combined"]
+    value: StrictStr = Field(min_length=1, max_length=512)
+
+
+class _OwnerEntry(_ClosedModel):
+    max_characters: Literal[512]
+    suggestions: list[_OwnerSuggestion] = Field(max_length=4)
+
+
+class _OwnerSubsetOption(_ClosedModel):
+    value: StrictStr = Field(min_length=1, max_length=1024)
+    current: StrictBool
+    proposed: StrictBool
+
+
+class _OwnerSubset(_ClosedModel):
+    max_items: Literal[32]
+    options: list[_OwnerSubsetOption] = Field(min_length=1, max_length=160)
+
+
+class _OwnerRevert(_ClosedModel):
+    state: Literal[
+        "available", "field_changed", "no_previous_value", "unavailable", "reverted"
+    ]
+    plan_id: StrictStr = Field(pattern=r"^effect_plan_[0-9a-f]{64}$")
+    written_value: _ProposedValue | None
+    previous_value: _ProposedValue | None
+    written_at: int = Field(ge=0)
+
+
+class _OwnerControl(_ClosedModel):
+    """F59's owner controls for one field; each part is offered or null."""
+
+    entry: _OwnerEntry | None
+    subset: _OwnerSubset | None
+    withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
+    revert: _OwnerRevert | None
+
+
 class _ReviewField(_ClosedModel):
     classification: ReviewFieldState
     classification_reason: str
@@ -504,6 +544,7 @@ class _ReviewField(_ClosedModel):
     needs_attention: bool
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
+    owner_control: _OwnerControl | None
     proposed_values: list[_ProposedValue]
     choice_contexts: list["_ChoiceContext"]
     provenance: list[str]
@@ -573,7 +614,7 @@ class _CaseDetailResponse(_ClosedModel):
         max_length=MAX_HEALTH_OBSERVATIONS
     )
     review_case_id: str
-    schema_version: Literal["review-case-detail-v5"]
+    schema_version: Literal["review-case-detail-v6"]
     target: _TargetIdentity
     writes_consented: bool
 
@@ -652,7 +693,9 @@ class _HistoryDecisionItem(_ClosedModel):
     event_id: str
     kind: Literal["human_decision_recorded"]
     occurred_at: int
-    outcome: Literal["accept", "keep_current", "reject"]
+    outcome: Literal[
+        "accept", "keep_current", "reject", "owner_entered", "withdraw", "revert"
+    ]
     previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: Literal["human-decision-event-v1"]
@@ -743,7 +786,7 @@ class _HistoryResponse(_ClosedModel):
     ] = Field(max_length=150)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-history-v2"]
+    schema_version: Literal["review-case-history-v3"]
 
 
 class _SessionResponse(_ClosedModel):
@@ -1308,9 +1351,14 @@ class _CoverConfirmation(_ClosedModel):
 class _DecisionRequest(_ClosedModel):
     cover_confirmation: _CoverConfirmation | None = None
     destination: StrictStr = Field(min_length=1, max_length=64)
-    outcome: Literal["accept", "keep_current", "reject"]
+    outcome: Literal[
+        "accept", "keep_current", "reject", "owner_entered", "withdraw", "revert"
+    ]
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
     selected_value: _ProposedValue | None = None
+    reverts_plan_id: StrictStr | None = Field(
+        default=None, pattern=r"^effect_plan_[0-9a-f]{64}$"
+    )
     target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     consideration_id: StrictStr | None = Field(
         default=None, pattern=r"^cover_consideration_[0-9a-f]{64}$"
@@ -3418,6 +3466,7 @@ def _register_case_and_effect_routes(
                     cover_confirmation=None
                     if payload.cover_confirmation is None
                     else payload.cover_confirmation.model_dump(mode="json"),
+                    reverts_plan_id=payload.reverts_plan_id,
                 )
             )
         )
@@ -4389,6 +4438,14 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "not_found": 404,
             "unsupported": 422,
             "persistence": 503,
+            "owner_value_invalid": 422,
+            "owner_value_unchanged": 422,
+            "nothing_to_withdraw": 409,
+            "automatic_hold": 409,
+            "decision_written": 409,
+            "revert_unavailable": 409,
+            "revert_no_previous_value": 409,
+            "revert_field_changed": 409,
         }.get(error.code, 503)
         raise HTTPException(status, detail={"code": error.code}) from None
 

@@ -102,6 +102,7 @@ def _sealed(decision: HumanDecision, **changes: object) -> HumanDecision:
             "outcome",
             "proposal_id",
             "review_case_id",
+            "reverts_plan_id",
             "selected_value",
             "target_fingerprint",
         )

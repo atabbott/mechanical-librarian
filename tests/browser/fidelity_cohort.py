@@ -474,7 +474,7 @@ def _field(
 def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
-            "schema_version": "review-case-detail-v5",
+            "schema_version": "review-case-detail-v6",
             "recording_identity_basis": None,
             "audiobook_review_scope": None,
             "media_health": [],
@@ -908,7 +908,7 @@ def _case(case_id: str) -> dict[str, object]:
         LIBRARY_WORKS[0],
     )
     return {
-        "schema_version": "review-case-detail-v5",
+        "schema_version": "review-case-detail-v6",
         "recording_identity_basis": None,
         "audiobook_review_scope": None,
         "media_health": [],
@@ -1702,7 +1702,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     }
                 )
             return {
-                "schema_version": "review-case-history-v2",
+                "schema_version": "review-case-history-v3",
                 "review_case_id": case_id,
                 "next_cursor": None,
                 "items": items,
