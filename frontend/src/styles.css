@@ -72,6 +72,7 @@ h2 { margin-bottom:.35rem; }
 .provider-throttle-retry button { min-height:40px; font-weight:650; }
 .provider-throttle-retry small, .provider-throttle-file { flex:1 1 18rem; min-width:0; color:var(--soft); font-size:.78rem; line-height:1.4; }
 .provider-throttle-file { margin:.7rem 0 0; }
+.preparation-popover > small { display:block; margin:.35rem 0 .7rem; }
 .provider-throttle-notice button[aria-disabled='true'], .preparation-popover button[aria-disabled='true'] { cursor:not-allowed; opacity:.55; }
 .provider-throttle-notice button[aria-busy='true'], .preparation-popover button[aria-busy='true'] { cursor:progress; }
 @media (max-width:760px) { .provider-throttle-notice a, .provider-throttle-retry button { min-height:44px; } .provider-throttle-retry button { width:100%; } }
