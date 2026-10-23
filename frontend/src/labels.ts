@@ -71,6 +71,17 @@ const ownerFieldLabels: Record<string, string> = {
 export const fieldLabel = (value: string) =>
   ownerFieldLabels[value] ??
   `${labelWords(value).slice(0, 1).toUpperCase()}${labelWords(value).slice(1)}`
+// The Activity ledger's own names for the write destinations whose generic
+// label differs, so the write card and the rows it writes name one field one
+// way: `3 ISBN changes`, not `3 isbn changes` (#1281).
+const writeFieldLabels: Record<string, string> = {
+  asin: 'ASIN',
+  isbn: 'ISBN',
+  publishedDate: 'Published date',
+  publishedYear: 'Published year',
+}
+export const writeFieldLabel = (destination: string) =>
+  writeFieldLabels[destination] ?? fieldLabel(destination)
 // The same words without the capital, for a label set inside a sentence
 // (`Choose a media kind value`) rather than standing on its own.
 export const labelWords = (value: string) => value.replaceAll('_', ' ')

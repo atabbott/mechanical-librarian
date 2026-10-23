@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Activity now gathers a preparation's automatic no-change checks into one
+  "Checked N fields, no changes" row that opens onto each check, so the
+  changes lead the page. Automatic choices name their field and value, write
+  permissions spell ISBN and ASIN as the ledger does, an unknown filter link
+  says it showed all events, and page buttons never split a word (#1281).
+
 - Reviewing write permissions on Activity now keeps the checked libraries and
   ticks through refreshes, focus changes and updates from other tabs. They are
   cleared, with the reason stated, only when the library settings really changed,

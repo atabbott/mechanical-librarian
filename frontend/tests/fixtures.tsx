@@ -198,6 +198,7 @@ export const activity = (
         work_label: 'Paper Moons: Larkspur',
         ...event,
         change_id: event.change_id ?? eventId,
+        check_group: event.check_group ?? null,
       }
     }),
   }

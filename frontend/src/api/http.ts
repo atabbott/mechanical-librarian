@@ -640,6 +640,8 @@ export interface ActivityEventView {
   change_detail: string
   /** Stable grouped identity for a change whose latest transition may move. */
   change_id: string
+  /** The preparation an automatic no-change check belongs to; never shown. */
+  check_group: string | null
   destination: string
   diagnostic?: ActivityDiagnosticView | null
   event_id: string
@@ -672,6 +674,8 @@ export interface ActivitySearch {
   rangeDays: 7 | 30 | 90
   page: number
   pageSize: 25 | 50 | 100
+  /** The address asked for an event filter the ledger does not have. */
+  filter?: 'unrecognised'
 }
 export interface ActivityLedgerView {
   event_type: ActivitySearch['eventType']
@@ -2684,6 +2688,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
           event.change_id === undefined
             ? stringValue(event.event_id, 'activity_event_id')
             : stringValue(event.change_id, 'activity_change_id'),
+        check_group: optionalString(event.check_group, 'activity_check_group') ?? null,
         field_label: stringValue(event.field_label, 'activity_event_field_label'),
         policy_changes: policyChanges.map((item) => {
           if (!record(item)) throw new ApiError(502, 'invalid_activity_policy_change')

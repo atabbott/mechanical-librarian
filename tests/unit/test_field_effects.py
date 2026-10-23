@@ -6664,7 +6664,7 @@ def test_actual_audiobook_author_activity_names_the_policy_without_operation_ide
         assert event["change_detail"] == (
             "Kept Authors as Example Author, Second Author"
             if preserve
-            else "Chose a Authors value automatically"
+            else "Set Authors from Example Author to Example Author, Second Author"
         )
         facts = {item["label"]: item["value"] for item in event["evidence"]}
         assert facts["Policy setting"] == "Contributor names: Canonical form"

@@ -92,3 +92,30 @@ export const activityOutcome = (data: unknown, command: { path: string; body?: u
   }
   return 'applied'
 }
+
+export type LedgerRow<Event> =
+  | { readonly kind: 'event'; readonly event: Event }
+  | { readonly kind: 'checks'; readonly key: string; readonly members: readonly Event[] }
+
+// One page's rows in page order. An event with no preparation key keeps its
+// own row and place; the first event with a key opens that preparation's
+// checks row there, and every later one on the page joins it. A key always
+// forms a checks row, even alone, so a refetch never changes a row's shape.
+export const ledgerRows = <Event extends { readonly check_group: string | null }>(
+  events: readonly Event[],
+) => {
+  const rows: LedgerRow<Event>[] = []
+  const groups = new Map<string, Event[]>()
+  for (const event of events) {
+    const key = event.check_group
+    const members = key === null ? undefined : groups.get(key)
+    if (key === null) rows.push({ kind: 'event', event })
+    else if (members) members.push(event)
+    else {
+      const opened = [event]
+      groups.set(key, opened)
+      rows.push({ kind: 'checks', key, members: opened })
+    }
+  }
+  return rows
+}

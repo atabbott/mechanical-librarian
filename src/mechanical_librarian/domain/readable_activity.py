@@ -17,6 +17,7 @@ previous/new fields.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from typing import cast
 
@@ -30,6 +31,7 @@ __all__ = [
     "chooser_label",
     "destination_label",
     "failure_reason",
+    "field_phrase",
     "keep_change",
     "policy_option_label",
     "policy_setting_label",
@@ -151,6 +153,16 @@ def destination_label(destination: str) -> str:
     return tidied[:1].upper() + tidied[1:]
 
 
+def field_phrase(label: str) -> str:
+    """Set a field's label inside a compact sentence.
+
+    An ordinary label is lowercased ("Removed subtitle") and an all-capitals
+    acronym keeps its capitals ("Removed ISBN"); a whole sentence keeps the
+    label as it stands.
+    """
+    return label if label.isupper() else label.lower()
+
+
 def chooser_label(origin: str) -> str:
     """Name who or what chose, from the event's own recorded origin."""
     return _CHOOSER_LABELS.get(origin, "Not recorded")
@@ -231,8 +243,15 @@ def value_text(destination: str, value: object, *, limit: int = EVIDENCE_LIMIT) 
     return ABSENT
 
 
-def set_change(destination: str, previous: object, new: object) -> ReadableChange:
-    """State a change from one exact recorded value to another."""
+def set_change(
+    destination: str, previous: object, new: object, *, named: bool = False
+) -> ReadableChange:
+    """State a change from one exact recorded value to another.
+
+    An owner's row reads its change as ``before → after``. ``named`` states an
+    automatic choice as "Set {field} to {after}" instead, because nobody read
+    that row's before and after when it was chosen.
+    """
     field = destination_label(destination)
     if destination == "cover":
         return ReadableChange(
@@ -242,11 +261,18 @@ def set_change(destination: str, previous: object, new: object) -> ReadableChang
     before = value_text(destination, previous, limit=CHANGE_LIMIT)
     after = value_text(destination, new, limit=CHANGE_LIMIT)
     if after == ABSENT:
-        return ReadableChange(f"Removed {field.lower()}", f"Removed {field}")
-    if before == after:
+        return ReadableChange(f"Removed {field_phrase(field)}", f"Removed {field}")
+    # Kept only when the whole values read alike, not just their first
+    # CHANGE_LIMIT characters: a late difference is still a change (#1281).
+    if value_text(destination, previous, limit=sys.maxsize) == value_text(
+        destination, new, limit=sys.maxsize
+    ):
         return keep_change(destination, new)
     return ReadableChange(
-        f"{before} {_ARROW} {after}", f"Set {field} from {before} to {after}"
+        f"Set {field_phrase(field)} to {after}"
+        if named
+        else f"{before} {_ARROW} {after}",
+        f"Set {field} from {before} to {after}",
     )
 
 
@@ -259,5 +285,7 @@ def keep_change(destination: str, value: object) -> ReadableChange:
         )
     kept = value_text(destination, value, limit=CHANGE_LIMIT)
     if kept == ABSENT:
-        return ReadableChange(f"Left {field.lower()} unset", f"Left {field} unset")
+        return ReadableChange(
+            f"Left {field_phrase(field)} unset", f"Left {field} unset"
+        )
     return ReadableChange(f"Kept {kept}", f"Kept {field} as {kept}")

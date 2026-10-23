@@ -312,7 +312,8 @@ def test_an_automatic_decision_names_the_policy_that_chose_it() -> None:
         report,
     )
     assert event["category"] == "automatic"
-    assert event["change_detail"] == "Chose a Series value automatically"
+    assert event["change"] == "Set series to Earthsea Cycle (1)"
+    assert event["change_detail"] == "Set Series from Not set to Earthsea Cycle (1)"
     assert _facts(event) == {
         "Previous value": ABSENT,
         "New value": "Earthsea Cycle (1)",
@@ -616,6 +617,320 @@ def test_an_unrecognised_record_is_bounded_rather_than_guessed() -> None:
     assert _facts(event) == {"Chosen by": "Not recorded"}
 
 
+# --- automatic choices name their field and value (#1281) ------------------
+
+
+def _automatic(
+    destination: str,
+    outcome: str,
+    report: MetadataReport | None,
+    selected: object = None,
+    *,
+    chosen: bool = True,
+) -> dict[str, object]:
+    return _project(
+        _event(
+            destination=destination,
+            event_type="metadata",
+            origin="automatic_policy",
+            state="recorded",
+            record={
+                "source_kind": "automatic_decision",
+                "target_fingerprint": None
+                if report is None
+                else report.target.fingerprint,
+                "outcome": outcome,
+                "selected_value": {"kind": "text", "value": selected}
+                if chosen
+                else None,
+                "policy_category": "title_layout",
+                "policy_option": "preserve",
+            },
+        ),
+        report,
+    )
+
+
+@pytest.mark.parametrize(
+    ("destination", "outcome", "current", "selected", "chosen", "compact", "sentence"),
+    (
+        (
+            "title",
+            "keep_current",
+            "Secret History",
+            None,
+            False,
+            "Kept Secret History",
+            "Kept Title as Secret History",
+        ),
+        (
+            "isbn",
+            "ignore",
+            "9780306406157",
+            None,
+            False,
+            "Left ISBN unchanged",
+            "Left ISBN unchanged",
+        ),
+        (
+            "subtitle",
+            "ignore",
+            None,
+            None,
+            False,
+            "Left subtitle unchanged",
+            "Left Subtitle unchanged",
+        ),
+        (
+            "cover",
+            "candidate",
+            None,
+            "cover_" + "c" * 64,
+            True,
+            "Current cover → selected cover",
+            "Set Cover from the current image to the selected image",
+        ),
+        (
+            "subtitle",
+            "candidate",
+            "A subtitle",
+            None,
+            True,
+            "Removed subtitle",
+            "Removed Subtitle",
+        ),
+        ("asin", "candidate", "B000000001", None, True, "Removed ASIN", "Removed ASIN"),
+        (
+            "title",
+            "candidate",
+            "Same",
+            "Same ",
+            True,
+            "Kept Same",
+            "Kept Title as Same",
+        ),
+        (
+            "isbn",
+            "candidate",
+            None,
+            "9781234567897",
+            True,
+            "Set ISBN to 9781234567897",
+            "Set ISBN from Not set to 9781234567897",
+        ),
+        (
+            "publisher",
+            "candidate",
+            "Old Press",
+            "New Press",
+            True,
+            "Set publisher to New Press",
+            "Set Publisher from Old Press to New Press",
+        ),
+        (
+            "isbn",
+            "candidate",
+            None,
+            None,
+            False,
+            "Chose an ISBN value automatically",
+            "Chose an ISBN value automatically",
+        ),
+        (
+            "title",
+            "candidate",
+            "Recorded",
+            None,
+            False,
+            "Chose a title value automatically",
+            "Chose a Title value automatically",
+        ),
+        (
+            "authors",
+            "unrecognised",
+            None,
+            None,
+            False,
+            "Chose an authors value automatically",
+            "Chose an Authors value automatically",
+        ),
+    ),
+    ids=(
+        "keep",
+        "ignore-acronym",
+        "ignore",
+        "cover",
+        "removed",
+        "removed-acronym",
+        "display-equal",
+        "set-acronym",
+        "set",
+        "unavailable-acronym",
+        "unavailable",
+        "unknown-outcome",
+    ),
+)
+def test_an_automatic_choice_names_its_field_and_value(  # noqa: PLR0913
+    destination: str,
+    outcome: str,
+    current: object,
+    selected: object,
+    chosen: bool,
+    compact: str,
+    sentence: str,
+) -> None:
+    target = TargetDestination(destination)
+    report = _with(target, current) if current is not None else _titled("Recorded")
+    event = _automatic(destination, outcome, report, selected, chosen=chosen)
+    assert (event["change"], event["change_detail"]) == (compact, sentence)
+
+
+def test_an_owner_row_keeps_its_arrow_while_absent_values_name_the_field() -> None:
+    assert set_change("isbn", "1", "2").compact == "1 → 2"
+    assert set_change("isbn", "1", None).compact == "Removed ISBN"
+    assert keep_change("asin", None).compact == "Left ASIN unset"
+    assert set_change("subtitle", "A", None).compact == "Removed subtitle"
+    assert set_change("publishedYear", "1", None).compact == "Removed published year"
+
+
+# Two descriptions that read alike for longer than a compact change shows.
+_SHARED = "A long synthetic description that keeps going past the change limit " * 2
+_EARLIER, _LATER = _SHARED + "and ends one way.", _SHARED + "and ends another way."
+_SHOWN = _SHARED.strip()[: CHANGE_LIMIT - 1].rstrip() + "\u2026"
+
+
+@pytest.mark.parametrize(
+    ("named", "compact"),
+    ((False, f"{_SHOWN} \u2192 {_SHOWN}"), (True, f"Set description to {_SHOWN}")),
+    ids=("owner", "named"),
+)
+def test_values_that_differ_past_the_change_limit_are_a_change(
+    named: bool, compact: str
+) -> None:
+    change = set_change("description", _EARLIER, _LATER, named=named)
+    assert change.compact == compact
+    assert change.sentence.startswith("Set Description from ")
+
+
+def test_an_automatic_candidate_that_differs_late_is_a_change_and_not_a_check() -> None:
+    report = _with(TargetDestination("description"), _EARLIER)
+    event = _automatic("description", "candidate", report, _LATER)
+    assert "check_group" not in event
+    assert not str(event["change"]).startswith("Kept")
+    assert event["change"] == f"Set description to {_SHOWN}"
+
+
+def _no_change(report: MetadataReport | None, origin: str) -> dict[str, object]:
+    return _project(
+        _event(
+            event_type="metadata",
+            origin=origin,
+            state="no_change_required",
+            record={
+                "source_kind": "field_effect_no_change",
+                "target_fingerprint": None
+                if report is None
+                else report.target.fingerprint,
+            },
+        ),
+        report,
+    )
+
+
+def _owner(state: str, report: MetadataReport | None) -> dict[str, object]:
+    return _project(
+        _event(
+            state=state,
+            record={
+                "source_kind": "human_decision",
+                "target_fingerprint": None
+                if report is None
+                else report.target.fingerprint,
+                "selected_value": None,
+            },
+        ),
+        report,
+    )
+
+
+def _record(kind: str, state: str, report: MetadataReport | None) -> dict[str, object]:
+    return _project(_event(state=state, record={"source_kind": kind}), report)
+
+
+def _refusal(report: MetadataReport | None) -> dict[str, object]:
+    record = {"source_kind": "isbn_refusal", "reason_code": "source_value_absent"}
+    return _project(_event(destination="isbn", record=record), report)
+
+
+_CHECKED = _titled("Recorded")
+
+
+@pytest.mark.parametrize(
+    ("project", "checked"),
+    (
+        (lambda r: _no_change(r, "automatic_policy"), True),
+        (lambda r: _automatic("title", "keep_current", r, chosen=False), True),
+        (lambda r: _automatic("title", "ignore", r, chosen=False), True),
+        (lambda r: _automatic("title", "candidate", r, "Recorded"), True),
+        (_refusal, True),
+        (lambda r: _automatic("title", "candidate", r, "Another title"), False),
+        (lambda r: _automatic("title", "candidate", r, None), False),
+        (lambda r: _automatic("title", "candidate", r, chosen=False), False),
+        (lambda r: _no_change(r, "human"), False),
+        (lambda r: _no_change(r, "automatic_pipeline"), False),
+        (lambda r: _owner("keep_current", r), False),
+        (lambda r: _owner("reject", r), False),
+        (lambda r: _record("field_effect", "verified", r), False),
+        (lambda r: _record("field_effect", "planned", r), False),
+        (lambda r: _record("cover_safeguard", "kept_incumbent", r), False),
+        (lambda r: _record("description_preparation", "succeeded", r), False),
+        (lambda r: _record("description_decision", "selected", r), False),
+        (lambda r: _record("policy_transition", "completed", r), False),
+        (lambda r: _record("degraded", "candidate", r), False),
+        (lambda r: _record("unrecognised", "recorded", r), False),
+    ),
+    ids=(
+        "automatic-no-change",
+        "keep",
+        "ignore",
+        "equal-candidate",
+        "isbn-refusal",
+        "changing-candidate",
+        "removing-candidate",
+        "unavailable-candidate",
+        "owner-no-change",
+        "pipeline-no-change",
+        "owner-keep",
+        "owner-reject",
+        "verified-write",
+        "planned-write",
+        "cover",
+        "description-preparation",
+        "description-decision",
+        "policy",
+        "degraded",
+        "unknown",
+    ),
+)
+def test_only_an_automatic_check_carries_its_preparation_key(
+    project, checked: bool
+) -> None:
+    gathered = project(_CHECKED)
+    assert gathered.get("check_group") == (_CHECKED.report_id if checked else None)
+    assert ("check_group" in gathered) is checked
+    # A check without its report has no preparation to be gathered under.
+    assert "check_group" not in project(None)
+
+
+def test_two_preparations_give_two_keys() -> None:
+    first, second = _titled("Recorded"), _titled("Recorded again")
+    keys = {
+        _automatic("title", "keep_current", report, chosen=False)["check_group"]
+        for report in (first, second)
+    }
+    assert keys == {first.report_id, second.report_id}
+
+
 # --- every fact fits the column the API bounds it to (#1278) -----------------
 
 _MAXIMUM = "A synthetic description well past any evidence bound. " * 40
@@ -692,6 +1007,22 @@ def _bounded_records() -> list[tuple[dict[str, object], MetadataReport | None]]:
         )
         for state in ("candidate", "keep_current")
     ]
+    records.append(
+        (
+            {
+                "state": "candidate",
+                "record": {
+                    "source_kind": "automatic_decision",
+                    "target_fingerprint": pinned,
+                    "outcome": "candidate",
+                    "selected_value": {"kind": "text", "value": _MAXIMUM},
+                    "policy_category": "description",
+                    "policy_option": "longest",
+                },
+            },
+            report,
+        )
+    )
     records += [
         (
             {

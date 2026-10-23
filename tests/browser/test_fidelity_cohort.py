@@ -66,6 +66,16 @@ def test_activity_carries_a_future_origin_and_every_cover_state() -> None:
     assert {"completed", "unavailable", "failed", "stale", "superseded"} == cover_states
 
 
+def test_activity_carries_one_preparations_checks_across_several_fields() -> None:
+    activity = rich_payload("/api/v1/activity")
+    assert isinstance(activity, dict)
+    groups: dict[str, set[str]] = {}
+    for event in activity["events"]:
+        if event["check_group"] is not None:
+            groups.setdefault(event["check_group"], set()).add(event["destination"])
+    assert [len(fields) for fields in groups.values()] == [3]
+
+
 @pytest.mark.parametrize(
     ("case_id", "status"),
     (("case-1", "completed"), ("case-2", "failed"), ("case-3", "unavailable")),

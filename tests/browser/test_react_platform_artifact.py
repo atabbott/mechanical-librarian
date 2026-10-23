@@ -30,6 +30,8 @@ from tests.browser.fidelity_cohort import (
     UNBROKEN_TITLE_SEGMENT,
     rich_payload,
 )
+from tests.browser.test_live_updates_browser import _ROW_PROMISES, _WIDER_TEXT
+from tests.browser.test_review_browser import _POLICY_MID_WORD
 from tests.support.cover_images import synthetic_image
 
 # The outcome the review controller renders when a decision request is lost
@@ -1089,12 +1091,27 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 other_row.get_by_role("button", name="Hide details").click()
 
                 compact_row = long_activity_title.locator("xpath=ancestor::article")
-                assert (
+                # The time track is as narrow as its 44 px floor allows and
+                # never narrower than the time it holds, whatever the fonts.
+                # The text is measured, not the element: a stretched grid item
+                # is as wide as its track, which would make the bound vacuous.
+                track = float(
                     compact_row.evaluate(
                         "node => getComputedStyle(node).gridTemplateColumns"
-                    ).split(" ", 1)[0]
-                    == "44px"
+                    )
+                    .split(" ", 1)[0]
+                    .removesuffix("px")
                 )
+                content = compact_row.locator(":scope > time").evaluate(
+                    """node => {
+                      const text = document.createRange();
+                      text.selectNodeContents(node);
+                      return Math.max(text.getBoundingClientRect().width,
+                        parseFloat(getComputedStyle(node).minWidth));
+                    }"""
+                )
+                assert 44 <= track, track
+                assert content - 1 <= track <= max(44, content) + 1, (track, content)
                 assert (
                     compact_row.locator("b").evaluate(
                         "node => getComputedStyle(node).gridRow"
@@ -1243,7 +1260,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     assert page_url == page.url
                     expect(page_number).to_be_focused()
                     page_size = page.get_by_role(
-                        "combobox", name="Rows per activity page"
+                        "combobox", name="Events per activity page"
                     )
                     page_size.click()
                     page.get_by_role("option", name="50 per page").click()
@@ -2557,3 +2574,254 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             for failure in failed_requests
             if failure[2] not in {"net::ERR_ABORTED", "net::ERR_FAILED"}
         ] == []
+
+
+_NAMED_CLIP = """node => {
+  const clipped = node.scrollWidth - node.clientWidth;
+  const box = node.getBoundingClientRect();
+  const viewport = document.documentElement.clientWidth;
+  const name = `${node.className || node.tagName} "${node.textContent.trim().slice(0, 32)}"`;
+  return [
+    ...(clipped > 0 ? [`${name} is clipped by ${clipped}px`] : []),
+    ...(box.left < 0 || box.right > viewport ? [`${name} is off screen`] : []),
+  ];
+}"""
+
+
+# Every Activity row's category pill and time, named by the row they belong to.
+# A pill may wrap between words but never inside one, and never runs out of its
+# box; a compact time track is never narrower than the time or day it holds;
+# and no cell runs past the row that holds it.
+_ROW_LABELS = """(compact) => [...document.querySelectorAll('.cm-activity-event-group article')]
+  .flatMap(row => {
+    const work = row.querySelector('.cm-activity-work');
+    const name = `${work?.querySelector('strong')?.textContent} (${work?.querySelector('span')?.textContent})`;
+    const found = [];
+    const pill = row.querySelector('.cm-activity-category');
+    const walker = document.createTreeWalker(pill, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/\\S+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const tops = new Set([...range.getClientRects()].filter(rect => rect.width > 0)
+          .map(rect => Math.round(rect.top)));
+        if (tops.size > 1) found.push(`the ${name} pill splits "${match[0]}"`);
+      }
+    const words = document.createRange();
+    words.selectNodeContents(pill);
+    if (pill.scrollWidth > pill.clientWidth ||
+        words.getBoundingClientRect().right > pill.getBoundingClientRect().right + 1)
+      found.push(`the ${name} pill "${pill.textContent}" runs out of its box`);
+    const style = getComputedStyle(row);
+    const edge = row.getBoundingClientRect().right - parseFloat(style.borderRightWidth) -
+      parseFloat(style.paddingRight);
+    for (const cell of row.children) {
+      const past = Math.round(cell.getBoundingClientRect().right - edge);
+      if (past > 1)
+        found.push(`the ${name} ${cell.className || cell.tagName.toLowerCase()} ` +
+          `"${cell.textContent.trim().slice(0, 24)}" runs ${past}px past its row`);
+    }
+    const time = row.querySelector(':scope > time');
+    if (compact && time.scrollWidth > time.clientWidth)
+      found.push(`the ${name} time "${time.textContent}" is ` +
+        `${time.scrollWidth - time.clientWidth}px wider than its track`);
+    return found;
+  })"""
+
+
+def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() -> None:
+    """One preparation's automatic checks read as one row that opens onto each
+    check, and an address naming no known filter says so (#1281)."""
+    bundle = load_react_asset_bundle(Path(os.environ["ML_REACT_ASSET_DIR"]))
+    assert isinstance(bundle, ReactAssetBundle)
+    widened = False
+    checks_gone = False
+
+    def fulfill(route: Route) -> None:
+        path = urlsplit(route.request.url).path
+        if path == "/api/v1/updates":
+            route.fulfill(status=204, body="")
+        elif path == "/api/v1/appearance":
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps({"reduced_motion": "follow_system"}),
+            )
+        elif path.startswith("/api/v1/"):
+            payload = rich_payload(route.request.url)
+            if checks_gone and path == "/api/v1/activity":
+                activity = cast("dict[str, list[dict[str, object]]]", payload)
+                activity["events"] = [
+                    event for event in activity["events"] if not event["check_group"]
+                ]
+            route.fulfill(content_type="application/json", body=json.dumps(payload))
+        elif path.startswith("/assets/review-app/"):
+            relative = path.removeprefix("/assets/review-app/")
+            css = relative.endswith(".css")
+            body = bundle.read(relative)
+            route.fulfill(
+                content_type="text/css" if css else "text/javascript",
+                body=body + _WIDER_TEXT.encode() if css and widened else body,
+            )
+        elif route.request.resource_type == "document":
+            route.fulfill(
+                content_type="text/html",
+                headers={
+                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                },
+                body=bundle.read(bundle.entry)
+                .decode("utf-8")
+                .replace(
+                    "<body>",
+                    f'<body data-build-identity="{_BUILD_IDENTITY}" data-csrf-token="{"b" * 32}">',
+                ),
+            )
+        else:
+            route.fulfill(status=404, body="")
+
+    capture = os.environ.get("ML_VISUAL_CAPTURE_DIR")
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.route("**/*", fulfill)
+        page.goto("https://react-platform.invalid/activity")
+        page.get_by_role("heading", name="Activity and recovery").wait_for()
+        checks = page.locator("article.is-checks")
+        toggle = checks.get_by_role("button")
+        expect(checks).to_have_count(1)
+        expect(checks).to_contain_text("Synthetic checked work")
+        expect(checks.get_by_text("Checked 3 fields, no changes")).to_be_visible()
+        assert "Checked 3 fields, no changes" in checks.aria_snapshot()
+        expect(checks).to_contain_text("No change required")
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        expect(page.locator(".cm-activity-checks")).to_have_count(0)
+
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        members = page.locator(".cm-activity-checks > li")
+        expect(members).to_have_count(3)
+        expect(members.locator("article")).to_have_count(3)
+        expect(members.nth(2).locator("time")).to_contain_text("2025")
+        expect(members.nth(1).locator("time")).not_to_contain_text("2025")
+        assert members.locator("article").all_inner_texts()[1].count("Left ISBN") == 1
+        for index in range(3):
+            expect(
+                members.nth(index).get_by_role("button", name="Details")
+            ).to_have_count(1)
+        member = members.nth(1).get_by_role("button", name="Details")
+        member.click()
+        expect(member).to_have_attribute("aria-expanded", "true")
+        expect(members.nth(1).locator(".cm-activity-evidence")).to_be_visible()
+        member.click()
+        expect(members.nth(1).locator(".cm-activity-evidence")).to_have_count(0)
+
+        toggle.click()
+        expect(page.locator(".cm-activity-checks")).to_have_count(0)
+        expect(toggle).to_be_focused()
+        page.keyboard.press("Enter")
+        expect(members).to_have_count(3)
+        page.keyboard.press("Tab")
+        expect(members.nth(0).get_by_role("button", name="Details")).to_be_focused()
+        page.keyboard.press("Shift+Tab")
+        page.keyboard.press("Enter")
+        expect(page.locator(".cm-activity-checks")).to_have_count(0)
+        expect(toggle).to_be_focused()
+
+        # A tab switch blurs the focused check without moving focus. When the
+        # next refetch removes its row, focus goes to the ledger heading.
+        page.keyboard.press("Enter")
+        members.nth(0).get_by_role("button", name="Details").focus()
+        page.evaluate(
+            """() => {
+              document.activeElement.dispatchEvent(
+                new FocusEvent('focusout', { bubbles: true }));
+              window.dispatchEvent(new FocusEvent('blur'));
+            }"""
+        )
+        checks_gone = True
+        expect(page.locator("article.is-checks")).to_have_count(0, timeout=15_000)
+        expect(page.locator("#activity-ledger-title")).to_be_focused()
+        checks_gone = False
+
+        notice = page.locator(".cm-activity-filter-notice")
+        expect(notice).to_have_text("")
+        page.goto("https://react-platform.invalid/activity?eventType=owner_choice")
+        expect(
+            page.get_by_role("status").filter(has_text="not recognised")
+        ).to_have_text("That activity filter is not recognised. Showing all events.")
+        page.get_by_role("button", name="Policy changes").click()
+        expect(notice).to_have_text("")
+
+        # Every row's promises, the new row's whole labels, the pagination and
+        # every row's pill and time, as installed and with each glyph widened
+        # as hosted Linux fonts render, light with motion and dark with reduced
+        # motion.
+        for widened, dark in (
+            (False, False),
+            (False, True),
+            (True, False),
+            (True, True),
+        ):
+            scheme = "dark" if dark else "light"
+            page.emulate_media(
+                color_scheme="dark" if dark else "light",
+                reduced_motion="reduce" if dark else "no-preference",
+            )
+            page.goto("https://react-platform.invalid/activity?eventType=owner_choice")
+            page.locator("article.is-checks").get_by_role("button").click()
+            expect(members).to_have_count(3)
+            # An open member's indented row carries the longest label.
+            members.nth(0).get_by_role("button", name="Details").click()
+            expect(
+                members.nth(0).get_by_role("button", name="Hide details")
+            ).to_be_visible()
+            expect(page.locator("html")).to_have_attribute("data-theme", scheme)
+            for width in (1440, 1100, 884, 761, 760, 390, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.evaluate("() => document.documentElement.offsetWidth")
+                where = f"{scheme}{' widened' if widened else ''} at {width}px"
+                assert page.evaluate(_ROW_PROMISES, width <= 760) == [], where
+                labels = page.evaluate(_ROW_LABELS, width <= 760)
+                assert labels == [], f"{where}: {labels}"
+                failures = [
+                    failure
+                    for selector in (
+                        ".is-checks .cm-activity-change",
+                        ".is-checks button",
+                        ".cm-activity-filter-notice",
+                        ".cm-activity-pagination-nav button",
+                    )
+                    for node in page.locator(selector).all()
+                    for failure in node.evaluate(_NAMED_CLIP)
+                ]
+                assert failures == [], f"{where}: {failures}"
+                # A check on another day names that day without running into
+                # the category beside it.
+                overlaps = page.locator(".cm-activity-checks time").evaluate_all(
+                    """times => times.filter(time => {
+                        const text = document.createRange();
+                        text.selectNodeContents(time);
+                        return text.getBoundingClientRect().right >
+                            time.nextElementSibling.getBoundingClientRect().left;
+                    }).map(time => time.textContent)"""
+                )
+                assert overlaps == [], f"{where}: {overlaps} overlap their category"
+                split = page.evaluate(
+                    _POLICY_MID_WORD,
+                    ".is-checks .cm-activity-change, .cm-activity-filter-notice, "
+                    ".cm-activity-pagination-nav",
+                )
+                assert split == [], f"{where}: words split {split}"
+                document = page.evaluate("() => document.documentElement.scrollWidth")
+                assert document <= width, f"{where}: the page is {document}px wide"
+                if capture is not None:
+                    Path(capture).mkdir(parents=True, exist_ok=True)
+                    page.screenshot(
+                        path=str(
+                            Path(capture) / f"activity-checks-{width}-{scheme}"
+                            f"{'-wide' if widened else ''}.png"
+                        ),
+                        full_page=True,
+                    )
