@@ -1597,8 +1597,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert detail_workspace.get_by_role("button", name="Previous").count() == 0
         assert detail_workspace.get_by_role("button", name="Next").count() == 0
         expect(page.get_by_role("button", name="Back to works")).to_be_hidden()
-        expect(page.get_by_role("button", name="Attention queue")).to_be_visible()
-        page.get_by_role("button", name="Attention queue").click()
+        expect(page.get_by_role("button", name="Attention 5 works")).to_be_visible()
+        page.get_by_role("button", name="Attention 5 works").click()
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1&attention=open"
         )
@@ -1846,7 +1846,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         compact_evidence.click()
         expect(page.locator("#choice-evidence-current")).to_be_visible()
         expect(page.get_by_role("button", name="Back to works")).to_be_visible()
-        page.get_by_role("button", name="Attention queue").click()
+        page.get_by_role("button", name="Attention 5 works").click()
         expect(page.locator(".attention-rail")).to_be_visible()
         expect(page.locator(".library-works")).to_be_hidden()
         expect(page.locator(".workspace-detail")).to_be_visible()
@@ -1896,7 +1896,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.set_viewport_size({"width": 761, "height": 900})
         expect(page.locator(".library-works")).to_be_hidden()
         expect(page.get_by_role("button", name="Back to works")).to_be_visible()
-        expect(page.get_by_role("button", name="Attention queue")).to_be_visible()
+        expect(page.get_by_role("button", name="Attention 5 works")).to_be_visible()
 
         stage[0] = "library:viewport:760"
         page.set_viewport_size({"width": 760, "height": 900})
@@ -1912,14 +1912,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator(".library-works")).to_be_hidden()
         expect(page.locator(".workspace-detail")).to_be_visible()
         expect(page.get_by_role("button", name="Back to works")).to_be_visible()
-        expect(page.get_by_role("button", name="Attention queue")).to_be_visible()
+        expect(page.get_by_role("button", name="Attention 5 works")).to_be_visible()
         assert (
             page.locator(".library-workspace").evaluate(
                 "node => getComputedStyle(node).display"
             )
             != "block"
         )
-        page.get_by_role("button", name="Attention queue").click()
+        page.get_by_role("button", name="Attention 5 works").click()
         expect(page.locator(".attention-rail")).to_be_visible()
         expect(page.locator(".attention-rail")).to_be_focused()
         attention_rail_clears_masthead()
@@ -1996,9 +1996,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         assert page.get_by_role("button", name="Previous").count() == 0
         assert page.get_by_role("button", name="Next").count() == 0
-        expect(page.locator(".compact-workspace-controls button")).to_have_count(2)
+        # One toolbar in both states; Back to works opens the workspace (#1284).
+        expect(page.locator(".library-header button")).to_have_count(1)
+        expect(
+            page.locator(".library-workspace > .compact-workspace-back")
+        ).to_be_visible()
         expect(page.get_by_role("button", name="Back to works")).to_be_visible()
-        for control in page.locator(".compact-workspace-controls button").all():
+        for control in (
+            page.locator(".library-header button").all()
+            + page.locator(".compact-workspace-back").all()
+        ):
             assert control.bounding_box()["height"] >= 44
         page.get_by_role("button", name="Back to works").click()
         expect(page.locator(".library-works")).to_be_visible()
@@ -2354,7 +2361,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".attention-rail h2").get_by_text(
             "Attention", exact=True
         ).wait_for()
+        # Six field rows, grouped under four works (#1284).
         assert page.locator(".attention-queue-item").count() == 6
+        assert page.locator(".attention-work-group").count() == 4
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
         attention_link = page.locator(".attention-queue-item").first
         assert "item-1" not in page.locator(".attention-rail").inner_text()
@@ -3287,3 +3296,301 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                 assert small == [], f"{where}: links under 44px {small}"
                 document = page.evaluate("() => document.documentElement.scrollWidth")
                 assert document <= width, f"{where}: the page is {document}px wide"
+
+
+def _serve_cohort(
+    page: Page,
+    *,
+    widened: Callable[[], bool] = lambda: False,
+    held_library: list[Route] | None = None,
+    library_requests: list[str] | None = None,
+) -> None:
+    """Serve the exact built shell over the mocked cohort.
+
+    `held_library` keeps every `/api/v1/library` request until the test fulfils
+    it, and `library_requests` records each one's query string.
+    """
+
+    bundle = load_react_asset_bundle(Path(os.environ["ML_REACT_ASSET_DIR"]))
+    assert isinstance(bundle, ReactAssetBundle)
+
+    def fulfill(route: Route) -> None:
+        parts = urlsplit(route.request.url)
+        path = parts.path
+        if path == "/api/v1/updates":
+            route.fulfill(status=204, body="")
+        elif path == "/api/v1/appearance":
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps({"reduced_motion": "follow_system"}),
+            )
+        elif path == "/api/v1/library" and (
+            library_requests is not None or held_library is not None
+        ):
+            if library_requests is not None:
+                library_requests.append(parts.query)
+            if held_library is not None:
+                held_library.append(route)
+            else:
+                route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(rich_payload(route.request.url)),
+                )
+        elif path.startswith("/api/v1/"):
+            try:
+                payload = rich_payload(route.request.url)
+            except AssertionError:
+                route.fulfill(status=404, body="")
+                return
+            route.fulfill(content_type="application/json", body=json.dumps(payload))
+        elif path.startswith("/assets/review-app/"):
+            relative = path.removeprefix("/assets/review-app/")
+            css = relative.endswith(".css")
+            body = bundle.read(relative)
+            route.fulfill(
+                content_type="text/css" if css else "text/javascript",
+                body=body + _WIDER_TEXT.encode() if css and widened() else body,
+            )
+        elif route.request.resource_type == "document":
+            route.fulfill(
+                content_type="text/html",
+                body=bundle.read(bundle.entry)
+                .decode("utf-8")
+                .replace(
+                    "<body>",
+                    f'<body data-build-identity="{_BUILD_IDENTITY}" data-csrf-token="{"b" * 32}">',
+                ),
+            )
+        else:
+            route.fulfill(status=404, body="")
+
+    page.route("**/*", fulfill)
+
+
+def test_library_attention_groups_works_and_counts_never_read_zero_while_loading() -> (
+    None
+):
+    """Attention lists each work once with its fields as keyboard rows, and no
+    count reads zero before the library summary arrives (#1284)."""
+    held: list[Route] = []
+    requests: list[str] = []
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        _serve_cohort(page, held_library=held, library_requests=requests)
+        page.goto("https://react-platform.invalid/library?lens=all")
+        # B3: the library read is held, so every count is pending. The cohort
+        # offers no write handoff; Vitest proves its pending heading.
+        expect(page.locator(".library-works-heading [role='status']")).to_have_text(
+            "Loading count…"
+        )
+        expect(page.locator(".attention-toggle strong")).to_have_text("…")
+        body = page.locator("body").inner_text()
+        assert re.search(r"\b0 works?\b", body) is None, body
+        assert requests == ["lens=all"], requests
+        while held:
+            route = held.pop()
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps(rich_payload(route.request.url)),
+            )
+        expect(page.locator(".attention-toggle strong")).to_have_text("5 works")
+        expect(page).to_have_url(re.compile(r"preview=case-1"))
+        expect(page.locator(".library-works-heading [role='status']")).to_have_text(
+            "20 works"
+        )
+
+        # B2: the rail groups six field rows under four works.
+        page.get_by_role("button", name="Attention 5 works").click()
+        rail = page.get_by_role("complementary", name="Attention queue")
+        expect(rail).to_be_focused()
+        groups = rail.locator(".attention-work-group")
+        expect(groups).to_have_count(4)
+        rows = rail.locator("button.attention-queue-item")
+        expect(rows).to_have_count(6)
+        expect(rail.locator("header p")).to_have_text("5 works need a decision")
+        titles = groups.evaluate_all(
+            "groups => groups.map(group => group.querySelector('strong').textContent)"
+        )
+        assert len(set(titles)) == 4, titles
+        for index in range(groups.count()):
+            group = groups.nth(index)
+            count = group.locator("button.attention-queue-item").count()
+            expect(group.locator(".attention-work-count")).to_have_text(
+                f"{count} field" if count == 1 else f"{count} fields"
+            )
+            described = group.locator("button.attention-queue-item").evaluate_all(
+                "rows => rows.map(row => document.getElementById(row.getAttribute('aria-describedby'))?.textContent)"
+            )
+            assert described == [titles[index]] * count, described
+        current = rail.locator("button.attention-queue-item[aria-current='true']")
+        expect(current).to_have_count(1)
+        # Keyboard: Tab reaches each row in order, and Enter selects the one focused.
+        rows.first.focus()
+        visited = []
+        for _ in range(6):
+            visited.append(page.evaluate(_FOCUSED))
+            page.keyboard.press("Tab")
+        assert visited == ["BUTTON.attention-queue-item"] * 6, visited
+        rows.nth(1).focus()
+        expected = rows.nth(1).evaluate(
+            "row => document.getElementById(row.getAttribute('aria-describedby')).textContent"
+        )
+        page.keyboard.press("Enter")
+        expect(page).not_to_have_url(re.compile(r"attention=open"))
+        expect(page.locator(".selected-work-header h2")).to_have_text(expected)
+        page.evaluate(_TWO_FRAMES)
+        assert not page.evaluate(_FOCUS_ON_BODY)
+        page.get_by_role("button", name="Attention 5 works").click()
+        expect(
+            rail.locator("button.attention-queue-item[aria-current='true']")
+        ).to_have_text(rows.nth(1).inner_text())
+        rail.get_by_role("button", name="Close").click()
+        page.evaluate(_TWO_FRAMES)
+        assert not page.evaluate(_FOCUS_ON_BODY)
+        assert all("q=" not in query for query in requests), requests
+
+
+# Where the workspace starts on the page, and the toolbar's own height, read
+# once layout has held still for three frames (a restyle can land late).
+_WORKSPACE_GEOMETRY = """async () => {
+  const read = () => {
+    const workspace = document.querySelector('.library-workspace').getBoundingClientRect();
+    const header = document.querySelector('header[aria-label="Library controls"]');
+    return {
+      top: workspace.top + window.scrollY,
+      header: header.getBoundingClientRect().height,
+      controls: [...header.querySelectorAll('button, a'), ...document.querySelectorAll('.compact-workspace-back')]
+        .filter(node => node.getClientRects().length > 0)
+        .map(node => [node.textContent.trim().slice(0, 24), node.getBoundingClientRect().height]),
+    };
+  };
+  const frame = () => new Promise(done => requestAnimationFrame(done));
+  let last = JSON.stringify(read());
+  for (let still = 0, frames = 0; still < 3 && frames < 120; frames++) {
+    await frame();
+    const next = JSON.stringify(read());
+    still = next === last ? still + 1 : 0;
+    last = next;
+  }
+  return JSON.parse(last);
+}"""
+
+
+def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> None:
+    """Selecting or leaving a work never moves the workspace, at every width,
+    theme and text size; the toolbar's labels never clip or split (#1284)."""
+    widened = [False]
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        _serve_cohort(page, widened=lambda: widened[0])
+
+        def load(route: str, text: str) -> None:
+            page.goto(f"https://react-platform.invalid{route}")
+            page.locator(".attention-toggle strong").filter(
+                has_text=re.compile(r"works?$")
+            ).wait_for()
+            if text == "200%":
+                # A stylesheet rule, so the shell's own root style writes keep it.
+                page.add_style_tag(content="html { font-size: 200% !important; }")
+            page.evaluate(_TWO_FRAMES)
+
+        def probe(where: str, width: int) -> None:
+            failures = [
+                failure
+                for selector in (
+                    ".attention-toggle",
+                    ".attention-toggle strong",
+                    ".library-works-heading [role='status']",
+                    ".cm-library-handoff h2",
+                    ".attention-rail header p",
+                    ".attention-work-count",
+                    ".attention-queue-item",
+                )
+                for node in page.locator(selector).all()
+                if node.is_visible()
+                for failure in node.evaluate(_NAMED_CLIP)
+            ]
+            assert failures == [], f"{where}: {failures}"
+            split = [
+                word
+                for selector in (
+                    ".attention-toggle",
+                    ".library-works-heading [role='status']",
+                    ".attention-rail header p",
+                    ".attention-work-count",
+                )
+                for word in page.evaluate(_POLICY_MID_WORD, selector)
+            ]
+            assert split == [], f"{where}: words split {split}"
+            document = page.evaluate("() => document.documentElement.scrollWidth")
+            assert document <= width, f"{where}: the page is {document}px wide"
+
+        for dark in (False, True):
+            page.emulate_media(
+                color_scheme="dark" if dark else "light",
+                reduced_motion="reduce" if dark else "no-preference",
+            )
+            for text in ("default", "widened", "200%"):
+                widened[0] = text == "widened"
+                for width in (1440, 1100, 884, 761, 760, 390, 320):
+                    where = f"{'dark' if dark else 'light'} {text} at {width}px"
+                    page.set_viewport_size({"width": width, "height": 900})
+                    states = []
+                    if width > 900:
+                        # Wide Library selects a work on arrival; a search with
+                        # no match is the landing without that selection.
+                        load("/library?lens=all&q=zzz-no-match", text)
+                        states.append(("landing", page.evaluate(_WORKSPACE_GEOMETRY)))
+                        load("/library?lens=all&q=zzz-no-match&preview=case-1", text)
+                        states.append(("selected", page.evaluate(_WORKSPACE_GEOMETRY)))
+                    else:
+                        load("/library?lens=all", text)
+                        if width > 760:
+                            # Selected on arrival; Back leaves it, a row returns.
+                            expect(page).to_have_url(re.compile(r"preview=case-1"))
+                            states.append(
+                                ("selected", page.evaluate(_WORKSPACE_GEOMETRY))
+                            )
+                            page.get_by_role("button", name="Back to works").click()
+                            page.locator(".library-work-row").first.wait_for()
+                            page.evaluate(_TWO_FRAMES)
+                            states.append(("back", page.evaluate(_WORKSPACE_GEOMETRY)))
+                            probe(f"{where} list", width)
+                            page.locator(".library-work-row").first.click()
+                        else:
+                            states.append(
+                                ("landing", page.evaluate(_WORKSPACE_GEOMETRY))
+                            )
+                            probe(f"{where} list", width)
+                            page.locator(".library-work-row").first.click()
+                        expect(page).to_have_url(re.compile(r"preview="))
+                        page.locator(".selected-work-header h2").wait_for()
+                        page.evaluate(_TWO_FRAMES)
+                        states.append(("selected", page.evaluate(_WORKSPACE_GEOMETRY)))
+                        if width <= 760:
+                            page.get_by_role("button", name="Back to works").click()
+                            page.locator(".library-work-row").first.wait_for()
+                            page.evaluate(_TWO_FRAMES)
+                            states.append(("back", page.evaluate(_WORKSPACE_GEOMETRY)))
+                    tops = [state["top"] for _, state in states]
+                    assert max(tops) - min(tops) <= 1, f"{where}: {states}"
+                    headers = [state["header"] for _, state in states]
+                    assert max(headers) - min(headers) <= 1, f"{where}: {states}"
+                    small = [
+                        control
+                        for _, state in states
+                        for control in state["controls"]
+                        if control[1] < 44
+                    ]
+                    assert small == [], f"{where}: controls under 44px {small}"
+                    probe(where, width)
+                    page.locator(".attention-toggle").click()
+                    page.locator(".attention-work-group").first.wait_for()
+                    page.evaluate(_TWO_FRAMES)
+                    probe(f"{where} rail", width)

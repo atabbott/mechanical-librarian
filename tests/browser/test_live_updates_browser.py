@@ -521,7 +521,7 @@ def test_preparation_run_shares_library_workspace_and_compacts_without_losing_st
                 )
 
                 page.set_viewport_size({"width": 390, "height": 844})
-                page.get_by_role("button", name="Attention queue").click()
+                page.get_by_role("button", name=re.compile(r"^Attention ")).click()
                 attention = page.locator(".attention-rail")
                 attention.wait_for()
                 attention.locator(".attention-queue-item").first.click()
