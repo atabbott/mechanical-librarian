@@ -720,7 +720,7 @@ describe('ReviewApiClient', () => {
       ],
     ) =>
       mapCaseDetail({
-        schema_version: 'review-case-detail-v5',
+        schema_version: 'review-case-detail-v6',
         audiobook_review_scope: null,
         recording_identity_basis: null,
         review_case_id: 'case-1',
@@ -750,6 +750,7 @@ describe('ReviewApiClient', () => {
             effect_capability: 'manual',
             needs_attention: true,
             manual_hold: false,
+            owner_control: null,
             current: { value: series },
             proposed_values: [],
             choice_contexts: choiceContexts,
@@ -774,7 +775,7 @@ describe('ReviewApiClient', () => {
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
     const response = (corroboration_sources: unknown) => ({
-      schema_version: 'review-case-detail-v5',
+      schema_version: 'review-case-detail-v6',
       audiobook_review_scope: null,
       recording_identity_basis: null,
       review_case_id: 'case-1',
@@ -804,6 +805,7 @@ describe('ReviewApiClient', () => {
           effect_capability: 'manual',
           needs_attention: true,
           manual_hold: false,
+          owner_control: null,
           current: { value: ['Ada Example'] },
           proposed_values: [],
           choice_contexts: [
@@ -840,7 +842,7 @@ describe('ReviewApiClient', () => {
   it('uses Unicode code point bounds for readable case identity', () => {
     const astral = '📚'
     const response = (target: Record<string, unknown>) => ({
-      schema_version: 'review-case-detail-v5',
+      schema_version: 'review-case-detail-v6',
       audiobook_review_scope: null,
       recording_identity_basis: null,
       review_case_id: 'case-1',
@@ -883,6 +885,7 @@ describe('ReviewApiClient', () => {
       effect_capability: 'manual',
       needs_attention: true,
       manual_hold: false,
+      owner_control: null,
       current: { value: 'A Book' },
       proposed_values: [],
       choice_contexts: [
@@ -908,7 +911,7 @@ describe('ReviewApiClient', () => {
       ...overrides,
     })
     const response = (fields: readonly unknown[]) => ({
-      schema_version: 'review-case-detail-v5',
+      schema_version: 'review-case-detail-v6',
       audiobook_review_scope: null,
       recording_identity_basis: null,
       review_case_id: 'case-1',
@@ -1087,7 +1090,7 @@ describe('ReviewApiClient', () => {
 
   it('maps history without exposing retained identities and rejects malformed values', () => {
     const payload = {
-      schema_version: 'review-case-history-v2',
+      schema_version: 'review-case-history-v3',
       review_case_id: 'case-1',
       next_cursor: null,
       items: [
@@ -1346,7 +1349,7 @@ describe('ReviewApiClient', () => {
       selected_value,
     })
     const history = (selected_value: unknown) => ({
-      schema_version: 'review-case-history-v2',
+      schema_version: 'review-case-history-v3',
       review_case_id: 'case-1',
       next_cursor: null,
       items: [decision(selected_value)],

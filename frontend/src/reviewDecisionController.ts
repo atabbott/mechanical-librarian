@@ -23,6 +23,42 @@ export const choiceAvailable = (field: CaseDetailView['fields'][number]) =>
   (field.decisionActions.length > 0 ||
     Boolean(field.descriptionAdvice?.current && field.descriptionAdvice.candidate))
 export const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
+// F59's owner commands settle the field in place: the owner stays on it to see
+// what was recorded, and only a choice among offered values advances (ADR-0085).
+const ownerOutcomes: Readonly<Record<string, string>> = {
+  owner_entered: 'Your value is recorded.',
+  withdraw: 'Withdrawn. This field needs a decision again.',
+  revert: 'The restore is recorded.',
+}
+const outcomeWords = (outcome: string) =>
+  ({ owner_entered: 'your value', withdraw: 'withdrawal', revert: 'restore' })[outcome] ??
+  labelWords(outcome)
+// The store's refusal for an owner command, in the words the owner acts on.
+export const ownerRefusalCopy = (
+  error: unknown,
+  field: CaseDetailView['fields'][number] | undefined,
+): string | undefined => {
+  if (!(error instanceof ApiError)) return undefined
+  return {
+    owner_value_invalid:
+      field?.destination === 'genres'
+        ? 'These genres can’t be recorded. Choose up to 32 from the list.'
+        : 'This value can’t be recorded. Use plain text of up to 512 characters, with no links or file paths.',
+    owner_value_unchanged: 'That is already the current value.',
+    nothing_to_withdraw: 'There is no recorded decision to withdraw.',
+    automatic_hold:
+      'This decision is holding automatic handling. Use Resume automatic handling to release it.',
+    decision_written:
+      field?.ownerControl?.revert?.state === 'available'
+        ? 'This decision has been written to your library. You can restore the earlier value instead.'
+        : 'This decision has been written to your library, so it can’t be withdrawn.',
+    revert_field_changed:
+      'This field has changed since it was written, so the earlier value can’t be restored safely.',
+    revert_no_previous_value:
+      'The field was empty before this write. Clearing a field isn’t available.',
+    revert_unavailable: 'This write can’t be reverted.',
+  }[error.code]
+}
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
 export type DecisionFailure = 'permanent' | 'retryable' | 'stale' | 'uncertain'
 export const classifyDecisionFailure = (error: unknown): DecisionFailure => {
@@ -257,7 +293,16 @@ export const useReviewDecisionController = ({
         return
       }
       mark(command, 'confirmed')
-      announce(reviewCaseId, command.destination, 'Decision recorded from the authoritative case.')
+      const settledInPlace = ownerOutcomes[command.outcome]
+      announce(
+        reviewCaseId,
+        command.destination,
+        settledInPlace ?? 'Decision recorded from the authoritative case.',
+      )
+      if (settledInPlace) {
+        refreshAggregatesInBackground()
+        return
+      }
       const next = nextUnresolved(
         order.current,
         refreshed.fields,
@@ -326,7 +371,11 @@ export const useReviewDecisionController = ({
         command.destination,
         classifyDecisionFailure(error) === 'uncertain'
           ? 'The response was lost. The current case was reloaded before any retry.'
-          : refusalCopy(error, 'The decision was not recorded. Your choice is unchanged.'),
+          : refusalCopy(
+              error,
+              ownerRefusalCopy(error, refreshedField) ??
+                'The decision was not recorded. Your choice is unchanged.',
+            ),
       )
       // The current field is already authoritative after reconciliation. Do
       // not make truthful failure feedback wait on a no-op same-field route
@@ -361,7 +410,7 @@ export const useReviewDecisionController = ({
     announce(
       reviewCaseId,
       failed.command.destination,
-      `Retrying ${labelWords(failed.command.outcome)}…`,
+      `Retrying ${outcomeWords(failed.command.outcome)}…`,
     )
     mark(failed.command, 'recording')
     decided.current = {
@@ -395,7 +444,7 @@ export const useReviewDecisionController = ({
         { command, phase: 'recording' as const },
       ],
     }))
-    announce(reviewCaseId, command.destination, `Recording ${labelWords(command.outcome)}…`)
+    announce(reviewCaseId, command.destination, `Recording ${outcomeWords(command.outcome)}…`)
     void decision.mutateAsync(command).catch(() => undefined)
   }
   return {

@@ -21,7 +21,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { SyntheticEvent } from 'react'
+import type { RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
 import { CsrfRenewedError, displayValue, refusalCopy, sessionRefreshedCopy } from '../api/http'
@@ -512,7 +512,9 @@ const bounded = (value: string, fallback: string) =>
 const decisionValue = (field: ReviewField) => {
   if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
     return field.descriptionAdvice.selected_advice.candidate.output.description
-  const selected = (field.humanDecision ?? field.automaticDecision)?.selected_value
+  // A hold carried from an earlier case keeps the library's value (ADR-0085).
+  const selected = (field.humanDecision ?? (field.manualHold ? null : field.automaticDecision))
+    ?.selected_value
   if (field.destination === 'cover') {
     const candidates = field.coverConsideration?.candidates ?? []
     const candidate = candidates.find((item) => item.artifactId === selected?.value)
@@ -530,7 +532,7 @@ const decisionValue = (field: ReviewField) => {
 const optionalChoice = (field: ReviewField) =>
   field.classification === 'owner_choosable' && choiceAvailable(field)
 const fieldState = (field: ReviewField) =>
-  field.humanDecision
+  field.humanDecision || field.manualHold
     ? 'Owner decision recorded'
     : field.automaticDecision
       ? 'Resolved automatically'
@@ -644,7 +646,7 @@ const commandSelected = (
 // they have not decided themselves.
 const recordedSelected = (
   field: ReviewField,
-  outcome: DecisionCommand['outcome'],
+  outcome: 'accept' | 'keep_current',
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
   field.descriptionAdvice &&
@@ -659,7 +661,7 @@ const recordedSelected = (
 const choiceSelected = (
   field: ReviewField,
   progress: ChoiceProgress,
-  outcome: DecisionCommand['outcome'],
+  outcome: 'accept' | 'keep_current',
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
   (progress?.phase !== 'failed' &&
@@ -1386,6 +1388,331 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
   !field.proposedValues.some((value) =>
     sameSelectedValue(value, field.automaticDecision?.selected_value),
   )
+
+// F59's owner controls (ADR-0085): enter a value, choose genres, withdraw a
+// decision, and restore what a write replaced. Each is offered only where the
+// store would accept it now; the store still decides, and a refusal is said
+// here, beside the control that was used.
+type OwnerOutcome = 'owner_entered' | 'withdraw' | 'revert'
+const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
+const writtenDate = (seconds: number) =>
+  new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(seconds * 1000))
+const quotedValue = (value: { value: unknown } | null | undefined) =>
+  value ? `“${displayValue(value.value)}”` : 'nothing'
+const revertCopy = {
+  field_changed:
+    'This field has changed since it was written, so the earlier value can’t be restored safely.',
+  no_previous_value: 'The field was empty before this write. Clearing a field isn’t available.',
+  unavailable: 'This write can’t be reverted.',
+} as const
+const withdrawCopy = {
+  automatic_hold:
+    'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
+  in_progress:
+    'This decision is being written to your library. You can change or withdraw it once the write finishes.',
+  written: 'This decision has been written to your library.',
+} as const
+
+function OwnerControls({
+  field,
+  disabled,
+  progress,
+  status,
+  failed,
+  submit,
+}: {
+  field: ReviewField
+  disabled: boolean
+  progress: { command: DecisionCommand; phase: 'recording' | 'confirmed' | 'failed' } | null
+  status: string
+  failed: boolean
+  submit: (
+    outcome: OwnerOutcome,
+    value: DecisionCommand['selectedValue'],
+    revertsPlanId?: string,
+  ) => string
+}) {
+  const control = field.ownerControl ?? null
+  const label = fieldLabel(field.destination)
+  const [mode, setMode] = useState<'idle' | 'entry' | 'subset' | 'restore'>('idle')
+  const [draft, setDraft] = useState('')
+  const [typed, setTyped] = useState(false)
+  const [chosen, setChosen] = useState<readonly string[]>([])
+  const [problem, setProblem] = useState('')
+  const inputId = useId()
+  const countId = useId()
+  const input = useRef<HTMLInputElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const restore = useRef<HTMLButtonElement>(null)
+  const recorded = useRef<HTMLParagraphElement>(null)
+  const notice = useRef<HTMLParagraphElement>(null)
+  const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
+  const busy = progress?.phase === 'recording'
+  const decision = field.humanDecision
+  const ownerValue = decision?.outcome === 'owner_entered' ? decision.selected_value : null
+  const restoreTrigger = useRef<HTMLButtonElement>(null)
+  const refocus = useRef<RefObject<HTMLButtonElement | null> | null>(null)
+  useEffect(() => {
+    if (mode === 'entry') input.current?.focus()
+    if (mode === 'restore') restore.current?.focus()
+    if (mode === 'idle') refocus.current?.current?.focus({ preventScroll: true })
+    refocus.current = null
+  }, [mode])
+  // A settled command leaves focus on something named: the recorded value,
+  // the field's heading after a withdrawal, or, when a refusal removed the
+  // control that was used, the refusal itself.
+  useEffect(() => {
+    const command = sent.current
+    if (!command) return
+    const own = progress?.command.idempotencyKey === command.key ? progress : null
+    if (own?.phase === 'recording') return
+    sent.current = null
+    if (own?.phase !== 'confirmed') {
+      requestAnimationFrame(() => {
+        if (!document.activeElement || document.activeElement === document.body)
+          notice.current?.focus({ preventScroll: true })
+      })
+      return
+    }
+    setMode('idle')
+    requestAnimationFrame(() => {
+      if (command.outcome !== 'withdraw') {
+        ;(recorded.current ?? notice.current)?.focus({ preventScroll: true })
+        return
+      }
+      const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
+      heading?.setAttribute('tabindex', '-1')
+      heading?.focus({ preventScroll: true })
+    })
+  }, [progress])
+  if (!control) return null
+  const { entry, subset, revert } = control
+  const writing = control.withdraw === 'in_progress'
+  const blocked = disabled || busy
+  const send = (outcome: OwnerOutcome, value: DecisionCommand['selectedValue'], plan?: string) => {
+    // The ref is the guard a second press meets before React re-renders.
+    if (blocked || sent.current !== null) return
+    setProblem('')
+    sent.current = { key: submit(outcome, value, plan), outcome }
+  }
+  const close = (target: RefObject<HTMLButtonElement | null>) => {
+    refocus.current = target
+    setMode('idle')
+    setProblem('')
+  }
+  const openEntry = () => {
+    setDraft(typeof ownerValue?.value === 'string' ? ownerValue.value : '')
+    setTyped(false)
+    setProblem('')
+    setMode('entry')
+  }
+  const openSubset = () => {
+    setChosen(
+      Array.isArray(ownerValue?.value)
+        ? (ownerValue.value as string[])
+        : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? []),
+    )
+    setProblem('')
+    setMode('subset')
+  }
+  const recordEntry = (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!entry || blocked) return
+    const value = ownerText(draft)
+    setDraft(value)
+    if (!value) setProblem('Enter a value first.')
+    else if (Array.from(value).length > entry.maxCharacters)
+      setProblem(`Use up to ${String(entry.maxCharacters)} characters.`)
+    else if (value === field.currentRaw) setProblem('That is already the current value.')
+    else send('owner_entered', { kind: 'text', value })
+  }
+  const recordSubset = (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!subset || blocked) return
+    // Raw values in the store's union order, never display text.
+    const value = subset.options
+      .map((option) => option.value)
+      .filter((option) => chosen.includes(option))
+    const current = Array.isArray(field.currentRaw) ? (field.currentRaw as unknown[]) : []
+    if (!value.length) setProblem('Choose at least one genre.')
+    else if (value.length > subset.maxItems)
+      setProblem(`Choose up to ${String(subset.maxItems)} genres.`)
+    else if (value.length === current.length && value.every((item, i) => item === current[i]))
+      setProblem('Those are already the current genres.')
+    else send('owner_entered', { kind: 'list', value })
+  }
+  const recordedCopy =
+    decision?.outcome === 'owner_entered'
+      ? Array.isArray(decision.selected_value?.value)
+        ? `You chose ${String(decision.selected_value.value.length)} ${decision.selected_value.value.length === 1 ? 'genre' : 'genres'}.`
+        : `You entered ${quotedValue(decision.selected_value)}.`
+      : decision?.outcome === 'revert'
+        ? `You restored ${quotedValue(decision.selected_value)}.`
+        : null
+  return (
+    <section className="owner-controls" aria-label={`Your value for ${label}`}>
+      {recordedCopy ? (
+        <p ref={recorded} tabIndex={-1} className="owner-recorded">
+          {recordedCopy}
+        </p>
+      ) : null}
+      {writing ? <p className="owner-note">{withdrawCopy.in_progress}</p> : null}
+      {entry && mode !== 'entry' && !writing ? (
+        <button ref={trigger} type="button" className="owner-trigger" onClick={openEntry}>
+          {ownerValue ? 'Change' : 'Enter a value'}
+        </button>
+      ) : null}
+      {subset && mode !== 'subset' && !writing ? (
+        <button ref={trigger} type="button" className="owner-trigger" onClick={openSubset}>
+          {ownerValue ? 'Change' : 'Choose genres'}
+        </button>
+      ) : null}
+      {entry && mode === 'entry' ? (
+        <form className="owner-entry" onSubmit={recordEntry} noValidate>
+          <label htmlFor={inputId}>{`Your value for ${label}`}</label>
+          <input
+            ref={input}
+            id={inputId}
+            type="text"
+            value={draft}
+            autoComplete="off"
+            aria-describedby={countId}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              setTyped(true)
+            }}
+            onBlur={() => setDraft((value) => ownerText(value))}
+          />
+          <small id={countId} className="owner-count" aria-live="polite">
+            {typed
+              ? `${String(Array.from(draft).length)} of ${String(entry.maxCharacters)} characters`
+              : ''}
+          </small>
+          {entry.suggestions.length ? (
+            <div className="owner-suggestions">
+              {entry.suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.rule}
+                  type="button"
+                  onClick={() => {
+                    setDraft(suggestion.value)
+                    setTyped(true)
+                    input.current?.focus()
+                  }}
+                >
+                  {`Use “${suggestion.value}”`}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="owner-actions">
+            <button type="submit" aria-disabled={blocked}>
+              {busy ? 'Recording…' : 'Record this value'}
+            </button>
+            <button type="button" onClick={() => close(trigger)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+      {subset && mode === 'subset' ? (
+        <form className="owner-entry" onSubmit={recordSubset} noValidate>
+          <fieldset className="owner-subset">
+            <legend>Choose genres</legend>
+            {subset.options.map((option) => (
+              <label key={option.value} className="owner-option">
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(option.value)}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setChosen((values) =>
+                      checked
+                        ? [...values, option.value]
+                        : values.filter((value) => value !== option.value),
+                    )
+                  }}
+                />
+                <span>{option.value}</span>
+                {option.current ? <small className="owner-tag">Current</small> : null}
+                {option.proposed ? <small className="owner-tag">Proposed</small> : null}
+              </label>
+            ))}
+          </fieldset>
+          <div className="owner-actions">
+            <button type="submit" aria-disabled={blocked}>
+              {busy ? 'Recording…' : 'Record these genres'}
+            </button>
+            <button type="button" onClick={() => close(trigger)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+      {control.withdraw === 'available' ? (
+        <button
+          type="button"
+          className="owner-trigger"
+          aria-disabled={blocked}
+          onClick={() => send('withdraw', null)}
+        >
+          {busy && progress.command.outcome === 'withdraw' ? 'Withdrawing…' : 'Withdraw'}
+        </button>
+      ) : control.withdraw && control.withdraw !== 'in_progress' ? (
+        <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
+      ) : null}
+      {revert ? (
+        <div className="owner-revert">
+          <p>
+            {revert.state === 'reverted'
+              ? `Restored ${writtenDate(revert.writtenAt)}: changed from ${quotedValue(revert.previousValue)} back to ${quotedValue(revert.writtenValue)}.`
+              : `Written ${writtenDate(revert.writtenAt)}: changed from ${quotedValue(revert.previousValue)} to ${quotedValue(revert.writtenValue)}.`}
+          </p>
+          {revert.state === 'available' ? (
+            mode === 'restore' ? (
+              <div className="owner-confirm" role="group" aria-label="Confirm restore">
+                <p>{`Restore ${quotedValue(revert.previousValue)} to ${label}? This writes to your library.`}</p>
+                <div className="owner-actions">
+                  <button
+                    ref={restore}
+                    type="button"
+                    aria-disabled={blocked}
+                    onClick={() => send('revert', revert.previousValue, revert.planId)}
+                  >
+                    {busy ? 'Restoring…' : 'Restore'}
+                  </button>
+                  <button type="button" onClick={() => close(restoreTrigger)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                ref={restoreTrigger}
+                type="button"
+                className="owner-trigger"
+                onClick={() => {
+                  setProblem('')
+                  setMode('restore')
+                }}
+              >
+                Restore earlier value…
+              </button>
+            )
+          ) : revert.state !== 'reverted' ? (
+            <p className="owner-note">{revertCopy[revert.state]}</p>
+          ) : null}
+        </div>
+      ) : null}
+      <p ref={notice} tabIndex={-1} className="owner-notice" role="alert">
+        {problem || (failed ? status : '')}
+      </p>
+      <p className="owner-status" role="status">
+        {problem || failed ? '' : status}
+      </p>
+    </section>
+  )
+}
 
 function RecordedOutcome({
   field,
@@ -2373,6 +2700,7 @@ export default function LibraryPage({
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
   const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
+  const [ownerCommand, setOwnerCommand] = useState<string | null>(null)
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error' | 'refreshed'>>
   >({})
@@ -3357,7 +3685,10 @@ export default function LibraryPage({
     outcome: DecisionCommand['outcome'],
     selectedValue: DecisionCommand['selectedValue'] = null,
     authoredDescription?: DecisionCommand['authoredDescription'],
+    revertsPlanId?: string,
   ) => {
+    const idempotencyKey = requestKey()
+    setOwnerCommand(null)
     setFrozenFieldOrders((current) =>
       current[selectedReviewCaseId] === undefined
         ? { ...current, [selectedReviewCaseId]: currentActionableDestinations }
@@ -3369,7 +3700,8 @@ export default function LibraryPage({
       proposalId: field.proposalId,
       selectedValue,
       targetFingerprint: field.targetFingerprint,
-      idempotencyKey: requestKey(),
+      idempotencyKey,
+      ...(revertsPlanId ? { revertsPlanId } : {}),
       ...(field.coverConsideration
         ? {
             considerationId: field.coverConsideration.id,
@@ -3387,6 +3719,7 @@ export default function LibraryPage({
         : {}),
       ...(authoredDescription ? { authoredDescription } : {}),
     })
+    return idempotencyKey
   }
   const closeAutomaticPanel = () => {
     const closingKey = automaticPanel
@@ -3474,7 +3807,13 @@ export default function LibraryPage({
     selected !== undefined &&
     selectedRecorded &&
     selected.editable &&
-    selected.decisionActions.length > 0
+    (selected.decisionActions.length > 0 ||
+      Boolean(selected.ownerControl?.entry ?? selected.ownerControl?.subset))
+  const selectedOwnerEntry = Boolean(
+    selected?.ownerControl?.entry ?? selected?.ownerControl?.subset,
+  )
+  const ownerKey = selected ? `${selectedReviewCaseId}:${selected.destination}` : null
+  const ownerStatusShown = ownerKey !== null && ownerCommand === ownerKey
   const selectedOptional =
     selected !== undefined && !selectedActionable && !selectedRecorded && optionalChoice(selected)
   const selectedAdvice = selected?.destination === 'description' ? selected.descriptionAdvice : null
@@ -4444,11 +4783,15 @@ export default function LibraryPage({
                     />
                   ) : (
                     <>
-                      <p className={selectedActionable ? 'decision-recorded' : 'decision-context'}>
-                        {selectedActionable
-                          ? `${fieldReason(selected)}${selected.humanDecision || selected.automaticDecision ? ` The recorded value remains ${decisionValue(selected)}.` : ''}`
-                          : 'There’s no other value to choose from.'}
-                      </p>
+                      {selectedActionable || !selectedOwnerEntry ? (
+                        <p
+                          className={selectedActionable ? 'decision-recorded' : 'decision-context'}
+                        >
+                          {selectedActionable
+                            ? `${fieldReason(selected)}${selected.humanDecision || selected.automaticDecision ? ` The recorded value remains ${decisionValue(selected)}.` : ''}`
+                            : 'There’s no other value to choose from.'}
+                        </p>
+                      ) : null}
                       {!selectedActionable ? (
                         <ContextValue
                           field={selected}
@@ -4458,6 +4801,21 @@ export default function LibraryPage({
                       ) : null}
                     </>
                   )}
+                  {selected.ownerControl && !controller.reloadRequired ? (
+                    <OwnerControls
+                      key={ownerKey}
+                      field={selected}
+                      disabled={controller.recording || controller.reloadRequired}
+                      progress={selectedProgress}
+                      status={ownerStatusShown ? controller.statusFor(selected.destination) : ''}
+                      failed={controller.decision.isError}
+                      submit={(outcome, value, plan) => {
+                        const key = choose(selected, outcome, value, undefined, plan)
+                        setOwnerCommand(ownerKey)
+                        return key
+                      }}
+                    />
+                  ) : null}
                   {selected.manualHold ? (
                     <section
                       className="automatic-handling-panel"
@@ -4572,6 +4930,7 @@ export default function LibraryPage({
                     </aside>
                   ) : null}
                   {selectedChoiceMode &&
+                  !ownerStatusShown &&
                   (controller.statusFor(selected.destination) ||
                     controller.messageFor(selected.destination)) ? (
                     <p
