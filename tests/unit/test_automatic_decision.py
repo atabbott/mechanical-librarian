@@ -1635,6 +1635,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="activity-check-groups-predecessor-f46",
         ),
+        pytest.param(
+            "60b1979ba6affa9afeac974063fd56771123e0e23c21c564c4ad5c3493878c17",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="provider-throttling-predecessor-f19a",
+        ),
+        pytest.param(
+            "9faa560bf95c46cf8addbc1d4c6f9d8179ebbd992cc8ff8060ab6e3fc00b8a69",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="provider-throttling-predecessor-f20",
+        ),
+        pytest.param(
+            "30831db3e98ed97333237e3f8a45c13d4b20087983b00b00d645d2fadfe36da3",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="provider-throttling-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

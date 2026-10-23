@@ -38,9 +38,21 @@ next UTC midnight. Header values themselves are never persisted. A deferred
 burst or daily-quota result consumes neither a recovery-health attempt nor the
 provider job's five-attempt execution allowance.
 
-After correcting a dormant condition, increment the positive
+After correcting a dormant condition, press **Retry now** on Library or
+Settings. It raises the positive `provider_recovery_generation` by exactly one
+through the ordinary owner Settings write: the request carries the generation
+the owner saw, and a second press, another tab or a changed revision is refused
+with `provider_recovery_stale` or `settings_stale` and changes nothing. When
+`/data/config.json` manages settings, the command is refused with
+`settings_managed_by_file` and the notice says instead to increment
 `provider_recovery_generation` in the `config-v9` file and restart the
-container. Startup first performs a read-only generation compatibility check;
+container. A saved generation takes effect the way any saved setting does: the
+runtime is rebuilt, and the recovery cutover below runs only after the new
+settings revision has committed. A save that fails leaves recovery exactly as
+it was, so a restart still starts. A cutover that fails after the commit leaves
+recovery at the previous generation, and the next start delivers it.
+
+Startup first performs a read-only generation compatibility check;
 it rejects persisted generations newer than configuration before any outbox
 delivery or database mutation. It then drains committed package cutovers from
 the durable outbox. Each delivery atomically enrolls its exact member and
@@ -53,7 +65,8 @@ does not discard recovery work. Authentication and authorization wake only
 when that delivered exact job proves the new configured generation; otherwise
 they remain dormant. Outbox delivery and job registration are idempotent, so a
 crash between cutover and enqueue is recovered on restart. No environment variable,
-file watcher, configuration hash, or manual retry endpoint wakes it. This
+file watcher or configuration hash wakes it, and Retry now is only that same
+generation increment. This
 recovery path rebuilds only retry-eligible provider lanes and publishes an immutable
 successor through the ordinary proposal, admission, shadow projection, and
 atomic review-package cutover. The predecessor package remains visible until

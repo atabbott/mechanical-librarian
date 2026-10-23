@@ -8927,3 +8927,80 @@ def test_completed_work_remains_browsable_during_explained_provider_waits(
                 ).to_be_visible()
             finally:
                 browser.close()
+
+
+def test_library_states_provider_throttling_and_idle_preparation_controls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real server's throttling projection and idle masthead (#1282)."""
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+    from tests.unit.test_provider_recovery import _job
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 2, prepare=True) as (fixture, origin):
+        preparation = fixture.preparation
+        assert preparation is not None
+        now = int(time.time())
+        fixture.recovery.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="books",
+            generation=1,
+            failure="burst_throttled",
+            now=now,
+            retry_after=3600,
+        )
+        fixture.recovery.enqueue_jobs(
+            tuple(_job(f"member-{index}") for index in range(3)), enqueued_at=now
+        )
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                notice = page.get_by_role(
+                    "region", name="Provider lookups waiting to retry"
+                )
+                entry = notice.get_by_role("listitem")
+                expect(entry).to_have_count(1)
+                expect(entry).to_contain_text(
+                    "Google Books · books: It is limiting requests. "
+                    "3 deferred lookups. Next automatic retry "
+                )
+                # File-managed settings: the instruction, never a command.
+                expect(notice).to_contain_text(
+                    "raise provider_recovery_generation by one there"
+                )
+                expect(notice.get_by_role("button")).to_have_count(0)
+
+                # One trigger whose name follows the state, located by place.
+                trigger = page.locator(".preparation-activity > button")
+                expect(trigger).to_have_text("Preparation idle")
+                trigger.click()
+                popover = page.get_by_role("region", name="Background activity")
+                popover.get_by_role("button", name="Pause", exact=True).click()
+                expect(trigger).to_have_text("Preparation paused")
+                resume = popover.get_by_role("button", name="Resume", exact=True)
+                expect(resume).to_be_focused()
+                resume.click()
+                expect(trigger).to_have_text("Preparation idle")
+                popover.get_by_role("button", name="Scan now", exact=True).first.click()
+                expect(trigger).to_have_text("Preparing libraries")
+                # Idle had no progress at all; the press started a real scan.
+                progress, paused = preparation.status()
+                assert not paused
+                assert progress[0] is not None
+                assert progress[0].scan_id
+                assert not page.evaluate(
+                    "() => document.activeElement === document.body"
+                )
+            finally:
+                browser.close()

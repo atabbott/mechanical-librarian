@@ -144,3 +144,28 @@ Audible later widens its fetched search page, not its retained bound (#1256):
 an audiobook search with a composed runtime reads one 25-product page and
 narrows it by the loose runtime band before the unchanged five-candidate bound
 applies. ADR-0064 records that evidence contract. iTunes is unchanged.
+
+## Amendment: Owner Retry now (2026-10)
+
+The operator generation stays the only wake. An owner may now raise it from the
+browser: `POST /api/v1/provider-recovery/retry` carries the generation the owner
+saw and composes the ordinary owner Settings write with exactly that generation
+plus one, the same revision check and no secret write. A mismatched generation
+is refused as `provider_recovery_stale` and a file-managed deployment as
+`settings_managed_by_file`, so two presses raise it once and the file stays the
+authority where it is one. No queue, wake, pacing, budget or egress path is
+added, and Activity keeps no retry control.
+
+The runtime rebuild that a saved generation triggers used to drain the outbox
+and reconcile the recovery store while preparing the successor, before the
+settings commit. A commit that then failed left the store's generation ahead of
+the configuration, and the next start refused it. Under store authority that
+cutover is now deferred until the commit succeeds; a failure after the commit
+leaves the store at the predecessor generation, which the next start delivers.
+File-authority startup keeps reconciling inline, because it commits nothing.
+
+The Library and Settings notice reads one bounded, read-only projection of
+unrecovered health: per library and adapter, the state, latest reason, deferred
+job count, next eligible time and a closed remedy. It names no provider
+instance, credential, request or work.
+

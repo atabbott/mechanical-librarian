@@ -2825,3 +2825,213 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                         ),
                         full_page=True,
                     )
+
+
+_FOCUS_ON_BODY = (
+    "() => document.activeElement === null || document.activeElement === document.body"
+)
+
+
+def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> None:
+    """Each throttled source reads once per library, Retry now sends one request
+    per press and answers in a mounted region, and nothing clips (#1282)."""
+    bundle = load_react_asset_bundle(Path(os.environ["ML_REACT_ASSET_DIR"]))
+    assert isinstance(bundle, ReactAssetBundle)
+    widened = False
+    retries: list[str] = []
+    held: list[Route] = []
+
+    def fulfill(route: Route) -> None:
+        path = urlsplit(route.request.url).path
+        if path == "/api/v1/updates":
+            route.fulfill(status=204, body="")
+        elif path == "/api/v1/appearance":
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps({"reduced_motion": "follow_system"}),
+            )
+        elif path == "/api/v1/provider-recovery/retry":
+            assert route.request.method == "POST"
+            assert json.loads(route.request.post_data or "") == {
+                "expected_generation": 1
+            }
+            retries.append(route.request.headers.get("x-csrf-token", ""))
+            if len(retries) == 1:
+                # Held until the test releases it, so the press stays pending.
+                held.append(route)
+                return
+            route.fulfill(
+                status=409,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "error": {"code": "provider_recovery_stale"},
+                        "schema_version": "review-error-v1",
+                    }
+                ),
+            )
+        elif path.startswith("/api/v1/"):
+            try:
+                payload = rich_payload(route.request.url)
+            except AssertionError:
+                route.fulfill(status=404, body="")
+                return
+            route.fulfill(content_type="application/json", body=json.dumps(payload))
+        elif path.startswith("/assets/review-app/"):
+            relative = path.removeprefix("/assets/review-app/")
+            css = relative.endswith(".css")
+            body = bundle.read(relative)
+            route.fulfill(
+                content_type="text/css" if css else "text/javascript",
+                body=body + _WIDER_TEXT.encode() if css and widened else body,
+            )
+        elif route.request.resource_type == "document":
+            route.fulfill(
+                content_type="text/html",
+                headers={
+                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                },
+                body=bundle.read(bundle.entry)
+                .decode("utf-8")
+                .replace(
+                    "<body>",
+                    f'<body data-build-identity="{_BUILD_IDENTITY}" data-csrf-token="{"b" * 32}">',
+                ),
+            )
+        else:
+            route.fulfill(status=404, body="")
+
+    capture = os.environ.get("ML_VISUAL_CAPTURE_DIR")
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.route("**/*", fulfill)
+        page.goto("https://react-platform.invalid/library?lens=all")
+        notice = page.get_by_role("region", name="Provider lookups waiting to retry")
+        entries = notice.get_by_role("listitem")
+        expect(entries).to_have_count(3)
+        expect(entries.nth(0)).to_contain_text(
+            "Google Books · Synthetic ebooks: It is limiting requests. "
+            "214 deferred lookups. Next automatic retry "
+        )
+        # The burst resets on the next day, so the time names the day.
+        expect(entries.nth(0).locator("span")).to_have_text(
+            re.compile(r"Next automatic retry [^.]+, [^.]+\.$")
+        )
+        expect(entries.nth(1)).to_contain_text(
+            "Hardcover · Synthetic ebooks: It refused the configured API key. "
+            "1 deferred lookup. Waits for Retry now after the source is fixed."
+        )
+        expect(entries.nth(2)).to_contain_text(
+            "Open Library · Synthetic audiobooks with a long library name: It did "
+            "not answer. 10,000 deferred lookups. No automatic retry remains."
+        )
+        expect(
+            entries.nth(1).get_by_role("link", name="Check the source’s API key")
+        ).to_have_attribute("href", "/settings?group=providers")
+        expect(entries.nth(2).get_by_role("link")).to_have_count(0)
+        status = notice.get_by_role("status")
+        alert = notice.get_by_role("alert")
+        expect(status).to_have_text("")
+        expect(alert).to_have_text("")
+
+        # Keyboard: Enter presses Retry now; while it is pending, neither a
+        # second Enter nor a click sends anything.
+        retry = notice.get_by_role("button", name="Retry now")
+        retry.focus()
+        page.keyboard.press("Enter")
+        busy = notice.locator(".provider-throttle-retry button")
+        expect(busy).to_have_attribute("aria-busy", "true")
+        expect(busy).to_have_attribute("aria-disabled", "true")
+        expect(busy).to_have_text("Retrying…")
+        page.keyboard.press("Enter")
+        busy.click(force=True)  # aria-disabled is "not enabled" to Playwright
+        page.wait_for_timeout(500)
+        assert len(retries) == 1, retries
+        assert retries[0] == "b" * 32
+        expect(busy).to_be_focused()
+        settings = cast(
+            "dict[str, dict[str, object]]", rich_payload("/api/v1/settings")
+        )
+        settings["document"] |= {"revision": 2, "provider_recovery_generation": 2}
+        held.pop().fulfill(content_type="application/json", body=json.dumps(settings))
+        expect(status).to_have_text(
+            "Retry now accepted. Every deferred lookup will retry now."
+        )
+        expect(retry).to_be_focused()
+        assert not page.evaluate(_FOCUS_ON_BODY)
+
+        # The second press is stale: the alert says so and nothing moves focus.
+        page.keyboard.press("Enter")
+        expect(alert).to_have_text(
+            "Retry now was already pressed elsewhere. The notice now shows the "
+            "current state."
+        )
+        assert len(retries) == 2, retries
+        expect(status).to_have_text("")
+        expect(retry).to_be_focused()
+
+        # The remedy opens Settings at Metadata sources, which carries the same
+        # notice and no generation number.
+        entries.nth(0).get_by_role("link", name="Add a Google Books API key").click()
+        page.wait_for_url("**/settings?group=providers")
+        expect(notice).to_be_visible()
+        expect(notice.get_by_role("button", name="Retry now")).to_be_visible()
+        page.goto("https://react-platform.invalid/settings?group=background")
+        page.get_by_role("spinbutton", name="Request timeout").wait_for()
+        expect(page.get_by_text("Provider recovery generation")).to_have_count(0)
+
+        for widened, dark in (
+            (False, False),
+            (False, True),
+            (True, False),
+            (True, True),
+        ):
+            scheme = "dark" if dark else "light"
+            page.emulate_media(
+                color_scheme="dark" if dark else "light",
+                reduced_motion="reduce" if dark else "no-preference",
+            )
+            for route in ("/library?lens=all", "/settings?group=providers"):
+                page.goto(f"https://react-platform.invalid{route}")
+                expect(entries).to_have_count(3)
+                expect(page.locator("html")).to_have_attribute("data-theme", scheme)
+                for width in (1440, 1100, 884, 761, 760, 390, 320):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.evaluate("() => document.documentElement.offsetWidth")
+                    where = (
+                        f"{route} {scheme}{' widened' if widened else ''} at {width}px"
+                    )
+                    failures = [
+                        failure
+                        for selector in (
+                            ".provider-throttle-notice li",
+                            ".provider-throttle-notice li > span",
+                            ".provider-throttle-notice a",
+                            ".provider-throttle-retry button",
+                            ".provider-throttle-retry small",
+                            ".preparation-activity > button",
+                        )
+                        for node in page.locator(selector).all()
+                        for failure in node.evaluate(_NAMED_CLIP)
+                    ]
+                    assert failures == [], f"{where}: {failures}"
+                    _fits_its_container(page, ".provider-throttle-notice", width)
+                    split = page.evaluate(_POLICY_MID_WORD, ".provider-throttle-notice")
+                    assert split == [], f"{where}: words split {split}"
+                    document = page.evaluate(
+                        "() => document.documentElement.scrollWidth"
+                    )
+                    assert document <= width, f"{where}: the page is {document}px wide"
+                    if capture is not None:
+                        Path(capture).mkdir(parents=True, exist_ok=True)
+                        name = route.strip("/").split("?")[0]
+                        page.screenshot(
+                            path=str(
+                                Path(capture) / f"throttle-{name}-{width}-{scheme}"
+                                f"{'-wide' if widened else ''}.png"
+                            ),
+                            full_page=True,
+                        )

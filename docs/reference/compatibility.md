@@ -1,5 +1,14 @@
 # Pre-release compatibility policy
 
+#1282 adds an optional `provider_throttling` projection to
+`review-preparation-v2`, whose schema version is unchanged, and the owner
+command `POST /api/v1/provider-recovery/retry`, which raises the existing
+`provider_recovery_generation` by one through the ordinary Settings write.
+Nothing persisted changes: the settings document, `config-v9` and the recovery
+store keep their schemas, so no clean rebuild is required. F19a/F20/F46 records
+are displaced because the web interface, recovery store and composition they
+bind changed, with permission sets unchanged.
+
 #1281 adds an optional, pattern-bound `check_group` to each
 `continuous-field-activity-v3` event, so the browser can gather one
 preparation's automatic no-change checks; the schema version is unchanged.

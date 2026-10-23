@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library and Settings now show which sources are limiting or refusing
+  lookups in each library, how many lookups wait, and when they retry next,
+  with a link to add or check a key. Retry now raises the recovery generation
+  by exactly one, replacing the number in Settings. The masthead stays at idle
+  so Scan now and Pause are always reachable (#1282).
+
 - Activity now gathers a preparation's automatic no-change checks into one
   "Checked N fields, no changes" row that opens onto each check, so the
   changes lead the page. Automatic choices name their field and value, write

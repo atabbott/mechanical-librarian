@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from copy import deepcopy
 from typing import cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
@@ -1459,6 +1460,43 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     }
 
 
+# Three sources in two libraries (#1282): a Google Books burst that resets on
+# the next day, a dormant Hardcover key refusal and an exhausted Open Library.
+THROTTLE_LONG_LIBRARY = "Synthetic audiobooks with a long library name"
+
+
+def _throttling_entries() -> list[dict[str, object]]:
+    return [
+        {
+            "library": "Synthetic ebooks",
+            "adapter": "google_books",
+            "state": "waiting",
+            "reasons": ["burst_throttled"],
+            "deferred": 214,
+            "next_retry_at": int(time.time()) + 26 * 3600,
+            "remedy": "add_api_key",
+        },
+        {
+            "library": "Synthetic ebooks",
+            "adapter": "hardcover",
+            "state": "dormant",
+            "reasons": ["authentication"],
+            "deferred": 1,
+            "next_retry_at": None,
+            "remedy": "check_api_key",
+        },
+        {
+            "library": THROTTLE_LONG_LIBRARY,
+            "adapter": "open_library",
+            "state": "exhausted",
+            "reasons": ["transient"],
+            "deferred": 10_000,
+            "next_retry_at": None,
+            "remedy": None,
+        },
+    ]
+
+
 def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     """Return a fresh response for one synthetic API target or absolute URL."""
     parsed = urlsplit(target)
@@ -1527,6 +1565,11 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "updated_at": 1,
                 }
             ],
+            "provider_throttling": {
+                "generation": 1,
+                "retry": "available",
+                "entries": _throttling_entries(),
+            },
         }
     if path == "/api/v1/library":
         return _library(query)
@@ -1918,6 +1961,7 @@ class RichFidelityApiMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp, *, review_case_id: str | None = None) -> None:
         super().__init__(app)
         self._review_case_id = review_case_id
+        self._retries = 0
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -1974,6 +2018,28 @@ class RichFidelityApiMiddleware(BaseHTTPMiddleware):
             else:
                 request.scope["raw_path"] = original_raw_path
             request.scope["query_string"] = original_query_string
+        # The real app has refused an unauthenticated, CSRF-less or malformed
+        # Retry now by now; only its settings-unavailable answer is scripted:
+        # the first press is accepted, every later one is stale (#1282).
+        if (
+            request.method == "POST"
+            and original_path == "/api/v1/provider-recovery/retry"
+            and response.status_code == 503
+        ):
+            self._retries += 1
+            if self._retries > 1:
+                return JSONResponse(
+                    {
+                        "error": {"code": "provider_recovery_stale"},
+                        "schema_version": "review-error-v1",
+                    },
+                    status_code=409,
+                )
+            settings = cast(
+                dict[str, dict[str, object]], rich_payload("/api/v1/settings")
+            )
+            settings["document"] |= {"revision": 2, "provider_recovery_generation": 2}
+            return JSONResponse(settings)
         if request.method != "GET" or response.status_code != 200:
             return response
         try:
@@ -1997,6 +2063,7 @@ __all__ = [
     "LONG_TITLE",
     "TERMINAL_FAILURE_COPY",
     "TERMINAL_LIBRARY_WORK",
+    "THROTTLE_LONG_LIBRARY",
     "UNBROKEN_TITLE_SEGMENT",
     "RichFidelityApiMiddleware",
     "rich_payload",
