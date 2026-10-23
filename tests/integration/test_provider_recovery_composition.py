@@ -1912,14 +1912,20 @@ def test_retry_now_has_exactly_the_effect_of_raising_the_generation_field() -> N
     }
 
 
-def test_a_failed_settings_commit_never_moves_recovery_past_a_restart() -> None:
+@pytest.mark.parametrize("path", ["retry_now", "settings_save"])
+def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
+    path: str,
+) -> None:
     from mechanical_librarian.application.owner_settings import (
         OwnerSettingsOperations,
     )
     from mechanical_librarian.application.review_application import (
         ReviewApplicationError,
     )
-    from mechanical_librarian.domain.owner_settings import OwnerSettingsError
+    from mechanical_librarian.domain.owner_settings import (
+        OwnerSettingsDocument,
+        OwnerSettingsError,
+    )
 
     with (
         tempfile.TemporaryDirectory() as temporary,
@@ -1932,9 +1938,25 @@ def test_a_failed_settings_commit_never_moves_recovery_past_a_restart() -> None:
         def refuse(*_args, **_kwargs):
             raise OwnerSettingsError("owner settings are unavailable")
 
+        def save_raised_generation() -> object:
+            view = application.owner_settings()
+            current = cast("OwnerSettingsDocument", getattr(view, "document"))
+            raised = current.model_copy(
+                update={
+                    "revision": current.revision + 1,
+                    "provider_recovery_generation": 2,
+                }
+            )
+            return application.write_owner_settings(raised, current.revision, ())
+
+        # The commit fails after the successor runtime was composed, which is
+        # where the base reconciled recovery to the raised generation.
         with patch.object(OwnerSettingsOperations, "write", refuse):
             with pytest.raises(ReviewApplicationError, match="settings_unavailable"):
-                application.retry_provider_recovery(1)
+                if path == "retry_now":
+                    application.retry_provider_recovery(1)
+                else:
+                    save_raised_generation()
         assert 1 == runtime.generation()
         assert before == runtime.recovery_state()
         runtime.stop()
