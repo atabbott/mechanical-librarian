@@ -1091,12 +1091,27 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 other_row.get_by_role("button", name="Hide details").click()
 
                 compact_row = long_activity_title.locator("xpath=ancestor::article")
-                assert (
+                # The time track is as narrow as its 44 px floor allows and
+                # never narrower than the time it holds, whatever the fonts.
+                # The text is measured, not the element: a stretched grid item
+                # is as wide as its track, which would make the bound vacuous.
+                track = float(
                     compact_row.evaluate(
                         "node => getComputedStyle(node).gridTemplateColumns"
-                    ).split(" ", 1)[0]
-                    == "44px"
+                    )
+                    .split(" ", 1)[0]
+                    .removesuffix("px")
                 )
+                content = compact_row.locator(":scope > time").evaluate(
+                    """node => {
+                      const text = document.createRange();
+                      text.selectNodeContents(node);
+                      return Math.max(text.getBoundingClientRect().width,
+                        parseFloat(getComputedStyle(node).minWidth));
+                    }"""
+                )
+                assert 44 <= track, track
+                assert content - 1 <= track <= max(44, content) + 1, (track, content)
                 assert (
                     compact_row.locator("b").evaluate(
                         "node => getComputedStyle(node).gridRow"
