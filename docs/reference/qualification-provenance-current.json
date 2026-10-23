@@ -459,7 +459,7 @@
     "tests/architecture/test_import_boundaries.py": "ec565550b406338fc41cddb42959a1e4f1a2e8648db67954d2c8115392421f1f",
     "tests/browser/fidelity_cohort.py": "cb0310086acb58458146df5390a62d09a7f8ff6f6efabfb63fb47d585e75187e",
     "tests/browser/test_live_updates_browser.py": "35834e72fa9f0d95d8482b8035ff69f6a4306ada148a2afaed64a57bbbdd75be",
-    "tests/browser/test_react_platform_artifact.py": "bcf3ed6277497aa52a9da26bf11a6d8ab7eed3c41b742d811083b5d6fec7c3c6",
+    "tests/browser/test_react_platform_artifact.py": "b45dfc6fd32bab34e77969770e4b1b71630be3dcd7de20204061b93cb77f8a04",
     "tests/browser/test_review_browser.py": "e25e7323547456747615a74aa1bd2573fc2c87ca5eb831ab9da60edbf7ceedab",
     "tests/fixtures/audiobook-synopsis-predecessor/ebook-policy.json": "c967a7d5d4020539da7e9652b84ba90676dbc04a967f622cea21337482d921c5",
     "tests/fixtures/audiobook-synopsis-predecessor/ebook-preview.json": "ac3c82474f5bc665f9548a1a5f798dd54275abcd00cc8668a53081f4d6efd6f7",
