@@ -17,6 +17,7 @@ import pytest
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
 )
@@ -26,6 +27,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.human_decision import HumanDecisionError
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.genre_reports import genre_report, publish_genre_case
 from tests.support.owner_values import OwnerStore, rewritten
 
@@ -435,3 +437,114 @@ def test_activity_states_withdraw_and_an_unwritten_restore(store: OwnerStore) ->
         ("owner_entered", "Real Tigers → The Silent Orchard"),
     ]
     assert written.plan.plan_id in store.patches
+
+
+# The owner's hold follows the work across its cases (ADR-0085, amending
+# ADR-0039): automatic genres handling stays off on every successor until the
+# owner returns the field to automatic.
+_HELD = genre_report(current=("Drama",), genres=("Fantasy",))
+
+
+@pytest.fixture
+def held(tmp_path: Path) -> Iterator[tuple[OwnerStore, str]]:
+    value = OwnerStore(tmp_path, None)
+    value.automatic("genres", "replace", _HELD.target.library)
+    value.publish(_HELD)
+    assert _automatic_genres(value) == [value.case.review_case_id]
+    token = value.decide("keep_current", destination="genres").decision_id
+    assert _hold(value) == token
+    assert _automatic_genres(value) == []
+    yield value, token
+    value.close()
+
+
+def _automatic_genres(store: OwnerStore) -> list[str]:
+    return [
+        document["review_case_id"]
+        for document in map(
+            json.loads, store.repository.pending_field_effect_decision_documents(32)
+        )
+        if document["schema_version"].startswith("automatic")
+        and document["destination"] == "genres"
+    ]
+
+
+def _hold(store: OwnerStore) -> str | None:
+    return store.repository.field_effect_manual_hold_token(
+        store.case.review_case_id, "genres"
+    )
+
+
+def test_the_hold_follows_the_work_to_its_successor(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    first = store.case.review_case_id
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    assert store.case.review_case_id != first
+    assert _hold(store) == token
+    assert _automatic_genres(store) == []
+    # The successor says so, and offers "Return to automatic" for it.
+    field = _field(store, "genres")
+    assert (field["manual_hold"], field["human_decision"]) == (True, None)
+    assert field["classification"] == "human_recorded"
+    store.publish(rewritten(_HELD, publisher="Changed Again"))
+    assert _hold(store) == token
+    assert _automatic_genres(store) == []
+    # The carried rows pass the store's own validation on reopening.
+    store.repository.close()
+    store.repository = open_repository(store.root / "owner.sqlite")
+    assert _hold(store) == token
+
+
+def test_a_pending_return_is_not_carried_forward(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    scan = store.repository.request_review_scan(
+        "primary", "ebooks", "library-ebooks", "a" * 64, store.clock()
+    )
+    at = store.clock()
+    assert store.repository.request_field_effect_manual_return(
+        store.case.review_case_id, "genres", token, scan.scan_id, at, at
+    )
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    assert _hold(store) is None
+    assert _automatic_genres(store) == [store.case.review_case_id]
+
+
+def test_retiring_and_readmitting_the_work_keeps_the_hold(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    first = store.case.review_case_id
+    # The providers fall silent: nothing is actionable and the case retires.
+    silent = MetadataReport.create(
+        target=_HELD.target,
+        file=_HELD.file,
+        local_claims=(),
+        local_reasons=_HELD.local_reasons,
+        providers=(),
+    )
+    assert store.admit(silent) == "retired"
+    assert store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    assert store.case.review_case_id != first
+    assert _hold(store) == token
+    assert _automatic_genres(store) == []
+
+
+def test_returning_the_successor_to_automatic_releases_the_hold(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    successor = store.case.review_case_id
+    assert store.repository.clear_field_effect_manual_hold(
+        successor, "genres", store.clock(), token
+    )
+    assert _hold(store) is None
+    assert _automatic_genres(store) == [successor]
+    assert _field(store, "genres")["manual_hold"] is False
+    store.publish(rewritten(_HELD, publisher="Changed Again"))
+    assert _hold(store) is None
+    assert _automatic_genres(store) == [store.case.review_case_id]

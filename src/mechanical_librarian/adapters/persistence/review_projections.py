@@ -305,6 +305,14 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     self._current_cover_automatic_decision_id(review_case_id)
                 ),
                 decision_effect_states=self._decision_effect_states(review_case_id),
+                held_destinations=tuple(
+                    row[0]
+                    for row in self._connection.execute(
+                        "SELECT destination FROM field_effect_manual_holds "
+                        "WHERE review_case_id=? AND active=1 ORDER BY destination",
+                        (review_case_id,),
+                    )
+                ),
                 revert_candidates=self._revert_candidates(
                     report.target.connection,
                     report.target.library,

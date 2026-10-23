@@ -233,6 +233,9 @@ class CurrentReviewCaseSnapshot:
     # work's revertible writes as `revert_candidates` states them (ADR-0085).
     decision_effect_states: tuple[tuple[str, str], ...] = ()
     revert_candidates: tuple[dict[str, object], ...] = ()
+    # Destinations whose automatic handling an owner hold keeps off on this
+    # case, including a hold carried forward from an earlier case (ADR-0085).
+    held_destinations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -829,6 +832,13 @@ class InspectCurrentReviewCase:
                 automatic_decision is not None,
                 snapshot,
             )
+            # The owner's hold follows the work: a successor case holds the
+            # field as the owner's decision on the earlier case left it.
+            carried_hold = (
+                decision is None
+                and automatic_decision is not None
+                and destination in snapshot.held_destinations
+            )
             owner_entry = owner_control is not None and (
                 owner_control["entry"] is not None
                 or owner_control["subset"] is not None
@@ -871,6 +881,7 @@ class InspectCurrentReviewCase:
                     )
                 ),
                 has_human_decision=decision is not None
+                or carried_hold
                 or (
                     destination == "cover"
                     and cover_is_current
@@ -925,7 +936,8 @@ class InspectCurrentReviewCase:
                 "automatic_decision": automatic_decision,
                 "automatic_withheld_reason": None,
                 "automatic_selection_sources": automatic_selection_sources,
-                "manual_hold": decision is not None and automatic_decision is not None,
+                "manual_hold": carried_hold
+                or (decision is not None and automatic_decision is not None),
                 "classification": classification.state,
                 "classification_reason": classification.reason,
                 "editable": classification.editable and has_owner_action,

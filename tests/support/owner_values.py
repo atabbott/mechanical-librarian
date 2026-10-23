@@ -29,6 +29,14 @@ from mechanical_librarian.application.field_effects import GuardedFieldApplicati
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import (
+    DEFAULT_OPTIONS,
+    OPTION_CATALOGUE,
+    MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
+    human_review_destinations,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetFacts,
@@ -66,6 +74,7 @@ class OwnerStore:
     """A store, its current case and a guarded service over a fake library."""
 
     def __init__(self, root: Path, report: MetadataReport | None) -> None:
+        self.root = root
         self.repository = open_repository(root / "owner.sqlite", cross_thread=True)
         self.target = FakeTargetService()
         self.patches: list[str] = []
@@ -93,6 +102,7 @@ class OwnerStore:
             self.clock,
         )
         self.case: ReviewCase
+        self.resolved: ResolvedMetadataPolicy | None = None
         if report is not None:
             self.publish(report)
 
@@ -102,6 +112,14 @@ class OwnerStore:
 
     def publish(self, report: MetadataReport) -> ReviewCase:
         """Publish one report of the work and return its current case."""
+        status = self.admit(report)
+        assert status in {"admitted", "superseded", "replayed"}, status
+        return self.case
+
+    def admit(self, report: MetadataReport) -> str:
+        """Publish one report and return its admission status, loading the case
+        it admits; under an automatic policy the shadow outcome follows, as a
+        scan's read-back records it."""
         current = self.repository._connection.execute(
             "SELECT report_id FROM current_metadata_reports WHERE connection_name=? "
             "AND library_name=? AND item_id=? AND file_identity=?",
@@ -113,11 +131,45 @@ class OwnerStore:
             ),
         ).fetchone()
         self.repository.publish(report, lambda: True, current and current[0])
-        proposal = evaluate_report(report)
+        resolved = self.resolved
+        proposal = (
+            evaluate_report(report)
+            if resolved is None
+            else evaluate_report(
+                report, resolved.resolved_id, human_review_destinations(resolved)
+            )
+        )
         self.repository.publish_proposal(proposal)
         admitted = json.loads(self.repository.admit_review_case(proposal))
-        assert admitted["status"] in {"admitted", "superseded", "replayed"}, admitted
-        return self.load(admitted["review_case_id"])
+        if admitted["status"] in {"admitted", "superseded", "replayed"}:
+            case = self.load(admitted["review_case_id"])
+            if resolved is not None:
+                self.repository.persist_shadow_outcome(
+                    case.review_case_id, self.clock()
+                )
+        return str(admitted["status"])
+
+    def automatic(self, destination: str, option: str, library: str) -> None:
+        """Make one destination automatic and qualified for later publications."""
+        options = dict(DEFAULT_OPTIONS)
+        options[destination] = option
+        destinations = {
+            name: "unsupported" if name == "explicit" else "ask"
+            for name in OPTION_CATALOGUE
+        }
+        destinations[destination] = "automatic"
+        profile = MetadataPolicyProfile.create("Owner hold", options, destinations)
+        self.resolved = resolve_policy(profile, library)
+        self.repository.enter_shadow_preview(1)
+        self.repository.create_metadata_policy_draft(profile.canonical_json)
+        self.repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((library, self.resolved.resolved_id, self.resolved.canonical_json),),
+            2,
+            expected_active_generation=1,
+        )
+        self.repository.activate_qualified_automatic(3)
 
     def load(self, review_case_id: str) -> ReviewCase:
         """Make one persisted case the one later commands are recorded on."""
