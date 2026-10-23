@@ -10533,6 +10533,66 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     )
   })
 
+  it('CR-b: Load more still loads the next page when each page lands at once', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const page = (name: string, nextCursor?: string) => ({
+      total: 3,
+      items: [railItem(`case-${name}`, 'title' as const, `Work ${name}`, 1)],
+      ...(nextCursor ? { nextCursor } : {}),
+    })
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(({ cursor }) =>
+      Promise.resolve(
+        cursor === 'attention-page-3'
+          ? page('C')
+          : cursor === 'attention-page-2'
+            ? page('B', 'attention-page-3')
+            : page('A', 'attention-page-2'),
+      ),
+    )
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await waitFor(() => expect(rail).toHaveFocus())
+    await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
+    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work B' })
+    await user.click(within(rail).getByRole('button', { name: 'Load more attention' }))
+    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work C' })
+    expect(vi.mocked(http.getAttention).mock.calls.map(([read]) => read.cursor)).toEqual([
+      undefined,
+      'attention-page-2',
+      'attention-page-3',
+    ])
+  })
+
+  it('CR-a: Load more leaves focus in the search field the owner moved to', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let release: () => void = () => undefined
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) =>
+      cursor === 'attention-page-2'
+        ? new Promise((resolve) => {
+            release = () => {
+              resolve({ total: 2, items: [railItem('case-2', 'title', 'Work B', 1)] })
+            }
+          })
+        : {
+            total: 2,
+            items: [railItem('case-1', 'title', 'Work A', 1)],
+            nextCursor: 'attention-page-2',
+          },
+    )
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await waitFor(() => expect(rail).toHaveFocus())
+    await user.click(within(rail).getByRole('button', { name: 'Load more attention' }))
+    const search = screen.getByRole('searchbox')
+    await user.click(search)
+    await user.keyboard('Work')
+    release()
+    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work B' })
+    expect(search).toHaveFocus()
+  })
+
   it.each([
     ['with a later page', true, 'Work 1 of 2 loaded'],
     ['fully loaded', false, 'Work 1 of 2'],

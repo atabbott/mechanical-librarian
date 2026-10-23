@@ -3570,6 +3570,40 @@ def test_compact_selection_brings_back_to_works_into_view() -> None:
                     assert not page.evaluate(_FOCUS_ON_BODY), where
 
 
+def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
+    """Closing the Attention rail over a compact selection brings the
+    workspace's top, where Back to works leads it, back into view (#1284)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        _serve_cohort(
+            page,
+            stylesheet=lambda: "html { font-size: 200% !important; }",
+            writes_off_handoff=True,
+        )
+        for width in (390, 320):
+            where = f"200% text at {width}px"
+            page.set_viewport_size({"width": width, "height": 844})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            rows = page.locator("button.library-work-row")
+            expect(rows.first).to_be_visible()
+            last = rows.nth(rows.count() - 1)
+            last.scroll_into_view_if_needed()
+            last.click()
+            page.locator(".compact-workspace-back").wait_for()
+            page.locator(".attention-toggle").click()
+            rail = page.get_by_role("complementary", name="Attention queue")
+            rail.get_by_role("button", name="Close", exact=True).click()
+            expect(rail).to_have_count(0)
+            expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
+            page.evaluate(_TWO_FRAMES)
+            back = page.evaluate(_BACK_IN_VIEW)
+            assert back["visible"], f"{where}: {back}"
+            assert not page.evaluate(_FOCUS_ON_BODY), where
+
+
 # Where the workspace starts on the page, and the toolbar's own height, read
 # once layout has held still for three frames (a restyle can land late).
 _WORKSPACE_GEOMETRY = """async () => {

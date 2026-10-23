@@ -2591,18 +2591,32 @@ export default function LibraryPage({
     return [...groups.values()]
   }, [attentionItems])
   // Load more keeps its place: once the page lands, focus moves to the first row
-  // it added, even when that row joins a work already in the rail (#1284).
-  const loadMore = useRef<{ from: number; started: boolean } | null>(null)
+  // it added, even when that row joins a work already in the rail (#1284). The
+  // press ends when a page is added or a newer error arrives, whether or not a
+  // render saw it fetching; a new search drops it, and focus the owner moved
+  // elsewhere stays put.
+  const attentionKey = `${search.q ?? ''} ${search.attentionCursor ?? ''}`
+  const loadMore = useRef<{
+    key: string
+    pages: number
+    errors: number
+    from: number
+  } | null>(null)
   useEffect(() => {
     const pending = loadMore.current
     if (!pending) return
-    if (attention.isFetchingNextPage) {
-      pending.started = true
+    if (pending.key !== attentionKey) {
+      loadMore.current = null
       return
     }
-    if (!pending.started) return
+    if (attentionQuery.errorUpdateCount > pending.errors) {
+      loadMore.current = null
+      return
+    }
+    if ((attention.data?.pages.length ?? 0) <= pending.pages) return
     loadMore.current = null
-    if (attention.isFetchNextPageError) return
+    const active = document.activeElement
+    if (active && active !== document.body && !attentionRail.current?.contains(active)) return
     const first = attentionItems[pending.from]
     const row = first
       ? [
@@ -2610,7 +2624,7 @@ export default function LibraryPage({
         ].find((node) => node.dataset.attentionRow === `${first.id}:${first.destination}`)
       : undefined
     ;(row ?? attentionRail.current)?.focus()
-  }, [attention.isFetchingNextPage, attention.isFetchNextPageError, attentionItems])
+  }, [attention.data, attentionItems, attentionKey, attentionQuery.errorUpdateCount])
   const selectedIdentity = useMemo(
     () =>
       search.preview
@@ -3093,7 +3107,8 @@ export default function LibraryPage({
   // far down the page is brought to the workspace's top, where Back to works
   // leads it, just below the sticky masthead (#1284). These selections skip the
   // router's reset to the top, and the work may still be loading, so the reveal
-  // repeats until it lands or the work settles.
+  // repeats until it lands or the work settles. Closing the rail over a selected
+  // work reveals it the same way.
   useLayoutEffect(() => {
     if (!revealWorkspace.current || !(search.preview ?? search.work)) return
     const workspace = document.querySelector<HTMLElement>('.library-workspace')
@@ -3106,7 +3121,7 @@ export default function LibraryPage({
     window.scrollTo({ top })
     if (Math.abs(window.scrollY - top) <= 1 || selectedDetailReady || selectedReadError)
       revealWorkspace.current = false
-  }, [search.preview, search.work, selectedDetailReady, selectedReadError])
+  }, [search.attention, search.preview, search.work, selectedDetailReady, selectedReadError])
   useLayoutEffect(() => {
     if (advanceScroll.current === null) return
     const top = advanceScroll.current
@@ -3243,6 +3258,7 @@ export default function LibraryPage({
             pendingSearchQuery.current = null
             await navigate({
               replace: pending.attention === undefined,
+              resetScroll: !revealWorkspace.current,
               search: (current) => {
                 if (generation !== searchGeneration.current) return current
                 const next = { ...current }
@@ -3381,6 +3397,7 @@ export default function LibraryPage({
   }
   const clearSelection = () => {
     workSelectionGeneration.current += 1
+    revealWorkspace.current = false
     setComplete(null)
     setCompletionInspection(null)
     setOpenedWork(null)
@@ -4646,7 +4663,14 @@ export default function LibraryPage({
                         : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
                 </p>
               </div>
-              <button onClick={() => changeAttention(false)}>Close</button>
+              <button
+                onClick={() => {
+                  revealWorkspace.current = Boolean(search.preview ?? search.work) && compactWidth()
+                  changeAttention(false)
+                }}
+              >
+                Close
+              </button>
             </header>
             {attention.data === undefined ? (
               <p role={attention.isError ? 'alert' : 'status'}>
@@ -4722,7 +4746,12 @@ export default function LibraryPage({
                     aria-disabled={attention.isFetchingNextPage || undefined}
                     onClick={() => {
                       if (loadMore.current || attention.isFetchingNextPage) return
-                      loadMore.current = { from: attentionItems.length, started: false }
+                      loadMore.current = {
+                        key: attentionKey,
+                        pages: attention.data.pages.length,
+                        errors: attentionQuery.errorUpdateCount,
+                        from: attentionItems.length,
+                      }
                       void attention.fetchNextPage()
                     }}
                   >
