@@ -220,6 +220,17 @@ sentinel does not reorder the remaining complete author list.
 There is no score, provider priority, ranking, configurable policy, review, or
 decision concept.
 
+## Owner decision
+
+`HumanDecision` (`human-decision-v3`) is one immutable owner fact for one case,
+proposal and destination. Its outcome is `accept` (a retained alternative),
+`keep_current`, historical `reject`, `owner_entered` (owner text for title,
+subtitle or publisher, or an in-order genre subset), `withdraw` (no value; the
+field is undecided again) or `revert` (the recorded pre-image of the named
+`reverts_plan_id`). The latest row for a case and destination decides it unless
+it is a withdrawal. A decision is not write authority by itself; the guarded
+effect boundary plans, claims and verifies every write (ADR-0085).
+
 ## Current book catalogue
 
 One `CatalogueGeneration` is a bounded current observation across every

@@ -152,9 +152,11 @@ and decisions, and explicit proxy trust. The `/api/v1` surface exposes
 exact-current case detail, bounded evidence, current-case admission and decision
 history, one individual field-decision operation, and authenticated OpenAPI.
 The mutation requires the displayed proposal ID and target fingerprint, an
-explicit `accept`, `keep_current`, or `reject` outcome, a 16–128 character
-`Idempotency-Key`, the session CSRF token, and an exact proposed value for
-`accept`. Same-key/same-payload retries return the original decision identity;
+explicit `accept`, `keep_current`, `reject`, `owner_entered`, `withdraw` or
+`revert` outcome, a 16–128 character `Idempotency-Key`, the session CSRF token,
+an exact proposed value for `accept`, the owner's value for `owner_entered`,
+and for `revert` the reverted plan's `reverts_plan_id` with its recorded
+pre-image (#1285). Same-key/same-payload retries return the original decision identity;
 conflicts and stale state fail without a partial decision or event. The response
 also carries `confirmation`: either `confirmed` with the actual case detail or
 `unavailable` if its post-commit readback failed. An unavailable confirmation is

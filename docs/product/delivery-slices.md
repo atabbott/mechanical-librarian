@@ -317,15 +317,20 @@ cover-question suppression is included.
 
 The owner can trust what the interface says and stays in control of what it
 does. This checkpoint is shaped from the 2026-10-20 frontend audit of a fresh
-deployment writing to a throwaway Audiobookshelf. It holds no new functional
-slice: every unit is focused work with `Delivery slice: Not applicable`.
+deployment writing to a throwaway Audiobookshelf. It holds one functional
+slice, F59; every other unit is focused work with `Delivery slice: Not
+applicable`.
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F59 Owner-entered values, changeable decisions and genre subsets | #1285 | A field with no fitting alternative takes an owner-entered value or genre subset; a recorded decision can be changed or withdrawn; and a written owner decision can be restored to the value it replaced through a guarded write. | Delivered; ADR-0085, amending ADR-0030, ADR-0037 and ADR-0039. |
 
 | Order | Issues | Outcome |
 | --- | --- | --- |
 | 1 | #1278 | Activity loads after a verified write of any length. It records this checkpoint and is its first unit; as focused work it may land before 0.28.0 closes. |
 | 2 | #1018, #1279, #1280, #1281, #1282, #1284, in any order | CSRF resend for every unsafe request; a write-permission review that survives refocus; a policy preview that evaluates every field it reports; a ledger that leads with changes rather than no-op records; library-level provider throttling, retry, scan and pause; and counts, search and Attention that agree across surfaces. |
 | 3 | #1283 | Degraded candidates are no longer presented as improvements, after the investigation records their cause. |
-| 4 | #1285 | Owner-entered values, changeable decisions and genre subsets. A planned feature that must be promoted to a slice designation before it starts. |
+| 4 | #1285 | F59: owner-entered values, changeable decisions and genre subsets. |
 
 No release, tag, deployment, production-library operation, new provider or
 credential, change to consent semantics, or cover-question suppression is

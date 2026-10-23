@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+[ADR-0085](0085-owner-entered-values-and-guarded-revert.md) adds owner-confirmed
+revert as a new guarded write; rollback, Undo and clearing stay unavailable.
+
 ## Context
 
 Mechanical Librarian already records immutable owner decisions and sealed,

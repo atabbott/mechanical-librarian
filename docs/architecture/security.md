@@ -215,7 +215,10 @@ present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state
 across the two lanes. A stale catalogue baseline is rebuilt progressively per
 successfully observed library, isolating unavailable connections; later work
-validates its exact item and revision against the latest generation. The
+validates its exact item and revision against the latest generation. A manual
+hold follows the work: admitting a successor case carries each destination's
+latest active hold with no pending return, under the same decision token, inside
+the admission transaction (#1285). The
 return-to-automatic control retains its durable manual hold until its requested
 scan is successfully complete. Release compares the hold's human-decision token,
 so a concurrent later manual decision remains held; failed or incomplete scans
@@ -2254,3 +2257,21 @@ after the settings commit, so a failed save cannot leave recovery ahead of
 configuration and stop the next start, and a cutover that fails after the
 commit fails the service closed rather than keep superseded settings running.
 
+## Owner-entered values and guarded revert (#1285)
+
+Owner-entered values, genre subsets, withdrawals and reverts use the existing
+session- and CSRF-bound decision command and grant no new destination, action
+kind, consent or permission. Owner text is refused, never rewritten, unless it
+is 1 to 512 code points of NFC text with collapsed whitespace and no control,
+path, credential or URI text; a genre subset must be an in-order subset of the
+current and eligible proposed genres, at most 32. Suggestions are pure local
+transforms of the current value. No proposal, shadow, automatic-decision,
+policy or qualification path reads an owner-entered or revert value. A revert
+restores only the pre-image the guarded pipeline read back before the latest
+verified human write of that field, refuses when the field no longer holds the
+written value, and is itself an ordinary guarded write: the claim re-read and
+the adapter's re-check before its request both compare the written value, and
+a change between them stales the plan with no request. The lost-update window
+between that re-check and the request remains, as Audiobookshelf offers no
+compare-and-set. Clearing, rollback, Undo and reverting automatic writes stay
+unavailable.
