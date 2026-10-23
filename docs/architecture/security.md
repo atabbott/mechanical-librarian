@@ -2236,3 +2236,21 @@ no-change, so it reaches no target, effect guard or write. Ebook outcomes are
 unchanged. Proposal policy v34 and decision policy v21 require a clean rebuild,
 with no migration or adoption; displaced qualification records keep their
 frozen permission sets and grant no current authority.
+
+## Library provider throttling and Retry now (#1282)
+
+The throttling projection is one read-only, bounded statement over the recovery
+store: at most 4,096 unrecovered health rows become at most 256 entries of
+library name, adapter, closed state, closed reasons, deferred count, next retry
+time and a closed remedy. Provider instance names, credentials, headers,
+payloads and work identities never leave the server; a remedy is computed from
+whether a key is configured, never from its value. Retry now is a session- and
+CSRF-bound owner command with a closed 2,048-byte body. It can only raise
+`provider_recovery_generation` by one against the generation the owner saw,
+through the existing Settings write and its optimistic revision, so it grants
+no credential, write, budget or pacing authority and sends no provider request
+by itself. File-managed settings refuse it. The recovery cutover now runs only
+after the settings commit, so a failed save cannot leave recovery ahead of
+configuration and stop the next start, and a cutover that fails after the
+commit fails the service closed rather than keep superseded settings running.
+

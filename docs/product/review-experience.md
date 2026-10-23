@@ -64,9 +64,11 @@ that stopped before a report existed has no catalogue name to search for, so
 the panel says plainly that it is listed in Works as `Preparation unavailable`
 with its stage, reason, next step and reference.
 
-Four affordances are shaped like a retry and mean different things. `Scan now`
+Five affordances are shaped like a retry and mean different things. `Scan now`
 and `Retry` in the background-work popover both start a new preparation cycle
-for one library. Retrying a cover consideration asks the configured reviewer
+for one library. `Retry now` in the provider notice raises the recovery
+generation once, so every deferred provider lookup in every library retries
+now. Retrying a cover consideration asks the configured reviewer
 about that one cover again, and retrying description advice asks it about that
 one description again. Reviewing a current comparison after a cover has moved
 retries nothing: it reads the comparison as it stands now. The popover
@@ -77,7 +79,25 @@ before a report has no automatic retry
 names each library's scan state in words, states checked, ready and
 could-not-finish for that library, and once a scan is finished lists only the
 buckets books actually reached. `Escape` closes it and returns focus to the
-control that opened it.
+control that opened it. The control stays in the masthead whenever a library is
+configured: at idle it reads `Preparation idle` and still offers Scan now and
+Pause, and it states that Pause stops new library scans while deferred provider
+lookups keep their schedule. Its commands, like Retry now, are marked disabled
+rather than removed while one is pending, so focus stays where it was and a
+second press sends nothing.
+
+Library and the top of Settings carry one provider notice. Each entry names a
+source and a library, the reason in a sentence, how many lookups are deferred,
+and when they retry next, with the day when it is not today; a wait that passes
+while the page is open reads as due without another read, a refused key waits
+for Retry now and an exhausted lane says no automatic retry remains. An entry
+ends with its own link to Settings › Metadata sources to add a Google Books key
+or check a source's key. One Retry now applies to every entry and also refreshes
+the saved settings; its outcome is announced beside it, a success and a refusal
+each marked by a glyph as well as colour, a stale press says another press
+already counted, and a file-managed deployment shows the file instruction
+instead. With nothing deferred, the notice takes no space and is no landmark.
+Arriving at Settings keeps focus in the page once the saved settings load.
 
 Each persisted failure code maps to one closed safe reason and exactly one
 owner posture: a named supported action, a stated pending automatic recovery,

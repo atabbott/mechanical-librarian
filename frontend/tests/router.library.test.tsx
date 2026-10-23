@@ -18,6 +18,8 @@ import type {
   LibrarySearch,
   LibraryView,
   PreparationView,
+  ProviderThrottleEntry,
+  ProviderThrottlingView,
   ReviewHttp,
   ReviewerAccessView,
 } from '../src/api/http'
@@ -32,6 +34,7 @@ import {
   recordedAcknowledgement,
   renderRoute,
 } from './fixtures'
+import { view as settingsView } from './settingsFixtures'
 
 // jsdom has no native dialog methods; real focus trapping/Escape are browser proof.
 Object.defineProperties(HTMLDialogElement.prototype, {
@@ -9909,4 +9912,367 @@ it('counts linked corroborating authorities once and keeps observations separate
   expect(screen.getByText('Title: Other title')).toBeVisible()
   expect(screen.getByText('External observation')).toBeVisible()
   expect(http.recordDecision).not.toHaveBeenCalled()
+})
+
+describe('library provider throttling notice (#1282)', () => {
+  const noon = new Date(2026, 9, 23, 12, 0)
+  const seconds = (date: Date) => Math.floor(date.getTime() / 1000)
+  // The time and its meridiem never wrap apart (#1282 R3 F8).
+  const clock = (date: Date) =>
+    new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+      .format(date)
+      .replace(/\s/g, '\u00a0')
+  const entry = (overrides: Partial<ProviderThrottleEntry> = {}): ProviderThrottleEntry => ({
+    library: 'Synthetic ebooks',
+    adapter: 'google_books',
+    state: 'waiting',
+    reasons: ['burst_throttled'],
+    deferred: 214,
+    next_retry_at: null,
+    remedy: null,
+    ...overrides,
+  })
+  const throttled = (
+    entries: ProviderThrottleEntry[],
+    retry: ProviderThrottlingView['retry'] = 'available',
+  ): PreparationView => ({
+    schema_version: 'review-preparation-v2',
+    recovery_required: false,
+    active: false,
+    actionable: false,
+    paused: false,
+    libraries: [],
+    provider_throttling: { generation: 4, retry, entries },
+  })
+  const notice = () => screen.findByRole('region', { name: 'Provider lookups waiting to retry' })
+  const container = () => document.querySelector<HTMLElement>('.provider-throttle-notice')
+  const freezeNoon = () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: noon })
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
+  }
+
+  it('states each library and source once with its reason, count, timing and remedy', async () => {
+    freezeNoon()
+    const today = new Date(2026, 9, 23, 13, 30)
+    const tomorrow = new Date(2026, 9, 24, 9, 0)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () =>
+        throttled([
+          entry({ next_retry_at: seconds(today), remedy: 'add_api_key' }),
+          entry({
+            adapter: 'hardcover',
+            state: 'dormant',
+            reasons: ['authentication'],
+            deferred: 1,
+            remedy: 'check_api_key',
+          }),
+          entry({
+            library: 'Synthetic audiobooks with a long library name',
+            adapter: 'open_library',
+            state: 'exhausted',
+            reasons: ['transient'],
+            deferred: 10_000,
+          }),
+          entry({
+            library: 'Second shelf',
+            reasons: ['quota_exhausted'],
+            deferred: 3,
+            next_retry_at: seconds(tomorrow),
+          }),
+          entry({ adapter: 'itunes_search', state: 'checking', reasons: ['rate_limited'] }),
+          entry({ adapter: 'audnexus', reasons: [], next_retry_at: seconds(noon) - 60 }),
+          entry({ adapter: 'inventaire', reasons: ['configuration'], deferred: 2 }),
+        ]),
+      ),
+    }
+    renderRoute('/library?lens=all', http)
+    const items = await within(await notice()).findAllByRole('listitem')
+    const day = new Intl.DateTimeFormat(undefined, {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    }).format(tomorrow)
+    expect(items.map((item) => item.querySelector('span')?.textContent)).toEqual([
+      `Google Books · Synthetic ebooks: It is limiting requests. 214 deferred lookups. Next automatic retry ${clock(today)}.`,
+      'Hardcover · Synthetic ebooks: It refused the configured API key. 1 deferred lookup. Waits for Retry now after the source is fixed.',
+      `Open Library · Synthetic audiobooks with a long library name: It did not answer. ${(10_000).toLocaleString()} deferred lookups. No automatic retry remains.`,
+      `Google Books · Second shelf: Its request quota is used up. 3 deferred lookups. Next automatic retry ${day}, ${clock(tomorrow)}.`,
+      'iTunes · Synthetic ebooks: It is limiting requests. 214 deferred lookups. Retrying now.',
+      'Audnexus · Synthetic ebooks: 214 deferred lookups. Retry due now.',
+      'Inventaire · Synthetic ebooks: Its settings need checking. 2 deferred lookups. Retry due now.',
+    ])
+    // Only the first two entries carry a remedy, each one link to Metadata sources.
+    expect(
+      items.map((item) =>
+        within(item)
+          .queryAllByRole('link')
+          .map((link) => [link.textContent, link.getAttribute('href')]),
+      ),
+    ).toEqual([
+      [['Add a Google Books API key', '/settings?group=providers']],
+      [['Check the source\u2019s API key', '/settings?group=providers']],
+      [],
+      [],
+      [],
+      [],
+      [],
+    ])
+    expect(screen.getByRole('button', { name: 'Retry now' })).toBeVisible()
+  })
+
+  it.each([
+    [
+      'managed_by_file',
+      'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.',
+    ],
+    ['unavailable', null],
+  ] as const)('offers no Retry now when retry is %s', async (retry, instruction) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => throttled([entry()], retry)),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    await within(region).findByRole('listitem')
+    expect(within(region).queryByRole('button')).toBeNull()
+    if (instruction) expect(within(region).getByText(instruction)).toBeVisible()
+    else expect(region.querySelector('.provider-throttle-file')).toBeNull()
+  })
+
+  it('keeps an empty notice mounted without content or a region, and its live regions only with a projection', async () => {
+    let current: PreparationView = { ...throttled([]), provider_throttling: null }
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalled())
+    await waitFor(() => expect(container()).not.toBeNull())
+    const empty = container()
+    if (!empty) throw new Error('the notice container is not mounted')
+    expect(empty).toHaveClass('is-empty')
+    expect(empty).toBeEmptyDOMElement()
+    // Empty, it is no landmark: no region role and no label (#1282 R3 F4).
+    expect(empty).not.toHaveAttribute('aria-label')
+    expect(screen.queryByRole('region', { name: 'Provider lookups waiting to retry' })).toBeNull()
+    current = throttled([])
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await waitFor(() => expect(within(empty).getByRole('status')).toBeEmptyDOMElement())
+    expect(within(empty).getByRole('alert')).toBeEmptyDOMElement()
+    expect(empty).toHaveClass('is-empty')
+    expect(empty).not.toHaveAttribute('aria-label')
+    expect(within(empty).queryByRole('list')).toBeNull()
+    // The label returns with the first entry, on the same element.
+    current = throttled([entry()])
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    expect(await notice()).toBe(empty)
+  })
+
+  it('re-renders a passed wait as due without another preparation read, on one timer (#1282 R3 F1)', async () => {
+    const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout }
+    vi.useFakeTimers({
+      toFake: ['Date', 'setTimeout', 'clearTimeout'],
+      now: noon,
+      shouldAdvanceTime: true,
+    })
+    // Recorded by hand: the configured mock restoration would reinstate a
+    // spied fake timer for every later test.
+    const fake = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout }
+    const scheduled: (readonly [number, unknown])[] = []
+    const cleared: unknown[] = []
+    globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+      const id = fake.setTimeout(...args)
+      scheduled.push([args[1] ?? 0, id])
+      return id
+    }) as typeof setTimeout
+    globalThis.clearTimeout = (id: Parameters<typeof clearTimeout>[0]) => {
+      cleared.push(id)
+      fake.clearTimeout(id)
+    }
+    onTestFinished(() => {
+      vi.useRealTimers()
+      Object.assign(globalThis, real)
+    })
+    // jest-dom compares normalised text, where the no-break space is a space.
+    const spoken = (date: Date) => clock(date).replace(/\u00a0/g, ' ')
+    const soon = new Date(noon.getTime() + 90_000)
+    const later = new Date(noon.getTime() + 600_000)
+    let current = throttled([
+      entry({ next_retry_at: seconds(soon) }),
+      entry({ adapter: 'inventaire', next_retry_at: seconds(later) }),
+    ])
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    const items = await within(await notice()).findAllByRole('listitem')
+    expect(items[0]).toHaveTextContent(`Next automatic retry ${spoken(soon)}.`)
+    // One timer, to the earliest wait still ahead; the query cache's own
+    // five-minute collection timers are the only other long ones.
+    const timers = () => scheduled.filter(([delay]) => delay > 60_000 && delay !== 300_000)
+    expect(timers().map(([delay]) => delay > 80_000 && delay <= 90_000)).toEqual([true])
+    const reads = vi.mocked(http.getPreparation).mock.calls.length
+    await act(() => vi.advanceTimersByTimeAsync(91_000))
+    expect(items[0]).toHaveTextContent('214 deferred lookups. Retry due now.')
+    expect(items[1]).toHaveTextContent(`Next automatic retry ${spoken(later)}.`)
+    expect(vi.mocked(http.getPreparation).mock.calls.length).toBe(reads)
+    // The next timer runs to the next wait; a change replaces it.
+    const [, second] = timers().at(-1) ?? []
+    current = throttled([entry({ adapter: 'inventaire', next_retry_at: seconds(later) + 600 })])
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await waitFor(() => expect(cleared).toContain(second))
+    const [, third] = timers().at(-1) ?? []
+    expect(third).not.toBe(second)
+    cleanup()
+    expect(cleared).toContain(third)
+  })
+
+  it('hands the Retry now settings to the Settings cache from Library (#1282 R3 F2)', async () => {
+    const user = userEvent.setup()
+    const saved = settingsView()
+    const raised = {
+      ...saved,
+      document: { ...saved.document, revision: 9, provider_recovery_generation: 5 },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => throttled([entry()])),
+      retryProviderRecovery: vi.fn(async () => raised),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    await user.click(await within(await notice()).findByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(queryClient.getQueryData(['settings'])).toEqual(raised))
+  })
+
+  it('answers Retry now beside its control, success and refusal marked apart (#1282 R3 F6)', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => throttled([entry()])),
+      retryProviderRecovery: vi
+        .fn<ReviewHttp['retryProviderRecovery']>()
+        .mockResolvedValueOnce(settingsView())
+        .mockRejectedValueOnce(new ApiError(409, 'provider_recovery_stale')),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const button = await within(region).findByRole('button', { name: 'Retry now' })
+    const status = within(region).getByRole('status')
+    const alert = within(region).getByRole('alert')
+    // Both are mounted, empty, in the Retry now block and after the control.
+    const block = button.closest('.provider-throttle-retry')
+    for (const outcome of [status, alert]) {
+      expect(outcome).toBeEmptyDOMElement()
+      expect(outcome.closest('.provider-throttle-retry')).toBe(block)
+      expect(
+        button.compareDocumentPosition(outcome) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
+    expect(within(region).getByRole('list').compareDocumentPosition(status)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    await user.click(button)
+    await waitFor(() => expect(status).toHaveTextContent('Retry now accepted.'))
+    expect(status).toHaveClass('provider-throttle-outcome', 'provider-throttle-status')
+    await user.click(button)
+    await waitFor(() => expect(alert).toHaveTextContent('Retry now was already pressed elsewhere.'))
+    expect(alert).toHaveClass('provider-throttle-outcome', 'provider-throttle-refusal')
+    expect(status).toBeEmptyDOMElement()
+  })
+
+  it('sends one Retry now per press while pending and announces success in the mounted region', async () => {
+    const user = userEvent.setup()
+    let release: (value: ReturnType<typeof settingsView>) => void = () => undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => throttled([entry()])),
+      retryProviderRecovery: vi.fn(
+        () =>
+          new Promise<ReturnType<typeof settingsView>>((resolve) => {
+            release = resolve
+          }),
+      ),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const status = await within(region).findByRole('status')
+    const button = await within(region).findByRole('button', { name: 'Retry now' })
+    await user.click(button)
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    expect(button).toHaveTextContent('Retrying…')
+    await user.click(button)
+    await user.keyboard('{Enter}')
+    expect(http.retryProviderRecovery).toHaveBeenCalledOnce()
+    expect(http.retryProviderRecovery).toHaveBeenCalledWith(4)
+    const reads = vi.mocked(http.getPreparation).mock.calls.length
+    await act(async () => release(settingsView()))
+    await waitFor(() =>
+      expect(status).toHaveTextContent('Retry now accepted. Every deferred lookup will retry now.'),
+    )
+    expect(within(region).getByRole('status')).toBe(status)
+    await waitFor(() =>
+      expect(vi.mocked(http.getPreparation).mock.calls.length).toBeGreaterThan(reads),
+    )
+    expect(button).not.toHaveAttribute('aria-disabled')
+    expect(button).toHaveFocus()
+  })
+
+  it.each([
+    [
+      new ApiError(409, 'provider_recovery_stale'),
+      'Retry now was already pressed elsewhere. The notice now shows the current state.',
+    ],
+    [
+      new ApiError(409, 'settings_managed_by_file'),
+      'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.',
+    ],
+    [
+      new ApiError(409, 'settings_stale'),
+      'Settings changed elsewhere. Check the notice, then press Retry now again.',
+    ],
+    [
+      new ApiError(503, 'settings_unavailable'),
+      'Retry now could not be confirmed. Check the notice before pressing it again.',
+    ],
+  ])('alerts a refused Retry now (%s) and refreshes the notice', async (error, copy) => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => throttled([entry()])),
+      retryProviderRecovery: vi.fn(async () => {
+        throw error
+      }),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const alert = await within(region).findByRole('alert')
+    const reads = () => vi.mocked(http.getPreparation).mock.calls.length
+    await waitFor(() => expect(reads()).toBeGreaterThan(0))
+    const before = reads()
+    await user.click(await within(region).findByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(alert).toHaveTextContent(copy))
+    expect(within(region).getByRole('status')).toBeEmptyDOMElement()
+    await waitFor(() => expect(reads()).toBeGreaterThan(before))
+  })
+
+  it('moves focus to the route, never the body, when the notice empties under the pressed control', async () => {
+    const user = userEvent.setup()
+    let current = throttled([entry()])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => {
+        current = throttled([])
+        return settingsView()
+      }),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const button = await within(region).findByRole('button', { name: 'Retry now' })
+    await user.click(button)
+    await waitFor(() => expect(within(region).queryByRole('button')).toBeNull())
+    expect(document.activeElement).not.toBe(document.body)
+    const main = document.getElementById('main-content')
+    expect(document.activeElement).toBe(main?.querySelector('[data-route-focus]') ?? main)
+    expect(within(region).getByRole('status')).toHaveTextContent('Retry now accepted.')
+  })
 })

@@ -24,6 +24,7 @@ import {
 } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
+import settingsVocabulary from '../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 import { ApiError, BuildMismatchError, SessionExpiredError, refusalCopy } from './api/http'
 import type {
   ActivitySearch,
@@ -34,7 +35,9 @@ import type {
   PolicySearch,
   PolicyStateView,
   PreparationView,
+  ProviderThrottleEntry,
   ReviewHttp,
+  SettingsView,
   ShadowPostureView,
 } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
@@ -550,6 +553,209 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
   )
 }
 
+// One sentence per recovery reason, in the order an entry names the first.
+const throttleReasonCopy: readonly (readonly [ProviderThrottleEntry['reasons'][number], string])[] =
+  [
+    ['quota_exhausted', 'Its request quota is used up.'],
+    ['burst_throttled', 'It is limiting requests.'],
+    ['rate_limited', 'It is limiting requests.'],
+    ['authentication', 'It refused the configured API key.'],
+    ['authorization', 'It refused access for the configured API key.'],
+    ['configuration', 'Its settings need checking.'],
+    ['transient', 'It did not answer.'],
+  ]
+const providerLabels: Readonly<Record<string, string>> = settingsVocabulary.provider_labels
+const retryTime = (seconds: number, now: Date) => {
+  const at = new Date(seconds * 1000)
+  // The time and its meridiem never wrap apart.
+  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+    .format(at)
+    .replace(/\s/g, '\u00a0')
+  return at.toDateString() === now.toDateString()
+    ? time
+    : `${new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(at)}, ${time}`
+}
+const throttleWhen = (entry: ProviderThrottleEntry, now: Date) =>
+  entry.state === 'checking'
+    ? 'Retrying now.'
+    : entry.state === 'dormant'
+      ? 'Waits for Retry now after the source is fixed.'
+      : entry.state === 'exhausted'
+        ? 'No automatic retry remains.'
+        : entry.next_retry_at === null || entry.next_retry_at * 1000 <= now.getTime()
+          ? 'Retry due now.'
+          : `Next automatic retry ${retryTime(entry.next_retry_at, now)}.`
+const fileManagedRetry =
+  'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.'
+const retryRefusal = (error: unknown) =>
+  error instanceof ApiError && error.code === 'provider_recovery_stale'
+    ? 'Retry now was already pressed elsewhere. The notice now shows the current state.'
+    : error instanceof ApiError && error.code === 'settings_managed_by_file'
+      ? fileManagedRetry
+      : error instanceof ApiError && error.code === 'settings_stale'
+        ? 'Settings changed elsewhere. Check the notice, then press Retry now again.'
+        : refusalCopy(
+            error,
+            'Retry now could not be confirmed. Check the notice before pressing it again.',
+          )
+
+/**
+ * Library-level provider throttling: one entry per library and source, and one
+ * Retry now that raises the recovery generation for all of them (#1282).
+ *
+ * The container is always mounted but is a named region only while it holds
+ * entries. Its two live regions sit beside Retry now and are mounted whenever
+ * the server composes the projection, so an outcome is announced into a region
+ * that already exists. Empty, none of them takes any space.
+ */
+export const ProviderThrottleNotice = () => {
+  const { data, queryClient, http } = usePreparation()
+  const container = useRef<HTMLElement>(null)
+  const controlFocused = useRef(false)
+  const pending = useRef(false)
+  const [status, setStatus] = useState('')
+  const [refusal, setRefusal] = useState('')
+  const throttling = data?.provider_throttling ?? null
+  const entries = throttling?.entries ?? []
+  const retry = useMutation({
+    mutationFn: (expected: number) => http.retryProviderRecovery(expected),
+    retry: false,
+    onMutate: () => {
+      setStatus('')
+      setRefusal('')
+    },
+    onSuccess: (value) => {
+      // A Retry now moves the settings revision; an open draft rebases over it.
+      queryClient.setQueryData<SettingsView>(['settings'], value)
+      setStatus('Retry now accepted. Every deferred lookup will retry now.')
+    },
+    onError: (error) => setRefusal(retryRefusal(error)),
+    onSettled: async () => {
+      pending.current = false
+      await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
+    },
+  })
+  // A focused control that leaves (the notice emptied, or the command was
+  // replaced) hands focus to the route's focus target, else to main, never
+  // to the document body.
+  useLayoutEffect(() => {
+    if (!controlFocused.current) return
+    const active = document.activeElement
+    if (active && active !== document.body) {
+      if (!container.current?.contains(active)) controlFocused.current = false
+      return
+    }
+    controlFocused.current = false
+    const main = document.getElementById('main-content')
+    ;(main?.querySelector<HTMLElement>('[data-route-focus]') ?? main)?.focus({
+      preventScroll: true,
+    })
+  })
+  const [clock, setClock] = useState(0)
+  const now = new Date()
+  // One timer to the earliest wait still ahead re-renders it as due.
+  const nextDue = Math.min(
+    ...entries.flatMap((entry) =>
+      entry.state === 'checking' ||
+      entry.state === 'dormant' ||
+      entry.state === 'exhausted' ||
+      entry.next_retry_at === null ||
+      entry.next_retry_at * 1000 <= now.getTime()
+        ? []
+        : [entry.next_retry_at * 1000],
+    ),
+  )
+  useEffect(() => {
+    if (!Number.isFinite(nextDue)) return
+    const timer = setTimeout(
+      () => setClock((tick) => tick + 1),
+      Math.min(nextDue - Date.now(), 2_147_483_647),
+    )
+    return () => clearTimeout(timer)
+  }, [nextDue, clock])
+  const busy = retry.isPending
+  return (
+    <section
+      ref={container}
+      className={`provider-throttle-notice${entries.length || status || refusal ? '' : ' is-empty'}`}
+      aria-label={entries.length ? 'Provider lookups waiting to retry' : undefined}
+      onFocus={() => {
+        controlFocused.current = true
+      }}
+      onBlur={(event) => {
+        // A window blur keeps the element focused; only a real move clears it.
+        if (event.relatedTarget !== null || document.hasFocus()) controlFocused.current = false
+      }}
+    >
+      {entries.length ? (
+        <ul>
+          {entries.map((entry) => {
+            const reason = throttleReasonCopy.find(([code]) => entry.reasons.includes(code))
+            return (
+              <li key={`${entry.library}\u0000${entry.adapter}`}>
+                <span>
+                  <strong>
+                    {providerLabels[entry.adapter] ?? fieldLabel(entry.adapter)} · {entry.library}:
+                  </strong>{' '}
+                  {reason ? `${reason[1]} ` : ''}
+                  {entry.deferred.toLocaleString()} deferred{' '}
+                  {entry.deferred === 1 ? 'lookup' : 'lookups'}. {throttleWhen(entry, now)}
+                </span>
+                {entry.remedy ? (
+                  <>
+                    {' '}
+                    <Link to="/settings" search={{ group: 'providers' }}>
+                      {/* The ring hugs this text, not the padded target. */}
+                      <span>
+                        {entry.remedy === 'add_api_key'
+                          ? 'Add a Google Books API key'
+                          : 'Check the source\u2019s API key'}
+                      </span>
+                    </Link>
+                  </>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+      {/* Mounted whenever the projection exists, so before any outcome. */}
+      {throttling ? (
+        <div className="provider-throttle-retry">
+          {entries.length > 0 && throttling.retry === 'available' ? (
+            <div className="provider-throttle-command">
+              <button
+                type="button"
+                aria-disabled={busy || undefined}
+                aria-busy={busy || undefined}
+                onClick={() => {
+                  if (pending.current) return
+                  pending.current = true
+                  retry.mutate(throttling.generation)
+                }}
+              >
+                {busy ? 'Retrying…' : 'Retry now'}
+              </button>
+              <small>
+                Retry now retries every deferred lookup in every library; a provider still limiting
+                requests may defer them again.
+              </small>
+            </div>
+          ) : entries.length > 0 && throttling.retry === 'managed_by_file' ? (
+            <p className="provider-throttle-file">{fileManagedRetry}</p>
+          ) : null}
+          <p className="provider-throttle-outcome provider-throttle-status" role="status">
+            {status}
+          </p>
+          <p className="provider-throttle-outcome provider-throttle-refusal" role="alert">
+            {refusal}
+          </p>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 /**
  * The nine buckets a work moves through, in the order an owner reads them.
  *
@@ -591,10 +797,12 @@ export const PreparationActivity = () => {
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const popover = useRef<HTMLElement>(null)
+  const pending = useRef(false)
   const action = useMutation({
     mutationFn: (path: string) => http.preparationAction(path),
     retry: false,
     onSettled: async () => {
+      pending.current = false
       await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
       await Promise.all([
         invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
@@ -602,8 +810,15 @@ export const PreparationActivity = () => {
       ])
     },
   })
-  const unavailable =
-    !data || (!data.active && !data.actionable && !data.paused && !data.recovery_required)
+  // Idle is a state the owner can act on: Scan now and Pause stay reachable.
+  const unavailable = !data || data.libraries.length === 0
+  // Each command is aria-disabled rather than disabled, so focus stays on it;
+  // the guard drops a press while one is pending or the command is refused.
+  const command = (path: string, refused: boolean) => () => {
+    if (refused || pending.current) return
+    pending.current = true
+    action.mutate(path)
+  }
   useEffect(() => {
     if (!open || !unavailable) return
     requestAnimationFrame(() => {
@@ -654,7 +869,9 @@ export const PreparationActivity = () => {
             ? 'Preparation paused'
             : data?.actionable
               ? 'Preparation needs attention'
-              : 'Preparing libraries'}
+              : data?.active
+                ? 'Preparing libraries'
+                : 'Preparation idle'}
       </button>
       {open && data ? (
         <section ref={popover} className="preparation-popover" aria-label="Background activity">
@@ -694,29 +911,34 @@ export const PreparationActivity = () => {
                   ))}
               </dl>
               <button
-                disabled={
+                type="button"
+                aria-disabled={
                   data.recovery_required ||
                   action.isPending ||
                   data.paused ||
                   item.state === 'queued' ||
                   item.state === 'discovering'
                 }
-                onClick={() =>
-                  action.mutate(
-                    `${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`,
-                  )
-                }
+                aria-busy={action.isPending || undefined}
+                onClick={command(
+                  `${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`,
+                  data.recovery_required ||
+                    data.paused ||
+                    item.state === 'queued' ||
+                    item.state === 'discovering',
+                )}
               >
                 Scan now
               </button>
               {item.state === 'completed_with_failures' ? (
                 <button
-                  disabled={data.recovery_required || action.isPending || data.paused}
-                  onClick={() =>
-                    action.mutate(
-                      `${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`,
-                    )
-                  }
+                  type="button"
+                  aria-disabled={data.recovery_required || action.isPending || data.paused}
+                  aria-busy={action.isPending || undefined}
+                  onClick={command(
+                    `${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`,
+                    data.recovery_required || data.paused,
+                  )}
                 >
                   Retry
                 </button>
@@ -738,12 +960,22 @@ export const PreparationActivity = () => {
             </article>
           ))}
           <button
-            disabled={data.recovery_required || action.isPending}
-            onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}
+            type="button"
+            aria-disabled={data.recovery_required || action.isPending}
+            aria-busy={action.isPending || undefined}
+            onClick={command(data.paused ? 'resume' : 'pause', data.recovery_required)}
           >
             {data.paused ? 'Resume' : 'Pause'}
           </button>
-          <button onClick={close}>Close</button>
+          {!data.recovery_required ? (
+            <small className="activity-backup-note">
+              Pause stops new library scans. Provider lookups that are already deferred still retry
+              on their schedule.
+            </small>
+          ) : null}
+          <button type="button" onClick={close}>
+            Close
+          </button>
           {action.isError ? (
             <p role="alert">
               {refusalCopy(action.error, 'Preparation control failed safely. Try again.')}

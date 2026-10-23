@@ -31,7 +31,7 @@ from tests.browser.fidelity_cohort import (
     rich_payload,
 )
 from tests.browser.test_live_updates_browser import _ROW_PROMISES, _WIDER_TEXT
-from tests.browser.test_review_browser import _POLICY_MID_WORD
+from tests.browser.test_review_browser import _FOCUSED, _POLICY_MID_WORD, _TWO_FRAMES
 from tests.support.cover_images import synthetic_image
 
 # The outcome the review controller renders when a decision request is lost
@@ -2825,3 +2825,465 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                         ),
                         full_page=True,
                     )
+
+
+_FOCUS_ON_BODY = (
+    "() => document.activeElement === null || document.activeElement === document.body"
+)
+
+# Each remedy link reads as part of its own entry -- on its sentence's line or
+# the line after it, never nearer the next entry -- and every entry is spaced
+# from the next by the same measured text gap, link or none (#1282 R3 F5).
+_THROTTLE_ENTRY_LAYOUT = """() => {
+  const textBox = (node) => {
+    let top = Infinity, bottom = -Infinity;
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      if (!text.data.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      for (const rect of range.getClientRects())
+        if (rect.width > 0) {
+          top = Math.min(top, rect.top);
+          bottom = Math.max(bottom, rect.bottom);
+        }
+    }
+    return { top, bottom };
+  };
+  const rows = [...document.querySelectorAll('.provider-throttle-notice li')].map(item => {
+    const link = item.querySelector('a');
+    return {
+      name: item.querySelector('strong').textContent.trim(),
+      sentence: textBox(item.querySelector(':scope > span')),
+      link: link && textBox(link),
+      all: textBox(item),
+      line: parseFloat(getComputedStyle(item.querySelector(':scope > span')).lineHeight),
+      // A wrapped link is a target on every line it occupies.
+      target: link && Math.min(...[...link.getClientRects()].map(rect => rect.height)),
+    };
+  });
+  const found = [];
+  rows.forEach((row, index) => {
+    if (!row.link) return;
+    const own = Math.max(0, row.link.top - row.sentence.bottom);
+    const next = rows[index + 1];
+    const toNext = next ? next.all.top - row.link.bottom : Infinity;
+    if (own > row.line / 2 || own >= toNext)
+      found.push(`${row.name} its link is ${Math.round(own)}px below it and ` +
+        `${Math.round(toNext)}px above the next entry`);
+  });
+  const gaps = rows.slice(1).map((row, index) => row.all.top - rows[index].all.bottom);
+  if (gaps.length && Math.max(...gaps) - Math.min(...gaps) > rows[0].line * 0.15)
+    found.push(`entries are spaced unevenly: ${gaps.map(Math.round)}`);
+  return {
+    found,
+    targets: rows.filter(row => row.link).map(row => [row.name, row.target]),
+  };
+}"""
+
+# A retry time and its meridiem never wrap apart. With `sweep`, each entry is
+# narrowed step by step so every line break position is tried (#1282 R3 F8).
+_TIME_TOGETHER = """(sweep) => {
+  const found = new Set();
+  let times = 0;
+  const check = (span) => {
+    const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/\\d{1,2}[:.]\\d{2}\\s*[AaPp]\\.?\\s?[Mm]\\.?/g)) {
+        times += 1;
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const tops = new Set([...range.getClientRects()].filter(rect => rect.width > 0)
+          .map(rect => Math.round(rect.top)));
+        if (tops.size > 1)
+          found.add(`"${match[0]}" wraps apart in ${span.querySelector('strong').textContent}`);
+      }
+  };
+  for (const span of document.querySelectorAll('.provider-throttle-notice li > span')) {
+    if (!sweep) { check(span); continue; }
+    const item = span.closest('li');
+    // Narrower than the time itself, any break is the only way to fit it.
+    const floor = Math.max(0, ...[...span.textContent.matchAll(
+      /\\d{1,2}[:.]\\d{2}\\s*[AaPp]\\.?\\s?[Mm]\\.?/g)].map(match => {
+      const probe = document.createElement('span');
+      probe.style.whiteSpace = 'nowrap';
+      probe.textContent = match[0];
+      span.append(probe);
+      const width = probe.getBoundingClientRect().width;
+      probe.remove();
+      return width;
+    }));
+    for (let width = item.getBoundingClientRect().width; width > floor + 2; width -= 2) {
+      item.style.maxWidth = `${width}px`;
+      check(span);
+    }
+    item.style.removeProperty('max-width');
+  }
+  return { found: [...found], times };
+}"""
+
+# Each remedy link's keyboard focus ring: a 3 px outline that crosses no word
+# of its entry outside the line it rings, at 3:1 against the notice (#1282 R5).
+_REMEDY_RING = """() => {
+  const channel = value => {
+    const c = value / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = color => {
+    const values = color.match(/[\\d.]+/g).map(Number);
+    const rgb = color.startsWith('color(') ? values.slice(0, 3).map(v => v * 255)
+      : values.slice(0, 3);
+    return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+  };
+  const contrast = (a, b) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (high + 0.05) / (low + 0.05);
+  };
+  const found = [];
+  const contrasts = [];
+  for (const link of document.querySelectorAll('.provider-throttle-notice li a')) {
+    link.focus({ focusVisible: true });
+    const ring = [link, ...link.querySelectorAll('*')].find(node => {
+      const style = getComputedStyle(node);
+      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 3;
+    });
+    if (!ring) {
+      found.push(`"${link.textContent}" has no 3px focus ring`);
+      continue;
+    }
+    const style = getComputedStyle(ring);
+    const reach = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+    const item = link.closest('li');
+    const words = [];
+    const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/\\S+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        for (const rect of range.getClientRects())
+          if (rect.width > 0) words.push([match[0], rect]);
+      }
+    for (const line of [...ring.getClientRects()].filter(rect => rect.width > 0)) {
+      const inside = rect => rect.left >= line.left - 0.5 && rect.right <= line.right + 0.5 &&
+        rect.top >= line.top - 0.5 && rect.bottom <= line.bottom + 0.5;
+      for (const [word, rect] of words) {
+        if (inside(rect)) continue;
+        const across = Math.min(line.right + reach, rect.right) - Math.max(line.left - reach, rect.left);
+        const down = Math.min(line.bottom + reach, rect.bottom) - Math.max(line.top - reach, rect.top);
+        if (across > 0.5 && down > 0.5)
+          found.push(`the ring of "${link.textContent}" crosses "${word}" by ${Math.round(down)}px`);
+      }
+    }
+    contrasts.push([link.textContent, contrast(style.outlineColor,
+      getComputedStyle(link.closest('.provider-throttle-notice')).backgroundColor)]);
+  }
+  document.activeElement?.blur();
+  return { found, contrasts };
+}"""
+
+# The Retry outcome on show: where it sits against the control and how it is
+# marked (#1282 R3 F6).
+_RETRY_OUTCOME = """() => {
+  const notice = document.querySelector('.provider-throttle-notice');
+  const button = notice.querySelector('.provider-throttle-retry button');
+  const shown = [...notice.querySelectorAll('[role=status], [role=alert]')]
+    .find(node => node.textContent.trim());
+  const style = getComputedStyle(shown);
+  const box = shown.getBoundingClientRect();
+  return {
+    role: shown.getAttribute('role'),
+    mark: getComputedStyle(shown, '::before').content,
+    color: style.color,
+    line: parseFloat(style.lineHeight),
+    distance: box.top - button.parentElement.getBoundingClientRect().bottom,
+    aboveList: box.top < notice.querySelector('ul').getBoundingClientRect().top,
+  };
+}"""
+
+
+def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> None:
+    """Each throttled source reads once per library, Retry now sends one request
+    per press and answers in a mounted region, and nothing clips (#1282)."""
+    bundle = load_react_asset_bundle(Path(os.environ["ML_REACT_ASSET_DIR"]))
+    assert isinstance(bundle, ReactAssetBundle)
+    widened = False
+    slow_settings = False
+    retries: list[str] = []
+    held: list[Route] = []
+
+    def fulfill(route: Route) -> None:
+        path = urlsplit(route.request.url).path
+        if path == "/api/v1/updates":
+            route.fulfill(status=204, body="")
+        elif path == "/api/v1/appearance":
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps({"reduced_motion": "follow_system"}),
+            )
+        elif path == "/api/v1/provider-recovery/retry":
+            assert route.request.method == "POST"
+            assert json.loads(route.request.post_data or "") == {
+                "expected_generation": 1
+            }
+            retries.append(route.request.headers.get("x-csrf-token", ""))
+            if len(retries) == 1:
+                # Held until the test releases it, so the press stays pending.
+                held.append(route)
+                return
+            route.fulfill(
+                status=409,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "error": {"code": "provider_recovery_stale"},
+                        "schema_version": "review-error-v1",
+                    }
+                ),
+            )
+        elif path.startswith("/api/v1/"):
+            try:
+                payload = rich_payload(route.request.url)
+            except AssertionError:
+                route.fulfill(status=404, body="")
+                return
+            if path == "/api/v1/settings" and slow_settings:
+                time.sleep(0.25)
+            route.fulfill(content_type="application/json", body=json.dumps(payload))
+        elif path.startswith("/assets/review-app/"):
+            relative = path.removeprefix("/assets/review-app/")
+            css = relative.endswith(".css")
+            body = bundle.read(relative)
+            route.fulfill(
+                content_type="text/css" if css else "text/javascript",
+                body=body + _WIDER_TEXT.encode() if css and widened else body,
+            )
+        elif route.request.resource_type == "document":
+            route.fulfill(
+                content_type="text/html",
+                headers={
+                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                },
+                body=bundle.read(bundle.entry)
+                .decode("utf-8")
+                .replace(
+                    "<body>",
+                    f'<body data-build-identity="{_BUILD_IDENTITY}" data-csrf-token="{"b" * 32}">',
+                ),
+            )
+        else:
+            route.fulfill(status=404, body="")
+
+    capture = os.environ.get("ML_VISUAL_CAPTURE_DIR")
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.route("**/*", fulfill)
+        page.goto("https://react-platform.invalid/library?lens=all")
+        notice = page.get_by_role("region", name="Provider lookups waiting to retry")
+        entries = notice.get_by_role("listitem")
+        expect(entries).to_have_count(3)
+        expect(entries.nth(0)).to_contain_text(
+            "Google Books · Synthetic ebooks: It is limiting requests. "
+            "214 deferred lookups. Next automatic retry "
+        )
+        # The burst resets on the next day, so the time names the day.
+        expect(entries.nth(0).locator(":scope > span")).to_have_text(
+            re.compile(r"Next automatic retry [^.]+, [^.]+\.$")
+        )
+        expect(entries.nth(1)).to_contain_text(
+            "Hardcover · Synthetic ebooks: It refused the configured API key. "
+            "1 deferred lookup. Waits for Retry now after the source is fixed."
+        )
+        expect(entries.nth(2)).to_contain_text(
+            "Open Library · Synthetic audiobooks with a long library name: It did "
+            "not answer. 10,000 deferred lookups. No automatic retry remains."
+        )
+        expect(
+            entries.nth(1).get_by_role("link", name="Check the source’s API key")
+        ).to_have_attribute("href", "/settings?group=providers")
+        expect(entries.nth(2).get_by_role("link")).to_have_count(0)
+        status = notice.get_by_role("status")
+        alert = notice.get_by_role("alert")
+        expect(status).to_have_text("")
+        expect(alert).to_have_text("")
+
+        # Keyboard: Enter presses Retry now; while it is pending, neither a
+        # second Enter nor a click sends anything.
+        retry = notice.get_by_role("button", name="Retry now")
+        retry.focus()
+        page.keyboard.press("Enter")
+        busy = notice.locator(".provider-throttle-retry button")
+        expect(busy).to_have_attribute("aria-busy", "true")
+        expect(busy).to_have_attribute("aria-disabled", "true")
+        expect(busy).to_have_text("Retrying…")
+        page.keyboard.press("Enter")
+        busy.click(force=True)  # aria-disabled is "not enabled" to Playwright
+        page.wait_for_timeout(500)
+        assert len(retries) == 1, retries
+        assert retries[0] == "b" * 32
+        expect(busy).to_be_focused()
+        settings = cast(
+            "dict[str, dict[str, object]]", rich_payload("/api/v1/settings")
+        )
+        settings["document"] |= {"revision": 2, "provider_recovery_generation": 2}
+        held.pop().fulfill(content_type="application/json", body=json.dumps(settings))
+        expect(status).to_have_text(
+            "Retry now accepted. Every deferred lookup will retry now."
+        )
+        expect(retry).to_be_focused()
+        assert not page.evaluate(_FOCUS_ON_BODY)
+        accepted = page.evaluate(_RETRY_OUTCOME)
+        assert accepted["role"] == "status", accepted
+        assert not accepted["aboveList"], accepted
+        assert 0 <= accepted["distance"] <= accepted["line"], accepted
+        assert accepted["mark"] not in ("none", "normal"), accepted
+
+        # The second press is stale: the alert says so and nothing moves focus.
+        page.keyboard.press("Enter")
+        expect(alert).to_have_text(
+            "Retry now was already pressed elsewhere. The notice now shows the "
+            "current state."
+        )
+        assert len(retries) == 2, retries
+        expect(status).to_have_text("")
+        expect(retry).to_be_focused()
+        refused = page.evaluate(_RETRY_OUTCOME)
+        assert refused["role"] == "alert", refused
+        assert not refused["aboveList"], refused
+        assert 0 <= refused["distance"] <= refused["line"], refused
+        # Marked apart by its glyph as well as its colour, never colour alone.
+        assert refused["mark"] not in ("none", "normal", accepted["mark"]), refused
+        assert refused["color"] != accepted["color"], (accepted, refused)
+        swept = page.evaluate(_TIME_TOGETHER, True)
+        assert swept["times"] > 0 and swept["found"] == [], swept
+
+        # The remedy opens Settings at Metadata sources, which carries the same
+        # notice and no generation number.
+        entries.nth(0).get_by_role("link", name="Add a Google Books API key").click()
+        page.wait_for_url("**/settings?group=providers")
+        expect(notice).to_be_visible()
+        expect(notice.get_by_role("button", name="Retry now")).to_be_visible()
+        page.goto("https://react-platform.invalid/settings?group=background")
+        page.get_by_role("spinbutton", name="Request timeout").wait_for()
+        expect(page.get_by_text("Provider recovery generation")).to_have_count(0)
+
+        # Arriving at Settings by a remedy or the nav link, focus stays in the
+        # route after the loading state that held it unmounts (#1282 R3 F7).
+        # The settings read is slowed so that state is always there.
+        slow_settings = True
+        arrivals = []
+        for attempt in range(5):
+            for via in ("remedy", "nav"):
+                page.goto("https://react-platform.invalid/library?lens=all")
+                link = (
+                    entries.nth(1).get_by_role("link")
+                    if via == "remedy"
+                    else page.get_by_role("navigation").get_by_role(
+                        "link", name="Settings", exact=True
+                    )
+                )
+                link.click()
+                page.locator("section.settings-route").wait_for()
+                page.evaluate(_TWO_FRAMES)
+                arrivals.append((attempt, via, page.evaluate(_FOCUSED)))
+        assert {focused for *_, focused in arrivals} == {"SECTION.settings-route"}, (
+            arrivals
+        )
+        slow_settings = False
+
+        for widened, dark in (
+            (False, False),
+            (False, True),
+            (True, False),
+            (True, True),
+        ):
+            scheme = "dark" if dark else "light"
+            page.emulate_media(
+                color_scheme="dark" if dark else "light",
+                reduced_motion="reduce" if dark else "no-preference",
+            )
+            for route in ("/library?lens=all", "/settings?group=providers"):
+                page.goto(f"https://react-platform.invalid{route}")
+                expect(entries).to_have_count(3)
+                expect(page.locator("html")).to_have_attribute("data-theme", scheme)
+                for width in (1440, 1100, 884, 761, 760, 390, 320):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.evaluate("() => document.documentElement.offsetWidth")
+                    where = (
+                        f"{route} {scheme}{' widened' if widened else ''} at {width}px"
+                    )
+                    failures = [
+                        failure
+                        for selector in (
+                            ".provider-throttle-notice li",
+                            ".provider-throttle-notice li > span",
+                            ".provider-throttle-notice a",
+                            ".provider-throttle-retry button",
+                            ".provider-throttle-retry small",
+                            ".preparation-activity > button",
+                        )
+                        for node in page.locator(selector).all()
+                        for failure in node.evaluate(_NAMED_CLIP)
+                    ]
+                    assert failures == [], f"{where}: {failures}"
+                    _fits_its_container(page, ".provider-throttle-notice", width)
+                    layout = page.evaluate(_THROTTLE_ENTRY_LAYOUT)
+                    assert layout["found"] == [], f"{where}: {layout['found']}"
+                    floor = 44 if width <= 760 else 40
+                    small = [
+                        target for target in layout["targets"] if target[1] < floor
+                    ]
+                    assert small == [], f"{where}: links under {floor}px {small}"
+                    together = page.evaluate(_TIME_TOGETHER, False)
+                    assert together["found"] == [], f"{where}: {together['found']}"
+                    split = page.evaluate(_POLICY_MID_WORD, ".provider-throttle-notice")
+                    assert split == [], f"{where}: words split {split}"
+                    document = page.evaluate(
+                        "() => document.documentElement.scrollWidth"
+                    )
+                    assert document <= width, f"{where}: the page is {document}px wide"
+                    ring = page.evaluate(_REMEDY_RING)
+                    assert ring["found"] == [], f"{where}: {ring['found']}"
+                    low = [item for item in ring["contrasts"] if item[1] < 3]
+                    assert low == [], f"{where}: focus ring under 3:1 {low}"
+                    if capture is not None:
+                        Path(capture).mkdir(parents=True, exist_ok=True)
+                        name = route.strip("/").split("?")[0]
+                        page.screenshot(
+                            path=str(
+                                Path(capture) / f"throttle-{name}-{width}-{scheme}"
+                                f"{'-wide' if widened else ''}.png"
+                            ),
+                            full_page=True,
+                        )
+
+        # With 200% root text the links wrap; each line's ring still crosses
+        # no neighbouring word, in either theme, and nothing scrolls sideways.
+        widened = False
+        for dark in (False, True):
+            page.emulate_media(color_scheme="dark" if dark else "light")
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(entries).to_have_count(3)
+            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+            for width in (390, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.evaluate("() => document.documentElement.offsetWidth")
+                where = f"{'dark' if dark else 'light'} 200% text at {width}px"
+                wrapped = page.locator(".provider-throttle-notice li a").evaluate_all(
+                    "links => links.filter(link => link.getClientRects().length > 1)"
+                    ".length"
+                )
+                assert wrapped > 0, f"{where}: no remedy link wraps"
+                ring = page.evaluate(_REMEDY_RING)
+                assert ring["found"] == [], f"{where}: {ring['found']}"
+                low = [item for item in ring["contrasts"] if item[1] < 3]
+                assert low == [], f"{where}: focus ring under 3:1 {low}"
+                layout = page.evaluate(_THROTTLE_ENTRY_LAYOUT)
+                small = [target for target in layout["targets"] if target[1] < 44]
+                assert small == [], f"{where}: links under 44px {small}"
+                document = page.evaluate("() => document.documentElement.scrollWidth")
+                assert document <= width, f"{where}: the page is {document}px wide"

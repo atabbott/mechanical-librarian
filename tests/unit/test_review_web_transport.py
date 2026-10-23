@@ -1289,6 +1289,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
         "first_boot_complete": False,
         "first_boot_works": None,
         "presentation": None,
+        "provider_throttling": None,
     }
     page = web.client.get(f"/review/{web.case.review_case_id}")
     assert page.status_code == 200, page.text
@@ -1803,6 +1804,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("put", "/api/v1/reviewer-access/selection"),
         ("get", "/api/v1/settings"),
         ("patch", "/api/v1/settings"),
+        ("post", "/api/v1/provider-recovery/retry"),
         ("get", "/api/v1/activity"),
         ("get", "/api/v1/activity/permission-readiness"),
         ("get", "/api/v1/activity/consent-state"),

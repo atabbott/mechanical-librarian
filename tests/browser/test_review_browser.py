@@ -28,6 +28,7 @@ from playwright.sync_api import (
     BrowserContext,
     Page,
     Request,
+    Route,
     expect,
     sync_playwright,
 )
@@ -8927,3 +8928,129 @@ def test_completed_work_remains_browsable_during_explained_provider_waits(
                 ).to_be_visible()
             finally:
                 browser.close()
+
+
+def test_library_states_provider_throttling_and_idle_preparation_controls(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real server's throttling projection and idle masthead (#1282)."""
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+    from tests.unit.test_provider_recovery import _job
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 2, prepare=True) as (fixture, origin):
+        preparation = fixture.preparation
+        assert preparation is not None
+        now = int(time.time())
+        fixture.recovery.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="books",
+            generation=1,
+            failure="burst_throttled",
+            now=now,
+            retry_after=3600,
+        )
+        fixture.recovery.enqueue_jobs(
+            tuple(_job(f"member-{index}") for index in range(3)), enqueued_at=now
+        )
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                notice = page.get_by_role(
+                    "region", name="Provider lookups waiting to retry"
+                )
+                entry = notice.get_by_role("listitem")
+                expect(entry).to_have_count(1)
+                expect(entry).to_contain_text(
+                    "Google Books · books: It is limiting requests. "
+                    "3 deferred lookups. Next automatic retry "
+                )
+                # File-managed settings: the instruction, never a command.
+                expect(notice).to_contain_text(
+                    "raise provider_recovery_generation by one there"
+                )
+                expect(notice.get_by_role("button")).to_have_count(0)
+                # The instruction keeps its 0.7rem separation from the list
+                # above it (#1282 R3 F3).
+                separation = page.evaluate(_THROTTLE_FILE_SEPARATION)
+                assert separation["gap"] >= 0.7 * separation["rem"] - 0.5, separation
+
+                # One trigger whose name follows the state, located by place.
+                trigger = page.locator(".preparation-activity > button")
+                expect(trigger).to_have_text("Preparation idle")
+                trigger.click()
+                popover = page.get_by_role("region", name="Background activity")
+                popover.get_by_role("button", name="Pause", exact=True).click()
+                expect(trigger).to_have_text("Preparation paused")
+                resume = popover.get_by_role("button", name="Resume", exact=True)
+                expect(resume).to_be_focused()
+                resume.click()
+                expect(trigger).to_have_text("Preparation idle")
+                popover.get_by_role("button", name="Scan now", exact=True).first.click()
+                expect(trigger).to_have_text("Preparing libraries")
+                # Idle had no progress at all; the press started a real scan.
+                progress, paused = preparation.status()
+                assert not paused
+                assert progress[0] is not None
+                assert progress[0].scan_id
+                assert not page.evaluate(
+                    "() => document.activeElement === document.body"
+                )
+
+                # Arriving at Settings by the nav link, focus stays
+                # in the route after the loading state that held it unmounts
+                # (#1282 R3 F7). The settings read is slowed so that state is
+                # always there to unmount.
+                def slow_settings(route: Route) -> None:
+                    time.sleep(0.25)
+                    route.continue_()
+
+                page.route(
+                    lambda url: urlparse(url).path == "/api/v1/settings",
+                    slow_settings,
+                )
+                # This fixture's source has no remedy link; the platform
+                # artifact test arrives by one.
+                arrivals = []
+                for attempt in range(5):
+                    page.goto(origin + "/library?lens=all")
+                    expect(entry).to_have_count(1)
+                    page.get_by_role("navigation").get_by_role(
+                        "link", name="Settings", exact=True
+                    ).click()
+                    page.locator("section.settings-route").wait_for()
+                    page.evaluate(_TWO_FRAMES)
+                    arrivals.append((attempt, page.evaluate(_FOCUSED)))
+                assert {focused for _, focused in arrivals} == {
+                    "SECTION.settings-route"
+                }, arrivals
+            finally:
+                browser.close()
+
+
+_THROTTLE_FILE_SEPARATION = """() => {
+  const notice = document.querySelector('.provider-throttle-notice');
+  const list = notice.querySelector('ul');
+  const file = notice.querySelector('.provider-throttle-file');
+  return {
+    gap: file.getBoundingClientRect().top - list.getBoundingClientRect().bottom,
+    rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+  };
+}"""
+_TWO_FRAMES = "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+_FOCUSED = """() => {
+  const active = document.activeElement;
+  return active === null ? 'null'
+    : `${active.tagName}${active.className ? '.' + active.className : ''}`;
+}"""

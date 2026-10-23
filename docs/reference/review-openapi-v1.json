@@ -7772,6 +7772,16 @@
               }
             ]
           },
+          "provider_throttling": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_PreparationThrottling"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recovery_required": {
             "default": false,
             "title": "Recovery Required",
@@ -7819,6 +7829,136 @@
           "count"
         ],
         "title": "_PreparationStage",
+        "type": "object"
+      },
+      "_PreparationThrottleEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "enum": [
+              "open_library",
+              "inventaire",
+              "hardcover",
+              "google_books",
+              "audible_catalog",
+              "audnexus",
+              "audiosilo",
+              "itunes_search"
+            ],
+            "title": "Adapter",
+            "type": "string"
+          },
+          "deferred": {
+            "minimum": 0.0,
+            "title": "Deferred",
+            "type": "integer"
+          },
+          "library": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "next_retry_at": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Retry At"
+          },
+          "reasons": {
+            "items": {
+              "enum": [
+                "authentication",
+                "authorization",
+                "configuration",
+                "rate_limited",
+                "burst_throttled",
+                "quota_exhausted",
+                "transient"
+              ],
+              "type": "string"
+            },
+            "maxItems": 7,
+            "title": "Reasons",
+            "type": "array"
+          },
+          "remedy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "add_api_key",
+                  "check_api_key"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remedy"
+          },
+          "state": {
+            "enum": [
+              "waiting",
+              "dormant",
+              "checking",
+              "exhausted"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "adapter",
+          "state",
+          "reasons",
+          "deferred",
+          "next_retry_at",
+          "remedy"
+        ],
+        "title": "_PreparationThrottleEntry",
+        "type": "object"
+      },
+      "_PreparationThrottling": {
+        "additionalProperties": false,
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationThrottleEntry"
+            },
+            "maxItems": 256,
+            "title": "Entries",
+            "type": "array"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "retry": {
+            "enum": [
+              "available",
+              "managed_by_file",
+              "unavailable"
+            ],
+            "title": "Retry",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "retry",
+          "entries"
+        ],
+        "title": "_PreparationThrottling",
         "type": "object"
       },
       "_PreparationTriggerRecord": {
@@ -8007,6 +8147,21 @@
           "state"
         ],
         "title": "_ProviderRecoveryActivity",
+        "type": "object"
+      },
+      "_ProviderRecoveryRetryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_generation": {
+            "minimum": 1.0,
+            "title": "Expected Generation",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_generation"
+        ],
+        "title": "_ProviderRecoveryRetryRequest",
         "type": "object"
       },
       "_PublisherEbookQualification": {
@@ -13019,6 +13174,120 @@
           }
         ],
         "summary": "Support Preview"
+      }
+    },
+    "/api/v1/provider-recovery/retry": {
+      "post": {
+        "operationId": "retry_provider_recovery_api_v1_provider_recovery_retry_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_ProviderRecoveryRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Retry Provider Recovery"
       }
     },
     "/api/v1/review-cases/{review_case_id}": {

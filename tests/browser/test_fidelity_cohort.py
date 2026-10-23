@@ -15,6 +15,7 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.browser.fidelity_cohort import (
     LIBRARY_WORKS,
+    THROTTLE_LONG_LIBRARY,
     RichFidelityApiMiddleware,
     rich_payload,
 )
@@ -174,6 +175,14 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
                 "/api/v1/library?lens=all&cursor=page-2",
             ):
                 assert client.get(target).status_code == 401
+            retry = "/api/v1/provider-recovery/retry"
+            origin = {"origin": _ORIGIN}
+            assert (
+                client.post(
+                    retry, json={"expected_generation": 1}, headers=origin
+                ).status_code
+                == 401
+            )
 
             login = client.post(
                 "/api/v1/session/login",
@@ -250,3 +259,23 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
                 final_library_payload["items"][-1]["title"]
                 == LIBRARY_WORKS[-1]["title"]
             )
+
+
+def test_preparation_carries_three_throttled_sources_and_every_remedy() -> None:
+    preparation = rich_payload("/api/v1/review-preparation")
+    assert isinstance(preparation, dict)
+    throttling = preparation["provider_throttling"]
+    assert throttling["retry"] == "available"
+    entries = throttling["entries"]
+    assert [(entry["library"], entry["adapter"]) for entry in entries] == [
+        ("Synthetic ebooks", "google_books"),
+        ("Synthetic ebooks", "hardcover"),
+        (THROTTLE_LONG_LIBRARY, "open_library"),
+    ]
+    assert {entry["remedy"] for entry in entries} == {
+        "add_api_key",
+        "check_api_key",
+        None,
+    }
+    assert {entry["state"] for entry in entries} == {"waiting", "dormant", "exhausted"}
+    assert sorted(entry["deferred"] for entry in entries) == [1, 214, 10_000]

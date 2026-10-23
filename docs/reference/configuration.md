@@ -66,9 +66,11 @@ own identifier and never becomes a display label, so field ids,
 
 `provider_recovery_generation` is a required positive operator generation for
 provider recovery. After correcting a provider credential, authorization, or
-configuration condition, increment it and save Settings. It is the
-only recovery wake mechanism: the service does not watch configuration files,
-derive hashes, or accept environment overrides.
+configuration condition, press Retry now on Library or Settings, which raises
+it by exactly one; Settings shows no number to edit. When this file manages
+settings, increment it here and restart. It is the only recovery wake
+mechanism: the service does not watch configuration files, derive hashes, or
+accept environment overrides.
 
 ## Example
 

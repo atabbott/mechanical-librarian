@@ -111,6 +111,7 @@ def create_transport_test_app(
     reviewer_access: ReviewerAccessOperations | None = None,
     first_boot: bool = False,
     acknowledge_first_boot: Callable[[], None] | None = None,
+    provider_throttling: Callable[[], dict[str, object]] | None = None,
 ):
     """Wire synthetic store capabilities before creating the HTTP adapter."""
     password_binding = load_owner_password_binding(
@@ -149,6 +150,7 @@ def create_transport_test_app(
         reviewer_access=reviewer_access,
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,
+        provider_throttling=provider_throttling,
     )
     with patch(
         "mechanical_librarian.interfaces.web.app.ReactAssetLoader",

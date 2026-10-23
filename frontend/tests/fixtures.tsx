@@ -310,6 +310,7 @@ export const createHttp = (): ReviewHttp => ({
     actionable: false,
     paused: false,
     libraries: [],
+    provider_throttling: null,
   })),
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({
     schema_version: 'review-preparation-v2',
@@ -318,6 +319,7 @@ export const createHttp = (): ReviewHttp => ({
     actionable: false,
     paused: false,
     libraries: [],
+    provider_throttling: null,
   })),
   dismissPreparation: vi.fn(async (): Promise<PreparationView> => ({
     schema_version: 'review-preparation-v2',
@@ -326,7 +328,11 @@ export const createHttp = (): ReviewHttp => ({
     actionable: false,
     paused: false,
     libraries: [],
+    provider_throttling: null,
   })),
+  retryProviderRecovery: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
   recordDecision: vi.fn<ReviewHttp['recordDecision']>(async (caseId, command) =>
     recordedAcknowledgement(
       { ...detail, id: caseId },

@@ -291,6 +291,9 @@ class OwnerResponsivenessFixture:
                 permission_projection=permissions,
                 close_activity_projection=close_activity,
                 preparation=self.preparation,
+                provider_throttling=composition._provider_throttling_reader(
+                    self.recovery, configuration, {}, "managed_by_file"
+                ),
                 settings=OwnerSettingsOperations(
                     FileOwnerSettingsRepository(
                         settings.document.model_copy(

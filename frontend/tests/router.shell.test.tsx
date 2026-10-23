@@ -1,7 +1,7 @@
 import { hasBackgroundDebt } from '../src/queryWork'
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -338,7 +338,9 @@ describe('Application shell', () => {
     expect(screen.getByText(/Restart the Mechanical Librarian service/)).toBeVisible()
     expect(screen.getByText('2 of 4 checked · 1 ready · 1 could not finish')).toBeVisible()
     for (const name of ['Scan now', 'Retry', 'Pause']) {
-      expect(screen.getByRole('button', { name })).toBeDisabled()
+      const control = screen.getByRole('button', { name })
+      expect(control).toHaveAttribute('aria-disabled', 'true')
+      await user.click(control)
     }
     expect(screen.queryByText('Preparing libraries')).toBeNull()
     screen.getByRole('button', { name: 'Close' }).focus()
@@ -967,13 +969,29 @@ describe('Application shell', () => {
 
   it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {
     const user = userEvent.setup()
+    // Idle libraries keep the trigger (#1282); only a deployment with no
+    // library leaves nothing for it to control.
     const active: PreparationView = {
       schema_version: 'review-preparation-v2',
       recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
-      libraries: [],
+      libraries: [
+        {
+          blocked: 0,
+          recorded: 0,
+          checked: 1,
+          connection: 'primary',
+          library: 'Books',
+          library_id: 'books',
+          ready: 1,
+          rescan_requested: false,
+          scan_id: 'scan-1',
+          state: 'processing',
+          total: 3,
+        },
+      ],
     }
     const inactive: PreparationView = {
       schema_version: 'review-preparation-v2',
@@ -991,10 +1009,99 @@ describe('Application shell', () => {
     current = inactive
     await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
 
+    // The trigger is renamed before it unmounts, so wait for no trigger at all.
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: 'Preparing libraries' })).toBeNull(),
+      expect(screen.queryByRole('button', { name: /^Preparation|^Preparing/ })).toBeNull(),
     )
     expect(document.getElementById('main-content')).toHaveFocus()
+  })
+
+  describe('idle preparation masthead (#1282)', () => {
+    const library = (state: string) => ({
+      blocked: 0,
+      recorded: 0,
+      checked: 3,
+      connection: 'primary',
+      library: 'Books',
+      library_id: 'books',
+      ready: 3,
+      rescan_requested: false,
+      scan_id: 'scan-1',
+      state,
+      total: 3,
+    })
+    const view = (state: string, overrides: Partial<PreparationView> = {}): PreparationView => ({
+      schema_version: 'review-preparation-v2',
+      recovery_required: false,
+      active: state !== 'completed',
+      actionable: false,
+      paused: false,
+      libraries: [library(state)],
+      ...overrides,
+    })
+
+    it('keeps Scan now and Pause reachable at idle and holds one trigger through each state', async () => {
+      const user = userEvent.setup()
+      let current = view('completed')
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => current),
+        preparationAction: vi.fn(async (path: string) => {
+          current =
+            path === 'pause'
+              ? view('completed', { paused: true })
+              : path === 'resume'
+                ? view('completed')
+                : view('queued')
+          return current
+        }),
+      }
+      renderRoute('/library?lens=all', http)
+      const trigger = await screen.findByRole('button', { name: 'Preparation idle' })
+      await user.click(trigger)
+      const popover = screen.getByRole('region', { name: 'Background activity' })
+      expect(
+        within(popover).getByText(
+          'Pause stops new library scans. Provider lookups that are already deferred still retry on their schedule.',
+        ),
+      ).toBeVisible()
+
+      await user.click(within(popover).getByRole('button', { name: 'Pause' }))
+      expect(http.preparationAction).toHaveBeenLastCalledWith('pause')
+      await waitFor(() => expect(trigger).toHaveTextContent('Preparation paused'))
+      const resume = within(popover).getByRole('button', { name: 'Resume' })
+      expect(resume).toHaveFocus()
+      await user.click(resume)
+      expect(http.preparationAction).toHaveBeenLastCalledWith('resume')
+      await waitFor(() => expect(trigger).toHaveTextContent('Preparation idle'))
+
+      const scan = within(popover).getByRole('button', { name: 'Scan now' })
+      await user.click(scan)
+      expect(http.preparationAction).toHaveBeenLastCalledWith('primary/Books/scan')
+      await waitFor(() => expect(trigger).toHaveTextContent('Preparing libraries'))
+      expect(screen.getByRole('button', { name: 'Preparing libraries' })).toBe(trigger)
+      const queued = within(popover).getByRole('button', { name: 'Scan now' })
+      expect(queued).toHaveAttribute('aria-disabled', 'true')
+      expect(queued).toHaveFocus()
+      await user.click(queued)
+      expect(http.preparationAction).toHaveBeenCalledTimes(3)
+    })
+
+    it('keeps the open popover and focus when activity settles to idle', async () => {
+      const user = userEvent.setup()
+      let current = view('processing')
+      const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
+      const { queryClient } = renderRoute('/library?lens=all', http)
+      const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
+      await user.click(trigger)
+      current = view('completed')
+      await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+      await waitFor(() => expect(trigger).toHaveTextContent('Preparation idle'))
+      await act(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      expect(trigger).toHaveFocus()
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByRole('region', { name: 'Background activity' })).toBeVisible()
+    })
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {

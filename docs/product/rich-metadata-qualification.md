@@ -89,6 +89,17 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Provider throttling successor (#1282)
+
+The current F19a, F20 and F46 records move to semantic revision 62 over base
+`2b71e4fc`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows the web interface's new optional preparation field and owner
+Retry now command, the recovery store's read-only throttling query and the
+composition's post-commit recovery cutover: report bytes are unchanged, no
+clean rebuild is required, and no operation gains or loses automatic authority.
+
 ## Activity check groups successor (#1281)
 
 The current F19a, F20 and F46 records move to semantic revision 61 over base

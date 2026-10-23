@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import tempfile
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from threading import Lock
@@ -1641,3 +1642,462 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
                     )
         finally:
             supervisor.stop()
+
+
+class _StoreRuntime:
+    """One real store-authority runtime whose activations reach reconcile."""
+
+    def __init__(self, root: Path, generation: int) -> None:
+        from argon2 import PasswordHasher
+
+        from mechanical_librarian.adapters.persistence.documents import _canonical_json
+        from mechanical_librarian.application.operation_admission import (
+            OperationAdmission,
+        )
+        from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+        from mechanical_librarian.infrastructure.settings_authority import (
+            ReviewBootstrap,
+        )
+        from mechanical_librarian.interfaces.web.runtime_dispatch import (
+            MutableRuntimeDispatcher,
+        )
+
+        self.root = root
+        self.database = root / "reports.sqlite"
+        self.admission = OperationAdmission()
+        self.control = open_repository(
+            self.database, create=True, cross_thread=True, admission=self.admission
+        )
+        document = OwnerSettingsDocument.model_validate(
+            {
+                "schema_version": "owner-settings-v4",
+                "revision": 1,
+                "connections": [
+                    {"name": "primary", "endpoint": "https://library.example.invalid"}
+                ],
+                "providers": [
+                    {"name": "google", "adapter": "google_books", "enabled": True}
+                ],
+                "libraries": [
+                    {
+                        "name": "books",
+                        "connection": "primary",
+                        "library_id": "library-1",
+                        "media_kind": "ebook",
+                        "provider_connections": ["google"],
+                    }
+                ],
+                "provider_recovery_generation": generation,
+            }
+        )
+        self.control._connection.execute(
+            "INSERT INTO owner_settings(singleton,revision,document) VALUES(1,1,?)",
+            (_canonical_json(document.model_dump()),),
+        )
+        self.control._connection.executemany(
+            "INSERT INTO owner_setting_secrets(field_id,value) VALUES(?,?)",
+            (
+                ("connection.primary.key", "synthetic-target-key"),
+                ("owner.password.verifier", PasswordHasher().hash("synthetic-owner")),
+            ),
+        )
+        self.control._connection.commit()
+        self.bootstrap = ReviewBootstrap(
+            schema_version="review-bootstrap-v2",
+            canonical_origin="https://review.example.invalid",
+            tls_certificate_file="/synthetic/certificate",
+            tls_private_key_file="/synthetic/key",
+        )
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        self.recovery_path = composition._private_root(self.database) / (
+            "provider-recovery.sqlite"
+        )
+        self.applications: list[object] = []
+        self.dispatcher: MutableRuntimeDispatcher | None = None
+
+    def seed(self) -> None:
+        """Waiting rate-limited health with queued jobs at the current generation."""
+        store = SQLiteProviderRecoveryStore.open(self.recovery_path)
+        generation = self.generation()
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="books",
+            generation=generation,
+            failure="rate_limited",
+            now=100,
+            retry_after=3_600,
+        )
+        store.enqueue_jobs(
+            tuple(
+                ProviderRecoveryJob(
+                    "google",
+                    "google_books",
+                    "books",
+                    generation,
+                    f"member-{index}",
+                    "primary",
+                    "books",
+                    f"item-{index}",
+                    "f" * 64,
+                    "report-" + "2" * 64,
+                    None,
+                    "report-" + "2" * 64,
+                    None,
+                    None,
+                    "report_only",
+                    "[]",
+                )
+                for index in range(3)
+            ),
+            enqueued_at=100,
+        )
+        store.close()
+
+    def generation(self) -> int:
+        return int(
+            json.loads(
+                self.control._connection.execute(
+                    "SELECT document FROM owner_settings WHERE singleton=1"
+                ).fetchone()[0]
+            )["provider_recovery_generation"]
+        )
+
+    def start(self):
+        from mechanical_librarian.interfaces.web.runtime_dispatch import (
+            MutableRuntimeDispatcher,
+        )
+
+        activation = composition._StoreRuntimeActivation(
+            self.bootstrap,
+            self.database,
+            self.root / "catalogue.sqlite",
+            self.root / "artifacts",
+            self.control.owner_settings_store(),
+            self.control.authority,
+            operation_admission=self.admission,
+        )
+        runtime, _ = composition.compose_store_runtime_generation(
+            self.bootstrap,
+            self.database,
+            self.root / "catalogue.sqlite",
+            self.root / "artifacts",
+            repository_authority=self.control.authority,
+            operation_admission=self.admission,
+            activation=activation,
+        )
+        self.dispatcher = MutableRuntimeDispatcher(runtime)
+        activation.bind(self.dispatcher)
+        self.dispatcher.start()
+        return self.applications[-1]
+
+    def stop(self) -> None:
+        if self.dispatcher is not None:
+            current = self.dispatcher.current()
+            current.stop_admission()
+            current.begin_drain()
+            current.close()
+            self.dispatcher = None
+
+    def recovery_state(self) -> dict[str, list[list[object]]]:
+        check = sqlite3.connect(self.recovery_path)
+        try:
+            return json.loads(
+                json.dumps(
+                    {
+                        table: [
+                            list(row)
+                            for row in check.execute(
+                                f"SELECT * FROM {table} ORDER BY 1,2,3,4,5"
+                            )
+                        ]
+                        for table in (
+                            "provider_recovery_health",
+                            "provider_recovery_jobs",
+                            "provider_recovery_events",
+                        )
+                    }
+                )
+            )
+        finally:
+            check.close()
+
+    def close(self) -> None:
+        self.stop()
+        self.control.close()
+
+
+@contextmanager
+def _quiet_store_runtime(root: Path, generation: int):
+    """Hold every background lane closed so only owner actions touch the store."""
+    runtime = _StoreRuntime(root, generation)
+    compose = composition.compose_review_application
+
+    def capture(**kwargs):
+        application = compose(**kwargs)
+        runtime.applications.append(application)
+        return application
+
+    with (
+        patch.object(composition.time, "time", return_value=50_000),
+        patch.object(composition, "compose_review_application", side_effect=capture),
+        patch.object(
+            composition.ReviewPreparationSupervisor, "admit", return_value=None
+        ),
+        patch.object(
+            composition.ContinuousGuardedApplication, "admit", return_value=None
+        ),
+    ):
+        try:
+            yield runtime
+        finally:
+            runtime.close()
+
+
+def _raised_generation(application, generation: int, via: str) -> None:
+    from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+
+    if via == "retry":
+        application.retry_provider_recovery(generation)
+        return
+    view = application.owner_settings()
+    application.write_owner_settings(
+        OwnerSettingsDocument.model_validate(
+            {
+                **view.document.model_dump(),
+                "revision": view.document.revision + 1,
+                "provider_recovery_generation": generation + 1,
+            }
+        ),
+        view.document.revision,
+        (),
+    )
+
+
+def test_retry_now_has_exactly_the_effect_of_raising_the_generation_field() -> None:
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+    )
+
+    states: dict[str, dict[str, list[list[object]]]] = {}
+    for via in ("settings", "retry"):
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            _quiet_store_runtime(Path(temporary), 2) as runtime,
+        ):
+            runtime.seed()
+            application = runtime.start()
+            before = runtime.recovery_state()
+            assert {2} == {row[3] for row in before["provider_recovery_health"]}
+            _raised_generation(application, 2, via)
+            assert 3 == runtime.generation()
+            states[via] = runtime.recovery_state()
+            if via == "retry":
+                successor = runtime.applications[-1]
+                assert successor is not application
+                for stale in (2, 1):
+                    with pytest.raises(
+                        ReviewApplicationError, match="provider_recovery_stale"
+                    ):
+                        successor.retry_provider_recovery(stale)
+                assert 3 == runtime.generation()
+                assert states[via] == runtime.recovery_state()
+    assert states["settings"] == states["retry"]
+    health = states["retry"]["provider_recovery_health"]
+    assert [["google", "google_books", "books", 3, "waiting", 0, 50_000]] == [
+        row[:7] for row in health
+    ]
+    jobs = states["retry"]["provider_recovery_jobs"]
+    assert 3 == len(jobs) and {(3, "queued", 0)} == {
+        (row[3], row[16], row[17]) for row in jobs
+    }
+
+
+@pytest.mark.parametrize("path", ["retry_now", "settings_save"])
+def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
+    path: str,
+) -> None:
+    from mechanical_librarian.application.owner_settings import (
+        OwnerSettingsOperations,
+    )
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+    )
+    from mechanical_librarian.domain.owner_settings import (
+        OwnerSettingsError,
+        SettingsView,
+    )
+
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        _quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        runtime.seed()
+        application = runtime.start()
+        before = runtime.recovery_state()
+
+        def refuse(*_args, **_kwargs):
+            raise OwnerSettingsError("owner settings are unavailable")
+
+        def save_raised_generation() -> object:
+            view = application.owner_settings()
+            assert isinstance(view, SettingsView)
+            current = view.document
+            raised = current.model_copy(
+                update={
+                    "revision": current.revision + 1,
+                    "provider_recovery_generation": 2,
+                }
+            )
+            return application.write_owner_settings(raised, current.revision, ())
+
+        # The commit fails after the successor runtime was composed, which is
+        # where the base reconciled recovery to the raised generation.
+        with patch.object(OwnerSettingsOperations, "write", refuse):
+            with pytest.raises(ReviewApplicationError, match="settings_unavailable"):
+                if path == "retry_now":
+                    application.retry_provider_recovery(1)
+                else:
+                    save_raised_generation()
+        assert 1 == runtime.generation()
+        assert before == runtime.recovery_state()
+        runtime.stop()
+        # The restart a stuck owner reaches for now starts.
+        restarted = runtime.start()
+        assert restarted.preparation().to_data()["provider_throttling"] == {
+            "generation": 1,
+            "retry": "available",
+            "entries": [
+                {
+                    "library": "books",
+                    "adapter": "google_books",
+                    "state": "waiting",
+                    "reasons": ["rate_limited"],
+                    "deferred": 3,
+                    "next_retry_at": 3_700,
+                    "remedy": "add_api_key",
+                }
+            ],
+        }
+
+
+@pytest.mark.parametrize("path", ["retry_now", "settings_save"])
+def test_a_failed_cutover_after_the_commit_fails_closed_until_a_restart(
+    path: str,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+    )
+    from mechanical_librarian.domain.owner_settings import SettingsView
+
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        _quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        runtime.seed()
+        application = runtime.start()
+        dispatcher = runtime.dispatcher
+        assert dispatcher is not None
+        shutdown: list[str] = []
+        dispatcher.bind_outer_server(
+            lambda: shutdown.append("shutdown"), lambda _: None
+        )
+        before = runtime.recovery_state()
+
+        def busy(*_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        # The settings commit succeeds; the recovery cutover that follows it
+        # cannot take its write lock.
+        with patch.object(SQLiteProviderRecoveryStore, "reconcile_generation", busy):
+            with pytest.raises(
+                ReviewApplicationError, match="settings_unavailable"
+            ) as refused:
+                if path == "retry_now":
+                    application.retry_provider_recovery(1)
+                else:
+                    view = application.owner_settings()
+                    assert isinstance(view, SettingsView)
+                    current = view.document
+                    application.write_owner_settings(
+                        current.model_copy(
+                            update={
+                                "revision": current.revision + 1,
+                                "provider_recovery_generation": 2,
+                            }
+                        ),
+                        current.revision,
+                        (),
+                    )
+        assert isinstance(refused.value.__cause__, sqlite3.OperationalError)
+        assert 2 == runtime.generation()
+        assert before == runtime.recovery_state()
+        # No generation keeps running the superseded settings: the service
+        # answers unavailable and asks its listener owner to stop.
+        assert shutdown == ["shutdown"]
+        sent: list[dict[str, object]] = []
+
+        async def receive() -> dict[str, object]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        asyncio.run(dispatcher({"type": "http"}, receive, send))
+        assert sent[0]["status"] == 503
+        # The restart completes the cutover at the committed generation.
+        runtime.dispatcher = None
+        restarted = runtime.start()
+        health = runtime.recovery_state()["provider_recovery_health"]
+        assert [["google", "google_books", "books", 2, "waiting"]] == [
+            row[:5] for row in health
+        ]
+        jobs = runtime.recovery_state()["provider_recovery_jobs"]
+        assert {2} == {row[3] for row in jobs} and 3 == len(jobs)
+        assert (
+            restarted.preparation().to_data()["provider_throttling"]["generation"] == 2
+        )
+
+
+def test_paused_preparation_still_runs_scheduled_provider_recovery() -> None:
+    """Pause stops new scans; the recovery lane keeps its own schedule (#1282)."""
+    import threading
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
+        # The supervisor opens its repositories under this held authority, as
+        # production does; without it Linux refuses the parent-directory lock.
+        held = open_repository(database)
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        woke = threading.Event()
+        observed: list[bool] = []
+
+        def run_one(_runner, *, now: int) -> RecoveryRun:
+            observed.append(supervisor.paused())
+            woke.set()
+            return RecoveryRun("idle")
+
+        with patch.object(
+            composition.ScopedProviderRecoveryRunner, "run_one", autospec=True
+        ) as patched:
+            patched.side_effect = run_one
+            supervisor = composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                _reviewer_access(database, configuration),
+                database_authority=held.authority,
+                provider_recovery=recovery,
+            )
+            supervisor.set_paused(True)
+            supervisor.start()
+            try:
+                assert woke.wait(5)
+            finally:
+                supervisor.stop()
+                held.close()
+        assert observed and all(observed)

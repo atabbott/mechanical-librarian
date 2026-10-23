@@ -570,6 +570,8 @@ export type PreparationView = Omit<
 > &
   Partial<Pick<PreparationSchema, 'first_boot' | 'first_boot_complete' | 'first_boot_works'>>
 export type PreparationProgress = Schema<'_PreparationProgress'>
+export type ProviderThrottlingView = Schema<'_PreparationThrottling'>
+export type ProviderThrottleEntry = ProviderThrottlingView['entries'][number]
 export type PolicyStateView = Schema<'_PolicyProfileResponse'>
 export type ShadowPostureView = Schema<'_ShadowPostureResponse'>
 export type AutomaticSafetyView = Schema<'_AutomaticSafetyResponse'>
@@ -921,6 +923,7 @@ export interface ReviewHttp {
     signal?: AbortSignal,
   ): Promise<PreparationView | PreparationProgress>
   dismissPreparation(runId: string, signal?: AbortSignal): Promise<PreparationView>
+  retryProviderRecovery(expectedGeneration: number, signal?: AbortSignal): Promise<SettingsView>
   recordDecision(
     reviewCaseId: string,
     command: DecisionCommand,
@@ -1270,6 +1273,20 @@ export class ReviewApiClient implements ReviewHttp {
     const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
     if (/(?:^|\/)(?:scan|retry)$/.test(path)) return preparationProgress(value)
     return mapPreparation(value)
+  }
+  // The expected generation makes a resend a refusal, never a second raise, so
+  // a CSRF-renewed press is sent once more (#1018).
+  async retryProviderRecovery(expectedGeneration: number, signal?: AbortSignal) {
+    return mapSettings(
+      await this.mutate(
+        '/api/v1/provider-recovery/retry',
+        { expected_generation: expectedGeneration },
+        signal,
+        undefined,
+        'POST',
+        true,
+      ),
+    )
   }
   async dismissPreparation(runId: string, signal?: AbortSignal) {
     return mapPreparation(
@@ -2347,6 +2364,70 @@ const preparationPresentation = (value: unknown) => {
     integerValue(completion.completed_at, 'preparation_completion_completed_at')
   }
 }
+const throttleAdapters = Object.keys(settingsVocabulary.provider_labels)
+const throttleReasons = [
+  'authentication',
+  'authorization',
+  'configuration',
+  'rate_limited',
+  'burst_throttled',
+  'quota_exhausted',
+  'transient',
+] as const
+const throttleEntryKeys = [
+  'library',
+  'adapter',
+  'state',
+  'reasons',
+  'deferred',
+  'next_retry_at',
+  'remedy',
+] as const
+const providerThrottling = (value: unknown): ProviderThrottlingView | null => {
+  if (value === null || value === undefined) return null
+  if (
+    !record(value) ||
+    !exactKeys(value, ['generation', 'retry', 'entries']) ||
+    !Array.isArray(value.entries) ||
+    value.entries.length > 256 ||
+    integerValue(value.generation, 'provider_throttling_generation') < 1
+  )
+    throw new ApiError(502, 'invalid_provider_throttling')
+  coverObservationValue(value.retry, 'provider_throttling_retry', [
+    'available',
+    'managed_by_file',
+    'unavailable',
+  ])
+  for (const entry of value.entries) {
+    if (
+      !record(entry) ||
+      !exactKeys(entry, throttleEntryKeys) ||
+      !Array.isArray(entry.reasons) ||
+      entry.reasons.length > throttleReasons.length ||
+      boundedStringValue(entry.library, 'provider_throttling_library', 64).length === 0
+    )
+      throw new ApiError(502, 'invalid_provider_throttling_entry')
+    coverObservationValue(entry.adapter, 'provider_throttling_adapter', throttleAdapters)
+    coverObservationValue(entry.state, 'provider_throttling_state', [
+      'waiting',
+      'dormant',
+      'checking',
+      'exhausted',
+    ])
+    for (const reason of entry.reasons)
+      coverObservationValue(reason, 'provider_throttling_reason', throttleReasons)
+    integerValue(entry.deferred, 'provider_throttling_deferred')
+    if (entry.next_retry_at !== null)
+      integerValue(entry.next_retry_at, 'provider_throttling_next_retry_at')
+    if (entry.remedy !== null)
+      coverObservationValue(entry.remedy, 'provider_throttling_remedy', [
+        'add_api_key',
+        'check_api_key',
+      ])
+  }
+  // Validated: the envelope and every member of every entry are checked above.
+  return value as unknown as ProviderThrottlingView
+}
 export const mapPreparation = (value: unknown): PreparationView => {
   if (
     !record(value) ||
@@ -2397,6 +2478,7 @@ export const mapPreparation = (value: unknown): PreparationView => {
     first_boot: value.first_boot ?? false,
     first_boot_complete: value.first_boot_complete ?? false,
     first_boot_works: value.first_boot_works ?? null,
+    provider_throttling: providerThrottling(value.provider_throttling),
   } as unknown as PreparationView
 }
 const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
