@@ -793,6 +793,33 @@ def test_an_owner_row_keeps_its_arrow_while_absent_values_name_the_field() -> No
     assert set_change("publishedYear", "1", None).compact == "Removed published year"
 
 
+# Two descriptions that read alike for longer than a compact change shows.
+_SHARED = "A long synthetic description that keeps going past the change limit " * 2
+_EARLIER, _LATER = _SHARED + "and ends one way.", _SHARED + "and ends another way."
+_SHOWN = _SHARED.strip()[: CHANGE_LIMIT - 1].rstrip() + "\u2026"
+
+
+@pytest.mark.parametrize(
+    ("named", "compact"),
+    ((False, f"{_SHOWN} \u2192 {_SHOWN}"), (True, f"Set description to {_SHOWN}")),
+    ids=("owner", "named"),
+)
+def test_values_that_differ_past_the_change_limit_are_a_change(
+    named: bool, compact: str
+) -> None:
+    change = set_change("description", _EARLIER, _LATER, named=named)
+    assert change.compact == compact
+    assert change.sentence.startswith("Set Description from ")
+
+
+def test_an_automatic_candidate_that_differs_late_is_a_change_and_not_a_check() -> None:
+    report = _with(TargetDestination("description"), _EARLIER)
+    event = _automatic("description", "candidate", report, _LATER)
+    assert "check_group" not in event
+    assert not str(event["change"]).startswith("Kept")
+    assert event["change"] == f"Set description to {_SHOWN}"
+
+
 def _no_change(report: MetadataReport | None, origin: str) -> dict[str, object]:
     return _project(
         _event(

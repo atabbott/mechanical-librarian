@@ -17,6 +17,7 @@ previous/new fields.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from typing import cast
 
@@ -261,7 +262,11 @@ def set_change(
     after = value_text(destination, new, limit=CHANGE_LIMIT)
     if after == ABSENT:
         return ReadableChange(f"Removed {field_phrase(field)}", f"Removed {field}")
-    if before == after:
+    # Kept only when the whole values read alike, not just their first
+    # CHANGE_LIMIT characters: a late difference is still a change (#1281).
+    if value_text(destination, previous, limit=sys.maxsize) == value_text(
+        destination, new, limit=sys.maxsize
+    ):
         return keep_change(destination, new)
     return ReadableChange(
         f"Set {field_phrase(field)} to {after}"
