@@ -2858,7 +2858,8 @@ _THROTTLE_ENTRY_LAYOUT = """() => {
       link: link && textBox(link),
       all: textBox(item),
       line: parseFloat(getComputedStyle(item.querySelector(':scope > span')).lineHeight),
-      target: link && link.getBoundingClientRect().height,
+      // A wrapped link is a target on every line it occupies.
+      target: link && Math.min(...[...link.getClientRects()].map(rect => rect.height)),
     };
   });
   const found = [];

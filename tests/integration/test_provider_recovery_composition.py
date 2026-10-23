@@ -2067,7 +2067,9 @@ def test_paused_preparation_still_runs_scheduled_provider_recovery() -> None:
         root = Path(temporary)
         database = root / "reports.sqlite"
         recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
-        open_repository(database).close()
+        # The supervisor opens its repositories under this held authority, as
+        # production does; without it Linux refuses the parent-directory lock.
+        held = open_repository(database)
         configuration = _recovery_configuration()
         composition.CoverArtifactStore(root / "artifacts", create=True)
         woke = threading.Event()
@@ -2088,6 +2090,7 @@ def test_paused_preparation_still_runs_scheduled_provider_recovery() -> None:
                 root / "catalogue.sqlite",
                 root / "artifacts",
                 _reviewer_access(database, configuration),
+                database_authority=held.authority,
                 provider_recovery=recovery,
             )
             supervisor.set_paused(True)
@@ -2096,4 +2099,5 @@ def test_paused_preparation_still_runs_scheduled_provider_recovery() -> None:
                 assert woke.wait(5)
             finally:
                 supervisor.stop()
+                held.close()
         assert observed and all(observed)

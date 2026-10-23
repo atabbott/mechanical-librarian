@@ -64,8 +64,8 @@ h2 { margin-bottom:.35rem; }
 .provider-throttle-notice ul { display:grid; gap:.9rem; margin:0; padding:0; list-style:none; }
 .provider-throttle-notice li { min-width:0; color:var(--soft); font-size:.82rem; line-height:1.4; }
 .provider-throttle-notice li strong { color:var(--ink); }
-/* Inline after its own sentence; the padding is the touch target, not layout. */
-.provider-throttle-notice li a { padding-block:13px; color:var(--accent-strong); font-weight:650; white-space:nowrap; }
+/* Inline after its own sentence, wrapping with it; the padding is each line's touch target, not layout. */
+.provider-throttle-notice li a { padding-block:13px; color:var(--accent-strong); font-weight:650; }
 .provider-throttle-retry { margin-top:.7rem; }
 .provider-throttle-notice.is-empty .provider-throttle-retry { margin:0; }
 .provider-throttle-retry:first-child, .provider-throttle-retry > .provider-throttle-outcome:first-child { margin-top:0; }
