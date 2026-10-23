@@ -88,13 +88,16 @@ second press sends nothing.
 
 Library and the top of Settings carry one provider notice. Each entry names a
 source and a library, the reason in a sentence, how many lookups are deferred,
-and when they retry next, with the day when it is not today; a refused key
-waits for Retry now and an exhausted lane says no automatic retry remains. An
-entry links to Settings › Metadata sources to add a Google Books key or check a
-source's key. One Retry now applies to every entry; its outcome is announced in
-the notice, a stale press says another press already counted, and a file-managed
-deployment shows the file instruction instead. With nothing deferred, the
-notice takes no space.
+and when they retry next, with the day when it is not today; a wait that passes
+while the page is open reads as due without another read, a refused key waits
+for Retry now and an exhausted lane says no automatic retry remains. An entry
+ends with its own link to Settings › Metadata sources to add a Google Books key
+or check a source's key. One Retry now applies to every entry and also refreshes
+the saved settings; its outcome is announced beside it, a success and a refusal
+each marked by a glyph as well as colour, a stale press says another press
+already counted, and a file-managed deployment shows the file instruction
+instead. With nothing deferred, the notice takes no space and is no landmark.
+Arriving at Settings keeps focus in the page once the saved settings load.
 
 Each persisted failure code maps to one closed safe reason and exactly one
 owner posture: a named supported action, a stated pending automatic recovery,

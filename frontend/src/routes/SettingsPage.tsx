@@ -610,10 +610,7 @@ export default function SettingsPage() {
     )
   return (
     <>
-      {/* A Retry now moves the revision; an open draft rebases over it. */}
-      <ProviderThrottleNotice
-        onRetried={(value) => queryClient.setQueryData(['settings'], value)}
-      />
+      <ProviderThrottleNotice />
       {saved ? (
         <p className="settings-saved" role="status">
           Settings saved and in use.
@@ -699,6 +696,13 @@ const SettingsEditor = ({
   const [libraryPage, setLibraryPage] = useState(0)
   const [focusTarget, setFocusTarget] = useState<string | null>(null)
   const statusTarget = useRef<HTMLParagraphElement>(null)
+  const routeSection = useRef<HTMLElement>(null)
+  // The loading state that held route focus has just unmounted; keep focus in
+  // the route rather than leave it on the document body.
+  useLayoutEffect(() => {
+    if (document.activeElement === null || document.activeElement === document.body)
+      routeSection.current?.focus({ preventScroll: true })
+  }, [])
   // Newer saved values (another tab, or the separate Policy description save)
   // are merged under the draft instead of replacing it.
   if (view.document.revision !== base.revision) {
@@ -917,7 +921,7 @@ const SettingsEditor = ({
   const currentSection = sections.find((section) => section.id === active) ?? sections[0]
 
   return (
-    <section className="settings-route" data-route-focus tabIndex={-1}>
+    <section ref={routeSection} className="settings-route" data-route-focus tabIndex={-1}>
       <header className="settings-heading">
         <h1>Settings</h1>
       </header>

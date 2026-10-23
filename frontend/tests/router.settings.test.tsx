@@ -1871,6 +1871,38 @@ describe('settings provider throttling (#1282)', () => {
     },
   })
 
+  it('keeps route focus in Settings when the loading state that held it unmounts (#1282 R3 F7)', async () => {
+    let release: (value: ReturnType<typeof view>) => void = () => undefined
+    const http = createHttp()
+    http.getSettings = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof view>>((resolve) => {
+          release = resolve
+        }),
+    )
+    http.getPreparation = vi.fn(async () => throttled())
+    renderRoute('/settings?group=background', http)
+    const loading = (await screen.findByRole('heading', { name: 'Loading settings…' })).closest(
+      'section',
+    )
+    // The shell has restored the route, and its route focus is spent on the
+    // loading state, before the settings read answers.
+    await waitFor(() =>
+      expect(window.document.getElementById('main-content')).toHaveAttribute(
+        'data-restored-path',
+        '/settings',
+      ),
+    )
+    loading?.focus()
+    expect(window.document.activeElement).toBe(loading)
+    await act(async () => release(view()))
+    await screen.findByRole('spinbutton', { name: 'Request timeout' })
+    expect(window.document.activeElement).not.toBe(window.document.body)
+    expect(window.document.activeElement).toBe(
+      window.document.querySelector('section.settings-route'),
+    )
+  })
+
   it('replaces the generation number with Retry now and leaves the other number rows', async () => {
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())

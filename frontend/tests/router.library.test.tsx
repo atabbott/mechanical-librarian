@@ -9917,8 +9917,11 @@ it('counts linked corroborating authorities once and keeps observations separate
 describe('library provider throttling notice (#1282)', () => {
   const noon = new Date(2026, 9, 23, 12, 0)
   const seconds = (date: Date) => Math.floor(date.getTime() / 1000)
+  // The time and its meridiem never wrap apart (#1282 R3 F8).
   const clock = (date: Date) =>
-    new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date)
+    new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+      .format(date)
+      .replace(/\s/g, '\u00a0')
   const entry = (overrides: Partial<ProviderThrottleEntry> = {}): ProviderThrottleEntry => ({
     library: 'Synthetic ebooks',
     adapter: 'google_books',
@@ -9942,6 +9945,7 @@ describe('library provider throttling notice (#1282)', () => {
     provider_throttling: { generation: 4, retry, entries },
   })
   const notice = () => screen.findByRole('region', { name: 'Provider lookups waiting to retry' })
+  const container = () => document.querySelector<HTMLElement>('.provider-throttle-notice')
   const freezeNoon = () => {
     vi.useFakeTimers({ toFake: ['Date'], now: noon })
     onTestFinished(() => {
@@ -10038,20 +10042,140 @@ describe('library provider throttling notice (#1282)', () => {
     else expect(region.querySelector('.provider-throttle-file')).toBeNull()
   })
 
-  it('keeps an empty notice mounted without content, and its live regions only with a projection', async () => {
+  it('keeps an empty notice mounted without content or a region, and its live regions only with a projection', async () => {
     let current: PreparationView = { ...throttled([]), provider_throttling: null }
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/library?lens=all', http)
-    const region = await notice()
     await waitFor(() => expect(http.getPreparation).toHaveBeenCalled())
-    expect(region).toHaveClass('is-empty')
-    expect(region).toBeEmptyDOMElement()
+    await waitFor(() => expect(container()).not.toBeNull())
+    const empty = container()
+    if (!empty) throw new Error('the notice container is not mounted')
+    expect(empty).toHaveClass('is-empty')
+    expect(empty).toBeEmptyDOMElement()
+    // Empty, it is no landmark: no region role and no label (#1282 R3 F4).
+    expect(empty).not.toHaveAttribute('aria-label')
+    expect(screen.queryByRole('region', { name: 'Provider lookups waiting to retry' })).toBeNull()
     current = throttled([])
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
-    await waitFor(() => expect(within(region).getByRole('status')).toBeEmptyDOMElement())
-    expect(within(region).getByRole('alert')).toBeEmptyDOMElement()
-    expect(region).toHaveClass('is-empty')
-    expect(within(region).queryByRole('list')).toBeNull()
+    await waitFor(() => expect(within(empty).getByRole('status')).toBeEmptyDOMElement())
+    expect(within(empty).getByRole('alert')).toBeEmptyDOMElement()
+    expect(empty).toHaveClass('is-empty')
+    expect(empty).not.toHaveAttribute('aria-label')
+    expect(within(empty).queryByRole('list')).toBeNull()
+    // The label returns with the first entry, on the same element.
+    current = throttled([entry()])
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    expect(await notice()).toBe(empty)
+  })
+
+  it('re-renders a passed wait as due without another preparation read, on one timer (#1282 R3 F1)', async () => {
+    const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout }
+    vi.useFakeTimers({
+      toFake: ['Date', 'setTimeout', 'clearTimeout'],
+      now: noon,
+      shouldAdvanceTime: true,
+    })
+    // Recorded by hand: the configured mock restoration would reinstate a
+    // spied fake timer for every later test.
+    const fake = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout }
+    const scheduled: (readonly [number, unknown])[] = []
+    const cleared: unknown[] = []
+    globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+      const id = fake.setTimeout(...args)
+      scheduled.push([args[1] ?? 0, id])
+      return id
+    }) as typeof setTimeout
+    globalThis.clearTimeout = (id: Parameters<typeof clearTimeout>[0]) => {
+      cleared.push(id)
+      fake.clearTimeout(id)
+    }
+    onTestFinished(() => {
+      vi.useRealTimers()
+      Object.assign(globalThis, real)
+    })
+    // jest-dom compares normalised text, where the no-break space is a space.
+    const spoken = (date: Date) => clock(date).replace(/\u00a0/g, ' ')
+    const soon = new Date(noon.getTime() + 90_000)
+    const later = new Date(noon.getTime() + 600_000)
+    let current = throttled([
+      entry({ next_retry_at: seconds(soon) }),
+      entry({ adapter: 'inventaire', next_retry_at: seconds(later) }),
+    ])
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    const items = await within(await notice()).findAllByRole('listitem')
+    expect(items[0]).toHaveTextContent(`Next automatic retry ${spoken(soon)}.`)
+    // One timer, to the earliest wait still ahead; the query cache's own
+    // five-minute collection timers are the only other long ones.
+    const timers = () => scheduled.filter(([delay]) => delay > 60_000 && delay !== 300_000)
+    expect(timers().map(([delay]) => delay > 80_000 && delay <= 90_000)).toEqual([true])
+    const reads = vi.mocked(http.getPreparation).mock.calls.length
+    await act(() => vi.advanceTimersByTimeAsync(91_000))
+    expect(items[0]).toHaveTextContent('214 deferred lookups. Retry due now.')
+    expect(items[1]).toHaveTextContent(`Next automatic retry ${spoken(later)}.`)
+    expect(vi.mocked(http.getPreparation).mock.calls.length).toBe(reads)
+    // The next timer runs to the next wait; a change replaces it.
+    const [, second] = timers().at(-1) ?? []
+    current = throttled([entry({ adapter: 'inventaire', next_retry_at: seconds(later) + 600 })])
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await waitFor(() => expect(cleared).toContain(second))
+    const [, third] = timers().at(-1) ?? []
+    expect(third).not.toBe(second)
+    cleanup()
+    expect(cleared).toContain(third)
+  })
+
+  it('hands the Retry now settings to the Settings cache from Library (#1282 R3 F2)', async () => {
+    const user = userEvent.setup()
+    const saved = settingsView()
+    const raised = {
+      ...saved,
+      document: { ...saved.document, revision: 9, provider_recovery_generation: 5 },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => throttled([entry()])),
+      retryProviderRecovery: vi.fn(async () => raised),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    await user.click(await within(await notice()).findByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(queryClient.getQueryData(['settings'])).toEqual(raised))
+  })
+
+  it('answers Retry now beside its control, success and refusal marked apart (#1282 R3 F6)', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => throttled([entry()])),
+      retryProviderRecovery: vi
+        .fn<ReviewHttp['retryProviderRecovery']>()
+        .mockResolvedValueOnce(settingsView())
+        .mockRejectedValueOnce(new ApiError(409, 'provider_recovery_stale')),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const button = await within(region).findByRole('button', { name: 'Retry now' })
+    const status = within(region).getByRole('status')
+    const alert = within(region).getByRole('alert')
+    // Both are mounted, empty, in the Retry now block and after the control.
+    const block = button.closest('.provider-throttle-retry')
+    for (const outcome of [status, alert]) {
+      expect(outcome).toBeEmptyDOMElement()
+      expect(outcome.closest('.provider-throttle-retry')).toBe(block)
+      expect(
+        button.compareDocumentPosition(outcome) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
+    expect(within(region).getByRole('list').compareDocumentPosition(status)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    await user.click(button)
+    await waitFor(() => expect(status).toHaveTextContent('Retry now accepted.'))
+    expect(status).toHaveClass('provider-throttle-outcome', 'provider-throttle-status')
+    await user.click(button)
+    await waitFor(() => expect(alert).toHaveTextContent('Retry now was already pressed elsewhere.'))
+    expect(alert).toHaveClass('provider-throttle-outcome', 'provider-throttle-refusal')
+    expect(status).toBeEmptyDOMElement()
   })
 
   it('sends one Retry now per press while pending and announces success in the mounted region', async () => {

@@ -61,21 +61,29 @@ h2 { margin-bottom:.35rem; }
 /* Library-level provider throttling (#1282): the connection-notice language, wrapping at every width; empty, it and its live regions take no space. */
 .provider-throttle-notice { width:min(100%,98rem); margin:0 auto 1rem; padding:.8rem 1rem; border:1px solid var(--notice); border-radius:.75rem; color:var(--ink); background:var(--notice-soft); white-space:normal; overflow-wrap:anywhere; }
 .provider-throttle-notice.is-empty { margin:0 auto; padding:0; border:0; background:none; }
-.provider-throttle-notice > p { margin:0; font-size:.82rem; line-height:1.4; }
-.provider-throttle-notice > p:not(:empty) { margin-bottom:.55rem; }
-.provider-throttle-notice ul { display:grid; gap:.45rem; margin:0; padding:0; list-style:none; }
-.provider-throttle-notice li { display:flex; flex-wrap:wrap; align-items:center; gap:.2rem .9rem; min-width:0; }
-.provider-throttle-notice li > span { flex:1 1 22rem; min-width:0; color:var(--soft); font-size:.82rem; line-height:1.4; }
+.provider-throttle-notice ul { display:grid; gap:.9rem; margin:0; padding:0; list-style:none; }
+.provider-throttle-notice li { min-width:0; color:var(--soft); font-size:.82rem; line-height:1.4; }
 .provider-throttle-notice li strong { color:var(--ink); }
-.provider-throttle-notice a { display:inline-flex; align-items:center; min-height:40px; color:var(--accent-strong); font-size:.82rem; font-weight:650; }
-.provider-throttle-retry { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem .9rem; margin-top:.7rem; }
-.provider-throttle-retry button { min-height:40px; font-weight:650; }
-.provider-throttle-retry small, .provider-throttle-file { flex:1 1 18rem; min-width:0; color:var(--soft); font-size:.78rem; line-height:1.4; }
-.provider-throttle-file { margin:.7rem 0 0; }
+/* Inline after its own sentence; the padding is the touch target, not layout. */
+.provider-throttle-notice li a { padding-block:13px; color:var(--accent-strong); font-weight:650; white-space:nowrap; }
+.provider-throttle-retry { margin-top:.7rem; }
+.provider-throttle-notice.is-empty .provider-throttle-retry { margin:0; }
+.provider-throttle-retry:first-child, .provider-throttle-retry > .provider-throttle-outcome:first-child { margin-top:0; }
+.provider-throttle-command { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem .9rem; }
+.provider-throttle-command button { min-height:40px; font-weight:650; }
+.provider-throttle-command small, .provider-throttle-file { flex:1 1 18rem; min-width:0; color:var(--soft); font-size:.78rem; line-height:1.4; }
+.provider-throttle-file { margin:0; }
+.provider-throttle-outcome { margin:0; font-size:.82rem; font-weight:650; line-height:1.4; }
+.provider-throttle-outcome:not(:empty) { margin-top:.45rem; }
+.provider-throttle-outcome:not(:empty)::before { display:inline-block; margin-right:.4rem; }
+.provider-throttle-status:not(:empty) { color:var(--accent-strong); }
+.provider-throttle-status:not(:empty)::before { content:'\2713'; content:'\2713' / ''; }
+.provider-throttle-refusal:not(:empty) { color:var(--danger); }
+.provider-throttle-refusal:not(:empty)::before { content:'\26A0'; content:'\26A0' / ''; }
 .preparation-popover > small { display:block; margin:.35rem 0 .7rem; }
 .provider-throttle-notice button[aria-disabled='true'], .preparation-popover button[aria-disabled='true'] { cursor:not-allowed; opacity:.55; }
 .provider-throttle-notice button[aria-busy='true'], .preparation-popover button[aria-busy='true'] { cursor:progress; }
-@media (max-width:760px) { .provider-throttle-notice a, .provider-throttle-retry button { min-height:44px; } .provider-throttle-retry button { width:100%; } }
+@media (max-width:760px) { .provider-throttle-notice li a { padding-block:15px; } .provider-throttle-command button { min-height:44px; width:100%; } }
 main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outline:none; }
 .eyebrow { margin-bottom:.35rem; color:var(--soft); font-size:.7rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 

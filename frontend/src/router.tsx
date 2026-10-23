@@ -567,7 +567,10 @@ const throttleReasonCopy: readonly (readonly [ProviderThrottleEntry['reasons'][n
 const providerLabels: Readonly<Record<string, string>> = settingsVocabulary.provider_labels
 const retryTime = (seconds: number, now: Date) => {
   const at = new Date(seconds * 1000)
-  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(at)
+  // The time and its meridiem never wrap apart.
+  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+    .format(at)
+    .replace(/\s/g, '\u00a0')
   return at.toDateString() === now.toDateString()
     ? time
     : `${new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(at)}, ${time}`
@@ -600,15 +603,12 @@ const retryRefusal = (error: unknown) =>
  * Library-level provider throttling: one entry per library and source, and one
  * Retry now that raises the recovery generation for all of them (#1282).
  *
- * The container is always mounted, and its two live regions are mounted
- * whenever the server composes the projection, so an outcome is announced
- * into a region that already exists. Empty, none of them takes any space.
+ * The container is always mounted but is a named region only while it holds
+ * entries. Its two live regions sit beside Retry now and are mounted whenever
+ * the server composes the projection, so an outcome is announced into a region
+ * that already exists. Empty, none of them takes any space.
  */
-export const ProviderThrottleNotice = ({
-  onRetried,
-}: {
-  onRetried?: (value: SettingsView) => void
-}) => {
+export const ProviderThrottleNotice = () => {
   const { data, queryClient, http } = usePreparation()
   const container = useRef<HTMLElement>(null)
   const controlFocused = useRef(false)
@@ -625,7 +625,8 @@ export const ProviderThrottleNotice = ({
       setRefusal('')
     },
     onSuccess: (value) => {
-      onRetried?.(value)
+      // A Retry now moves the settings revision; an open draft rebases over it.
+      queryClient.setQueryData<SettingsView>(['settings'], value)
       setStatus('Retry now accepted. Every deferred lookup will retry now.')
     },
     onError: (error) => setRefusal(retryRefusal(error)),
@@ -650,13 +651,34 @@ export const ProviderThrottleNotice = ({
       preventScroll: true,
     })
   })
+  const [clock, setClock] = useState(0)
   const now = new Date()
+  // One timer to the earliest wait still ahead re-renders it as due.
+  const nextDue = Math.min(
+    ...entries.flatMap((entry) =>
+      entry.state === 'checking' ||
+      entry.state === 'dormant' ||
+      entry.state === 'exhausted' ||
+      entry.next_retry_at === null ||
+      entry.next_retry_at * 1000 <= now.getTime()
+        ? []
+        : [entry.next_retry_at * 1000],
+    ),
+  )
+  useEffect(() => {
+    if (!Number.isFinite(nextDue)) return
+    const timer = setTimeout(
+      () => setClock((tick) => tick + 1),
+      Math.min(nextDue - Date.now(), 2_147_483_647),
+    )
+    return () => clearTimeout(timer)
+  }, [nextDue, clock])
   const busy = retry.isPending
   return (
     <section
       ref={container}
       className={`provider-throttle-notice${entries.length || status || refusal ? '' : ' is-empty'}`}
-      aria-label="Provider lookups waiting to retry"
+      aria-label={entries.length ? 'Provider lookups waiting to retry' : undefined}
       onFocus={() => {
         controlFocused.current = true
       }}
@@ -665,46 +687,40 @@ export const ProviderThrottleNotice = ({
         if (event.relatedTarget !== null || document.hasFocus()) controlFocused.current = false
       }}
     >
-      {/* Mounted whenever the projection exists, so before any outcome. */}
-      {throttling ? (
-        <>
-          <p className="provider-throttle-status" role="status">
-            {status}
-          </p>
-          <p className="provider-throttle-refusal" role="alert">
-            {refusal}
-          </p>
-        </>
-      ) : null}
       {entries.length ? (
-        <>
-          <ul>
-            {entries.map((entry) => {
-              const reason = throttleReasonCopy.find(([code]) => entry.reasons.includes(code))
-              return (
-                <li key={`${entry.library}\u0000${entry.adapter}`}>
-                  <span>
-                    <strong>
-                      {providerLabels[entry.adapter] ?? fieldLabel(entry.adapter)} · {entry.library}
-                      :
-                    </strong>{' '}
-                    {reason ? `${reason[1]} ` : ''}
-                    {entry.deferred.toLocaleString()} deferred{' '}
-                    {entry.deferred === 1 ? 'lookup' : 'lookups'}. {throttleWhen(entry, now)}
-                  </span>
-                  {entry.remedy ? (
+        <ul>
+          {entries.map((entry) => {
+            const reason = throttleReasonCopy.find(([code]) => entry.reasons.includes(code))
+            return (
+              <li key={`${entry.library}\u0000${entry.adapter}`}>
+                <span>
+                  <strong>
+                    {providerLabels[entry.adapter] ?? fieldLabel(entry.adapter)} · {entry.library}:
+                  </strong>{' '}
+                  {reason ? `${reason[1]} ` : ''}
+                  {entry.deferred.toLocaleString()} deferred{' '}
+                  {entry.deferred === 1 ? 'lookup' : 'lookups'}. {throttleWhen(entry, now)}
+                </span>
+                {entry.remedy ? (
+                  <>
+                    {' '}
                     <Link to="/settings" search={{ group: 'providers' }}>
                       {entry.remedy === 'add_api_key'
                         ? 'Add a Google Books API key'
                         : 'Check the source\u2019s API key'}
                     </Link>
-                  ) : null}
-                </li>
-              )
-            })}
-          </ul>
-          {throttling?.retry === 'available' ? (
-            <div className="provider-throttle-retry">
+                  </>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+      ) : null}
+      {/* Mounted whenever the projection exists, so before any outcome. */}
+      {throttling ? (
+        <div className="provider-throttle-retry">
+          {entries.length > 0 && throttling.retry === 'available' ? (
+            <div className="provider-throttle-command">
               <button
                 type="button"
                 aria-disabled={busy || undefined}
@@ -722,10 +738,16 @@ export const ProviderThrottleNotice = ({
                 requests may defer them again.
               </small>
             </div>
-          ) : throttling?.retry === 'managed_by_file' ? (
+          ) : entries.length > 0 && throttling.retry === 'managed_by_file' ? (
             <p className="provider-throttle-file">{fileManagedRetry}</p>
           ) : null}
-        </>
+          <p className="provider-throttle-outcome provider-throttle-status" role="status">
+            {status}
+          </p>
+          <p className="provider-throttle-outcome provider-throttle-refusal" role="alert">
+            {refusal}
+          </p>
+        </div>
       ) : null}
     </section>
   )

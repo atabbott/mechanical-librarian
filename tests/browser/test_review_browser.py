@@ -28,6 +28,7 @@ from playwright.sync_api import (
     BrowserContext,
     Page,
     Request,
+    Route,
     expect,
     sync_playwright,
 )
@@ -8980,6 +8981,10 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                     "raise provider_recovery_generation by one there"
                 )
                 expect(notice.get_by_role("button")).to_have_count(0)
+                # The instruction keeps its 0.7rem separation from the list
+                # above it (#1282 R3 F3).
+                separation = page.evaluate(_THROTTLE_FILE_SEPARATION)
+                assert separation["gap"] >= 0.7 * separation["rem"] - 0.5, separation
 
                 # One trigger whose name follows the state, located by place.
                 trigger = page.locator(".preparation-activity > button")
@@ -9002,5 +9007,50 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 assert not page.evaluate(
                     "() => document.activeElement === document.body"
                 )
+
+                # Arriving at Settings by the nav link, focus stays
+                # in the route after the loading state that held it unmounts
+                # (#1282 R3 F7). The settings read is slowed so that state is
+                # always there to unmount.
+                def slow_settings(route: Route) -> None:
+                    time.sleep(0.25)
+                    route.continue_()
+
+                page.route(
+                    lambda url: urlparse(url).path == "/api/v1/settings",
+                    slow_settings,
+                )
+                # This fixture's source has no remedy link; the platform
+                # artifact test arrives by one.
+                arrivals = []
+                for attempt in range(5):
+                    page.goto(origin + "/library?lens=all")
+                    expect(entry).to_have_count(1)
+                    page.get_by_role("navigation").get_by_role(
+                        "link", name="Settings", exact=True
+                    ).click()
+                    page.locator("section.settings-route").wait_for()
+                    page.evaluate(_TWO_FRAMES)
+                    arrivals.append((attempt, page.evaluate(_FOCUSED)))
+                assert {focused for _, focused in arrivals} == {
+                    "SECTION.settings-route"
+                }, arrivals
             finally:
                 browser.close()
+
+
+_THROTTLE_FILE_SEPARATION = """() => {
+  const notice = document.querySelector('.provider-throttle-notice');
+  const list = notice.querySelector('ul');
+  const file = notice.querySelector('.provider-throttle-file');
+  return {
+    gap: file.getBoundingClientRect().top - list.getBoundingClientRect().bottom,
+    rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+  };
+}"""
+_TWO_FRAMES = "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+_FOCUSED = """() => {
+  const active = document.activeElement;
+  return active === null ? 'null'
+    : `${active.tagName}${active.className ? '.' + active.className : ''}`;
+}"""
