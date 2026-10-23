@@ -193,6 +193,10 @@ export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) =>
     staleTime: 15_000,
     retry: false,
   })
+// Library-wide counts. The server counts independently of lens, cursor and
+// limit, so the default landing read is the summary: it shares that request,
+// and with no q no search can reach a global figure (#1284).
+export const librarySummaryQuery = (http: ReviewHttp) => libraryQuery(http, { lens: 'all' })
 export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) =>
   queryOptions({
     queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const,
@@ -375,6 +379,7 @@ const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unav
 
 export const ConnectionNotice = ({
   data,
+  works,
   checking,
   onCheck,
   recovered,
@@ -383,6 +388,8 @@ export const ConnectionNotice = ({
   error,
 }: {
   data: PreparationView | undefined
+  /** Works in Library, from the library summary; undefined until it resolves. */
+  works: number | undefined
   checking: boolean
   onCheck: (connection: string) => void
   recovered: NonNullable<PreparationView['connections']>[number] | undefined
@@ -392,7 +399,6 @@ export const ConnectionNotice = ({
 }) => {
   const condition = data?.connections?.find((item) => item.state !== 'recovered') ?? recovered
   if (!condition) return null
-  const ready = data?.libraries.reduce((total, item) => total + item.ready, 0) ?? 0
   const paused = condition.state === 'recovered' ? 0 : condition.affected
   const title =
     condition.state === 'checking'
@@ -421,8 +427,8 @@ export const ConnectionNotice = ({
       </div>
       <dl>
         <div>
-          <dt>Ready</dt>
-          <dd>{String(ready)}</dd>
+          <dt>In Library</dt>
+          <dd>{works === undefined ? '…' : String(works)}</dd>
         </div>
         <div>
           <dt>Safely paused</dt>
@@ -472,6 +478,11 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
       ? recovered
       : undefined
   const activeConnection = data?.connections?.some((condition) => condition.state !== 'recovered')
+  // Only a shown notice reads the summary, so Activity issues no extra read.
+  const summary = useQuery({
+    ...librarySummaryQuery(http),
+    enabled: activeConnection === true || acknowledgedRecovery !== undefined,
+  })
   useLayoutEffect(() => {
     if (activeConnection || acknowledgedRecovery || !connectionControlFocused.current) return
     connectionControlFocused.current = false
@@ -537,6 +548,7 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
   return (
     <ConnectionNotice
       data={data}
+      works={summary.data?.counts.all}
       checking={action.isPending}
       error={action.error}
       recovered={acknowledgedRecovery}

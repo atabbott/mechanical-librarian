@@ -11,7 +11,16 @@ import { MediaHealth } from '../components/MediaHealth'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
@@ -43,6 +52,7 @@ import {
   detailQuery,
   libraryQuery,
   libraryRoute,
+  librarySummaryQuery,
   PreparationNotice,
   ProviderThrottleNotice,
   usePreparation,
@@ -218,6 +228,8 @@ const preparationPassage = [
   ['checked', 'Metadata checked'],
 ] as const
 
+const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
+
 const PreparationSummary = ({
   presentation,
   reconnecting,
@@ -276,11 +288,9 @@ const PreparationSummary = ({
       <span>
         <strong>{title}</strong>
         <small>
-          {recoveryRequired
-            ? copy
-            : reconnecting
-              ? 'Reconnecting · last confirmed progress shown'
-              : copy}
+          {reconnecting && !recoveryRequired
+            ? 'Reconnecting · last confirmed progress shown'
+            : `This run: ${copy}`}
         </small>
       </span>
     </button>
@@ -346,7 +356,7 @@ const PreparationDetail = ({
           </h2>
           <p>{introduction}</p>
         </div>
-        <strong>{String(presentation.passage.ready)} ready</strong>
+        <strong>{String(presentation.passage.ready)} ready in this run</strong>
       </header>
       <p
         className={`preparation-run-state state-${presentation.state}${animateChange ? ' reported-change' : ''}`}
@@ -480,8 +490,9 @@ const PreparationDetail = ({
         )}
         {presentation.passage.failed > 0 ? (
           <small className="activity-backup-note">
-            A book that stopped before it could be read is listed in Works as Preparation
-            unavailable, with its stage, reason, next step and reference.
+            A book that could not finish is listed in Works under its library title, with its stage,
+            reason, next step and reference. If its library record has since changed, it is listed
+            as Preparation unavailable.
           </small>
         ) : null}
       </section>
@@ -2144,6 +2155,11 @@ export default function LibraryPage({
     [libraryNavigate, router],
   )
   const { http, updates, queryClient } = useReviewContext()
+  // Global figures read the library summary, which carries no q (#1284).
+  const summary = useQuery(librarySummaryQuery(http))
+  const summaryWorks = summary.data?.counts.all
+  const summaryAttention = summary.data?.counts.attention
+  const attentionTitleId = useId()
   const preparationState = usePreparation()
   const presentation =
     preparationState.data?.presentation?.state === 'dismissed'
@@ -2559,6 +2575,17 @@ export default function LibraryPage({
       }) ?? [],
     [attention.data],
   )
+  // One group per work, in first-appearance order; a work that continues onto
+  // the next page joins its existing group.
+  const attentionGroups = useMemo(() => {
+    const groups = new Map<string, (typeof attentionItems)[number][]>()
+    for (const item of attentionItems) {
+      const group = groups.get(item.id)
+      if (group) group.push(item)
+      else groups.set(item.id, [item])
+    }
+    return [...groups.values()]
+  }, [attentionItems])
   const selectedIdentity = useMemo(
     () =>
       search.preview
@@ -2779,6 +2806,9 @@ export default function LibraryPage({
         (item) => item.id === search.preview && item.destination === selected.destination,
       )
     : -1
+  const activeQueueGroup = attentionGroups.findIndex((group) => group[0]?.id === search.preview)
+  // The summary and this search's read are separate reads; clamp any skew.
+  const outsideSearch = Math.max((summaryAttention ?? 0) - (data?.counts.attention ?? 0), 0)
   const nextWork =
     complete && !attention.isPlaceholderData
       ? (attentionItems.find(
@@ -3416,48 +3446,39 @@ export default function LibraryPage({
   return (
     <div className={`library-page variant-m-workspace${hasSelection ? ' has-selected-work' : ''}`}>
       <h1 className="sr-only">Library</h1>
-      {!hasSelection ? (
-        <header
-          className="library-header"
-          aria-label="Library controls"
-          tabIndex={-1}
-          data-route-focus="true"
+      {/* One toolbar in both states, so selecting a work never moves the workspace. */}
+      <header
+        className="library-header"
+        aria-label="Library controls"
+        tabIndex={-1}
+        {...(!hasSelection ? { 'data-route-focus': 'true' } : {})}
+      >
+        <button
+          className="attention-toggle"
+          type="button"
+          aria-expanded={search.attention === 'open'}
+          onClick={() => changeAttention(search.attention !== 'open')}
         >
-          <button
-            className="attention-toggle"
-            type="button"
-            aria-expanded={search.attention === 'open'}
-            onClick={() => changeAttention(search.attention !== 'open')}
-          >
-            Attention <strong>{data ? data.counts.attention : '…'}</strong>
-          </button>
-          <WriteReadyNotice />
-        </header>
-      ) : (
-        <div className="compact-workspace-controls">
-          {search.attention !== 'open' ? (
+          Attention
+          {summaryAttention !== undefined || !summary.isError ? (
             <>
-              <button className="compact-workspace-back" type="button" onClick={clearSelection}>
-                Back to works
-              </button>
-              <button
-                type="button"
-                aria-label="Attention queue"
-                onClick={() => changeAttention(true)}
-              >
-                Attention queue{' '}
-                <strong aria-hidden="true">{data ? data.counts.attention : '…'}</strong>
-              </button>
+              {' '}
+              <strong>{summaryAttention === undefined ? '…' : workCount(summaryAttention)}</strong>
             </>
           ) : null}
-          <WriteReadyNotice />
-        </div>
-      )}
+        </button>
+        <WriteReadyNotice />
+      </header>
       <PreparationNotice routeIdentity={routeIdentity} />
       <ProviderThrottleNotice />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >
+        {hasSelection && search.attention !== 'open' ? (
+          <button className="compact-workspace-back" type="button" onClick={clearSelection}>
+            Back to works
+          </button>
+        ) : null}
         <section className="library-works" aria-labelledby="library-works-title">
           {presentation ? (
             <PreparationSummary
@@ -3480,7 +3501,11 @@ export default function LibraryPage({
             <h2 id="library-works-title">Works</h2>
             <span role="status" aria-live="polite" aria-busy={retained || undefined}>
               {data
-                ? `${String(data.counts.all)} total`
+                ? !search.q
+                  ? workCount(data.counts.all)
+                  : summaryWorks === undefined
+                    ? `Matching: ${workCount(data.counts.all)}`
+                    : `Matching: ${String(data.counts.all)} of ${workCount(summaryWorks)}`
                 : failed
                   ? 'Count unavailable'
                   : 'Loading count…'}
@@ -4026,8 +4051,17 @@ export default function LibraryPage({
                           Try finding next work again
                         </button>
                       </>
-                    ) : (
+                    ) : !search.q ? (
                       <span>All visible review work is complete.</span>
+                    ) : (
+                      <span>
+                        All review work matching this search is complete.
+                        {summaryAttention === undefined || !data
+                          ? null
+                          : outsideSearch > 0
+                            ? ` ${String(outsideSearch)} more ${outsideSearch === 1 ? 'work needs' : 'works need'} a decision outside this search.`
+                            : ' No other work needs a decision.'}
+                      </span>
                     )}
                   </footer>
                 </article>
@@ -4075,8 +4109,8 @@ export default function LibraryPage({
                         <div>
                           <dt>Queue position</dt>
                           <dd>
-                            {activeQueueIndex >= 0
-                              ? `${String(activeQueueIndex + 1)} of ${String(attentionItems.length)}`
+                            {activeQueueGroup >= 0
+                              ? `Work ${String(activeQueueGroup + 1)} of ${String(attentionGroups.length)}${attention.hasNextPage || search.attentionCursor ? ' loaded' : ''}`
                               : 'Selected work'}
                           </dd>
                         </div>
@@ -4549,7 +4583,13 @@ export default function LibraryPage({
             <header>
               <div>
                 <h2>Attention</h2>
-                <p>{String(attentionItems.length)} visible fields</p>
+                <p>
+                  {summaryAttention === undefined || (search.q && !data)
+                    ? 'Counting works…'
+                    : !search.q
+                      ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
+                      : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
+                </p>
               </div>
               <button onClick={() => changeAttention(false)}>Close</button>
             </header>
@@ -4568,38 +4608,57 @@ export default function LibraryPage({
               </p>
             ) : (
               <>
-                {attentionItems.map((item, index) => (
-                  <button
-                    key={`${item.id}:${item.destination}`}
-                    className="attention-queue-item"
-                    aria-current={
-                      item.id === search.preview && item.destination === selected?.destination
-                    }
-                    aria-disabled={attention.isPlaceholderData || undefined}
-                    onClick={() => selectFromQueue(item.id, item.destination, item.attentionCursor)}
-                  >
-                    <span className="attention-position">{String(index + 1)}</span>
-                    <span className="attention-queue-copy">
-                      <strong>{item.title}</strong>
-                      <small>
-                        {item.authors.length
-                          ? item.authors.join(', ')
-                          : 'Author details unavailable'}
-                      </small>
-                      <small>
-                        {item.libraryDisplayName ?? item.library} · {fieldLabel(item.mediaKind)}
-                      </small>
-                      <b>
-                        {fieldLabel(item.destination)} ·{' '}
-                        {item.classificationReason ?? 'Needs your decision'}
-                      </b>
-                    </span>
-                    <span className="attention-work-count">
-                      <strong>{String(item.workAttentionCount)}</strong>
-                      <small>for work</small>
-                    </span>
-                  </button>
-                ))}
+                {attentionGroups.map((group, index) => {
+                  const work = group[0]
+                  if (!work) return null
+                  const titleId = `${attentionTitleId}-${String(index)}`
+                  return (
+                    <div key={work.id} className="attention-work-group">
+                      <div className="attention-work-identity">
+                        <span className="attention-position">{String(index + 1)}</span>
+                        <span>
+                          <strong id={titleId}>{work.title}</strong>
+                          <small>
+                            {work.authors.length
+                              ? work.authors.join(', ')
+                              : 'Author details unavailable'}
+                          </small>
+                          <small>
+                            {work.libraryDisplayName ?? work.library} · {fieldLabel(work.mediaKind)}
+                          </small>
+                        </span>
+                        <span className="attention-work-count">
+                          {`${String(work.workAttentionCount)} ${work.workAttentionCount === 1 ? 'field' : 'fields'}`}
+                        </span>
+                      </div>
+                      <ul className="attention-field-rows">
+                        {group.map((item) => (
+                          <li key={item.destination}>
+                            <button
+                              className="attention-queue-item"
+                              aria-current={
+                                item.id === search.preview &&
+                                item.destination === selected?.destination
+                              }
+                              aria-describedby={titleId}
+                              aria-disabled={attention.isPlaceholderData || undefined}
+                              onClick={() =>
+                                selectFromQueue(item.id, item.destination, item.attentionCursor)
+                              }
+                            >
+                              <span className="attention-queue-copy">
+                                <b>
+                                  {fieldLabel(item.destination)} ·{' '}
+                                  {item.classificationReason ?? 'Needs your decision'}
+                                </b>
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })}
                 {attention.hasNextPage ? (
                   <button
                     className="attention-load-more"
