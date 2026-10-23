@@ -1923,8 +1923,8 @@ def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
         ReviewApplicationError,
     )
     from mechanical_librarian.domain.owner_settings import (
-        OwnerSettingsDocument,
         OwnerSettingsError,
+        SettingsView,
     )
 
     with (
@@ -1940,7 +1940,8 @@ def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
 
         def save_raised_generation() -> object:
             view = application.owner_settings()
-            current = cast("OwnerSettingsDocument", getattr(view, "document"))
+            assert isinstance(view, SettingsView)
+            current = view.document
             raised = current.model_copy(
                 update={
                     "revision": current.revision + 1,
