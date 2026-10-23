@@ -2141,7 +2141,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
 
                 page.on("request", count_document)
                 initial_documents = documents
-                page.get_by_role("button", name="Attention queue").click()
+                page.get_by_role("button", name=re.compile(r"^Attention ")).click()
                 attention_rail = page.locator(".attention-rail")
                 attention_rail.wait_for()
                 expect(attention_rail).to_be_focused()
@@ -3248,6 +3248,204 @@ _COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280), (300, 200))
 _LIBRARY_SHAPES = _COVER_SHAPES
 
 
+@contextmanager
+def _identity_library(
+    reduced_motion: Literal["reduce", "no-preference"] = "no-preference",
+) -> Iterator[tuple[Page, str, list[str]]]:
+    """Sign in to the real server over the library identity fixture.
+
+    It holds one case with two open fields, a same-title sibling with none, and
+    one book whose preparation stopped before its report, catalogued as
+    "Retained Terminal Title" by "Retained Writer". The list records the query
+    of every `/api/v1/library` request.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, reduced_motion=reduced_motion
+            )
+            page = context.new_page()
+            queries: list[str] = []
+            page.on(
+                "request",
+                lambda request: (
+                    queries.append(urlparse(request.url).query)
+                    if urlparse(request.url).path == "/api/v1/library"
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    library_identity_fixture=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                yield page, origin, queries
+
+
+def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
+    """A search narrows Works and the rail; the badge, the handoff and every
+    summary denominator keep the whole library, and no summary read carries q
+    (#1284)."""
+    with _identity_library() as (page, origin, queries):
+        page.goto(f"{origin}/library?lens=needs_attention&attention=open")
+        status = page.locator(".library-works-heading [role='status']")
+        badge = page.locator(".attention-toggle strong")
+        rail = page.get_by_role("complementary", name="Attention queue")
+        handoff = page.locator(".cm-library-handoff h2")
+        expect(status).to_have_text("3 works")
+        expect(badge).to_have_text("1 work")
+        expect(rail.locator("header p")).to_have_text("1 work needs a decision")
+        # One work with two open fields is one group with two rows.
+        expect(rail.locator(".attention-work-group")).to_have_count(1)
+        expect(rail.locator("button.attention-queue-item")).to_have_count(2)
+        expect(rail.locator(".attention-work-count")).to_have_text("2 fields")
+        expect(rail.locator(".attention-work-identity strong")).to_have_text(
+            "Synthetic Journey"
+        )
+        expect(handoff).to_have_text("3 works are in Library. Writes are off.")
+        search = page.get_by_role("searchbox")
+        search.fill("Retained Terminal")
+        expect(page).to_have_url(re.compile(r"q=Retained"))
+        expect(status).to_have_text("Matching: 1 of 3 works")
+        expect(rail.locator("header p")).to_have_text(
+            "Matching: 0 of 1 work needing a decision"
+        )
+        expect(rail.locator("button.attention-queue-item")).to_have_count(0)
+        expect(badge).to_have_text("1 work")
+        expect(handoff).to_have_text("3 works are in Library. Writes are off.")
+        search.fill("zzz-no-match")
+        expect(status).to_have_text("Matching: 0 of 3 works")
+        expect(badge).to_have_text("1 work")
+        search.fill("")
+        expect(page).not_to_have_url(re.compile(r"q="))
+        expect(status).to_have_text("3 works")
+        expect(rail.locator("header p")).to_have_text("1 work needs a decision")
+        expect(badge).to_have_text("1 work")
+        expect(handoff).to_have_text("3 works are in Library. Writes are off.")
+        summary = [query for query in queries if "lens=all" in query]
+        assert summary, queries
+        assert all("q=" not in query for query in summary), queries
+
+
+def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> None:
+    """A book that stopped before its report is listed under its catalogue
+    title and authors, stays noninteractive, and a title search finds it
+    (#1284)."""
+    with _identity_library(reduced_motion="reduce") as (page, origin, _queries):
+        page.goto(f"{origin}/library?lens=all")
+        row = page.locator(".library-work-row.is-terminal")
+        expect(row).to_have_count(1)
+        expect(row).to_contain_text("Retained Terminal Title")
+        expect(row).to_contain_text("Retained Writer")
+        expect(row).not_to_contain_text("Preparation unavailable")
+        assert row.evaluate("node => node.tagName") == "ARTICLE"
+        assert row.locator("button, a").count() == 0
+        expect(row).to_contain_text("The local media file could not be read.")
+        page.get_by_role("searchbox").fill("Retained Terminal")
+        expect(page).to_have_url(re.compile(r"q=Retained"))
+        expect(page.locator(".library-works-heading [role='status']")).to_have_text(
+            "Matching: 1 of 3 works"
+        )
+        expect(page.locator(".library-work-row")).to_have_count(1)
+        expect(page.locator(".library-work-row.is-terminal")).to_contain_text(
+            "Retained Terminal Title"
+        )
+
+
+@pytest.mark.parametrize("cohort", [24, 30])
+def test_load_more_attention_keeps_focus_on_the_first_row_it_added(
+    cohort: int,
+) -> None:
+    """Load more never drops focus: the first row the next page adds takes it,
+    even when that row joins a work already in the rail (#1284).
+
+    24 works put one work's last field alone on the second 25-row page; 30 put
+    seven rows there, so the next Tab continues through the rail.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1440, "height": 900}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    provider_recovery=True,
+                    cohort=cohort,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&attention=open")
+                rail = page.get_by_label("Attention queue", exact=True)
+                rows = rail.locator("button.attention-queue-item")
+                expect(rows.first).to_be_visible()
+                keys = "rows => rows.map(row => row.dataset.attentionRow)"
+                before = rows.evaluate_all(keys)
+                titles = rail.locator(".attention-work-identity strong")
+                before_titles = titles.all_text_contents()
+                more = rail.get_by_role(
+                    "button", name="Load more attention", exact=True
+                )
+                more.focus()
+                page.keyboard.press("Enter")
+                expect(rows).not_to_have_count(len(before))
+                page.evaluate(_TWO_FRAMES)
+                added = [key for key in rows.evaluate_all(keys) if key not in before]
+                assert added, "the next page added no row"
+                focused = page.evaluate(
+                    "() => document.activeElement?.dataset?.attentionRow ?? null"
+                )
+                assert focused == added[0], (focused, added)
+                work = page.evaluate(
+                    "() => document.getElementById(document.activeElement"
+                    ".getAttribute('aria-describedby')).textContent"
+                )
+                assert titles.all_text_contents().count(work) == 1
+                if cohort == 24:
+                    # The page continued a work already shown, inside its group.
+                    assert added == [focused]
+                    assert work in before_titles, (work, before_titles)
+                else:
+                    assert work not in before_titles, (work, before_titles)
+                    page.keyboard.press("Tab")
+                    assert page.evaluate(_FOCUSED) == "BUTTON.attention-queue-item"
+                    assert (
+                        page.evaluate(
+                            "() => document.activeElement.dataset.attentionRow"
+                        )
+                        == added[1]
+                    )
+                context.close()
+            browser.close()
+
+
 @pytest.mark.parametrize("identity", [False, True])
 @pytest.mark.parametrize("dark", [False, True])
 def test_library_description_controls_preserve_words_at_enlarged_text(
@@ -3872,9 +4070,14 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                         current_field(),
                     )
 
+                # Each decision refreshes this page and the library summary
+                # (the unsearched lens=all read), so it issues two (#1284).
+                per_decision = 2
+
                 def release_aggregate_request(
-                    expected: int, *, previous: str, committed: str
+                    decision: int, *, previous: str, committed: str
                 ) -> None:
+                    expected = decision * per_decision
                     deadline = time.monotonic() + 5
                     while (
                         len(held_library_requests) < expected
@@ -3883,10 +4086,15 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                         page.wait_for_timeout(10)
                     assert len(held_library_requests) == expected, held_library_requests
                     assert len(library_request_fields) == issued + expected
-                    field = library_request_fields[issued + expected - 1]
-                    assert field == committed
-                    assert field != previous
-                    held_library_requests[expected - 1].continue_()
+                    batch = slice(issued + expected - per_decision, issued + expected)
+                    assert sorted(
+                        urlparse(url).query for url in library_requests[batch]
+                    ) == ["lens=all", "lens=needs_attention&q=Mistborn"]
+                    for field in library_request_fields[batch]:
+                        assert field == committed
+                        assert field != previous
+                    for held in held_library_requests[expected - per_decision :]:
+                        held.continue_()
 
                 issued = len(library_requests)
                 elapsed, projections, first_field, first_next = advance(pointer=True)
@@ -4040,7 +4248,9 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 # completed.
                 page.unroute("**/api/v1/library**", hold_library_request)
                 page.wait_for_timeout(600)
-                assert len(library_requests[issued:]) == 2, library_requests[issued:]
+                assert len(library_requests[issued:]) == 2 * per_decision, (
+                    library_requests[issued:]
+                )
 
                 # And the other half of the same rule: everything this tab did
                 # not cause still reaches it while the owner keeps recording.
@@ -4995,7 +5205,13 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     summary = page.locator(".preparation-summary")
                     expect(summary).to_contain_text(title)
                     expect(summary).to_contain_text(copy)
-                    expect(page.get_by_role("heading", name="Works")).to_be_visible()
+                    # At 390 the selected run fills the screen and Works is one
+                    # Back away. (A substring "Works" match once passed here on
+                    # the write handoff's "… works are ready to browse" heading.)
+                    expect(page.locator("#library-works-title")).to_have_text("Works")
+                    expect(
+                        page.get_by_role("button", name="Back to works")
+                    ).to_be_visible()
                     expect(page.locator(".library-work-row").first).to_be_enabled()
                 if not reduced:
                     presentation_state["value"] = "running"
@@ -6786,22 +7002,24 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 expect(library_titles.first).to_be_visible()
                 first_library_titles = library_titles.all_text_contents()
                 assert first_library_titles
-                page.get_by_role("button", name="Attention queue", exact=False).click()
+                page.get_by_role("button", name=re.compile(r"^Attention ")).click()
                 queue = page.get_by_label("Attention queue", exact=True)
                 queued = queue.locator(".attention-queue-item")
                 expect(queued.first).to_be_visible()
                 initial_count = queued.count()
-                initial_titles = queued.locator(
-                    ".attention-queue-copy > strong"
+                initial_titles = queue.locator(
+                    ".attention-work-identity strong"
                 ).all_text_contents()
                 page.get_by_role(
                     "button", name="Load more attention", exact=True
                 ).click()
                 later = queued.nth(initial_count)
                 expect(later).to_be_visible()
-                later_title = later.locator(
-                    ".attention-queue-copy > strong"
-                ).inner_text()
+                # A field row names its work through the group title (#1284).
+                later_title = later.evaluate(
+                    "row => document.getElementById("
+                    "row.getAttribute('aria-describedby')).textContent"
+                )
                 assert later_title not in initial_titles
                 assert later_title not in first_library_titles
                 later.press("Enter")

@@ -1,14 +1,14 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { Link } from '@tanstack/react-router'
 
-import { useLiveStream, usePreparation, useReviewContext } from '../router'
+import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
 import { readWriteConsent } from '../writeConsent'
 
 /**
  * The completion handoff, stated once and compactly inside the Library flow.
  *
  * Preparation finishing and writes being off are two halves of one moment: an
- * owner is told what is ready to browse and what will happen to it, in one
+ * owner is told what is in Library and what will happen to it, in one
  * notice with one entry to the scoped permission review (#641, #639, #1011). The offer is read from the same function Activity reads, so
  * the compact route and the long one cannot come to disagree. Its inputs come
  * from the narrow consent read, which the server projects with the code that
@@ -21,6 +21,9 @@ export const WriteReadyNotice = () => {
   const { http } = useReviewContext()
   const live = useLiveStream() === 'live'
   const preparation = usePreparation().data
+  // The figure is the library summary's work count, never a scan's case count (#1284).
+  const summary = useQuery(librarySummaryQuery(http))
+  const works = summary.data?.counts.all
   const query = useQuery({
     queryKey: ['activity', 'library-handoff'] as const,
     queryFn: (queryContext) =>
@@ -41,16 +44,21 @@ export const WriteReadyNotice = () => {
     ),
   })
   if (!consent.actionable) return null
-  const ready = preparation?.libraries.reduce((total, item) => total + item.ready, 0) ?? 0
   const preparing = Boolean(preparation?.active)
+  const inLibrary =
+    works !== undefined
+      ? `${String(works)} ${works === 1 ? 'work is' : 'works are'} in Library. `
+      : summary.isError
+        ? ''
+        : 'Counting works in Library… '
   const heading =
     consent.state === 'off'
-      ? `${String(ready)} ${ready === 1 ? 'work is' : 'works are'} ready to browse. Writes are off.`
+      ? `${inLibrary}Writes are off.`
       : consent.state === 'enabling'
         ? 'Enabling writes…'
         : consent.state === 'applying'
           ? 'Applying prepared changes.'
-          : `${String(ready)} ${ready === 1 ? 'work is' : 'works are'} ready to browse. Writes are enabled.`
+          : `${inLibrary}Writes are enabled.`
   const copy =
     consent.state === 'off'
       ? `Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`

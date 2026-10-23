@@ -3778,3 +3778,122 @@ def test_combined_browse_validates_empty_marker_and_totals(
         assert reached
     finally:
         repository.close()
+
+
+def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
+    """The Library's counts are its one summary (#1284).
+
+    Against real SQLite, `counts` do not depend on the lens, the page size or
+    the cursor, they include a book whose preparation stopped before its
+    report, and only a search changes them. The browser's toolbar badge and
+    every global denominator read this summary from the unsearched default
+    request, so this is the contract they rest on.
+    """
+    from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+
+    def at_item(source: MetadataReport, item: str) -> MetadataReport:
+        return MetadataReport.create(
+            target=TargetFacts(
+                source.target.connection,
+                source.target.library,
+                item,
+                source.target.fields,
+            ),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            cover_sources=source.cover_sources,
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        repository = open_repository(root / "review.sqlite")
+        for report in (
+            at_item(_report("Needle attention work", actionable=True), "attention"),
+            at_item(_report("Settled work", "c", "d", actionable=False), "settled"),
+        ):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        catalogue = open_catalogue(root / "catalogue.sqlite", create=True)
+        entry = CatalogueEntry(
+            "primary",
+            "fiction",
+            "lib-1",
+            "terminal-item",
+            1,
+            "Stopped terminal title",
+            ("Terminal Writer",),
+            True,
+            False,
+            "singular-supported",
+            "1" * 64,
+            "/synthetic.epub",
+            "epub",
+            "/media",
+        )
+        catalogue.acquire_refresh()
+        generation = catalogue.publish("a" * 64, (entry,))
+        repository.bind_library_catalogue(root / "catalogue.sqlite", "a" * 64)
+        repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, generation, "a" * 64, (entry,), 12
+        )
+        action = repository.claim_review_pipeline_action(13)
+        assert action is not None
+        repository.fail_review_pipeline_action(
+            action, "unreadable_media", False, 14, "track_1"
+        )
+
+        browser = BrowseReviewLibrary(repository)
+        summary = {"all": 3, "needs_attention": 1, "no_attention_needed": 2}
+        observed = []
+        for lens in ("all", "needs_attention", "no_attention_needed"):
+            for limit in (1, 25):
+                first = browser.library(
+                    lens=lens, search=None, limit=limit, cursor=None
+                )
+                observed.append((lens, limit, "page 1", first["counts"]))
+                if first["next_cursor"] is not None:
+                    second = browser.library(
+                        lens=lens,
+                        search=None,
+                        limit=limit,
+                        cursor=cast(str, first["next_cursor"]),
+                    )
+                    observed.append((lens, limit, "page 2", second["counts"]))
+        assert all(counts == summary for *_, counts in observed), observed
+        # A lens holding more than one work has a second page at limit 1.
+        assert {lens for lens, _, page, _ in observed if page == "page 2"} == {
+            "all",
+            "no_attention_needed",
+        }
+        all_items = browser.library(lens="all", search=None, limit=25, cursor=None)
+        titles = [
+            item["title"] for item in cast(list[dict[str, object]], all_items["items"])
+        ]
+        assert "Stopped terminal title" in titles, titles
+        # Only a search changes the summary.
+        for search, expected in (
+            ("Needle", {"all": 1, "needs_attention": 1, "no_attention_needed": 0}),
+            (
+                "Stopped terminal",
+                {"all": 1, "needs_attention": 0, "no_attention_needed": 1},
+            ),
+            (
+                "zzz-no-match",
+                {"all": 0, "needs_attention": 0, "no_attention_needed": 0},
+            ),
+        ):
+            for lens in ("all", "needs_attention"):
+                assert (
+                    browser.library(lens=lens, search=search, limit=1, cursor=None)[
+                        "counts"
+                    ]
+                    == expected
+                ), (search, lens)

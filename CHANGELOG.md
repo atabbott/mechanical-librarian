@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library counts now come from one library-wide summary and name their unit:
+  the Attention badge counts works, Works reads "Matching: 1 of 20 works" under
+  a search, and no count shows 0 while loading. Attention lists each work once
+  with its fields as rows, preparation counts say they are for this run, and
+  selecting a work no longer moves the workspace (#1284).
+
 - Library and Settings now show which sources are limiting or refusing
   lookups in each library, how many lookups wait, and when they retry next,
   with a link to add or check a key. Retry now raises the recovery generation

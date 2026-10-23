@@ -60,9 +60,11 @@ stops at its last stage. A finishing rate is stated only while the run is
 starting or running; a run that is finished, paused, dismissed or showing the
 last confirmed state after a reconnect states no rate at all, because it has
 none. Every completed book links into Works by the name the panel shows. A book
-that stopped before a report existed has no catalogue name to search for, so
-the panel says plainly that it is listed in Works as `Preparation unavailable`
-with its stage, reason, next step and reference.
+that could not finish is listed in Works under its library title, with its
+stage, reason, next step and reference; only when its library record has since
+changed is it listed as `Preparation unavailable`, and the panel says both. The
+panel's counts belong to the run: the summary reads `This run: …` and the detail
+header `{n} ready in this run`.
 
 Five affordances are shaped like a retry and mean different things. `Scan now`
 and `Retry` in the background-work popover both start a new preparation cycle
@@ -352,6 +354,21 @@ states.
 
 ## Queue, detail, and summary
 
+Every global count comes from one summary, the unsearched default Library read,
+and names its unit: the Attention badge counts works needing a decision, the
+Works status counts works (`Matching: m of n works` under a search), and the
+write handoff and a connection notice state the works in Library. A search
+narrows only the work list and the Attention rail, never these figures, and a
+filtered completion states how many works still need a decision outside it. A
+count whose source has not resolved shows an ellipsis or a counting line, never
+zero, and one whose source failed is left out or reads "Count unavailable", never
+"Counting". Counts that belong to a preparation run say so. The Library toolbar
+is one element whether or not a work is selected, so selecting a work never moves
+the workspace; at compact widths Back to works leads the workspace and returns to
+the list, and choosing a work, or closing the Attention rail over one, scrolls the
+page so Back to works sits just below the masthead. Load more in the Attention rail
+moves focus to the first row it adds, unless the owner has moved focus elsewhere.
+
 The authenticated Library is the complete work surface. It opens on the `all`
 lens with server-authoritative attention counts, presents readable title,
 author, library, and media identity, and keeps works needing a human decision
@@ -389,11 +406,15 @@ readable without widening the work list or document.
 
 Attention is a contextual, URL-owned field queue inside the regular-width
 Library workspace, not a peer navigation destination. It contains only
-unresolved ordinary fields that can benefit from an owner decision, groups them
-by readable work identity, and keeps the current work, active field, and queue
-position visible beside the decision canvas. Its rows use the same bounded search
-as the Library attention count; its cursor is independent of the work-list cursor
-and resets when the search changes. Opening or closing Attention commits any
+unresolved ordinary fields that can benefit from an owner decision. Each work
+appears once, with its title, authors, library and media kind and its field
+count, and its fields follow as rows that name the work they belong to; a work
+that continues onto the next page joins its existing group. The current work,
+active field, and queue position (`Work g of G`, or `… loaded` while more pages
+exist) stay visible beside the decision canvas. The toolbar's Attention count
+covers the whole library; the rail's rows use the bounded search, and its header
+says `Matching: f of a works needing a decision` while one is active. Its cursor
+is independent of the work-list cursor and resets when the search changes. Opening or closing Attention commits any
 pending typed search with that action; Back/Forward retains authority over obsolete
 pending edits. At narrower regular widths the
 work index and selected detail remain concurrent while attention opens as a
@@ -483,11 +504,12 @@ replaced by a competing review back control.
 
 A book reached from a preparation completion arrives as an ordinary bounded
 search over the work index. A book that produced a report is found by the name
-the panel showed; one that stopped before a report exists is not, because the
-index holds no catalogue name for it. That search states that it matched
-nothing and offers to clear itself, and the terminal row is waiting in the
-unfiltered index with its stage, safe reason, owner posture, bounded reference
-and media-health aside.
+the panel showed, and so is one that stopped before its report: its row carries
+the current catalogue title, authors and format with its stage, safe reason,
+owner posture, bounded reference and media-health aside. Only a book whose
+catalogue identity is no longer current falls back to `Preparation unavailable`;
+that search states that it matched nothing and offers to clear itself, and the
+row waits in the unfiltered index.
 
 Current values and exact eligible changes are the commands. Pointer selection
 may show recording and recorded acknowledgement before authoritative

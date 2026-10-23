@@ -97,7 +97,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                 "warm_full_reload",
                 "cold_sign_in_destination",
             }:
-                expect(page.get_by_text("2300 total", exact=True)).to_be_visible()
+                expect(page.get_by_text("2300 works", exact=True)).to_be_visible()
             state = page.evaluate("() => window.__ownerTiming")
             if navigation:
                 key = "sign_in" if name == "cold_sign_in_shell" else "data"
@@ -246,18 +246,18 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 const heading = text => exact('h1,h2,h3,h4', text);
                                 const tests = {
                                     cold_sign_in_destination: () => heading('Works'),
-                                    warm_sign_in_destination: () => exact('.library-works-heading>span', '2300 total'),
-                                    search: () => exact('.library-works-heading>span', '2070 total'),
+                                    warm_sign_in_destination: () => exact('.library-works-heading>span', '2300 works'),
+                                    search: () => exact('.library-works-heading>span', 'Matching: 2070 of 2300 works'),
                                     negative_search: () => new URL(location.href).searchParams.get('q') === 'absent-search-term'
                                         && exact('p', 'No exact-current works match this search and lens.'),
                                     clear_search: () => !new URL(location.href).searchParams.has('q')
-                                        && exact('.library-works-heading>span', '2300 total'),
+                                        && exact('.library-works-heading>span', '2300 works'),
                                     pagination: () => exact('span', 'Page 2'),
                                     selected_detail: () => heading('Which cover should this work use?'),
                                     choice_confirmation: () => heading('Review complete'),
                                     policy_navigation: () => heading('Library policy'),
                                     settings_navigation: () => heading('Settings'),
-                                    library_navigation: () => exact('.library-works-heading>span', '2300 total'),
+                                    library_navigation: () => exact('.library-works-heading>span', '2300 works'),
                                     attention_status: () => exact('button', 'Load more attention'),
                                     preparation_status: () => heading('Background activity'),
                                     activity_navigation: () => heading('Activity ledger') && !!document.querySelector('.cm-activity-events article'),
@@ -288,7 +288,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     const now = performance.now();
                                     if (exact('button', 'Sign in')) timing.navigation.sign_in ??= now;
                                     if (heading('Works')) timing.navigation.shell ??= now;
-                                    if (exact('.library-works-heading>span', '2300 total')) timing.navigation.data ??= now;
+                                    if (exact('.library-works-heading>span', '2300 works')) timing.navigation.data ??= now;
                                     if (timing.name && tests[timing.name]()) timing.ready ??= now;
                                 }).observe(document, {
                                     subtree: true, childList: true, characterData: true, attributes: true,
@@ -322,13 +322,13 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                             1000,
                         )
                         expect(
-                            page.get_by_text("2300 total", exact=True)
+                            page.get_by_text("2300 works", exact=True)
                         ).to_be_visible()
                         measured(
                             "cold_full_reload",
                             page.reload,
                             lambda page=page: expect(
-                                page.get_by_text("2300 total", exact=True)
+                                page.get_by_text("2300 works", exact=True)
                             ).to_be_visible(),
                         )
                         if cold < 4:
@@ -379,7 +379,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     "clear_search",
                                     lambda search=search: search.fill(""),
                                     lambda page=page: expect(
-                                        page.get_by_text("2300 total", exact=True)
+                                        page.get_by_text("2300 works", exact=True)
                                     ).to_be_visible(),
                                 )
                                 assert "q" not in parse_qs(urlsplit(page.url).query)
@@ -389,7 +389,9 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                         "Synthetic title"
                                     ),
                                     lambda page=page: expect(
-                                        page.get_by_text("2070 total", exact=True)
+                                        page.get_by_text(
+                                            "Matching: 2070 of 2300 works", exact=True
+                                        )
                                     ).to_be_visible(),
                                 )
                                 measured(
@@ -587,13 +589,13 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                         "link", name="Library", exact=True
                                     ).click(),
                                     lambda page=page: expect(
-                                        page.get_by_text("2300 total", exact=True)
+                                        page.get_by_text("2300 works", exact=True)
                                     ).to_be_visible(),
                                 )
                                 measured(
                                     "attention_status",
                                     lambda page=page: page.get_by_role(
-                                        "button", name="Attention queue", exact=True
+                                        "button", name=re.compile(r"^Attention ")
                                     ).click(),
                                     lambda page=page: expect(
                                         page.get_by_role(
@@ -636,7 +638,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                         "button", name="Sign in", exact=True
                                     ).click(),
                                     lambda page=page: expect(
-                                        page.get_by_text("2300 total", exact=True)
+                                        page.get_by_text("2300 works", exact=True)
                                     ).to_be_visible(),
                                 )
                                 response = context.request.get(

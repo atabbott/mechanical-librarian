@@ -89,7 +89,8 @@ describe('Application shell', () => {
     expect(http.getPreparation).toHaveBeenCalled()
     expect(http.getAttention).toHaveBeenCalled()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
-    expect(screen.queryByText('0 total')).toBeNull()
+    // A count whose source has not resolved is never shown as zero (#1284).
+    expect(screen.queryByText(/^0 works?$/u)).toBeNull()
     expect(screen.queryByText('No exact-current works match this search and lens.')).toBeNull()
     await act(async () => {
       await router.navigate({ to: '/policy', search: { section: 'identity' } })
@@ -164,7 +165,7 @@ describe('Application shell', () => {
 
     const summary = await screen.findByRole('button', { name: /Preparing your library/u })
     expect(summary).toBeVisible()
-    expect(screen.getByText('1 ready · 0 could not finish · 1 active')).toBeVisible()
+    expect(screen.getByText('This run: 1 ready · 0 could not finish · 1 active')).toBeVisible()
     fireEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
     expect(screen.getByText('Preparation continues')).toBeVisible()
@@ -500,14 +501,33 @@ describe('Application shell', () => {
           },
         ],
       }
-      const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
+      // The notice counts works in Library from the summary, not the scan's ready cases.
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => preparation),
+        getLibrary: vi.fn(async () => ({ ...library, counts: { ...library.counts, all: 7 } })),
+      }
       const { router } = renderRoute('/library?lens=needs_attention&q=A%20Book', http)
       expect(
         (await screen.findAllByText(title)).some(
           (element) => getComputedStyle(element).display !== 'none',
         ),
       ).toBe(true)
-      expect(screen.getByText('Ready')).toBeVisible()
+      expect(await screen.findByText('In Library')).toBeVisible()
+      await waitFor(() =>
+        expect(screen.getByText('In Library').nextElementSibling).toHaveTextContent(/^7$/u),
+      )
+      expect(screen.queryByText('Ready')).toBeNull()
+      expect(http.getLibrary).toHaveBeenCalledWith(
+        { lens: 'all' },
+        expect.any(AbortSignal),
+        'foreground',
+      )
+      expect(
+        vi
+          .mocked(http.getLibrary)
+          .mock.calls.every(([search]) => search.lens !== 'all' || search.q === undefined),
+      ).toBe(true)
       expect(screen.getByRole('button', { name: action })).toHaveAttribute(
         'aria-disabled',
         String(disabled),
@@ -530,6 +550,7 @@ describe('Application shell', () => {
           (element) => getComputedStyle(element).display !== 'none',
         ),
       ).toBe(true)
+      expect(screen.getByText('In Library').nextElementSibling).toHaveTextContent(/^7$/u)
       const activityTitle = state === 'paused' ? 'Library connection is paused' : title
       expect(screen.getByRole('heading', { name: activityTitle })).toBeVisible()
       expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('2')
@@ -537,6 +558,61 @@ describe('Application shell', () => {
       expect(screen.queryByText('No action required')).toBeNull()
     },
   )
+
+  it('reads the library summary on Activity only while a connection notice is shown', async () => {
+    const paused = (connections: NonNullable<PreparationView['connections']>): PreparationView => ({
+      schema_version: 'review-preparation-v2',
+      recovery_required: false,
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections,
+    })
+    const quiet = { ...createHttp(), getPreparation: vi.fn(async () => paused([])) }
+    renderRoute('/activity', quiet)
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await waitFor(() => expect(quiet.getPreparation).toHaveBeenCalled())
+    expect(quiet.getLibrary).not.toHaveBeenCalled()
+    cleanup()
+
+    let release: ((value: LibraryView) => void) | undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () =>
+        paused([
+          {
+            connection: 'primary',
+            code: 'unavailable',
+            state: 'paused',
+            affected: 1,
+            updated_at: 1,
+          },
+        ]),
+      ),
+      getLibrary: vi.fn(
+        () =>
+          new Promise<LibraryView>((resolve) => {
+            release = resolve
+          }),
+      ),
+    }
+    renderRoute('/activity', http)
+    const label = await screen.findByText('In Library')
+    // Pending is an ellipsis, never zero.
+    expect(label.nextElementSibling).toHaveTextContent(/^…$/u)
+    expect(http.getLibrary).toHaveBeenCalledOnce()
+    expect(http.getLibrary).toHaveBeenCalledWith(
+      { lens: 'all' },
+      expect.any(AbortSignal),
+      'foreground',
+    )
+    await act(async () => release?.({ ...library, counts: { ...library.counts, all: 2 } }))
+    await waitFor(() =>
+      expect(screen.getByText('In Library').nextElementSibling).toHaveTextContent(/^2$/u),
+    )
+    expect(http.getLibrary).toHaveBeenCalledOnce()
+  })
 
   it('does not restore a completed connection incident from retained recovered state', async () => {
     const recovered: PreparationView = {

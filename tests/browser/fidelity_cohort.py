@@ -931,25 +931,26 @@ def _case(case_id: str) -> dict[str, object]:
 def _library(query: dict[str, list[str]]) -> dict[str, object]:
     lens = query.get("lens", ["all"])[0]
     needle = query.get("q", [""])[0].casefold().strip()
-    works = list(LIBRARY_WORKS)
+    # Like the server, counts cover the search but not the lens or the page.
+    matched = [
+        item
+        for item in LIBRARY_WORKS
+        if not needle
+        or needle
+        in " ".join(
+            [
+                str(item["title"]),
+                *[str(author) for author in item["authors"]],
+                str(item["library"]),
+                str(item["media_kind"]),
+            ]
+        ).casefold()
+    ]
+    works = matched
     if lens == "needs_attention":
         works = [item for item in works if int(cast(int, item["attention_count"])) > 0]
     elif lens == "no_attention_needed":
         works = [item for item in works if int(cast(int, item["attention_count"])) == 0]
-    if needle:
-        works = [
-            item
-            for item in works
-            if needle
-            in " ".join(
-                [
-                    str(item["title"]),
-                    *[str(author) for author in item["authors"]],
-                    str(item["library"]),
-                    str(item["media_kind"]),
-                ]
-            ).casefold()
-        ]
     cursor = query.get("cursor", [""])[0]
     page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
@@ -963,11 +964,11 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
         "page": page,
         "counts": {
             "needs_attention": sum(
-                int(cast(int, item["attention_count"])) > 0 for item in LIBRARY_WORKS
+                int(cast(int, item["attention_count"])) > 0 for item in matched
             ),
-            "all": len(LIBRARY_WORKS),
+            "all": len(matched),
             "no_attention_needed": sum(
-                int(cast(int, item["attention_count"])) == 0 for item in LIBRARY_WORKS
+                int(cast(int, item["attention_count"])) == 0 for item in matched
             ),
         },
         "items": deepcopy(works[start:end]),

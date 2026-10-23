@@ -56,7 +56,9 @@ export default function AttentionPage({
           <strong>{data ? data.total : '…'}</strong>
           <span>
             {data
-              ? `${data.total === 1 ? 'field' : 'fields'} across current works`
+              ? search.q
+                ? `${data.total === 1 ? 'field matches' : 'fields match'} this search`
+                : `${data.total === 1 ? 'field' : 'fields'} across current works`
               : failed
                 ? 'Count unavailable'
                 : 'Loading count…'}
