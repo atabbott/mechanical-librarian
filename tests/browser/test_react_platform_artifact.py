@@ -3280,8 +3280,9 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
             page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
             for width in (390, 320):
                 page.set_viewport_size({"width": width, "height": 900})
-                page.evaluate("() => document.documentElement.offsetWidth")
                 where = f"{'dark' if dark else 'light'} 200% text at {width}px"
+                settled = page.evaluate(_REMEDY_LINKS_SETTLED)
+                assert settled is not None, f"{where}: the remedy links never settled"
                 wrapped = page.locator(".provider-throttle-notice li a").evaluate_all(
                     "links => links.filter(link => link.getClientRects().length > 1)"
                     ".length"
@@ -3296,6 +3297,26 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                 assert small == [], f"{where}: links under 44px {small}"
                 document = page.evaluate("() => document.documentElement.scrollWidth")
                 assert document <= width, f"{where}: the page is {document}px wide"
+
+
+# Resolves once the remedy links' line boxes agree across two consecutive
+# frames, so a reflow after a text or viewport change is read only when done.
+_REMEDY_LINKS_SETTLED = """async () => {
+  const frame = () => new Promise(done => requestAnimationFrame(done));
+  const boxes = () => JSON.stringify([
+    document.documentElement.scrollWidth,
+    ...[...document.querySelectorAll('.provider-throttle-notice li a')].map(link =>
+      [...link.getClientRects()].map(box => [box.left, box.top, box.width, box.height])),
+  ]);
+  let previous = boxes();
+  for (let frames = 1; frames <= 120; frames += 1) {
+    await frame();
+    const current = boxes();
+    if (current === previous) return frames;
+    previous = current;
+  }
+  return null;
+}"""
 
 
 # The review server's own policy, so nothing the shell needs is admitted here
