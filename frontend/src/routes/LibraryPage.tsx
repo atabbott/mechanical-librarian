@@ -2610,9 +2610,10 @@ export default function LibraryPage({
       loadMore.current = null
       return
     }
-    if (attentionQuery.dataUpdatedAt === pending.updated) return
+    const pages = attention.data?.pages.length ?? 0
+    if (attentionQuery.dataUpdatedAt === pending.updated && pages <= pending.pages) return
     loadMore.current = null
-    if ((attention.data?.pages.length ?? 0) <= pending.pages) return
+    if (pages <= pending.pages) return
     const active = document.activeElement
     if (active && active !== document.body && !attentionRail.current?.contains(active)) return
     const first = attentionItems[pending.from]
@@ -3328,6 +3329,7 @@ export default function LibraryPage({
     scheduleSearchNavigation()
   }
   const changeAttention = (open: boolean) => {
+    if (!open) revealWorkspace.current = Boolean(search.preview ?? search.work) && compactWidth()
     pendingSearchQuery.current = {
       q: searchPending ? queryText.trim() : null,
       attention: open,
@@ -4667,14 +4669,7 @@ export default function LibraryPage({
                         : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
                 </p>
               </div>
-              <button
-                onClick={() => {
-                  revealWorkspace.current = Boolean(search.preview ?? search.work) && compactWidth()
-                  changeAttention(false)
-                }}
-              >
-                Close
-              </button>
+              <button onClick={() => changeAttention(false)}>Close</button>
             </header>
             {attention.data === undefined ? (
               <p role={attention.isError ? 'alert' : 'status'}>
