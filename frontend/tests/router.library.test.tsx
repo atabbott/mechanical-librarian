@@ -10509,6 +10509,8 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
     const more = await within(rail).findByRole('button', { name: 'Load more attention' })
+    // Opening the rail focuses it a frame later; the owner reaches Load more after that.
+    await waitFor(() => expect(rail).toHaveFocus())
     more.focus()
     await user.keyboard('{Enter}')
     // While the page loads the control keeps focus, and a second press is ignored.

@@ -228,6 +228,9 @@ const preparationPassage = [
   ['checked', 'Metadata checked'],
 ] as const
 
+// The compact layout, where the selected work replaces the list.
+const compactWidth = () =>
+  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
 
 const PreparationSummary = ({
@@ -2320,6 +2323,7 @@ export default function LibraryPage({
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
   const attentionRail = useRef<HTMLElement>(null)
+  const revealWorkspace = useRef(false)
   const workSelectionGeneration = useRef(0)
   const selectedIdentityRef = useRef<{
     id: string
@@ -3085,6 +3089,24 @@ export default function LibraryPage({
         : Math.max(0, bounds.bottom - window.innerHeight)
     if (reveal) window.scrollBy({ top: reveal })
   }, [centreFieldRail, selected?.destination, selectedDetailReady])
+  // At compact widths the list gives way to the work, so an owner who chose one
+  // far down the page is brought to the workspace's top, where Back to works
+  // leads it, just below the sticky masthead (#1284). These selections skip the
+  // router's reset to the top, and the work may still be loading, so the reveal
+  // repeats until it lands or the work settles.
+  useLayoutEffect(() => {
+    if (!revealWorkspace.current || !(search.preview ?? search.work)) return
+    const workspace = document.querySelector<HTMLElement>('.library-workspace')
+    if (!workspace || !compactWidth()) {
+      revealWorkspace.current = false
+      return
+    }
+    const masthead = document.querySelector<HTMLElement>('.masthead')?.getBoundingClientRect()
+    const top = window.scrollY + workspace.getBoundingClientRect().top - (masthead?.bottom ?? 0)
+    window.scrollTo({ top })
+    if (Math.abs(window.scrollY - top) <= 1 || selectedDetailReady || selectedReadError)
+      revealWorkspace.current = false
+  }, [search.preview, search.work, selectedDetailReady, selectedReadError])
   useLayoutEffect(() => {
     if (advanceScroll.current === null) return
     const top = advanceScroll.current
@@ -3166,7 +3188,7 @@ export default function LibraryPage({
     }
     setOpenedWork(null)
     void navigate({
-      resetScroll: !(field && reviewCaseId === selectedReviewCaseId),
+      resetScroll: !revealWorkspace.current && !(field && reviewCaseId === selectedReviewCaseId),
       search: (current) => {
         const next = { ...current, preview: reviewCaseId }
         delete next.work
@@ -3184,6 +3206,7 @@ export default function LibraryPage({
   const select = async (work: LibraryWorkView) => {
     // A retained row may not be on the page the URL now names.
     if (retained) return
+    revealWorkspace.current = compactWidth()
     if (work.reviewCaseId) {
       selectCase(work.reviewCaseId)
       return
@@ -3192,6 +3215,7 @@ export default function LibraryPage({
     setCompletionInspection(null)
     const generation = ++workSelectionGeneration.current
     await navigate({
+      resetScroll: !revealWorkspace.current,
       search: (current) => {
         const next = { ...current, work: work.workId }
         delete next.preview
@@ -3378,6 +3402,7 @@ export default function LibraryPage({
     attentionCursor: string | undefined,
   ) => {
     if (attention.isPlaceholderData) return
+    revealWorkspace.current = compactWidth()
     workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
@@ -3385,6 +3410,7 @@ export default function LibraryPage({
     setCompletionInspection(null)
     setOpenedWork(null)
     void navigate({
+      resetScroll: !revealWorkspace.current,
       search: (current) => {
         const next = { ...current, preview: reviewCaseId, field }
         if (attentionCursor) next.attentionCursor = attentionCursor

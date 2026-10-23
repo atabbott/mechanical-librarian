@@ -3502,6 +3502,53 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
         assert all("q=" not in query for query in requests), requests
 
 
+# Back to works, after selection: inside the viewport, below the sticky
+# masthead, and the element actually under its centre.
+_BACK_IN_VIEW = """() => {
+  const back = document.querySelector('.compact-workspace-back');
+  const masthead = document.querySelector('.masthead').getBoundingClientRect();
+  if (!back || back.getClientRects().length === 0) return {visible: false};
+  const box = back.getBoundingClientRect();
+  const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return {
+    visible: box.top >= masthead.bottom - 1 && box.bottom <= innerHeight + 1 && back.contains(hit),
+    top: box.top, bottom: box.bottom, masthead: masthead.bottom, height: innerHeight,
+  };
+}"""
+
+
+def test_compact_selection_brings_back_to_works_into_view() -> None:
+    """Choosing a work far down the compact list scrolls the workspace's top,
+    where Back to works leads it, to just below the masthead (#1284)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        _serve_cohort(page, stylesheet=lambda: styles[text], writes_off_handoff=True)
+        for reduced in (False, True):
+            page.emulate_media(reduced_motion="reduce" if reduced else "no-preference")
+            for text in styles:
+                for width in (390, 320):
+                    where = f"{text} at {width}px{' reduced' if reduced else ''}"
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.goto("https://react-platform.invalid/library?lens=all")
+                    # The last work that opens, far below the first screen.
+                    rows = page.locator("button.library-work-row")
+                    expect(rows.first).to_be_visible()
+                    last = rows.nth(rows.count() - 1)
+                    last.scroll_into_view_if_needed()
+                    last.click()
+                    expect(page).to_have_url(re.compile(r"[?&](preview|work)="))
+                    page.locator(".compact-workspace-back").wait_for()
+                    page.evaluate(_TWO_FRAMES)
+                    back = page.evaluate(_BACK_IN_VIEW)
+                    assert back["visible"], f"{where}: {back}"
+                    assert not page.evaluate(_FOCUS_ON_BODY), where
+
+
 # Where the workspace starts on the page, and the toolbar's own height, read
 # once layout has held still for three frames (a restyle can land late).
 _WORKSPACE_GEOMETRY = """async () => {
@@ -3511,9 +3558,7 @@ _WORKSPACE_GEOMETRY = """async () => {
     return {
       top: workspace.top + window.scrollY,
       header: header.getBoundingClientRect().height,
-      // The toolbar's buttons and the handoff's primary action; its secondary
-      // text link is the handoff's own (#1241) and is not a toolbar control.
-      controls: [...header.querySelectorAll('button, a.cm-primary'), ...document.querySelectorAll('.compact-workspace-back')]
+      controls: [...header.querySelectorAll('button, a'), ...document.querySelectorAll('.compact-workspace-back')]
         .filter(node => node.getClientRects().length > 0)
         .map(node => [node.textContent.trim().slice(0, 24), node.getBoundingClientRect().height]),
     };

@@ -365,7 +365,8 @@ zero, and one whose source failed is left out or reads "Count unavailable", neve
 "Counting". Counts that belong to a preparation run say so. The Library toolbar
 is one element whether or not a work is selected, so selecting a work never moves
 the workspace; at compact widths Back to works leads the workspace and returns to
-the list. Load more in the Attention rail moves focus to the first row it adds.
+the list, and choosing a work scrolls the page so Back to works sits just below the
+masthead. Load more in the Attention rail moves focus to the first row it adds.
 
 The authenticated Library is the complete work surface. It opens on the `all`
 lens with server-authoritative attention counts, presents readable title,
