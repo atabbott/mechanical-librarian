@@ -512,17 +512,11 @@ class _StoreRuntimeActivation:
         dispatcher = self.dispatcher
         expected = dispatcher.current()
         dispatcher.prepare(candidate)
-
-        def committed() -> object:
-            # A recovery store never moves past an authority that did not
-            # commit: a failed commit leaves it where a restart accepts it, and
-            # a failed cutover after the commit is completed by that restart.
-            result = commit()
-            if cutover is not None:
-                cutover()
-            return result
-
-        return dispatcher.transition(expected, candidate, committed)
+        # A recovery store never moves past an authority that did not commit:
+        # a failed commit resumes the predecessor where a restart accepts it,
+        # and a failed cutover after the commit fails the service closed so
+        # the restart completes it and no generation runs superseded settings.
+        return dispatcher.transition(expected, candidate, commit, cutover)
 
     def activate_setup(
         self,

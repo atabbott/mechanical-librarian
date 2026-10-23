@@ -108,8 +108,15 @@ class MutableRuntimeDispatcher:
         expected: RuntimeGeneration,
         successor: RuntimeGeneration,
         commit: Callable[[], _Result],
+        after_commit: Callable[[], None] | None = None,
     ) -> _Result:
-        """Commit and publish with captures and scheduler admissions serialized."""
+        """Commit and publish with captures and scheduler admissions serialized.
+
+        ``after_commit`` runs once the commit has succeeded and before the
+        successor is admitted. The authority is already durable then, so its
+        failure fails closed like any other post-commit fault instead of
+        resuming the predecessor on superseded settings.
+        """
         if not successor._started or successor._admitting or successor._closed:
             raise RuntimeError("runtime successor is unavailable")
         result: _Result
@@ -138,6 +145,8 @@ class MutableRuntimeDispatcher:
                     successor._closed = True
                 raise
             try:
+                if after_commit is not None:
+                    after_commit()
                 self._current = successor
                 self._apply_shutdown_budget(successor.shutdown_seconds)
                 successor.admit()

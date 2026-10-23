@@ -160,8 +160,10 @@ The runtime rebuild that a saved generation triggers used to drain the outbox
 and reconcile the recovery store while preparing the successor, before the
 settings commit. A commit that then failed left the store's generation ahead of
 the configuration, and the next start refused it. Under store authority that
-cutover is now deferred until the commit succeeds; a failure after the commit
-leaves the store at the predecessor generation, which the next start delivers.
+cutover is now deferred until the commit succeeds. A cutover that fails after
+the commit fails the service closed: it answers unavailable and requests a
+shutdown rather than resuming the predecessor on superseded settings, and the
+restart delivers the committed generation.
 File-authority startup keeps reconciling inline, because it commits nothing.
 
 The Library and Settings notice reads one bounded, read-only projection of

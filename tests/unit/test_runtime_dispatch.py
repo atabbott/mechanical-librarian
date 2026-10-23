@@ -130,6 +130,54 @@ def test_partial_predecessor_stop_failure_fails_closed_without_committing() -> N
     assert not old.admitting and not new.admitting
 
 
+def test_after_commit_fault_serves_unavailable_and_requests_shutdown() -> None:
+    shutdown: list[str] = []
+    events: list[str] = []
+    old = RuntimeGeneration(
+        _app,
+        resume_admission=lambda: events.append("old.resume"),
+        begin_drain=lambda: events.append("old.drain"),
+        close=lambda: events.append("old.close"),
+    )
+    new = RuntimeGeneration(
+        _app,
+        admit=lambda: events.append("new.admit"),
+        begin_drain=lambda: events.append("new.drain"),
+        close=lambda: events.append("new.close"),
+    )
+    dispatcher = MutableRuntimeDispatcher(
+        old, request_shutdown=lambda: shutdown.append("shutdown")
+    )
+    dispatcher.start()
+    dispatcher.prepare(new)
+
+    def cutover() -> None:
+        events.append("cutover")
+        raise ValueError("cutover")
+
+    with pytest.raises(ValueError, match="cutover"):
+        dispatcher.transition(
+            old, new, lambda: events.append("commit"), after_commit=cutover
+        )
+    sent: list[dict[str, object]] = []
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    asyncio.run(dispatcher({"type": "http"}, _receive, send))
+    assert shutdown == ["shutdown"]
+    assert events == [
+        "commit",
+        "cutover",
+        "old.drain",
+        "old.close",
+        "new.drain",
+        "new.close",
+    ]
+    assert not old.admitting and not new.admitting
+    assert sent[0]["status"] == 503
+
+
 def test_post_commit_admit_fault_serves_unavailable_and_requests_shutdown() -> None:
     shutdown: list[str] = []
     resources: list[str] = []

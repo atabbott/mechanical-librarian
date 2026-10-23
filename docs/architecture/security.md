@@ -2251,5 +2251,6 @@ through the existing Settings write and its optimistic revision, so it grants
 no credential, write, budget or pacing authority and sends no provider request
 by itself. File-managed settings refuse it. The recovery cutover now runs only
 after the settings commit, so a failed save cannot leave recovery ahead of
-configuration and stop the next start.
+configuration and stop the next start, and a cutover that fails after the
+commit fails the service closed rather than keep superseded settings running.
 

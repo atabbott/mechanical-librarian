@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import tempfile
@@ -1978,6 +1979,84 @@ def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
                 }
             ],
         }
+
+
+@pytest.mark.parametrize("path", ["retry_now", "settings_save"])
+def test_a_failed_cutover_after_the_commit_fails_closed_until_a_restart(
+    path: str,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+    )
+    from mechanical_librarian.domain.owner_settings import SettingsView
+
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        _quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        runtime.seed()
+        application = runtime.start()
+        dispatcher = runtime.dispatcher
+        assert dispatcher is not None
+        shutdown: list[str] = []
+        dispatcher.bind_outer_server(
+            lambda: shutdown.append("shutdown"), lambda _: None
+        )
+        before = runtime.recovery_state()
+
+        def busy(*_args, **_kwargs):
+            raise sqlite3.OperationalError("database is locked")
+
+        # The settings commit succeeds; the recovery cutover that follows it
+        # cannot take its write lock.
+        with patch.object(SQLiteProviderRecoveryStore, "reconcile_generation", busy):
+            with pytest.raises(
+                ReviewApplicationError, match="settings_unavailable"
+            ) as refused:
+                if path == "retry_now":
+                    application.retry_provider_recovery(1)
+                else:
+                    view = application.owner_settings()
+                    assert isinstance(view, SettingsView)
+                    current = view.document
+                    application.write_owner_settings(
+                        current.model_copy(
+                            update={
+                                "revision": current.revision + 1,
+                                "provider_recovery_generation": 2,
+                            }
+                        ),
+                        current.revision,
+                        (),
+                    )
+        assert isinstance(refused.value.__cause__, sqlite3.OperationalError)
+        assert 2 == runtime.generation()
+        assert before == runtime.recovery_state()
+        # No generation keeps running the superseded settings: the service
+        # answers unavailable and asks its listener owner to stop.
+        assert shutdown == ["shutdown"]
+        sent: list[dict[str, object]] = []
+
+        async def receive() -> dict[str, object]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        asyncio.run(dispatcher({"type": "http"}, receive, send))
+        assert sent[0]["status"] == 503
+        # The restart completes the cutover at the committed generation.
+        runtime.dispatcher = None
+        restarted = runtime.start()
+        health = runtime.recovery_state()["provider_recovery_health"]
+        assert [["google", "google_books", "books", 2, "waiting"]] == [
+            row[:5] for row in health
+        ]
+        jobs = runtime.recovery_state()["provider_recovery_jobs"]
+        assert {2} == {row[3] for row in jobs} and 3 == len(jobs)
+        assert (
+            restarted.preparation().to_data()["provider_throttling"]["generation"] == 2
+        )
 
 
 def test_paused_preparation_still_runs_scheduled_provider_recovery() -> None:

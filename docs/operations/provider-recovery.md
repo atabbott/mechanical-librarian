@@ -49,8 +49,9 @@ with `provider_recovery_stale` or `settings_stale` and changes nothing. When
 container. A saved generation takes effect the way any saved setting does: the
 runtime is rebuilt, and the recovery cutover below runs only after the new
 settings revision has committed. A save that fails leaves recovery exactly as
-it was, so a restart still starts. A cutover that fails after the commit leaves
-recovery at the previous generation, and the next start delivers it.
+it was, so a restart still starts. A cutover that fails after the commit stops
+the service instead of running on the previous settings; restart the container
+and the next start delivers the committed generation.
 
 Startup first performs a read-only generation compatibility check;
 it rejects persisted generations newer than configuration before any outbox
