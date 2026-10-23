@@ -10333,3 +10333,430 @@ describe('library provider throttling notice (#1282)', () => {
     expect(within(region).getByRole('status')).toHaveTextContent('Retry now accepted.')
   })
 })
+
+describe('Library counts, search scope and grouped Attention (#1284)', () => {
+  const counted = (attention: number, all: number): LibraryView => ({
+    ...library,
+    counts: { attention, all, clear: all - attention },
+  })
+  const badge = () => document.querySelector('.attention-toggle strong')
+  const worksStatus = () => document.querySelector('.library-works-heading [role="status"]')
+  const railItem = (
+    id: string,
+    destination: string,
+    title: string,
+    workAttentionCount: number,
+  ) => ({
+    id,
+    destination,
+    title,
+    authors: ['Synthetic Writer'],
+    library: 'Books',
+    mediaKind: 'ebook',
+    notices: [],
+    provenance: [],
+    workAttentionCount,
+  })
+  const writesOff = () =>
+    activity({
+      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ consented: false, destination: 'title', prepared: 2, state: 'allowed' }],
+        },
+      ],
+      waiting: {
+        applying: 0,
+        awaiting_permission: 2,
+        held_for_recovery: 0,
+        retrying: 0,
+        scheduled: 0,
+      },
+    })
+
+  it('V1: a search narrows only the list and the rail, never the badge or its denominators', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+      search.q ? counted(1, 1) : counted(3, 5),
+    )
+    const { router } = renderRoute('/library?lens=needs_attention&attention=open', http)
+    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^5 works$/u))
+    expect(badge()).toHaveTextContent(/^3 works$/u)
+    expect(screen.getByRole('button', { name: 'Attention 3 works' })).toBeVisible()
+    const rail = screen.getByRole('complementary', { name: 'Attention queue' })
+    expect(within(rail).getByText('3 works need a decision')).toBeVisible()
+    // Opening the rail moves focus to it; type only once it has settled there.
+    await waitFor(() => expect(rail).toHaveFocus())
+
+    await user.type(screen.getByRole('searchbox'), 'needle')
+    await waitFor(() => expect(router.state.location.search.q).toBe('needle'))
+    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^Matching: 1 of 5 works$/u))
+    expect(badge()).toHaveTextContent(/^3 works$/u)
+    expect(
+      within(screen.getByRole('complementary', { name: 'Attention queue' })).getByText(
+        'Matching: 1 of 3 works needing a decision',
+      ),
+    ).toBeVisible()
+
+    await user.clear(screen.getByRole('searchbox'))
+    await waitFor(() => expect(router.state.location.search.q).toBeUndefined())
+    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^5 works$/u))
+    expect(badge()).toHaveTextContent(/^3 works$/u)
+    // The summary is the unsearched lens=all read, read once and never with q.
+    const summaryCalls = vi
+      .mocked(http.getLibrary)
+      .mock.calls.filter(([search]) => search.lens === 'all')
+    expect(summaryCalls.map(([search]) => search)).toEqual([{ lens: 'all' }])
+  })
+
+  it('V1: singular forms name one work', async () => {
+    const http = createHttp()
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => counted(1, 1))
+    renderRoute('/library?lens=all&attention=open', http)
+    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^1 work$/u))
+    expect(badge()).toHaveTextContent(/^1 work$/u)
+    expect(screen.getByText('1 work needs a decision')).toBeVisible()
+  })
+
+  it('V2: Attention lists each work once with its fields as rows, and Load more continues a work', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const workA = railItem('case-1', 'title', 'Work A', 2)
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) =>
+      cursor === 'attention-page-2'
+        ? {
+            total: 5,
+            items: [
+              railItem('case-2', 'authors', 'Work B', 2),
+              railItem('case-3', 'title', 'Work C', 1),
+            ],
+          }
+        : {
+            total: 5,
+            items: [
+              workA,
+              { ...workA, destination: 'description' },
+              railItem('case-2', 'title', 'Work B', 2),
+            ],
+            nextCursor: 'attention-page-2',
+          },
+    )
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await waitFor(() => expect(rail.querySelectorAll('.attention-work-group')).toHaveLength(2))
+    const groups = [...rail.querySelectorAll<HTMLElement>('.attention-work-group')]
+    expect(rail.querySelectorAll('button.attention-queue-item')).toHaveLength(3)
+    expect(within(rail).getAllByText('Work A')).toHaveLength(1)
+    expect(within(rail).getAllByText('Synthetic Writer')).toHaveLength(2)
+    expect(groups.map((group) => group.querySelector('.attention-position')?.textContent)).toEqual([
+      '1',
+      '2',
+    ])
+    expect(
+      groups.map((group) => group.querySelector('.attention-work-count')?.textContent),
+    ).toEqual(['2 fields', '2 fields'])
+    const rows = within(groups[0] ?? rail).getAllByRole('button')
+    expect(rows.map((row) => row.querySelector('.attention-queue-copy b')?.textContent)).toEqual([
+      'Title · Needs your decision',
+      'Description · Needs your decision',
+    ])
+    for (const row of rows) expect(row).toHaveAccessibleDescription('Work A')
+
+    await user.click(screen.getByRole('button', { name: 'Load more attention' }))
+    await waitFor(() => expect(rail.querySelectorAll('.attention-work-group')).toHaveLength(3))
+    const workB = within(rail).getAllByRole('button', { description: 'Work B' })
+    expect(workB.map((row) => row.querySelector('b')?.textContent)).toEqual([
+      'Title · Needs your decision',
+      'Authors · Needs your decision',
+    ])
+    expect(workB[0]?.closest('.attention-work-group')).toBe(
+      workB[1]?.closest('.attention-work-group'),
+    )
+    expect(within(rail).getAllByText('Work B')).toHaveLength(1)
+    expect(rail.querySelectorAll('button.attention-queue-item')).toHaveLength(5)
+  })
+
+  it.each([
+    ['with a later page', true, 'Work 1 of 2 loaded'],
+    ['fully loaded', false, 'Work 1 of 2'],
+  ] as const)('V2: Queue position counts loaded works %s', async (_name, more, position) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({
+      total: 2,
+      items: [railItem('case-1', 'title', 'A Book', 1), railItem('case-2', 'title', 'Work B', 1)],
+      ...(more ? { nextCursor: 'attention-page-2' } : {}),
+    }))
+    renderRoute('/library?lens=all&attention=open', http)
+    await user.click(await screen.findByRole('button', { name: /^Title/u, description: 'A Book' }))
+    const label = await screen.findByText('Queue position')
+    expect(label.nextElementSibling).toHaveTextContent(new RegExp(`^${position}$`, 'u'))
+    await user.click(screen.getByRole('button', { name: /^Attention/u }))
+    expect(
+      await screen.findByRole('button', { name: /^Title/u, description: 'A Book' }),
+    ).toHaveAttribute('aria-current', 'true')
+    expect(screen.getByRole('button', { name: /^Title/u, description: 'Work B' })).toHaveAttribute(
+      'aria-current',
+      'false',
+    )
+  })
+
+  it('V3: no count reads zero before its source resolves', async () => {
+    let release: ((value: LibraryView) => void) | undefined
+    const view = writesOff()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getLibrary: vi.fn(
+        () =>
+          new Promise<LibraryView>((resolve) => {
+            release = resolve
+          }),
+      ),
+    }
+    renderRoute('/library?lens=all&attention=open', http)
+    expect(
+      await screen.findByRole('heading', { name: 'Counting works in Library… Writes are off.' }),
+    ).toBeVisible()
+    expect(badge()).toHaveTextContent(/^…$/u)
+    expect(worksStatus()).toHaveTextContent(/^Loading count…$/u)
+    expect(screen.getByText('Counting works…')).toBeVisible()
+    expect(document.body.textContent).not.toMatch(/\b0 works?\b/u)
+    await act(async () => release?.(counted(2, 5)))
+    expect(
+      await screen.findByRole('heading', { name: '5 works are in Library. Writes are off.' }),
+    ).toBeVisible()
+    expect(badge()).toHaveTextContent(/^2 works$/u)
+  })
+
+  it('V3: a failed summary omits its figure rather than printing zero', async () => {
+    const view = writesOff()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getLibrary: vi.fn(async () => Promise.reject(new Error('synthetic library failure'))),
+    }
+    renderRoute('/library?lens=all', http)
+    expect(await screen.findByRole('heading', { name: 'Writes are off.' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Attention' })).toBeVisible()
+    expect(badge()).toBeNull()
+    expect(worksStatus()).toHaveTextContent(/^Count unavailable$/u)
+  })
+
+  const settledTitle = (): CaseDetailView => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('completion fixture requires a title field')
+    return {
+      ...detail,
+      fields: [
+        {
+          ...titleField,
+          needsAttention: false,
+          humanDecision: {
+            actor: 'owner',
+            application: 'apply' as const,
+            decision_id: 'decision-filtered',
+            destination: 'title',
+            occurred_at: 1,
+            outcome: 'keep_current',
+            proposal_id: titleField.proposalId,
+            review_case_id: 'case-1',
+            selected_value: null,
+            target_fingerprint: titleField.targetFingerprint,
+          },
+        },
+      ],
+    }
+  }
+  const completeUnderSearch = async (
+    entry: string,
+    summary: (decided: boolean) => Promise<LibraryView>,
+  ) => {
+    const user = userEvent.setup()
+    let decided = false
+    let current = detail
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('completion fixture requires a title field')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async (search: LibrarySearch) =>
+        search.q ? counted(decided ? 0 : 1, 1) : summary(decided),
+      ),
+      getAttention: vi.fn(async () =>
+        decided
+          ? { total: 0, items: [] }
+          : { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] },
+      ),
+      getCaseDetail: vi.fn(async () => current),
+      recordDecision: vi.fn(async () => {
+        decided = true
+        current = settledTitle()
+        return {
+          confirmation: { status: 'confirmed' as const, case: current },
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          application: 'apply' as const,
+          decision_id: 'decision-filtered',
+          destination: 'title',
+          occurred_at: 1,
+          outcome: 'keep_current' as const,
+          proposal_id: titleField.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: titleField.targetFingerprint,
+        }
+      }),
+    }
+    renderRoute(entry, http)
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    const complete = (await screen.findByRole('heading', { name: 'Review complete' })).closest(
+      'article',
+    )
+    if (!complete) throw new Error('completion boundary is required')
+    return complete.querySelector('footer')
+  }
+
+  it.each([
+    [
+      3,
+      'All review work matching this search is complete. 2 more works need a decision outside this search.',
+    ],
+    [
+      2,
+      'All review work matching this search is complete. 1 more work needs a decision outside this search.',
+    ],
+    [1, 'All review work matching this search is complete. No other work needs a decision.'],
+  ] as const)(
+    'V4: completing a search with %i library-wide works states what remains outside it',
+    async (before, copy) => {
+      const footer = await completeUnderSearch(
+        '/library?lens=all&q=needle&preview=case-1&field=title',
+        async (decided) => counted(decided ? before - 1 : before, 4),
+      )
+      await waitFor(() => expect(footer).toHaveTextContent(new RegExp(`^${copy}$`, 'u')))
+    },
+  )
+
+  it('V4: a remainder skewed below zero is clamped', async () => {
+    const footer = await completeUnderSearch(
+      '/library?lens=all&q=needle&preview=case-1&field=title',
+      async () => counted(0, 4),
+    )
+    await waitFor(() =>
+      expect(footer).toHaveTextContent(
+        /^All review work matching this search is complete\. No other work needs a decision\.$/u,
+      ),
+    )
+  })
+
+  it('V4: a pending summary leaves the remainder unstated', async () => {
+    const footer = await completeUnderSearch(
+      '/library?lens=all&q=needle&preview=case-1&field=title',
+      () => new Promise<LibraryView>(() => undefined),
+    )
+    await waitFor(() =>
+      expect(footer).toHaveTextContent(/^All review work matching this search is complete\.$/u),
+    )
+  })
+
+  it('V4: without a search the completion footer is unchanged', async () => {
+    const footer = await completeUnderSearch(
+      '/library?lens=needs_attention&preview=case-1&field=title',
+      async (decided) => counted(decided ? 2 : 3, 4),
+    )
+    await waitFor(() =>
+      expect(footer).toHaveTextContent(/^All visible review work is complete\.$/u),
+    )
+  })
+
+  it('V5: the default landing and the summary share one request', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    renderRoute('/library?lens=all', http)
+    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^1 work$/u))
+    expect(http.getLibrary).toHaveBeenCalledOnce()
+    cleanup()
+
+    const lensed = createHttp()
+    const { router } = renderRoute('/library?lens=needs_attention', lensed)
+    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^1 work$/u))
+    expect(vi.mocked(lensed.getLibrary).mock.calls.map(([search]) => search)).toEqual(
+      expect.arrayContaining([
+        { lens: 'all' },
+        expect.objectContaining({ lens: 'needs_attention' }),
+      ]),
+    )
+    expect(lensed.getLibrary).toHaveBeenCalledTimes(2)
+    await user.type(screen.getByRole('searchbox'), 'needle')
+    await waitFor(() => expect(router.state.location.search.q).toBe('needle'))
+    await waitFor(() => expect(lensed.getLibrary).toHaveBeenCalledTimes(3))
+    expect(vi.mocked(lensed.getLibrary).mock.calls[2]?.[0]).toMatchObject({
+      lens: 'needs_attention',
+      q: 'needle',
+    })
+  })
+
+  it('V7: one toolbar, with the same children, whether or not a work is selected', async () => {
+    const user = userEvent.setup()
+    const view = writesOff()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+    }
+    renderRoute('/library?lens=all', http)
+    await screen.findByRole('heading', { name: '1 work is in Library. Writes are off.' })
+    const header = document.querySelector('header[aria-label="Library controls"]')
+    const toggle = screen.getByRole('button', { name: 'Attention 1 work' })
+    const children = () => [...(header?.children ?? [])].map((child) => child.className)
+    const before = children()
+    expect(before).toEqual(['attention-toggle', expect.stringContaining('cm-library-handoff')])
+    expect(header).toHaveAttribute('data-route-focus', 'true')
+    expect(document.querySelector('.compact-workspace-back')).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /^A Book\./u }))
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    expect(document.querySelector('header[aria-label="Library controls"]')).toBe(header)
+    expect(children()).toEqual(before)
+    expect(screen.getByRole('button', { name: 'Attention 1 work' })).toBe(toggle)
+    expect(header).not.toHaveAttribute('data-route-focus')
+    expect(document.querySelector('.library-workspace')?.firstElementChild).toBe(
+      screen.getByRole('button', { name: 'Back to works' }),
+    )
+
+    await user.click(toggle)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    expect(toggle).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.queryByRole('button', { name: 'Back to works' })).toBeNull()
+    await user.click(within(rail).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'false'))
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body))
+    expect(screen.getByRole('button', { name: 'Back to works' })).toBeVisible()
+  })
+
+  it.each([
+    [2, 'fields match this search'],
+    [1, 'field matches this search'],
+  ] as const)('V8: /attention under a search reads %i %s', async (total, copy) => {
+    const http = createHttp()
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({
+      total,
+      items: [railItem('case-1', 'title', 'A Book', total)],
+    }))
+    renderRoute('/attention?q=needle', http)
+    const count = await screen.findByText(copy)
+    expect(count.previousElementSibling).toHaveTextContent(String(total))
+    cleanup()
+    renderRoute('/attention', http)
+    expect(
+      await screen.findByText(
+        total === 1 ? 'field across current works' : 'fields across current works',
+      ),
+    ).toBeVisible()
+  })
+})
