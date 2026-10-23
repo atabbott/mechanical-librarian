@@ -2923,6 +2923,66 @@ _TIME_TOGETHER = """(sweep) => {
   return { found: [...found], times };
 }"""
 
+# Each remedy link's keyboard focus ring: a 3 px outline that crosses no word
+# of its entry outside the line it rings, at 3:1 against the notice (#1282 R5).
+_REMEDY_RING = """() => {
+  const channel = value => {
+    const c = value / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = color => {
+    const values = color.match(/[\\d.]+/g).map(Number);
+    const rgb = color.startsWith('color(') ? values.slice(0, 3).map(v => v * 255)
+      : values.slice(0, 3);
+    return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+  };
+  const contrast = (a, b) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (high + 0.05) / (low + 0.05);
+  };
+  const found = [];
+  const contrasts = [];
+  for (const link of document.querySelectorAll('.provider-throttle-notice li a')) {
+    link.focus({ focusVisible: true });
+    const ring = [link, ...link.querySelectorAll('*')].find(node => {
+      const style = getComputedStyle(node);
+      return style.outlineStyle !== 'none' && parseFloat(style.outlineWidth) >= 3;
+    });
+    if (!ring) {
+      found.push(`"${link.textContent}" has no 3px focus ring`);
+      continue;
+    }
+    const style = getComputedStyle(ring);
+    const reach = parseFloat(style.outlineOffset) + parseFloat(style.outlineWidth);
+    const item = link.closest('li');
+    const words = [];
+    const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/\\S+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        for (const rect of range.getClientRects())
+          if (rect.width > 0) words.push([match[0], rect]);
+      }
+    for (const line of [...ring.getClientRects()].filter(rect => rect.width > 0)) {
+      const inside = rect => rect.left >= line.left - 0.5 && rect.right <= line.right + 0.5 &&
+        rect.top >= line.top - 0.5 && rect.bottom <= line.bottom + 0.5;
+      for (const [word, rect] of words) {
+        if (inside(rect)) continue;
+        const across = Math.min(line.right + reach, rect.right) - Math.max(line.left - reach, rect.left);
+        const down = Math.min(line.bottom + reach, rect.bottom) - Math.max(line.top - reach, rect.top);
+        if (across > 0.5 && down > 0.5)
+          found.push(`the ring of "${link.textContent}" crosses "${word}" by ${Math.round(down)}px`);
+      }
+    }
+    contrasts.push([link.textContent, contrast(style.outlineColor,
+      getComputedStyle(link.closest('.provider-throttle-notice')).backgroundColor)]);
+  }
+  document.activeElement?.blur();
+  return { found, contrasts };
+}"""
+
 # The Retry outcome on show: where it sits against the control and how it is
 # marked (#1282 R3 F6).
 _RETRY_OUTCOME = """() => {
@@ -3031,7 +3091,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
             "214 deferred lookups. Next automatic retry "
         )
         # The burst resets on the next day, so the time names the day.
-        expect(entries.nth(0).locator("span")).to_have_text(
+        expect(entries.nth(0).locator(":scope > span")).to_have_text(
             re.compile(r"Next automatic retry [^.]+, [^.]+\.$")
         )
         expect(entries.nth(1)).to_contain_text(
@@ -3186,6 +3246,10 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                         "() => document.documentElement.scrollWidth"
                     )
                     assert document <= width, f"{where}: the page is {document}px wide"
+                    ring = page.evaluate(_REMEDY_RING)
+                    assert ring["found"] == [], f"{where}: {ring['found']}"
+                    low = [item for item in ring["contrasts"] if item[1] < 3]
+                    assert low == [], f"{where}: focus ring under 3:1 {low}"
                     if capture is not None:
                         Path(capture).mkdir(parents=True, exist_ok=True)
                         name = route.strip("/").split("?")[0]
@@ -3196,3 +3260,30 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                             ),
                             full_page=True,
                         )
+
+        # With 200% root text the links wrap; each line's ring still crosses
+        # no neighbouring word, in either theme, and nothing scrolls sideways.
+        widened = False
+        for dark in (False, True):
+            page.emulate_media(color_scheme="dark" if dark else "light")
+            page.goto("https://react-platform.invalid/library?lens=all")
+            expect(entries).to_have_count(3)
+            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+            for width in (390, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.evaluate("() => document.documentElement.offsetWidth")
+                where = f"{'dark' if dark else 'light'} 200% text at {width}px"
+                wrapped = page.locator(".provider-throttle-notice li a").evaluate_all(
+                    "links => links.filter(link => link.getClientRects().length > 1)"
+                    ".length"
+                )
+                assert wrapped > 0, f"{where}: no remedy link wraps"
+                ring = page.evaluate(_REMEDY_RING)
+                assert ring["found"] == [], f"{where}: {ring['found']}"
+                low = [item for item in ring["contrasts"] if item[1] < 3]
+                assert low == [], f"{where}: focus ring under 3:1 {low}"
+                layout = page.evaluate(_THROTTLE_ENTRY_LAYOUT)
+                small = [target for target in layout["targets"] if target[1] < 44]
+                assert small == [], f"{where}: links under 44px {small}"
+                document = page.evaluate("() => document.documentElement.scrollWidth")
+                assert document <= width, f"{where}: the page is {document}px wide"

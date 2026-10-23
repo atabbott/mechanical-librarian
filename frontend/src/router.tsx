@@ -705,9 +705,12 @@ export const ProviderThrottleNotice = () => {
                   <>
                     {' '}
                     <Link to="/settings" search={{ group: 'providers' }}>
-                      {entry.remedy === 'add_api_key'
-                        ? 'Add a Google Books API key'
-                        : 'Check the source\u2019s API key'}
+                      {/* The ring hugs this text, not the padded target. */}
+                      <span>
+                        {entry.remedy === 'add_api_key'
+                          ? 'Add a Google Books API key'
+                          : 'Check the source\u2019s API key'}
+                      </span>
                     </Link>
                   </>
                 ) : null}
