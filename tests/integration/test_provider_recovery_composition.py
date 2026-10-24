@@ -31,7 +31,7 @@ from mechanical_librarian.adapters.providers.inventaire_metadata import (
 )
 from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
 from mechanical_librarian.application import provider_retry_successor
-from mechanical_librarian.application.catalogue import CatalogueReader
+from mechanical_librarian.application.catalogue import CatalogueEntry, CatalogueReader
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -44,6 +44,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     provider_result_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
+    InspectionResult,
     MetadataReportError,
     ProviderLaneResult,
     ProviderResult,
@@ -1911,6 +1912,167 @@ def test_retry_now_has_exactly_the_effect_of_raising_the_generation_field() -> N
     assert 3 == len(jobs) and {(3, "queued", 0)} == {
         (row[3], row[16], row[17]) for row in jobs
     }
+
+
+def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
+    """Two fresh ebooks meet a keyless Google Books 429 in real preparation (#1367).
+
+    An ebook's non-terminal lane failure goes straight on to its proposal, so
+    the outbox drain is the only place recovery hears of it: each enrolment
+    names its classified failure without moving the scope's schedule.
+    """
+    items = ("item-1", "item-2")
+    isbn = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+
+    class Catalogue:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def probe_connection(self, *_args) -> None:
+            return None
+
+        def read_library(self, *_args) -> tuple[CatalogueEntry, ...]:
+            return tuple(
+                CatalogueEntry(
+                    "primary",
+                    "ebooks",
+                    "library-1",
+                    item,
+                    1,
+                    f"Title {index}",
+                    (),
+                    True,
+                    False,
+                    "singular-supported",
+                    f"{index + 10:064x}",
+                    f"/{item}.epub",
+                    "epub",
+                    "books",
+                )
+                for index, item in enumerate(items)
+            )
+
+    class Reader:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def read(self, item: str) -> TargetSnapshot:
+            index = items.index(item)
+            return TargetSnapshot(
+                "ebook",
+                f"Title {index}",
+                (TargetFile(f"{index + 10:064x}", f"{item}.epub", "epub"),),
+            )
+
+    class Inspector(_Inspector):
+        def inspect(self, *_args) -> InspectionResult:
+            return InspectionResult("c" * 64, (isbn,))
+
+    clock = [10_000.0]
+    statuses: list[int] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        response = httpx.Response(429, json={"error": {"code": 429}})
+        statuses.append(response.status_code)
+        return response
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+
+    def google(name, _client, maximum_bytes, timeout_seconds, **kwargs):
+        return GoogleBooksMetadataProvider(
+            name,
+            httpx.Client(transport=httpx.MockTransport(answer)),
+            maximum_bytes,
+            timeout_seconds,
+            **kwargs,
+            clock=lambda: clock[0],
+            wall_clock=lambda: clock[0],
+            sleep=advance,
+        )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
+        held = open_repository(database)
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        with (
+            patch.object(composition.time, "time", side_effect=lambda: int(clock[0])),
+            patch.object(composition, "AudiobookshelfCatalogueReader", Catalogue),
+            patch.object(composition, "AudiobookshelfItemReader", Reader),
+            patch.object(composition, "_IsolatedEpubInspector", Inspector),
+            patch.object(
+                composition,
+                "GoogleBooksPacer",
+                return_value=ProviderRequestPacer(
+                    clock=lambda: clock[0], sleep=advance
+                ),
+            ),
+            patch.object(
+                composition, "GoogleBooksMetadataProvider", side_effect=google
+            ),
+        ):
+            supervisor = composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                _reviewer_access(database, configuration),
+                database_authority=held.authority,
+                provider_recovery=recovery,
+            )
+            pipeline = supervisor._pipeline
+            pipeline.request("primary", "ebooks")
+            for _ in range(64):
+                if not pipeline.run_next(1):
+                    break
+        work = held._connection.execute(
+            "SELECT stage,state,failure_code FROM review_preparation_work"
+        ).fetchall()
+        events = recovery._connection.execute(
+            "SELECT state,attempt,next_eligible_at,occurred_at,outcome "
+            "FROM provider_recovery_events ORDER BY sequence"
+        ).fetchall()
+        health = recovery._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        activity = recovery.activity_snapshot()
+        throttling = composition._provider_throttling_reader(
+            recovery, configuration, {}, "available"
+        )()
+        supervisor.stop()
+        held.close()
+    assert [("complete", "complete", None)] * 2 == work
+    assert [429, 429] == statuses
+    # The fallback enrolment sets the schedule; each delivery names the reason.
+    assert [
+        ("waiting", 1, 17_200, 10_000, None),
+        ("waiting", 1, 17_200, 10_000, "rate_limited"),
+        ("waiting", 1, 17_200, 10_001, "rate_limited"),
+    ] == events
+    assert [("waiting", 1, 17_200)] == health
+    assert ["rate_limited"] == activity[0]["failure_reasons"]
+    assert throttling["entries"] == [
+        {
+            "library": "ebooks",
+            "adapter": "google_books",
+            "state": "waiting",
+            "reasons": ["rate_limited"],
+            "deferred": 2,
+            "next_retry_at": 17_200,
+            "remedy": "add_api_key",
+        }
+    ]
 
 
 def test_the_first_throttle_names_its_reason_and_remedy_through_its_retry() -> None:

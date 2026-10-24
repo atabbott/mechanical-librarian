@@ -453,8 +453,8 @@ def test_fixed_budget_replay_counts_actual_decided_fields_not_reason_labels() ->
             observers=lambda *_: (_ for _ in ()).throw(AssertionError("unused")),
             provider_resolver=lambda *_: None,
             pipeline=lambda: None,
-            enqueue=lambda jobs, enqueued_at: store.enqueue_jobs(
-                jobs, enqueued_at=enqueued_at
+            enqueue=lambda jobs, enqueued_at, outcomes: store.enqueue_jobs(
+                jobs, enqueued_at=enqueued_at, outcomes=outcomes
             ),
             clock=lambda: 1,
         )

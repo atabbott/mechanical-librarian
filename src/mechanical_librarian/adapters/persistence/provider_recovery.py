@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
@@ -13,6 +13,7 @@ from mechanical_librarian.domain.provider_recovery import (
     DEFERRED_RECOVERY_FAILURES,
     MAX_TIMESTAMP,
     RECOVERY_FAILURES,
+    TRANSIENT_RECOVERY_FAILURES,
     ProviderRecovery,
     ProviderRecoveryError,
     ProviderRecoveryJob,
@@ -1463,15 +1464,27 @@ class SQLiteProviderRecoveryStore:
             ) from error
 
     def enqueue_jobs(
-        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
+        self,
+        jobs: tuple[ProviderRecoveryJob, ...],
+        *,
+        enqueued_at: int,
+        outcomes: Mapping[ProviderRecoveryJob, str] | None = None,
     ) -> int:
         """Durably register exact-current failed lanes before any canary runs.
 
         The full package tuple is deliberately stored with the job.  A caller
         must revalidate it before dispatch; a replayed registration is a no-op.
+        A newly registered job with a non-terminal ``outcomes`` entry appends
+        one event copying its scope's current-generation health unchanged with
+        that outcome, so the episode names its reason (#1367).
         """
+        outcomes = {} if outcomes is None else outcomes
         if (
             not jobs
+            or not isinstance(outcomes, Mapping)
+            or not outcomes.keys() <= set(jobs)
+            or not set(outcomes.values())
+            <= TRANSIENT_RECOVERY_FAILURES | DEFERRED_RECOVERY_FAILURES
             or type(enqueued_at) is not int
             or not 0 <= enqueued_at <= MAX_TIMESTAMP - 7_200
             or tuple(
@@ -1619,6 +1632,21 @@ class SQLiteProviderRecoveryStore:
                                     0,
                                     enqueued_at,
                                     enqueued_at,
+                                ),
+                            )
+                        if job in outcomes:
+                            self._connection.execute(
+                                "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome) "
+                                "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,?,? "
+                                "FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? "
+                                "AND generation=? AND state!='recovered'",
+                                (
+                                    enqueued_at,
+                                    outcomes[job],
+                                    job.connection,
+                                    job.adapter,
+                                    job.scope,
+                                    job.generation,
                                 ),
                             )
                 self._connection.execute("COMMIT")

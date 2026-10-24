@@ -15,7 +15,7 @@ an Audiobookshelf endpoint is.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
@@ -33,6 +33,9 @@ from mechanical_librarian.application.provider_recovery_evidence import (
     TargetConnectionHeld,
     provider_recovery_jobs,
 )
+from mechanical_librarian.application.provider_recovery_policy import (
+    provider_recovery_decision,
+)
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
     GenerateProviderRetrySuccessor,
@@ -44,7 +47,11 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+from mechanical_librarian.domain.provider_recovery import (
+    DEFERRED_RECOVERY_FAILURES,
+    TRANSIENT_RECOVERY_FAILURES,
+    RecoveryAttemptEvidence,
+)
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.configuration import (
@@ -113,7 +120,10 @@ class ProviderRecoveryActivation:
             [str, str, str, str, int], ConfiguredProviderRetry | None
         ],
         pipeline: Callable[[], ReviewPreparationPipeline | None],
-        enqueue: Callable[[tuple[ProviderRecoveryJob, ...], int], int],
+        enqueue: Callable[
+            [tuple[ProviderRecoveryJob, ...], int, Mapping[ProviderRecoveryJob, str]],
+            int,
+        ],
         clock: Callable[[], int],
     ) -> None:
         self._configuration = configuration
@@ -373,9 +383,33 @@ class ProviderRecoveryActivation:
                 configuration=self._configuration,
                 scope=report.target.library,
             )
+            # An ebook's non-terminal lane failure reaches recovery only here,
+            # so its typed classification names the episode (#1367). Audiobook
+            # and credential failures are already observed where they occur.
+            failures = (
+                {}
+                if report.audio is not None
+                else {
+                    observation.provider: decision[0]
+                    for observation in report.providers
+                    if (
+                        decision := provider_recovery_decision(
+                            observation, now=created_at
+                        )
+                    )
+                    is not None
+                    and decision[0]
+                    in TRANSIENT_RECOVERY_FAILURES | DEFERRED_RECOVERY_FAILURES
+                }
+            )
+            outcomes = {
+                job: failures[job.connection]
+                for job in jobs
+                if job.connection in failures
+            }
             if jobs:
                 try:
-                    self._enqueue(jobs, created_at)
+                    self._enqueue(jobs, created_at, outcomes)
                 except Exception as error:
                     raise ReviewPipelineError("persistence") from error
         repository.complete_provider_recovery_outbox(

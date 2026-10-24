@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- The provider throttling notice now says why a source is limiting lookups,
-  and offers the Google Books key link, from the first throttle onwards. It no
-  longer loses them when a retry or a newly enrolled lookup follows, and drops
-  them only once the source recovers or Retry now starts over (#1367).
+- When an ebook's source first throttles or fails lookups, Library, Settings and
+  Activity now say why, and Library and Settings offer the Google Books key
+  link, without waiting for a retry. The reason stays through later retries and
+  clears once the source recovers or Retry now starts over (#1367).
 
 - A policy activation that completes with failures no longer blocks Validate
   and preview, and a new activation now proceeds over it. After activation,

@@ -9,7 +9,7 @@ caller and the background caller cannot fan out concurrently.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Protocol, cast
 from uuid import uuid4
@@ -31,7 +31,11 @@ from mechanical_librarian.domain.provider_recovery import (
 
 class ProviderRecoveryStore(Protocol):
     def enqueue_jobs(
-        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
+        self,
+        jobs: tuple[ProviderRecoveryJob, ...],
+        *,
+        enqueued_at: int,
+        outcomes: Mapping[ProviderRecoveryJob, str] | None = None,
     ) -> int: ...
     def claim_one(
         self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str]
@@ -210,10 +214,16 @@ class ScopedProviderRecoveryRunner:
         return floor if self._clock is None else max(floor, self._clock())
 
     def enqueue(
-        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
+        self,
+        jobs: tuple[ProviderRecoveryJob, ...],
+        *,
+        enqueued_at: int,
+        outcomes: Mapping[ProviderRecoveryJob, str] | None = None,
     ) -> int:
         """Persist the complete eligible set before it becomes claimable."""
-        return self._store.enqueue_jobs(jobs, enqueued_at=enqueued_at)
+        return self._store.enqueue_jobs(
+            jobs, enqueued_at=enqueued_at, outcomes=outcomes
+        )
 
     def run_one(self, *, now: int, token: str | None = None) -> RecoveryRun:
         started = self._monotonic()
