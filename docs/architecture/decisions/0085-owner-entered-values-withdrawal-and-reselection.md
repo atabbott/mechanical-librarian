@@ -74,6 +74,7 @@ event, so the value a write replaced is durable.
   write planned from it: title recovery re-projects a held successor, and
   automatic description admission records its authored selection, so the
   case shows the hold, and Resume, once there is a decision for it to hold.
+  Until Resume that decision is neither pending nor shown as chosen.
 - **Amendments.** ADR-0030's exclusion of reversal stays: nothing reverses a
   write, and an earlier value returns only as a new owner-entered decision;
   bulk editing stays excluded. ADR-0037's rollback and Undo stay unavailable,

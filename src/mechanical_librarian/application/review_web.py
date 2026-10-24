@@ -1080,10 +1080,17 @@ class InspectCurrentReviewCase:
                         if outcome.policy_category == "title"
                         else outcome.policy_category
                     )
+                advice = field.get("description_advice")
                 if (
                     dict(policy.destinations).get(category) != "automatic"
                     or field["human_decision"] is not None
                     or field["automatic_decision"] is not None
+                    # An admitted automatic description is its evaluation.
+                    or isinstance(advice, dict)
+                    and isinstance(advice.get("selection"), dict)
+                    and advice["selection"].get("origin") == "automatic_policy"
+                    and isinstance(advice.get("selected_advice"), dict)
+                    and advice["selected_advice"].get("current") is True
                 ):
                     continue
                 if outcome is None:

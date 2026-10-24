@@ -85,6 +85,14 @@ const authoredOwnerRecorded = (field: ReviewField) =>
     field.descriptionAdvice.selected_advice?.current === true ||
     field.descriptionAdvice.application_outcome,
   )
+// A carried hold pauses an automatic authored choice as it pauses a title's
+// automatic decision, so nothing reads as chosen until Resume (ADR-0085).
+const shownAdvice = (field: ReviewField) =>
+  field.manualHold &&
+  field.humanDecision === null &&
+  field.descriptionAdvice?.selection?.origin === 'automatic_policy'
+    ? { ...field.descriptionAdvice, selection: null, selected_advice: null }
+    : field.descriptionAdvice
 const searchNavigationDelay = 150
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
@@ -567,7 +575,7 @@ const fieldReason = (field: ReviewField) =>
     'Retained reviewer notice',
   )
 const effectSummary = (field: ReviewField) => {
-  const advice = field.destination === 'description' ? field.descriptionAdvice : null
+  const advice = field.destination === 'description' ? shownAdvice(field) : null
   if (advice?.selection) {
     if (advice.application_outcome === 'verified')
       return {
@@ -3935,7 +3943,7 @@ export default function LibraryPage({
   const ownerStatusShown = ownerKey !== null && ownerCommand === ownerKey
   const selectedOptional =
     selected !== undefined && !selectedActionable && !selectedRecorded && optionalChoice(selected)
-  const selectedAdvice = selected?.destination === 'description' ? selected.descriptionAdvice : null
+  const selectedAdvice = selected?.destination === 'description' ? shownAdvice(selected) : null
   const selectedChoiceMode =
     selectedActionable || selectedRevisitable || selectedOptional || Boolean(selectedAdvice)
   const selectedCoverPreparation =

@@ -666,13 +666,31 @@ def test_a_successor_carrying_the_owners_hold_admits_its_description_held(
     """F59 R10: the owner's authored description holds the field, and the hold
     follows the work to its successor. Automatic admission still records the
     successor's description, so the hold has a decision to hold and says so;
-    nothing is written until Resume releases it."""
+    nothing is written until Resume releases it. While held it is not pending
+    either (R-D), so no pass resolves it into a failure and no permission offer
+    counts it."""
+    from types import SimpleNamespace
+
     from mechanical_librarian.adapters.field_effect_authority import (
         PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.adapters.field_effect_fakes import (
+        FakeBackupReadiness,
+        FakeCapabilityObserver,
+        FakeDependencyCurrentness,
+        FakeForwardReevaluation,
+        FakeTargetService,
+    )
+    from mechanical_librarian.adapters.field_effect_runtime import (
+        PersistedEffectConsent,
+    )
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
     )
     from mechanical_librarian.application.description_advice import (
         DescriptionAdviceService,
     )
+    from mechanical_librarian.application.field_effects import GuardedFieldApplication
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
     from mechanical_librarian.domain.field_effect import FieldEffectError
     from tests.support.description_advice import _prepared
@@ -706,16 +724,66 @@ def test_a_successor_carrying_the_owners_hold_admits_its_description_held(
         if value["destination"] == "description"
     )
     assert (field["manual_hold"], field["human_decision"]) == (True, None)
+    # The admitted automatic description is the field's evaluation.
+    assert field["automatic_withheld_reason"] is None
     authority = PersistedFieldEffectAuthority(repository)
     with pytest.raises(FieldEffectError):
         authority.resolve(decision)
+
+    def pending() -> tuple[list[object], list[object]]:
+        documents = [
+            document
+            for document in repository.pending_field_effect_decision_documents(32)
+            if json.loads(document)["decision_id"] == decision.decision_id
+        ]
+        counts = [
+            row
+            for row in repository.pending_field_effect_decision_counts()
+            if row["destination"] == "description"
+        ]
+        return documents, counts
+
+    assert pending() == ([], [])
+    connection, library = repository._connection.execute(
+        "SELECT connection_name,library_name FROM current_review_case_lineages "
+        "WHERE review_case_id=?",
+        (successor,),
+    ).fetchone()
+    repository.grant_field_effect_consents(connection, (library,), ("description",), 16)
+    capabilities = FakeCapabilityObserver("c" * 64)
+    application = GuardedFieldApplication(
+        repository,
+        FakeTargetService(),
+        FakeBackupReadiness(),
+        capabilities,
+        authority,
+        FakeDependencyCurrentness(),
+        PersistedEffectConsent(repository),
+        SimpleNamespace(),
+        FakeForwardReevaluation(),
+        lambda: 17,
+    )
+    scheduler = ContinuousGuardedApplication(
+        repository,
+        {(connection, library): application},
+        {(connection, library): capabilities},
+        authority,
+        ((connection, library),),
+        lambda: 17,
+        lambda *_: None,
+    )
+    assert scheduler.schedule() == 0
+    assert scheduler.activity()["last_failure"] is None
     assert repository._connection.execute(
         "SELECT count(*) FROM field_effects WHERE decision_id=?",
         (decision.decision_id,),
     ).fetchone() == (0,)
     assert repository.clear_field_effect_manual_hold(
-        successor, "description", 16, owner.decision_id
+        successor, "description", 18, owner.decision_id
     )
+    documents, counts = pending()
+    assert len(documents) == 1
+    assert [(row["origin"], row["count"]) for row in counts] == [("automatic", 1)]
     assert authority.resolve(decision).decision_value == {
         "kind": "text",
         "value": "Authored synthetic description.",

@@ -1211,6 +1211,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON lineage.review_case_id=consideration.review_case_id "
                 "WHERE selection.kind='automatic'"
                 " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
+                # An owner's description is the decision its own hold keeps; an
+                # automatic one under a hold waits for Resume (ADR-0085).
+                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+                "hold.review_case_id=d.review_case_id AND "
+                "hold.destination='description' AND hold.active=1))"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
                 "AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
                 + _FIELD_EFFECT_COMPANION_DECISION_SQL
@@ -1293,7 +1299,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic' UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id) "
+                "WHERE selection.kind='automatic' UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
+                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+                "hold.review_case_id=d.review_case_id AND "
+                "hold.destination='description' AND hold.active=1))) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "
