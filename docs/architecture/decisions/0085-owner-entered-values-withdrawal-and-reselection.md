@@ -33,10 +33,11 @@ event, so the value a write replaced is durable.
   whitespace collapsed, and no control, path, credential or URI text. The server
   refuses a value that fails (`owner_value_invalid`) or equals the current one
   (`owner_value_unchanged`); it never rewrites what was sent. Suggestions
-  (`title_case`, `strip_part`, `split_author`, `combined`) are pure, at most
-  four, read only the current value, and only fill the input. Genres take any
-  non-empty subset, of at most 32, of the union of current and eligible
-  proposed genres, in union order. Bulk editing and every other destination
+  (`title_case`, `strip_part`, `split_author`, `combined`, and `previous` under
+  Reselection) are pure, at most five, read only the current value or, for
+  `previous`, the value before the latest write, and only fill the input.
+  Genres take any non-empty subset, of at most 32, of the union of current,
+  eligible proposed and previous genres, in union order. Bulk editing and every other destination
   stay excluded. No proposal, shadow, automatic-decision, policy or
   qualification path reads an owner-entered value or a previous value.
 - **Withdraw.** `withdraw` appends a row with no value and revokes the
@@ -52,8 +53,7 @@ event, so the value a write replaced is durable.
   Previous value; for genres, previous genres not already listed join the
   subset options tagged Previous. The read is bounded: the latest verified plan
   per destination through the target index, by (`updated_at`, `plan_id`), so a
-  superseded, stale or abandoned plan wrote nothing it kept and is never
-  treated as the latest write. A subtitle written as a title's companion is
+  superseded, stale or abandoned plan is never treated as the latest write. A subtitle written as a title's companion is
   shadowed by that title write; a verified event that disagrees with its plan,
   or an empty or invalid pre-image, offers nothing; cover and description
   offer nothing. A suggestion grants no authority: choosing it is an ordinary
@@ -103,7 +103,8 @@ event, so the value a write replaced is durable.
 - A case id is a content hash, so a work that returns to exactly the content of
   an earlier case re-admits that case. Its own hold row takes the work's latest
   hold state, a release or pending return included, so a released hold never
-  resurrects. Its earlier decisions are append-only and stay, so a re-admitted
+  resurrects, and a new owner decision there re-arms that row even where the
+  case has no automatic decision. Its earlier decisions are append-only and stay, so a re-admitted
   case can show its old decision wording, such as "You entered X" marked
   written while the library holds the earlier value, and can read as held
   while automatic handling is queued. Main already does this when an accepted

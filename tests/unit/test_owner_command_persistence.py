@@ -27,6 +27,10 @@ from mechanical_librarian.application.continuous_field_effects import (
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.human_decision import HumanDecisionError
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.genre_reports import genre_report, publish_genre_case
 from tests.support.owner_values import OwnerStore, rewritten
@@ -578,3 +582,52 @@ def test_an_earlier_case_that_recurs_keeps_a_hold_still_in_force(
     assert store.case.review_case_id == first
     assert _hold(store) == token
     assert _automatic_genres(store) == []
+
+
+def test_a_decision_on_a_recurring_case_without_automatic_handling_is_planned(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    # Genres turns to Ask, so neither later case has an automatic genres
+    # decision; each carries the hold.
+    automatic = MetadataPolicyProfile.from_data(
+        json.loads(store.repository.active_metadata_policy())
+    )
+    ask = MetadataPolicyProfile.create(
+        "Ask genres",
+        dict(automatic.options),
+        dict(automatic.destinations) | {"genres": "ask"},
+    )
+    store.resolved = resolve_policy(ask, _HELD.target.library)
+    store.repository.create_metadata_policy_draft(ask.canonical_json)
+    store.repository.activate_metadata_policy(
+        ask.policy_id,
+        automatic.policy_id,
+        (
+            (
+                _HELD.target.library,
+                store.resolved.resolved_id,
+                store.resolved.canonical_json,
+            ),
+        ),
+        store.clock(),
+        expected_active_generation=2,
+    )
+    earlier = store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    store.publish(rewritten(_HELD, publisher="Changed Again"))
+    assert store.repository.clear_field_effect_manual_hold(
+        store.case.review_case_id, "genres", store.clock(), token
+    )
+    assert store.publish(rewritten(_HELD, publisher="Changed Elsewhere")) == earlier
+    assert _hold(store) is None
+    assert _automatic_genres(store) == []
+    # The owner's accept on the recurring case still becomes a write.
+    decision = store.decide(
+        "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    pending = map(
+        json.loads, store.repository.pending_field_effect_decision_documents(32)
+    )
+    assert decision.decision_id in {document["decision_id"] for document in pending}
+    assert store.write(decision).plan.desired_value == ["Fantasy"]
+    assert _hold(store) == decision.decision_id
