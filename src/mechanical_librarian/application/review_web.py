@@ -833,10 +833,16 @@ class InspectCurrentReviewCase:
                 snapshot,
             )
             # The owner's hold follows the work: a successor case holds the
-            # field as the owner's decision on the earlier case left it.
+            # field as the owner's decision on the earlier case left it, once
+            # it has an automatic decision to hold, a description's automatic
+            # authored selection among them.
             carried_hold = (
                 decision is None
-                and automatic_decision is not None
+                and (
+                    automatic_decision is not None
+                    or isinstance(authored_selection, dict)
+                    and authored_selection.get("origin") == "automatic_policy"
+                )
                 and destination in snapshot.held_destinations
             )
             owner_entry = owner_control is not None and (

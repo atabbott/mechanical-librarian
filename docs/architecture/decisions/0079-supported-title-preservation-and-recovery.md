@@ -26,7 +26,8 @@ requeues eligible completed title projections through the preparation owner on
 that same connection. While any title, global or pause blocker remains, completed
 work stays untouched; the last explicit unblock selects the current eligible cohort. Eligibility requires current report, file, proposal and
 case lineage, current policy generation/resolution, an Automatic title outcome,
-and no final title decision or active manual hold. Running and queued work stay
+and no final title decision. An active manual hold does not exclude the work: its
+new automatic decision stays held at planning (ADR-0085). Running and queued work stay
 under their current owner. No acquisition, extraction or model work is queued.
 Terminal scans and preparation presentation reopen in the same transaction.
 The visible run retains its identity, unrelated enrollments and completion

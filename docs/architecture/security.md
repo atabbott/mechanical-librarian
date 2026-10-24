@@ -1917,8 +1917,8 @@ completed title projections only when title permission changes from blocked to
 permitted; retained pause, global or title blockers leave completed work untouched.
 Resume changes only the pause flag. Both commands read safety inside their writer
 transaction, preserving suspensions committed by competing projection workers.
-Report/proposal/case and policy currentness, owner-final and manual holds constrain
-the cohort; final projection checks and insertion uniqueness remain authoritative.
+Report/proposal/case and policy currentness and owner-final constrain the cohort,
+while a manual hold withholds the planned write and never the decision; final projection checks and insertion uniqueness remain authoritative.
 No external acquisition, model, target or media write authority is added. A failed
 transaction rolls back safety, work, scan and presentation together. Predecessor
 v6 state requires a clean rebuild, never silent clearing or migration. See

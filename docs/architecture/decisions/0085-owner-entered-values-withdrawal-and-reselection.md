@@ -70,7 +70,10 @@ event, so the value a write replaced is durable.
   handling releases one. This also changes holds from `accept` and
   `keep_current`: they persist until the owner returns the field. A case whose
   hold was carried shows the hold, not its paused automatic decision, as what
-  speaks for the field.
+  speaks for the field. A hold never refuses an automatic decision, only the
+  write planned from it: title recovery re-projects a held successor, and
+  automatic description admission records its authored selection, so the
+  case shows the hold, and Resume, once there is a decision for it to hold.
 - **Amendments.** ADR-0030's exclusion of reversal stays: nothing reverses a
   write, and an earlier value returns only as a new owner-entered decision;
   bulk editing stays excluded. ADR-0037's rollback and Undo stay unavailable,

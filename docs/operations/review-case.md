@@ -373,8 +373,9 @@ Library preparation shows “Title recovery requested” and the queued or runni
 re-evaluation, retaining unrelated work and earlier completion counts. Recovery
 creates a visible run if the earlier one was dismissed.
 Recovery does not apply metadata. Pause, global suspensions and other category
-suspensions still apply. Books with owner decisions, manual holds, stale evidence,
-Ask/Ignore policy or work already in progress are not requeued. An empty eligible
+suspensions still apply. Books with owner decisions, stale evidence, Ask/Ignore
+policy or work already in progress are not requeued. A book you hold is
+re-evaluated, and its new title stays held until you resume automatic handling. An empty eligible
 cohort is a successful recovery with no new work. A failed request retains the
 suspension and work; inspect current state and retry explicitly.
 

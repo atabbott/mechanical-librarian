@@ -658,3 +658,66 @@ def test_finish_rejects_inconsistent_success_failure_without_mutation(
     assert repository._connection.total_changes == before
     assert store.read(binding.review_case_id)["state"] == "succeeded"
     repository.close()
+
+
+def test_a_successor_carrying_the_owners_hold_admits_its_description_held(
+    tmp_path,
+):
+    """F59 R10: the owner's authored description holds the field, and the hold
+    follows the work to its successor. Automatic admission still records the
+    successor's description, so the hold has a decision to hold and says so;
+    nothing is written until Resume releases it."""
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from tests.support.description_advice import _prepared
+
+    access = []
+    repository, store, binding, original, _ = _prepared(
+        tmp_path, pipeline_probe=lambda *values: access.append(values[3])
+    )
+    owner = store.admit(original.candidate_id, binding, "human", "e" * 64, 11)
+    assert (
+        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        == owner.decision_id
+    )
+    report, fresh = _publish_successor(repository, binding)
+    successor = fresh.review_case_id
+    assert (
+        repository.field_effect_manual_hold_token(successor, "description")
+        == owner.decision_id
+    )
+    candidate = DescriptionAdviceService(
+        store, access[0], store.current_settings, lambda: 12
+    ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+    assert candidate is not None
+    decision = store.admit(
+        candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15
+    )
+    assert decision.origin == "automatic_policy"
+    field = next(
+        value
+        for value in InspectCurrentReviewCase(repository).run(successor)["fields"]
+        if value["destination"] == "description"
+    )
+    assert (field["manual_hold"], field["human_decision"]) == (True, None)
+    authority = PersistedFieldEffectAuthority(repository)
+    with pytest.raises(FieldEffectError):
+        authority.resolve(decision)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM field_effects WHERE decision_id=?",
+        (decision.decision_id,),
+    ).fetchone() == (0,)
+    assert repository.clear_field_effect_manual_hold(
+        successor, "description", 16, owner.decision_id
+    )
+    assert authority.resolve(decision).decision_value == {
+        "kind": "text",
+        "value": "Authored synthetic description.",
+    }
+    repository.close()
