@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import tempfile
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -1991,13 +1992,41 @@ def test_retry_now_leaves_an_already_recovered_scope_recovered() -> None:
     assert "dormant" not in [phase["state"] for phase in activity]
 
 
-def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
+@pytest.mark.parametrize(
+    ("errors", "expected"),
+    (
+        pytest.param(
+            [],
+            {
+                "statuses": [429, 429],
+                "outcomes": ["rate_limited", "rate_limited"],
+                "reason": "rate_limited",
+            },
+            id="generic-429",
+        ),
+        pytest.param(
+            [{"reason": "rateLimitExceeded"}],
+            # The second work sends no request of its own.
+            {
+                "statuses": [429],
+                "outcomes": ["burst_throttled", "rate_limited"],
+                "reason": "rate_limited",
+            },
+            id="burst-then-inherited-window",
+        ),
+    ),
+)
+def test_a_real_first_throttle_names_its_reason_and_remedy(
+    errors: list[dict[str, str]], expected: dict[str, object]
+) -> None:
     """Two fresh ebooks meet a keyless Google Books 429 in real preparation (#1367).
 
     An ebook's non-terminal lane failure goes straight on to its proposal, so
     the outbox drain is the only place recovery hears of it: each enrolment
     names its classified failure without moving the scope's schedule, and the
-    review app's preparation API carries that reason and the key remedy.
+    review app's preparation API carries that reason and the key remedy. A
+    burst 429 holds Google for its window, so the second work sends nothing
+    and inherits that window, which is still a throttle and never transient.
     """
     items = ("item-1", "item-2")
     isbn = LocalClaim.create(
@@ -2058,12 +2087,18 @@ def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
     statuses: list[int] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
-        response = httpx.Response(429, json={"error": {"code": 429}})
+        response = httpx.Response(429, json={"error": {"code": 429, "errors": errors}})
         statuses.append(response.status_code)
         return response
 
     def advance(seconds: float) -> None:
         clock[0] += seconds
+
+    # Preparation sets each lane deadline on the real monotonic clock, so the
+    # adapter and its pacer read that clock, advanced by their synthetic sleeps;
+    # a synthetic one would fall before or after the deadline with host uptime.
+    def monotonic() -> float:
+        return time.monotonic() + clock[0] - 10_000
 
     def google(name, _client, maximum_bytes, timeout_seconds, **kwargs):
         return GoogleBooksMetadataProvider(
@@ -2072,7 +2107,7 @@ def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
             maximum_bytes,
             timeout_seconds,
             **kwargs,
-            clock=lambda: clock[0],
+            clock=monotonic,
             wall_clock=lambda: clock[0],
             sleep=advance,
         )
@@ -2092,9 +2127,7 @@ def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
             patch.object(
                 composition,
                 "GoogleBooksPacer",
-                return_value=ProviderRequestPacer(
-                    clock=lambda: clock[0], sleep=advance
-                ),
+                return_value=ProviderRequestPacer(clock=monotonic, sleep=advance),
             ),
             patch.object(
                 composition, "GoogleBooksMetadataProvider", side_effect=google
@@ -2164,21 +2197,23 @@ def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
             "library": "ebooks",
             "adapter": "google_books",
             "state": "waiting",
-            "reasons": ["rate_limited"],
+            "reasons": [expected["reason"]],
             "deferred": 2,
             "next_retry_at": 17_200,
             "remedy": "add_api_key",
         }
     ]
-    assert [429, 429] == statuses
+    assert expected["statuses"] == statuses
     # The fallback enrolment sets the schedule; each delivery names the reason.
+    first, second = cast("list[str]", expected["outcomes"])
     assert [
         ("waiting", 1, 17_200, 10_000, None),
-        ("waiting", 1, 17_200, 10_000, "rate_limited"),
-        ("waiting", 1, 17_200, 10_001, "rate_limited"),
+        ("waiting", 1, 17_200, 10_000, first),
+        # The pacer's spacing advances the synthetic clock by under a second.
+        ("waiting", 1, 17_200, 10_000, second),
     ] == events
     assert [("waiting", 1, 17_200)] == health
-    assert ["rate_limited"] == activity[0]["failure_reasons"]
+    assert [expected["reason"]] == activity[0]["failure_reasons"]
 
 
 def test_the_first_throttle_names_its_reason_and_remedy_through_its_retry() -> None:

@@ -62,12 +62,13 @@ h2 { margin-bottom:.35rem; }
 .provider-throttle-notice { width:min(100%,98rem); margin:0 auto 1rem; padding:.8rem 1rem; border:1px solid var(--notice); border-radius:.75rem; color:var(--ink); background:var(--notice-soft); white-space:normal; overflow-wrap:anywhere; }
 .provider-throttle-notice.is-empty { margin:0 auto; padding:0; border:0; background:none; }
 /* Entries sit far enough apart that two padded link targets never overlap (#1367). */
-.provider-throttle-notice ul { display:grid; gap:1.75rem; margin:0; padding:0; list-style:none; }
+.provider-throttle-notice ul { display:grid; gap:2rem; margin:0; padding:0; list-style:none; }
 /* Leading leaves room for a remedy link's 3px focus ring between lines. */
 .provider-throttle-notice li { min-width:0; color:var(--soft); font-size:.82rem; line-height:calc(1.3em + 4px); }
 .provider-throttle-notice li strong { color:var(--ink); }
-/* Inline after its own sentence, wrapping with it; the padding is each line's touch target, not layout. */
-.provider-throttle-notice li a { padding-block:14px; color:var(--accent-strong); font-weight:650; }
+/* Inline after its own sentence, wrapping with it; the padding is each line's touch target, not layout.
+   16px clears 44px with headroom for each platform's font metrics (#1367). */
+.provider-throttle-notice li a { padding-block:16px; color:var(--accent-strong); font-weight:650; }
 /* The padded target's ring would cross the lines around it; ring each line's text instead. */
 .provider-throttle-notice li a:focus-visible { outline:none; }
 .provider-throttle-notice li a:focus-visible > span { outline:3px solid var(--focus); outline-offset:0; }
@@ -88,7 +89,7 @@ h2 { margin-bottom:.35rem; }
 .preparation-popover > small { display:block; margin:.35rem 0 .7rem; }
 .provider-throttle-notice button[aria-disabled='true'], .preparation-popover button[aria-disabled='true'] { cursor:not-allowed; opacity:.55; }
 .provider-throttle-notice button[aria-busy='true'], .preparation-popover button[aria-busy='true'] { cursor:progress; }
-@media (max-width:760px) { .provider-throttle-notice li a { padding-block:15px; } .provider-throttle-command button { min-height:44px; width:100%; } }
+@media (max-width:760px) { .provider-throttle-command button { min-height:44px; width:100%; } }
 main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outline:none; }
 .eyebrow { margin-bottom:.35rem; color:var(--soft); font-size:.7rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 
