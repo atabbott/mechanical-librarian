@@ -4322,7 +4322,17 @@ export default function LibraryPage({
               </p>
             ) : (
               <div className="library-selection">
-                <h2>Selected work</h2>
+                <h2
+                  tabIndex={-1}
+                  // Reached when the case under an open owner form could not
+                  // be followed: focus lands here, never on the page body.
+                  ref={(heading) => {
+                    if (heading && document.activeElement === document.body)
+                      heading.focus({ preventScroll: true })
+                  }}
+                >
+                  Selected work
+                </h2>
                 <p>Readable work identity is not available on this Library page.</p>
                 <p role="status">This work is not available in the current Library result.</p>
               </div>

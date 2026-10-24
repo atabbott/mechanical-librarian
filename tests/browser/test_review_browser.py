@@ -8143,6 +8143,41 @@ def _owner_layout_holds(page: Page) -> None:
             ".map(node => node.getBoundingClientRect().height)"
         )
         assert all(height >= 44 for height in heights), (width, heights)
+    # At 320 px with 200% text, nothing in the controls passes the canvas edge.
+    # The page's CSP ignores a style attribute, so the text is enlarged by a
+    # constructed stylesheet, and the root size proves it applied.
+    page.set_viewport_size({"width": 320, "height": 900})
+    page.evaluate(
+        "() => { const sheet = new CSSStyleSheet(); "
+        "sheet.replaceSync('html { font-size: 200% }'); "
+        "document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet] }"
+    )
+    try:
+        # The new root size lands a frame later; waiting on it is the proof.
+        page.wait_for_function(
+            "() => getComputedStyle(document.documentElement).fontSize === '32px'",
+            timeout=5_000,
+        )
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => "
+            "requestAnimationFrame(resolve)))"
+        )
+        past = page.evaluate(
+            """() => {
+              const edge = document.querySelector('.decision-canvas')
+                .getBoundingClientRect().right
+              return [...document.querySelectorAll('.owner-controls, .owner-controls *')]
+                .filter(node => node.getBoundingClientRect().right > edge + 0.5)
+                .map(node => `${node.tagName}.${node.className}: ${
+                  Math.round(node.getBoundingClientRect().right)} > ${Math.round(edge)}`)
+            }"""
+        )
+        assert past == [], past
+    finally:
+        page.evaluate(
+            "() => { document.adoptedStyleSheets = "
+            "document.adoptedStyleSheets.slice(0, -1) }"
+        )
 
 
 def _attention_destinations(page: Page, case_id: str) -> list[str]:
@@ -8155,6 +8190,10 @@ def _attention_destinations(page: Page, case_id: str) -> list[str]:
         }""",
         case_id,
     )
+
+
+# A value whose longest word is wide enough to set a column's width at 200% text.
+_LONG_TITLE = "The Extraordinarily Long-Winded Chronicle of the Silent Orchard"
 
 
 def test_owner_enters_a_title_at_enlarged_text():
@@ -8175,9 +8214,9 @@ def test_owner_enters_a_title_at_enlarged_text():
         panel.get_by_role("button", name="Enter a value", exact=True).click()
         field = panel.get_by_role("textbox", name="Your value for Title")
         expect(field).to_be_focused()
-        field.fill(OWNER_TITLE)
+        field.fill(_LONG_TITLE)
         expect(panel.locator(".owner-count")).to_have_text(
-            f"{len(OWNER_TITLE)} of 512 characters"
+            f"{len(_LONG_TITLE)} of 512 characters"
         )
         _owner_layout_holds(page)
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -8186,17 +8225,26 @@ def test_owner_enters_a_title_at_enlarged_text():
         ) as recorded:
             panel.get_by_role("button", name="Record this value", exact=True).click()
         assert recorded.value.status == 200
-        entered = panel.get_by_text(f"You entered “{OWNER_TITLE}”.", exact=True)
+        entered = panel.get_by_text(f"You entered “{_LONG_TITLE}”.", exact=True)
         expect(entered).to_be_focused()
         expect(panel.get_by_role("button", name="Withdraw", exact=True)).to_be_visible()
+        expect(panel.get_by_role("button", name="Change", exact=True)).to_be_visible()
+        _owner_layout_holds(page)
+        # Changing it opens the entry prefilled with the long value.
+        page.set_viewport_size({"width": 1440, "height": 900})
+        panel.get_by_role("button", name="Change", exact=True).click()
+        expect(panel.get_by_role("textbox", name="Your value for Title")).to_have_value(
+            _LONG_TITLE
+        )
         _owner_layout_holds(page)
 
 
 def test_owner_chooses_a_genre_subset_then_withdraws_it():
     """B2 and B3: a union-order subset records; withdrawing returns the field
     to Attention with focus on its heading."""
+    # Drama is both current and proposed, so its option carries two tags.
     with _owner_page(
-        genre_fixture=("Fantasy", "Mystery"), genre_current=("Drama",)
+        genre_fixture=("Drama", "Fantasy", "Mystery"), genre_current=("Drama",)
     ) as (page, origin, case_id):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
         panel = page.get_by_role("region", name="Your value for Genres")
@@ -8205,7 +8253,9 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         expect(group.get_by_role("checkbox")).to_have_count(3)
         # Opening the subset puts focus on its first genre, never on body (D1).
         expect(group.get_by_role("checkbox").first).to_be_focused()
-        expect(group.locator(".owner-option").first).to_contain_text("DramaCurrent")
+        expect(group.locator(".owner-option").first).to_contain_text(
+            "DramaCurrentProposed"
+        )
         group.get_by_role("checkbox", name=re.compile("^Mystery")).check()
         group.get_by_role("checkbox", name=re.compile("^Drama")).uncheck()
         group.get_by_role("checkbox", name=re.compile("^Fantasy")).check()

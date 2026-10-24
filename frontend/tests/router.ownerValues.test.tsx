@@ -530,6 +530,31 @@ describe('owner review fixes', () => {
     expect(within(moved).queryByText('The work changed. Review it again.')).toBeNull()
   })
 
+  it('M4 leaves focus on the work, not the page, when no successor is found', async () => {
+    const user = userEvent.setup()
+    let stale = false
+    const updates = createLiveStream()
+    const http = {
+      ...owner(() => [contextTitle]),
+      getLibrary: vi.fn(async () => (stale ? { ...quietLibrary, works: [] } : quietLibrary)),
+      getCaseSuccessor: vi.fn(async () => {
+        if (stale) throw new ApiError(503, 'unavailable')
+        return null
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    const panel = await screen.findByRole('region', { name: 'Your value for Title' })
+    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 81, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, 3 * coalesceMilliseconds))
+    })
+    const unavailable = await screen.findByRole('heading', { name: 'Selected work' })
+    await waitFor(() => expect(unavailable).toHaveFocus())
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
   it('M4 says nothing when the owner was not using an owner control', async () => {
     let stale = false
     const updates = createLiveStream()
