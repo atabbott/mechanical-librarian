@@ -584,36 +584,41 @@ def test_an_earlier_case_that_recurs_keeps_a_hold_still_in_force(
     assert _automatic_genres(store) == []
 
 
-def test_a_decision_on_a_recurring_case_without_automatic_handling_is_planned(
-    held: tuple[OwnerStore, str],
-) -> None:
-    store, token = held
-    # Genres turns to Ask, so neither later case has an automatic genres
-    # decision; each carries the hold.
-    automatic = MetadataPolicyProfile.from_data(
+_FANTASY = {"kind": "list", "value": ["Fantasy"]}
+
+
+def _genres_policy(store: OwnerStore, destination: str, generation: int) -> None:
+    """Turn genres to `destination` for later reads of the work."""
+    active = MetadataPolicyProfile.from_data(
         json.loads(store.repository.active_metadata_policy())
     )
-    ask = MetadataPolicyProfile.create(
-        "Ask genres",
-        dict(automatic.options),
-        dict(automatic.destinations) | {"genres": "ask"},
+    profile = MetadataPolicyProfile.create(
+        f"Genres {destination}",
+        dict(active.options),
+        dict(active.destinations) | {"genres": destination},
     )
-    store.resolved = resolve_policy(ask, _HELD.target.library)
-    store.repository.create_metadata_policy_draft(ask.canonical_json)
+    resolved = resolve_policy(profile, _HELD.target.library)
+    store.resolved = resolved
+    store.repository.create_metadata_policy_draft(profile.canonical_json)
     store.repository.activate_metadata_policy(
-        ask.policy_id,
-        automatic.policy_id,
-        (
-            (
-                _HELD.target.library,
-                store.resolved.resolved_id,
-                store.resolved.canonical_json,
-            ),
-        ),
+        profile.policy_id,
+        active.policy_id,
+        ((_HELD.target.library, resolved.resolved_id, resolved.canonical_json),),
         store.clock(),
-        expected_active_generation=2,
+        expected_active_generation=generation,
     )
+
+
+def _recur_after_release(
+    store: OwnerStore, token: str, before_release: str | None = None
+) -> None:
+    """Genres turns to Ask, so no later case has an automatic genres decision
+    and each carries the hold; the work reads A, then B, where the hold is
+    released, then A again. `before_release` is recorded on A first."""
+    _genres_policy(store, "ask", 2)
     earlier = store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    if before_release is not None:
+        store.decide(before_release, _FANTASY, destination="genres")
     store.publish(rewritten(_HELD, publisher="Changed Again"))
     assert store.repository.clear_field_effect_manual_hold(
         store.case.review_case_id, "genres", store.clock(), token
@@ -621,13 +626,47 @@ def test_a_decision_on_a_recurring_case_without_automatic_handling_is_planned(
     assert store.publish(rewritten(_HELD, publisher="Changed Elsewhere")) == earlier
     assert _hold(store) is None
     assert _automatic_genres(store) == []
+
+
+def test_a_decision_on_a_recurring_case_without_automatic_handling_is_planned(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    _recur_after_release(store, token)
     # The owner's accept on the recurring case still becomes a write.
-    decision = store.decide(
-        "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
-    )
+    decision = store.decide("accept", _FANTASY, destination="genres")
     pending = map(
         json.loads, store.repository.pending_field_effect_decision_documents(32)
     )
     assert decision.decision_id in {document["decision_id"] for document in pending}
     assert store.write(decision).plan.desired_value == ["Fantasy"]
-    assert _hold(store) == decision.decision_id
+    # With nothing automatic to hold, the case holds nothing.
+    assert _hold(store) is None
+
+
+# R-A: that decision leaves the case as if it was never held, so a successor
+# read under automatic handling is handled automatically.
+@pytest.mark.parametrize("outcome", ["accept", "withdraw"])
+def test_a_decision_on_a_recurring_case_carries_no_hold_forward(
+    held: tuple[OwnerStore, str], outcome: str
+) -> None:
+    store, token = held
+    if outcome == "accept":
+        _recur_after_release(store, token)
+        store.write(store.decide("accept", _FANTASY, destination="genres"))
+        later = rewritten(_HELD, publisher="Changed Elsewhere", genres=("Fantasy",))
+    else:
+        _recur_after_release(store, token, before_release="accept")
+        store.decide("withdraw", destination="genres")
+        later = rewritten(_HELD, publisher="Changed Later")
+    # The Ask transition's work item went stale as the work changed under
+    # it; the owner acknowledges that before the next policy is activated.
+    transition = store.repository.metadata_policy_transition()
+    assert transition is not None
+    store.repository.acknowledge_metadata_policy_transition(
+        transition.transition_id, store.clock()
+    )
+    _genres_policy(store, "automatic", 3)
+    store.publish(later)
+    assert _hold(store) is None
+    assert _automatic_genres(store) == [store.case.review_case_id]

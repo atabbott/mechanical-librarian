@@ -640,25 +640,22 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 self._revoke_field_effect_authority_in_transaction(
                     previous[0], decision.occurred_at, required=False
                 )
-            if automatic is not None and (
-                previous is None or automatic[0] != previous[0]
-            ):
-                self._revoke_field_effect_authority_in_transaction(
-                    automatic[0], decision.occurred_at, required=False
-                )
-            # A released hold row excludes the case's human decisions from
-            # planning, so a new owner decision re-arms it even where no
-            # automatic decision exists: a case admitted again can carry a
-            # release made on a later case (ADR-0085).
-            if (
-                automatic is not None
-                or self._connection.execute(
-                    "SELECT 1 FROM field_effect_manual_holds WHERE "
+            if automatic is None:
+                # A case admitted again can carry a release made on a later
+                # case, and a released row excludes its human decisions from
+                # planning. With no automatic decision here there is nothing
+                # to hold, so the row goes and the case reads as never held:
+                # the owner's decision plans and nothing carries (ADR-0085).
+                self._connection.execute(
+                    "DELETE FROM field_effect_manual_holds WHERE "
                     "review_case_id=? AND destination=? AND active=0",
                     (decision.review_case_id, decision.destination),
-                ).fetchone()
-                is not None
-            ):
+                )
+            else:
+                if previous is None or automatic[0] != previous[0]:
+                    self._revoke_field_effect_authority_in_transaction(
+                        automatic[0], decision.occurred_at, required=False
+                    )
                 self._set_field_effect_manual_hold(
                     decision.review_case_id,
                     decision.destination,

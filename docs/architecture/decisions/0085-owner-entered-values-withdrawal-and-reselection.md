@@ -103,14 +103,15 @@ event, so the value a write replaced is durable.
 - A case id is a content hash, so a work that returns to exactly the content of
   an earlier case re-admits that case. Its own hold row takes the work's latest
   hold state, a release or pending return included, so a released hold never
-  resurrects, and a new owner decision there re-arms that row even where the
-  case has no automatic decision. Its earlier decisions are append-only and stay, so a re-admitted
-  case can show its old decision wording, such as "You entered X" marked
-  written while the library holds the earlier value, and can read as held
-  while automatic handling is queued. Choosing the previous value again
-  reaches this too. Main already does this when an accepted write is edited
-  back by hand; making a recurring case a new episode is a
-  follow-up candidate.
+  resurrects. Where that case has no automatic decision, a new owner decision
+  there removes its released row, so the decision plans and nothing carries
+  forward, as on a case never held. Its earlier decisions are append-only and
+  stay, so a re-admitted case can show its old decision wording, such as "You
+  entered X" marked written while the library holds the earlier value, and can
+  read as held while automatic handling is queued. Choosing the previous value
+  again reaches this too. Main already does this when an accepted write is
+  edited back by hand; making a recurring case a new episode is a follow-up
+  candidate.
 - Extending owner entry to more fields, clearing a field and adapter
   compare-and-set are follow-up candidates.
 
