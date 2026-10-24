@@ -95,11 +95,14 @@ def genre_report(
 
 
 def publish_genre_case(
-    repository: Any, report: MetadataReport, destination: str = "automatic"
+    repository: Any,
+    report: MetadataReport,
+    destination: str = "automatic",
+    others: str = "ask",
 ):
     """Publish an actual policy, proposal, review case and persisted outcome."""
     destinations = {
-        name: "unsupported" if name == "explicit" else "ask"
+        name: "unsupported" if name == "explicit" else others
         for name in OPTION_CATALOGUE
     }
     destinations["genres"] = destination

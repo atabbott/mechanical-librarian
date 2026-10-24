@@ -301,6 +301,43 @@ describe('owner-entered values', () => {
     )
   })
 
+  it.each(['entered', 'withdrawn'] as const)(
+    'V9 keeps the work in view when the %s outcome takes it off the Library result',
+    async (outcome) => {
+      const user = userEvent.setup()
+      let fields: readonly Field[] = outcome === 'entered' ? [contextTitle] : [enteredTitle]
+      let listed = true
+      const http = owner(() => fields)
+      http.getLibrary = vi.fn(async () => (listed ? quietLibrary : { ...quietLibrary, works: [] }))
+      const panel = await open(http)
+      listed = false
+      if (outcome === 'entered') {
+        await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+        await user.click(within(panel).getByRole('button', { name: 'Use “The Silent Orchard”' }))
+        fields = [enteredTitle]
+        await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+        const recorded = await screen.findByText('You entered “The Silent Orchard”.')
+        await waitFor(() => expect(recorded).toHaveFocus())
+      } else {
+        fields = [{ ...contextTitle, needsAttention: false }]
+        await user.click(within(panel).getByRole('button', { name: 'Withdraw' }))
+        expect(
+          await screen.findByText('Withdrawn. This field needs a decision again.'),
+        ).toBeVisible()
+      }
+      // The Library result read after the command no longer lists the work;
+      // its case read still names it (#1365).
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull())
+      expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+      expect(screen.getByRole('region', { name: 'Your value for Title' })).toBeVisible()
+      expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+      if (outcome === 'withdrawn')
+        await waitFor(() =>
+          expect(screen.getByRole('heading', { level: 2, name: 'Title' })).toHaveFocus(),
+        )
+    },
+  )
+
   it.each([
     [
       'automatic_hold',
@@ -604,12 +641,25 @@ describe('owner review fixes', () => {
         })
         await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 60))
       })
+      if (outcome === 'predecessor current') {
+        // Its own read says the case is current, so the owner stays on it (#1365).
+        expect(await screen.findByRole('region', { name: 'Your value for Title' })).toBeVisible()
+        expect(router.state.location.search.preview).toBe('case-1')
+        observer.disconnect()
+        expect(frames.filter((frame) => frame.includes('not available in the current'))).toEqual([])
+        return
+      }
       if (outcome !== 'moved') {
-        // The move ends with nowhere to go, so the absence is news after all.
+        // The move ends with nowhere to go, so the absence is news after all,
+        // once the case's own read has been made again and refused (#1365).
         expect(await screen.findByRole('heading', { name: 'Selected work' })).toBeVisible()
         expect(router.state.location.search.preview).toBe('case-1')
         observer.disconnect()
-        expect(frames.some((frame) => frame.includes('Loading selected work…'))).toBe(true)
+        expect(http.getCaseDetail).toHaveBeenLastCalledWith(
+          'case-1',
+          expect.any(AbortSignal),
+          'foreground',
+        )
         return
       }
       await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
@@ -627,9 +677,13 @@ describe('owner review fixes', () => {
     const http = {
       ...owner(() => [contextTitle]),
       getLibrary: vi.fn(async () => (stale ? { ...quietLibrary, works: [] } : quietLibrary)),
-      getCaseSuccessor: vi.fn(async () => {
-        if (stale) throw new ApiError(503, 'unavailable')
-        return null
+      getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
+      // The server refuses the superseded case's read, and its named
+      // replacement has gone too.
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        if (stale && id === 'case-1') throw new ApiError(409, 'stale')
+        if (id === 'case-2') throw new ApiError(404, 'not_found')
+        return { ...detail, id, fields: [contextTitle] }
       }),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)

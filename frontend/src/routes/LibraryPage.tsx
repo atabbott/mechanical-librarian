@@ -2995,7 +2995,9 @@ export default function LibraryPage({
           (attention.isPlaceholderData
             ? undefined
             : attentionItems.find((item) => item.id === search.preview)) ??
-          (detail.data && reconciledSuccessorIdentity === search.preview
+          // A readable case names its own work, so the selection survives a
+          // Library result or Attention page that no longer lists it.
+          (!detail.isError && detail.data?.id === search.preview
             ? {
                 id: detail.data.id,
                 title: detail.data.title,
@@ -3012,7 +3014,7 @@ export default function LibraryPage({
       attention.isPlaceholderData,
       currentWorks,
       detail.data,
-      reconciledSuccessorIdentity,
+      detail.isError,
       search.preview,
     ],
   )
@@ -3153,6 +3155,12 @@ export default function LibraryPage({
         // The server refuses a superseded case's read as stale; that is the
         // case no longer being current. Each successor's target is checked.
         if (!(error instanceof ApiError && error.code === 'stale')) {
+          // A move that ends nowhere leaves a predecessor its own read refused,
+          // so its retained case read is read again rather than shown as current.
+          void queryClient.resetQueries({
+            queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
+            exact: true,
+          })
           setMovingFrom(null)
           setSuccessorPending(null)
           return
@@ -3195,10 +3203,14 @@ export default function LibraryPage({
           // still name its replacement.
         }
       }
+      void queryClient.resetQueries({
+        queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
+        exact: true,
+      })
       setMovingFrom(null)
       setSuccessorPending(null)
     })()
-  }, [data, retained, works, http, navigate, search.preview, successorGeneration])
+  }, [data, retained, works, http, navigate, queryClient, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const [pendingIdentity, setPendingIdentity] = useState<{
     id: string
@@ -3482,7 +3494,8 @@ export default function LibraryPage({
     return () => cancelAnimationFrame(frame)
   }, [preparationSelected, presentation?.run_id])
   const identityPending =
-    !displayedIdentity && (reading || attention.isPending || attention.isPlaceholderData)
+    !displayedIdentity &&
+    (reading || attention.isPending || attention.isPlaceholderData || detail.isPending)
   const identityError = !displayedIdentity && (failed || attention.isError)
   // While a command records, the Library asks for the successor, the owner is
   // moved to it, or its identity is still being read, the absence is the move.
