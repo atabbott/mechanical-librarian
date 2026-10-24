@@ -3762,6 +3762,14 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                     probe(f"{where} rail", width)
 
 
+_OPTION_BESIDE_CHECKBOX = (
+    "() => [...document.querySelectorAll('.owner-option')].map(option => {"
+    " const box = option.querySelector('input').getBoundingClientRect();"
+    " const name = option.querySelector('span').getBoundingClientRect();"
+    " return name.left >= box.right && name.top < box.bottom })"
+)
+
+
 def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
     """The entry and subset controls, with the previous value among their
     choices, break no word at any width or text size, in light and dark, with
@@ -3794,7 +3802,7 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                 reduced_motion="reduce" if reduced else "no-preference",
             )
             for text in styles:
-                for width in (1440, 761, 390, 320):
+                for width in (1440, 1100, 884, 761, 760, 390, 320):
                     where = f"{scheme}, {text} text at {width}px"
                     page.set_viewport_size({"width": width, "height": 900})
                     page.goto(
@@ -3817,6 +3825,10 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                     genres.get_by_role("button", name="Choose genres").click()
                     expect(genres.get_by_role("checkbox")).to_have_count(3)
                     page.evaluate(_TWO_FRAMES)
+                    # A long genre wraps beside its checkbox; only a single
+                    # word too wide for that space at enlarged text may not.
+                    beside = page.evaluate(_OPTION_BESIDE_CHECKBOX)
+                    assert text != "default" or all(beside), f"{where}: {beside}"
                     broken = page.evaluate(_POLICY_MID_WORD, ".owner-controls")
                     assert not broken, f"{where}: {broken}"
                     assert (

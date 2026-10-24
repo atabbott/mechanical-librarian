@@ -63,6 +63,11 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <p className="diagnostic-value">
             <span>Retained</span> {displayRetainedHistoryValue(item)}
           </p>
+        ) : item.category === 'owner' && item.outcome === 'withdraw' ? (
+          // A withdrawal selects nothing, so it has no value to change to.
+          <p className="diagnostic-value">
+            <span>Outcome</span> Withdrawn
+          </p>
         ) : (
           <>
             <p className="diagnostic-value">

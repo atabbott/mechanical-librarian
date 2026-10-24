@@ -8113,7 +8113,7 @@ def _owner_page(**fixture) -> Iterator[tuple[Page, str, str]]:
 
 def _owner_layout_holds(page: Page) -> None:
     """Every owner control word stays whole and the page never scrolls sideways."""
-    for width in (1440, 761, 390, 320):
+    for width in (1440, 1100, 884, 761, 760, 390, 320):
         page.set_viewport_size({"width": width, "height": 900})
         page.evaluate(
             "() => new Promise(resolve => requestAnimationFrame(() => "
@@ -8187,6 +8187,8 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         panel.get_by_role("button", name="Choose genres", exact=True).click()
         group = panel.get_by_role("group", name="Choose genres")
         expect(group.get_by_role("checkbox")).to_have_count(3)
+        # Opening the subset puts focus on its first genre, never on body (D1).
+        expect(group.get_by_role("checkbox").first).to_be_focused()
         expect(group.locator(".owner-option").first).to_contain_text("DramaCurrent")
         group.get_by_role("checkbox", name=re.compile("^Mystery")).check()
         group.get_by_role("checkbox", name=re.compile("^Drama")).uncheck()
@@ -8284,6 +8286,17 @@ def test_the_previous_title_chosen_after_the_library_changed_is_refused():
             case_id,
         )
         assert current and current != case_id
+        # The owner stays on the work, on the case that replaced theirs, and is
+        # told there why nothing was recorded (M4).
+        page.wait_for_url(re.compile(f"preview={current}"))
+        moved = page.get_by_role("region", name="Your value for Title")
+        expect(
+            moved.get_by_text(
+                "Not recorded: the work changed. Review it again.", exact=True
+            )
+        ).to_be_visible()
+        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        expect(page.get_by_text("Selected work could not be loaded")).to_have_count(0)
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))

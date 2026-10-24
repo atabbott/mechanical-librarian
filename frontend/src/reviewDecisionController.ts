@@ -31,6 +31,9 @@ const ownerOutcomes: Readonly<Record<string, string>> = {
 }
 const outcomeWords = (outcome: string) =>
   ({ owner_entered: 'your value', withdraw: 'withdrawal' })[outcome] ?? labelWords(outcome)
+// One sentence for a written decision, shared by the refusal and the note.
+export const writtenRefusal =
+  'This decision has been written to your library, so it can’t be withdrawn.'
 // The store's refusal for an owner command, in the words the owner acts on.
 export const ownerRefusalCopy = (
   error: unknown,
@@ -46,7 +49,7 @@ export const ownerRefusalCopy = (
     nothing_to_withdraw: 'There is no recorded decision to withdraw.',
     automatic_hold:
       'This decision is holding automatic handling. Use Resume automatic handling to release it.',
-    decision_written: 'This decision has been written to your library, so it can’t be withdrawn.',
+    decision_written: writtenRefusal,
   }[error.code]
 }
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
@@ -115,7 +118,7 @@ export const useReviewDecisionController = ({
   onAdvance: (field: string) => Promise<void> | void
   onComplete?: (fields: CaseDetailView['fields']) => Promise<void> | void
   onRecorded?: (caseId: string, destination: string) => Promise<void> | void
-  onStale: () => Promise<void> | void
+  onStale: (command: DecisionCommand) => Promise<void> | void
 }) => {
   const { http, queryClient } = useReviewContext()
   const [status, setStatus] = useState<{
@@ -271,7 +274,7 @@ export const useReviewDecisionController = ({
       if (!refreshed.current) {
         forget(command)
         announce(reviewCaseId, command.destination, '')
-        if (isMounted()) await onStale()
+        if (isMounted()) await onStale(command)
         return
       }
       if (!isMounted()) {
@@ -326,7 +329,7 @@ export const useReviewDecisionController = ({
         // inherit its pressed/recording presentation or destination guard.
         forget(command)
         announce(reviewCaseId, command.destination, '')
-        await onStale()
+        await onStale(command)
         return
       }
       if (!refreshed) {
@@ -457,7 +460,9 @@ export const useReviewDecisionController = ({
       reconciliation.data?.destination === destination ? reconciliation.data.message : undefined,
     decision,
     settle,
-    announce: (destination: string, text: string) => announce(reviewCaseId, destination, text),
+    // A notice for this case, or for the case the owner is being moved to.
+    announce: (destination: string, text: string, caseId = reviewCaseId) =>
+      announce(caseId, destination, text),
     submit,
   }
 }

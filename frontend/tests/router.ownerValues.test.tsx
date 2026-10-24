@@ -1,10 +1,18 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
 import type { CaseDetailView, DecisionCommand, OwnerControlView, ReviewHttp } from '../src/api/http'
-import { createHttp, detail, library, recordedAcknowledgement, renderRoute } from './fixtures'
+import { coalesceMilliseconds } from '../src/liveInvalidation'
+import {
+  createHttp,
+  createLiveStream,
+  detail,
+  library,
+  recordedAcknowledgement,
+  renderRoute,
+} from './fixtures'
 
 // F59 owner controls on the decision canvas (#1285, ADR-0085): V1-V7.
 type Field = CaseDetailView['fields'][number]
@@ -270,7 +278,7 @@ describe('owner-entered values', () => {
     expect(within(busy).queryByRole('button', { name: 'Change' })).toBeNull()
     expect(
       within(busy).getByText(
-        'This decision is being written to your library. You can change or withdraw it once the write finishes.',
+        'This decision is being written to your library. You can change it once the write finishes.',
       ),
     ).toBeVisible()
   })
@@ -294,7 +302,7 @@ describe('owner-entered values', () => {
       'automatic_hold',
       'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
     ],
-    ['written', 'This decision has been written to your library.'],
+    ['written', 'This decision has been written to your library, so it can’t be withdrawn.'],
   ] as const)('V6 states why %s withdraw is not offered', async (state, copy) => {
     const http = owner(() => [{ ...enteredTitle, ownerControl: control({ withdraw: state }) }])
     const panel = await open(http)
@@ -399,5 +407,273 @@ describe('owner command labels', () => {
       (await screen.findByRole('heading', { name })).closest('article')
     expect(await article('Title')).toHaveTextContent('Owner entered a value.')
     expect(await article('Subtitle')).toHaveTextContent('Owner withdrew the decision.')
+  })
+})
+
+describe('owner review fixes', () => {
+  const heading = () => screen.getByRole('heading', { level: 2, name: 'Title' })
+
+  it('M1 labels an entered value as the owner’s own', async () => {
+    const http = owner(() => [{ ...enteredTitle, editable: false, ownerControl: null }])
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const recorded = await screen.findByRole('region', { name: 'Title recorded outcome' })
+    expect(within(recorded).getByText('Your value')).toBeVisible()
+    expect(within(recorded).queryByText('Current value')).toBeNull()
+  })
+
+  it('M3 lets a carried hold, not the automatic decision, speak for the field', async () => {
+    const held: Field = {
+      ...base,
+      needsAttention: false,
+      classification: 'automatic_recorded',
+      manualHold: true,
+      automaticDecision: {
+        candidate_id: null,
+        decision_id: 'automatic-1',
+        destination: 'title',
+        occurred_at: 1,
+        outcome: 'keep_current',
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: null,
+        target_fingerprint: base.targetFingerprint,
+      },
+    }
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=title',
+      owner(() => [held]),
+    )
+    expect(
+      await screen.findByText(
+        'An earlier owner decision is pausing automatic handling until you choose Resume automatic handling.',
+      ),
+    ).toBeVisible()
+    expect(document.querySelector('[aria-pressed="true"]')).toBeNull()
+    const resolved = screen.getByText('Resolved automatically', { selector: 'dt' })
+    expect(resolved.nextElementSibling).toHaveTextContent('0')
+  })
+
+  it('M4 says a stale entry was not recorded on the case that replaced it', async () => {
+    const user = userEvent.setup()
+    let stale = false
+    const http = {
+      ...owner(
+        () => [contextTitle],
+        async () => {
+          stale = true
+          throw new ApiError(409, 'stale')
+        },
+      ),
+      getCaseSuccessor: vi.fn(async () => 'case-2'),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
+        ...detail,
+        id,
+        current: id === 'case-2' || !stale,
+        fields: [contextTitle],
+      })),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const panel = await screen.findByRole('region', { name: 'Your value for Title' })
+    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    await user.type(within(panel).getByRole('textbox'), 'A Fresh Orchard')
+    await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+    await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+    const moved = await screen.findByRole('region', { name: 'Your value for Title' })
+    expect(
+      await within(moved).findByText('Not recorded: the work changed. Review it again.'),
+    ).toBeVisible()
+    await waitFor(() => expect(heading()).toHaveFocus())
+    expect(router.state.location.search.field).toBe('title')
+    expect(screen.queryByText(/Selected work could not be loaded/u)).toBeNull()
+    expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+  })
+
+  it('M4 moves an owner with an open form to the case that superseded theirs', async () => {
+    const user = userEvent.setup()
+    let stale = false
+    const updates = createLiveStream()
+    const http = {
+      ...owner(() => [contextTitle]),
+      getLibrary: vi.fn(async () => (stale ? { ...quietLibrary, works: [] } : quietLibrary)),
+      getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
+        ...detail,
+        id,
+        current: id === 'case-2' || !stale,
+        fields: [contextTitle],
+      })),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    const panel = await screen.findByRole('region', { name: 'Your value for Title' })
+    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 80, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+    const moved = await screen.findByRole('region', { name: 'Your value for Title' })
+    expect(await within(moved).findByText('The work changed. Review it again.')).toBeVisible()
+    await waitFor(() => expect(heading()).toHaveFocus())
+    expect(screen.queryByText(/Selected work could not be loaded/u)).toBeNull()
+  })
+
+  it('M4 says nothing when the owner was not using an owner control', async () => {
+    let stale = false
+    const updates = createLiveStream()
+    const http = {
+      ...owner(() => [contextTitle]),
+      getLibrary: vi.fn(async () => (stale ? { ...quietLibrary, works: [] } : quietLibrary)),
+      getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
+        ...detail,
+        id,
+        current: id === 'case-2' || !stale,
+        fields: [contextTitle],
+      })),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    await screen.findByRole('region', { name: 'Your value for Title' })
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 82, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+    await screen.findByRole('region', { name: 'Your value for Title' })
+    expect(screen.queryByText('The work changed. Review it again.')).toBeNull()
+  })
+
+  it('D1 puts focus on the first genre when the subset opens', async () => {
+    const user = userEvent.setup()
+    const genres: Field = {
+      ...contextTitle,
+      destination: 'genres',
+      currentRaw: ['Drama'],
+      ownerControl: control({
+        subset: {
+          maxItems: 32,
+          options: [{ value: 'Drama', current: true, proposed: false, previous: false }],
+        },
+      }),
+    }
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=genres',
+      owner(() => [genres]),
+    )
+    const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
+    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    expect(within(panel).getByRole('checkbox', { name: /Drama/u })).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(within(panel).getByRole('button', { name: 'Choose genres' })).toHaveFocus()
+  })
+
+  it('S2 ties a refusal to the input it is about', async () => {
+    const user = userEvent.setup()
+    const panel = await open(owner(() => [contextTitle]))
+    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    const input = within(panel).getByRole('textbox', { name: 'Your value for Title' })
+    await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(input).toHaveAccessibleDescription(/Enter a value first\./u)
+    expect(within(panel).getAllByRole('alert')).toHaveLength(1)
+    await user.keyboard('{Escape}')
+    expect(within(panel).getByRole('button', { name: 'Enter a value' })).toHaveFocus()
+  })
+
+  it('S4 announces an owner command once, in its own words', async () => {
+    const user = userEvent.setup()
+    const genres: Field = {
+      ...base,
+      destination: 'genres',
+      decisionActions: ['keep_current', 'accept'],
+      currentValue: 'Drama',
+      currentRaw: ['Drama'],
+      proposedValues: [{ kind: 'list', value: ['Fantasy'] }],
+      ownerControl: control({
+        subset: {
+          maxItems: 32,
+          options: [
+            { value: 'Drama', current: true, proposed: false, previous: false },
+            { value: 'Fantasy', current: false, proposed: true, previous: false },
+          ],
+        },
+      }),
+    }
+    let fields: readonly Field[] = [genres]
+    const http = owner(() => fields)
+    renderRoute('/library?lens=all&preview=case-1&field=genres', http)
+    const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
+    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('checkbox', { name: /Fantasy/u }))
+    fields = [
+      {
+        ...genres,
+        needsAttention: false,
+        humanDecision: {
+          ...decision('owner_entered', { kind: 'list', value: ['Drama', 'Fantasy'] }),
+          destination: 'genres',
+        },
+      },
+    ]
+    await user.click(within(panel).getByRole('button', { name: 'Record these genres' }))
+    expect(await screen.findByText('Your value is recorded.')).toBeVisible()
+    expect(screen.queryByText('Choice recorded.')).toBeNull()
+    expect(screen.queryByText('Recording choice…')).toBeNull()
+  })
+
+  it('S5 and the written note promise only what is possible, once', async () => {
+    const http = owner(() => [
+      { ...enteredTitle, ownerControl: control({ ...entry, withdraw: 'in_progress' }) },
+    ])
+    const panel = await open(http)
+    expect(
+      within(panel).getByText(
+        'This decision is being written to your library. You can change it once the write finishes.',
+      ),
+    ).toBeVisible()
+  })
+
+  it('S6 reads a withdrawal in History as a withdrawal', async () => {
+    const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+      items: [
+        {
+          category: 'owner' as const,
+          occurredAt: 1786000000,
+          applicationReason: null,
+          destination: 'title',
+          outcome: 'withdraw',
+          previousValue: { kind: 'text', value: 'The Silent Orchard' },
+          selectedValue: null,
+        },
+      ],
+    }))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const article = (await screen.findByRole('heading', { name: 'Title' })).closest('article')
+    expect(article).toHaveTextContent('Withdrawn')
+    expect(article).not.toHaveTextContent('No value is recorded.')
+  })
+
+  it('O1 re-reads the open case on Activity while its owner write is in flight', async () => {
+    const updates = createLiveStream()
+    let writing = true
+    const http = owner(() => [
+      {
+        ...enteredTitle,
+        ownerControl: control({ ...entry, withdraw: writing ? 'in_progress' : 'written' }),
+      },
+    ])
+    renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    const panel = await screen.findByRole('region', { name: 'Your value for Title' })
+    expect(within(panel).getByText(/is being written to your library/u)).toBeVisible()
+    writing = false
+    await act(async () => {
+      updates.announce({ sequence: 81, subject: null, topic: 'activity' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    await waitFor(() =>
+      expect(within(panel).queryByText(/is being written to your library/u)).toBeNull(),
+    )
+    expect(within(panel).getByRole('button', { name: 'Change' })).toBeVisible()
   })
 })

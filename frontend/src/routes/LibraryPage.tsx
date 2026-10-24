@@ -1,4 +1,5 @@
 import {
+  invalidateBackgroundQueries,
   prefetchBackgroundQuery,
   runRequiredRead,
   useRequiredRead,
@@ -21,7 +22,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { RefObject, SyntheticEvent } from 'react'
+import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
 import { CsrfRenewedError, displayValue, refusalCopy, sessionRefreshedCopy } from '../api/http'
@@ -65,6 +66,7 @@ import {
   choiceAvailable,
   requestKey,
   useReviewDecisionController,
+  writtenRefusal,
 } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
@@ -613,6 +615,8 @@ const effectSummary = (field: ReviewField) => {
           detail: `${fieldLabel(field.effectCapability)} currently prevents an external update.`,
         }
 }
+const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
+  outcome === 'owner_entered' || outcome === 'withdraw'
 const completionOutcome = (field: ReviewField) =>
   authoredOwnerRecorded(field)
     ? 'Advised description selected'
@@ -656,7 +660,9 @@ const recordedSelected = (
     ? false
     : field.humanDecision !== null
       ? humanChoiceSelected(field.humanDecision, outcome, selectedValue)
-      : field.automaticDecision !== null &&
+      : // A carried hold pauses the automatic decision, so it chose nothing.
+        !field.manualHold &&
+        field.automaticDecision !== null &&
         automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
 const choiceSelected = (
   field: ReviewField,
@@ -1394,6 +1400,13 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
 // suggestions. Each is offered only where the store would accept it now; the
 // store still decides, and a refusal is said here, beside the control used.
 type OwnerOutcome = 'owner_entered' | 'withdraw'
+// The open field's heading, the place focus returns to when the control that
+// was used is gone.
+const focusFieldHeading = () => {
+  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
+  heading?.setAttribute('tabindex', '-1')
+  heading?.focus({ preventScroll: true })
+}
 const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
 const quotedValue = (value: { value: unknown } | null | undefined) =>
   value ? `“${displayValue(value.value)}”` : 'nothing'
@@ -1401,8 +1414,8 @@ const withdrawCopy = {
   automatic_hold:
     'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
   in_progress:
-    'This decision is being written to your library. You can change or withdraw it once the write finishes.',
-  written: 'This decision has been written to your library.',
+    'This decision is being written to your library. You can change it once the write finishes.',
+  written: writtenRefusal,
 } as const
 
 function OwnerControls({
@@ -1429,17 +1442,21 @@ function OwnerControls({
   const [problem, setProblem] = useState('')
   const inputId = useId()
   const countId = useId()
+  const problemId = useId()
   const input = useRef<HTMLInputElement>(null)
+  const subsetGroup = useRef<HTMLFieldSetElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const recorded = useRef<HTMLParagraphElement>(null)
   const notice = useRef<HTMLParagraphElement>(null)
   const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
   const busy = progress?.phase === 'recording'
   const decision = field.humanDecision
-  const ownerValue = decision?.outcome === 'owner_entered' ? decision.selected_value : null
+  // Any standing decision is changed, not entered afresh (D5).
+  const changing = decision !== null && decision.outcome !== 'withdraw'
   const refocus = useRef<RefObject<HTMLButtonElement | null> | null>(null)
   useEffect(() => {
     if (mode === 'entry') input.current?.focus()
+    if (mode === 'subset') subsetGroup.current?.querySelector('input')?.focus()
     if (mode === 'idle') refocus.current?.current?.focus({ preventScroll: true })
     refocus.current = null
   }, [mode])
@@ -1465,9 +1482,7 @@ function OwnerControls({
         ;(recorded.current ?? notice.current)?.focus({ preventScroll: true })
         return
       }
-      const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
-      heading?.setAttribute('tabindex', '-1')
-      heading?.focus({ preventScroll: true })
+      focusFieldHeading()
     })
   }, [progress])
   if (!control) return null
@@ -1485,16 +1500,23 @@ function OwnerControls({
     setMode('idle')
     setProblem('')
   }
+  const escape = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    close(trigger)
+  }
   const openEntry = () => {
-    setDraft(typeof ownerValue?.value === 'string' ? ownerValue.value : '')
+    const recordedText = decision?.selected_value?.value
+    setDraft(changing && typeof recordedText === 'string' ? recordedText : '')
     setTyped(false)
     setProblem('')
     setMode('entry')
   }
   const openSubset = () => {
+    const recordedList = decision?.selected_value?.value
     setChosen(
-      Array.isArray(ownerValue?.value)
-        ? (ownerValue.value as string[])
+      changing && Array.isArray(recordedList)
+        ? (recordedList as string[])
         : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? []),
     )
     setProblem('')
@@ -1532,6 +1554,14 @@ function OwnerControls({
         ? `You chose ${String(decision.selected_value.value.length)} ${decision.selected_value.value.length === 1 ? 'genre' : 'genres'}.`
         : `You entered ${quotedValue(decision.selected_value)}.`
       : null
+  // A refusal is said in one place: beside the input while a form is open,
+  // and at the end of the section otherwise. Each place is mounted empty.
+  const refusal = problem || (failed ? status : '')
+  const refusalNotice = (
+    <p ref={notice} id={problemId} tabIndex={-1} className="owner-notice" role="alert">
+      {refusal}
+    </p>
+  )
   return (
     <section className="owner-controls" aria-label={`Your value for ${label}`}>
       {recordedCopy ? (
@@ -1542,16 +1572,16 @@ function OwnerControls({
       {writing ? <p className="owner-note">{withdrawCopy.in_progress}</p> : null}
       {entry && mode !== 'entry' && !writing ? (
         <button ref={trigger} type="button" className="owner-trigger" onClick={openEntry}>
-          {ownerValue ? 'Change' : 'Enter a value'}
+          {changing ? 'Change' : 'Enter a value'}
         </button>
       ) : null}
       {subset && mode !== 'subset' && !writing ? (
         <button ref={trigger} type="button" className="owner-trigger" onClick={openSubset}>
-          {ownerValue ? 'Change' : 'Choose genres'}
+          {changing ? 'Change' : 'Choose genres'}
         </button>
       ) : null}
       {entry && mode === 'entry' ? (
-        <form className="owner-entry" onSubmit={recordEntry} noValidate>
+        <form className="owner-entry" onSubmit={recordEntry} onKeyDown={escape} noValidate>
           <label htmlFor={inputId}>{`Your value for ${label}`}</label>
           <input
             ref={input}
@@ -1559,7 +1589,8 @@ function OwnerControls({
             type="text"
             value={draft}
             autoComplete="off"
-            aria-describedby={countId}
+            aria-invalid={refusal ? true : undefined}
+            aria-describedby={`${countId} ${problemId}`}
             onChange={(event) => {
               setDraft(event.target.value)
               setTyped(true)
@@ -1571,6 +1602,7 @@ function OwnerControls({
               ? `${String(Array.from(draft).length)} of ${String(entry.maxCharacters)} characters`
               : ''}
           </small>
+          {refusalNotice}
           {entry.suggestions.length ? (
             <div className="owner-suggestions">
               {entry.suggestions.map((suggestion) => (
@@ -1601,8 +1633,8 @@ function OwnerControls({
         </form>
       ) : null}
       {subset && mode === 'subset' ? (
-        <form className="owner-entry" onSubmit={recordSubset} noValidate>
-          <fieldset className="owner-subset">
+        <form className="owner-entry" onSubmit={recordSubset} onKeyDown={escape} noValidate>
+          <fieldset ref={subsetGroup} className="owner-subset" aria-describedby={problemId}>
             <legend>Choose genres</legend>
             {subset.options.map((option) => (
               <label key={option.value} className="owner-option">
@@ -1625,6 +1657,7 @@ function OwnerControls({
               </label>
             ))}
           </fieldset>
+          {refusalNotice}
           <div className="owner-actions">
             <button type="submit" aria-disabled={blocked}>
               {busy ? 'Recording…' : 'Record these genres'}
@@ -1644,14 +1677,15 @@ function OwnerControls({
         >
           {busy && progress.command.outcome === 'withdraw' ? 'Withdrawing…' : 'Withdraw'}
         </button>
-      ) : control.withdraw && control.withdraw !== 'in_progress' ? (
+      ) : control.withdraw &&
+        control.withdraw !== 'in_progress' &&
+        // The refusal already says it in the same words.
+        !(control.withdraw === 'written' && refusal === writtenRefusal) ? (
         <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
       ) : null}
-      <p ref={notice} tabIndex={-1} className="owner-notice" role="alert">
-        {problem || (failed ? status : '')}
-      </p>
+      {mode === 'idle' ? refusalNotice : null}
       <p className="owner-status" role="status">
-        {problem || failed ? '' : status}
+        {refusal ? '' : status}
       </p>
     </section>
   )
@@ -1694,7 +1728,7 @@ function RecordedOutcome({
     >
       <p>
         <strong>
-          {field.humanDecision === null && field.automaticDecision !== null
+          {field.humanDecision === null && field.automaticDecision !== null && !field.manualHold
             ? 'Resolved automatically'
             : completionOutcome(field)}
         </strong>
@@ -1713,7 +1747,13 @@ function RecordedOutcome({
           </div>
         ) : (
           <div>
-            <dt>{decision.outcome === 'keep_current' ? 'Retained value' : 'Current value'}</dt>
+            <dt>
+              {decision.outcome === 'keep_current'
+                ? 'Retained value'
+                : decision.outcome === 'owner_entered'
+                  ? 'Your value'
+                  : 'Current value'}
+            </dt>
             <dd>
               {field.destination === 'description' ? (
                 <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
@@ -2644,6 +2684,18 @@ export default function LibraryPage({
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
   const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
   const [ownerCommand, setOwnerCommand] = useState<string | null>(null)
+  // What the owner is told on the case they were moved to when theirs was
+  // superseded under them, and the case whose field heading takes focus (M4).
+  const [ownerNotice, setOwnerNotice] = useState<{
+    caseId: string
+    destination: string
+    text: string
+  } | null>(null)
+  const headingFocus = useRef<string | null>(null)
+  const ownerField = useRef<string | null>(null)
+  // The case whose owner form was open, or whose owner control had focus,
+  // when the Library said it changed; the refetch that follows can unmount it.
+  const ownerEngaged = useRef<string | null>(null)
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error' | 'refreshed'>>
   >({})
@@ -3001,6 +3053,12 @@ export default function LibraryPage({
     if (!updates || !search.preview) return
     return updates.subscribe((update) => {
       if (update.topic !== 'library') return
+      if (
+        document.querySelector(
+          '.owner-controls form, .owner-controls button:focus, .owner-controls input:focus',
+        )
+      )
+        ownerEngaged.current = search.preview ?? null
       if (update.subject === null) {
         const predecessor = search.preview
         if (!predecessor) return
@@ -3059,6 +3117,16 @@ export default function LibraryPage({
           )
             continue
           setReconciledSuccessorIdentity(successor.id)
+          const destination = ownerField.current
+          if (destination && ownerEngaged.current === selectedTarget.caseId) {
+            ownerEngaged.current = null
+            setOwnerNotice({
+              caseId: successor.id,
+              destination,
+              text: 'The work changed. Review it again.',
+            })
+            headingFocus.current = successor.id
+          }
           await navigate({
             replace: true,
             search: (current) =>
@@ -3114,6 +3182,31 @@ export default function LibraryPage({
     : railFields.filter((field) => !emptyUnproposed(field))
   const selected = urlSelected ?? renderedRailFields.find(actionable) ?? renderedRailFields[0]
   const attentionFields = railFields.filter(actionable)
+  const selectedOwnerDestination = selected?.ownerControl ? selected.destination : null
+  useEffect(() => {
+    ownerField.current = selectedOwnerDestination
+  }, [selectedOwnerDestination])
+  const shownCaseId = detail.data?.id
+  useEffect(() => {
+    if (!shownCaseId || headingFocus.current !== shownCaseId) return
+    headingFocus.current = null
+    requestAnimationFrame(focusFieldHeading)
+  }, [shownCaseId])
+  // An owner write settles after its decision recorded. The case topic is not
+  // published then, so while one is in flight each Activity frame re-reads the
+  // open case, and its controls stop saying the write is in progress (O1).
+  const ownerWriteInFlight =
+    detail.data?.fields.some((field) => field.ownerControl?.withdraw === 'in_progress') === true
+  useEffect(() => {
+    if (!updates || !ownerWriteInFlight || !shownCaseId) return
+    return updates.subscribe((update) => {
+      if (update.topic !== 'activity') return
+      void invalidateBackgroundQueries(queryClient, {
+        queryKey: ['review-case', shownCaseId],
+        exact: true,
+      })
+    })
+  }, [ownerWriteInFlight, queryClient, shownCaseId, updates])
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
   const activeQueueIndex = selected
@@ -3203,7 +3296,30 @@ export default function LibraryPage({
       if (destination !== 'cover') return
       setStaleCoverReview((current) => (current?.caseId === caseId ? null : current))
     },
-    onStale: async () => {
+    onStale: async (command) => {
+      if (ownerOutcome(command.outcome)) {
+        // The owner stays on the work: the refused command is said on the case
+        // that replaced theirs, with focus on its field (M4).
+        const predecessor = selectedReviewCaseId
+        const successor = await http.getCaseSuccessor(predecessor).catch(() => null)
+        if (successor !== null) {
+          setReconciledSuccessorIdentity(successor)
+          setOwnerNotice({
+            caseId: successor,
+            destination: command.destination,
+            text: 'Not recorded: the work changed. Review it again.',
+          })
+          headingFocus.current = successor
+          await navigate({
+            replace: true,
+            search: (current) =>
+              current.preview === predecessor
+                ? { ...current, preview: successor, field: command.destination }
+                : current,
+          })
+          return
+        }
+      }
       if (selected?.destination === 'cover') {
         setStaleCoverReview({
           caseId: selectedReviewCaseId,
@@ -3631,6 +3747,7 @@ export default function LibraryPage({
   ) => {
     const idempotencyKey = requestKey()
     setOwnerCommand(null)
+    setOwnerNotice(null)
     setFrozenFieldOrders((current) =>
       current[selectedReviewCaseId] === undefined
         ? { ...current, [selectedReviewCaseId]: currentActionableDestinations }
@@ -3782,10 +3899,13 @@ export default function LibraryPage({
   // The one-tap teaching line is for someone who has not yet seen what a tap
   // does. It says so on the first field only, and gives way to what is actually
   // happening once they have chosen.
+  // An owner command says what it did in its own status, once (S4).
+  const choiceProgress =
+    selectedProgress && ownerOutcome(selectedProgress.command.outcome) ? null : selectedProgress
   const teachingLine =
-    selectedProgress?.phase === 'recording'
+    choiceProgress?.phase === 'recording'
       ? 'Recording choice…'
-      : selectedProgress?.phase === 'confirmed' ||
+      : choiceProgress?.phase === 'confirmed' ||
           (!selectedProgress && selected && authoredOwnerRecorded(selected))
         ? 'Choice recorded.'
         : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
@@ -4229,7 +4349,9 @@ export default function LibraryPage({
                       {String(
                         detail.data.fields.filter(
                           (field) =>
-                            field.humanDecision === null && field.automaticDecision !== null,
+                            field.humanDecision === null &&
+                            field.automaticDecision !== null &&
+                            !field.manualHold,
                         ).length,
                       )}
                     </dd>
@@ -4748,7 +4870,14 @@ export default function LibraryPage({
                       field={selected}
                       disabled={controller.recording || controller.reloadRequired}
                       progress={selectedProgress}
-                      status={ownerStatusShown ? controller.statusFor(selected.destination) : ''}
+                      status={
+                        ownerNotice?.caseId === selectedReviewCaseId &&
+                        ownerNotice.destination === selected.destination
+                          ? ownerNotice.text
+                          : ownerStatusShown
+                            ? controller.statusFor(selected.destination)
+                            : ''
+                      }
                       failed={controller.decision.isError}
                       submit={(outcome, value) => {
                         const key = choose(selected, outcome, value)
@@ -4813,20 +4942,28 @@ export default function LibraryPage({
                           </div>
                         </>
                       ) : (
-                        <button
-                          ref={automaticTrigger}
-                          type="button"
-                          aria-disabled={automaticCompletedForSelected}
-                          onClick={
-                            automaticCompletedForSelected
-                              ? undefined
-                              : () => setAutomaticPanel(selectedAutomaticKey)
-                          }
-                        >
-                          {automaticCompletedForSelected
-                            ? 'Fresh checks requested'
-                            : 'Resume automatic handling'}
-                        </button>
+                        <>
+                          {selected.humanDecision === null ? (
+                            <p>
+                              An earlier owner decision is pausing automatic handling until you
+                              choose Resume automatic handling.
+                            </p>
+                          ) : null}
+                          <button
+                            ref={automaticTrigger}
+                            type="button"
+                            aria-disabled={automaticCompletedForSelected}
+                            onClick={
+                              automaticCompletedForSelected
+                                ? undefined
+                                : () => setAutomaticPanel(selectedAutomaticKey)
+                            }
+                          >
+                            {automaticCompletedForSelected
+                              ? 'Fresh checks requested'
+                              : 'Resume automatic handling'}
+                          </button>
+                        </>
                       )}
                     </section>
                   ) : null}
