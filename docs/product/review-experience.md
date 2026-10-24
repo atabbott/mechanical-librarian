@@ -689,7 +689,10 @@ choosing the earlier value again: after a write is read back, Enter a value
 offers the value it replaced as one more suggestion, Previous value, and Choose
 genres tags previous genres Previous. Recording either is an ordinary
 owner-entered decision under the same guards. Fields without owner entry, such
-as authors, return to an earlier value only when a provider proposes it.
+as authors, return to an earlier value only when a provider proposes it. A work
+read back to exactly an earlier content re-admits that earlier case, which can
+still show its old decision wording, for example a written entry while the
+library holds the earlier value; a hold released since stays released.
 
 ## Settings route
 

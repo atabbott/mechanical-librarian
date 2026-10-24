@@ -357,23 +357,39 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             # The owner's hold follows the work, not the case (ADR-0085): the
             # latest hold per destination across the item's cases carries
             # forward while it is active and no return is pending, keeping
-            # its decision as the token "Return to automatic" names.
-            for destination, document in self._connection.execute(
-                "SELECT destination,document FROM (SELECT hold.destination,"
+            # its decision as the token "Return to automatic" names. A case
+            # admitted again takes that latest state into its own row, so a
+            # hold released or returning since never resurrects with it.
+            for destination, active, document in self._connection.execute(
+                "SELECT destination,active,document FROM (SELECT hold.destination,"
                 "hold.active,hold.document,row_number() OVER (PARTITION BY "
                 "hold.destination ORDER BY hold.updated_at DESC,hold.rowid DESC) "
                 "position FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id IN (SELECT to_review_case_id FROM "
                 "review_case_transitions WHERE connection_name=? AND "
                 "library_name=? AND item_id=? AND to_review_case_id IS NOT NULL)) "
-                "WHERE position=1 AND active=1 "
-                "AND json_extract(document,'$.pending_return') IS NULL",
+                "WHERE position=1",
                 lineage,
             ).fetchall():
                 hold = json.loads(document)
                 if hold["review_case_id"] == case.review_case_id:
                     continue
                 hold["review_case_id"] = case.review_case_id
+                if not active or hold["pending_return"] is not None:
+                    if existing is not None:
+                        self._connection.execute(
+                            "UPDATE field_effect_manual_holds SET active=?,"
+                            "updated_at=?,document=? WHERE review_case_id=? "
+                            "AND destination=?",
+                            (
+                                active,
+                                hold["updated_at"],
+                                canonical_effect_json(hold),
+                                case.review_case_id,
+                                destination,
+                            ),
+                        )
+                    continue
                 self._connection.execute(
                     "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
                     "active,updated_at,document) VALUES(?,?,1,?,?) "

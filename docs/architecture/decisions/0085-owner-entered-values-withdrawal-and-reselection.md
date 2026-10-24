@@ -101,8 +101,14 @@ event, so the value a write replaced is durable.
   holds, so a successor shows the hold and its Resume automatic handling
   control. Library browse facts do not yet show a carried hold.
 - A case id is a content hash, so a work that returns to exactly the content of
-  an earlier case re-admits that case with its earlier decisions and hold row;
-  main already does this when an accepted write is edited back by hand.
+  an earlier case re-admits that case. Its own hold row takes the work's latest
+  hold state, a release or pending return included, so a released hold never
+  resurrects. Its earlier decisions are append-only and stay, so a re-admitted
+  case can show its old decision wording, such as "You entered X" marked
+  written while the library holds the earlier value, and can read as held
+  while automatic handling is queued. Main already does this when an accepted
+  write is edited back by hand; making a recurring case a new episode is a
+  follow-up candidate.
 - Extending owner entry to more fields, clearing a field and adapter
   compare-and-set are follow-up candidates.
 

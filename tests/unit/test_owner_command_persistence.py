@@ -515,3 +515,66 @@ def test_returning_the_successor_to_automatic_releases_the_hold(
     store.publish(rewritten(_HELD, publisher="Changed Again"))
     assert _hold(store) is None
     assert _automatic_genres(store) == [store.case.review_case_id]
+
+
+# R4: a case id is a content hash, so a work read back to exactly an earlier
+# content admits that earlier case again. Its own hold row takes the work's
+# latest hold state, so a hold released or returning since never resurrects.
+def test_a_released_hold_stays_released_when_an_earlier_case_recurs(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    first = store.case.review_case_id
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    successor = store.case.review_case_id
+    assert store.repository.clear_field_effect_manual_hold(
+        successor, "genres", store.clock(), token
+    )
+    assert _automatic_genres(store) == [successor]
+    store.publish(_HELD)
+    assert store.case.review_case_id == first
+    assert _hold(store) is None
+    assert _automatic_genres(store) == [first]
+    # Its earlier decision still reads as before (ADR-0085 records the gap).
+    # The rewritten row passes the store's own validation on reopening.
+    store.repository.close()
+    store.repository = open_repository(store.root / "owner.sqlite")
+    assert _hold(store) is None
+
+
+def test_a_pending_return_reaches_an_earlier_case_that_recurs(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    first = store.case.review_case_id
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    scan = store.repository.request_review_scan(
+        "primary", "ebooks", "library-ebooks", "a" * 64, store.clock()
+    )
+    at = store.clock()
+    assert store.repository.request_field_effect_manual_return(
+        store.case.review_case_id, "genres", token, scan.scan_id, at, at
+    )
+    store.publish(_HELD)
+    assert store.case.review_case_id == first
+    row = store.repository._connection.execute(
+        "SELECT active,document FROM field_effect_manual_holds "
+        "WHERE review_case_id=? AND destination='genres'",
+        (first,),
+    ).fetchone()
+    assert row[0] == 1
+    assert json.loads(row[1])["pending_return"]["scan_id"] == scan.scan_id
+    store.repository.close()
+    store.repository = open_repository(store.root / "owner.sqlite")
+
+
+def test_an_earlier_case_that_recurs_keeps_a_hold_still_in_force(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    first = store.case.review_case_id
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    store.publish(_HELD)
+    assert store.case.review_case_id == first
+    assert _hold(store) == token
+    assert _automatic_genres(store) == []
