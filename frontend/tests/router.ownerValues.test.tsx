@@ -180,6 +180,10 @@ describe('owner-entered values', () => {
       ),
     )
     expect(within(panel).getByRole('button', { name: 'Record this value' })).toHaveFocus()
+    // Closing the form leaves the refusal behind it.
+    await user.keyboard('{Escape}')
+    expect(within(panel).getByRole('alert')).toHaveTextContent('')
+    expect(within(panel).getByRole('status')).toHaveTextContent('')
   })
 
   it('V3 fills the input from a suggestion without recording', async () => {
@@ -449,6 +453,9 @@ describe('owner review fixes', () => {
       ),
     ).toBeVisible()
     expect(document.querySelector('[aria-pressed="true"]')).toBeNull()
+    // Nothing is marked, so the header does not say something is.
+    expect(screen.getByText(/Your earlier decision still holds this field\./u)).toBeVisible()
+    expect(screen.queryByText(/The recorded outcome is marked below/u)).toBeNull()
     const resolved = screen.getByText('Resolved automatically', { selector: 'dt' })
     expect(resolved.nextElementSibling).toHaveTextContent('0')
   })
@@ -465,12 +472,11 @@ describe('owner review fixes', () => {
         },
       ),
       getCaseSuccessor: vi.fn(async () => 'case-2'),
-      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
-        ...detail,
-        id,
-        current: id === 'case-2' || !stale,
-        fields: [contextTitle],
-      })),
+      // The server refuses a superseded case's read as stale.
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        if (stale && id === 'case-1') throw new ApiError(409, 'stale')
+        return { ...detail, id, fields: [contextTitle] }
+      }),
     }
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Title' })
@@ -486,6 +492,10 @@ describe('owner review fixes', () => {
     expect(router.state.location.search.field).toBe('title')
     expect(screen.queryByText(/Selected work could not be loaded/u)).toBeNull()
     expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    // Acting on the replacement case clears the notice; a fresh input is valid.
+    await user.click(within(moved).getByRole('button', { name: 'Enter a value' }))
+    expect(within(moved).getByRole('textbox')).not.toHaveAttribute('aria-invalid')
+    expect(within(moved).queryByText(/the work changed/u)).toBeNull()
   })
 
   it('M4 moves an owner with an open form to the case that superseded theirs', async () => {
@@ -496,12 +506,11 @@ describe('owner review fixes', () => {
       ...owner(() => [contextTitle]),
       getLibrary: vi.fn(async () => (stale ? { ...quietLibrary, works: [] } : quietLibrary)),
       getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
-      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
-        ...detail,
-        id,
-        current: id === 'case-2' || !stale,
-        fields: [contextTitle],
-      })),
+      // The server refuses a superseded case's read as stale.
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        if (stale && id === 'case-1') throw new ApiError(409, 'stale')
+        return { ...detail, id, fields: [contextTitle] }
+      }),
     }
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
     const panel = await screen.findByRole('region', { name: 'Your value for Title' })
@@ -516,6 +525,9 @@ describe('owner review fixes', () => {
     expect(await within(moved).findByText('The work changed. Review it again.')).toBeVisible()
     await waitFor(() => expect(heading()).toHaveFocus())
     expect(screen.queryByText(/Selected work could not be loaded/u)).toBeNull()
+    expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+    await user.click(within(moved).getByRole('button', { name: 'Enter a value' }))
+    expect(within(moved).queryByText('The work changed. Review it again.')).toBeNull()
   })
 
   it('M4 says nothing when the owner was not using an owner control', async () => {
@@ -525,12 +537,11 @@ describe('owner review fixes', () => {
       ...owner(() => [contextTitle]),
       getLibrary: vi.fn(async () => (stale ? { ...quietLibrary, works: [] } : quietLibrary)),
       getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
-      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
-        ...detail,
-        id,
-        current: id === 'case-2' || !stale,
-        fields: [contextTitle],
-      })),
+      // The server refuses a superseded case's read as stale.
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        if (stale && id === 'case-1') throw new ApiError(409, 'stale')
+        return { ...detail, id, fields: [contextTitle] }
+      }),
     }
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
     await screen.findByRole('region', { name: 'Your value for Title' })

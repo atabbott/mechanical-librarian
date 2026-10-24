@@ -25,7 +25,13 @@ import {
 import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { CsrfRenewedError, displayValue, refusalCopy, sessionRefreshedCopy } from '../api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  displayValue,
+  refusalCopy,
+  sessionRefreshedCopy,
+} from '../api/http'
 import type {
   CaseDetailView,
   ChoiceContextView,
@@ -1440,6 +1446,9 @@ function OwnerControls({
   const [typed, setTyped] = useState(false)
   const [chosen, setChosen] = useState<readonly string[]>([])
   const [problem, setProblem] = useState('')
+  // The notice or refusal the owner has moved past by opening or closing a
+  // form; it stays unsaid until the next command.
+  const [dismissed, setDismissed] = useState<string | null>(null)
   const inputId = useId()
   const countId = useId()
   const problemId = useId()
@@ -1493,12 +1502,14 @@ function OwnerControls({
     // The ref is the guard a second press meets before React re-renders.
     if (blocked || sent.current !== null) return
     setProblem('')
+    setDismissed(null)
     sent.current = { key: submit(outcome, value), outcome }
   }
   const close = (target: RefObject<HTMLButtonElement | null>) => {
     refocus.current = target
     setMode('idle')
     setProblem('')
+    setDismissed(status)
   }
   const escape = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return
@@ -1510,6 +1521,7 @@ function OwnerControls({
     setDraft(changing && typeof recordedText === 'string' ? recordedText : '')
     setTyped(false)
     setProblem('')
+    setDismissed(status)
     setMode('entry')
   }
   const openSubset = () => {
@@ -1520,6 +1532,7 @@ function OwnerControls({
         : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? []),
     )
     setProblem('')
+    setDismissed(status)
     setMode('subset')
   }
   const recordEntry = (event: SyntheticEvent<HTMLFormElement>) => {
@@ -1556,7 +1569,8 @@ function OwnerControls({
       : null
   // A refusal is said in one place: beside the input while a form is open,
   // and at the end of the section otherwise. Each place is mounted empty.
-  const refusal = problem || (failed ? status : '')
+  const shown = status === dismissed ? '' : status
+  const refusal = problem || (failed ? shown : '')
   const refusalNotice = (
     <p ref={notice} id={problemId} tabIndex={-1} className="owner-notice" role="alert">
       {refusal}
@@ -1651,9 +1665,12 @@ function OwnerControls({
                   }}
                 />
                 <span>{option.value}</span>
-                {option.current ? <small className="owner-tag">Current</small> : null}
-                {option.proposed ? <small className="owner-tag">Proposed</small> : null}
-                {option.previous ? <small className="owner-tag">Previous</small> : null}
+                {/* One unit, so a narrow row wraps its tags together. */}
+                <span className="owner-tags">
+                  {option.current ? <small className="owner-tag">Current</small> : null}
+                  {option.proposed ? <small className="owner-tag">Proposed</small> : null}
+                  {option.previous ? <small className="owner-tag">Previous</small> : null}
+                </span>
               </label>
             ))}
           </fieldset>
@@ -1685,7 +1702,7 @@ function OwnerControls({
       ) : null}
       {mode === 'idle' ? refusalNotice : null}
       <p className="owner-status" role="status">
-        {refusal ? '' : status}
+        {refusal || failed ? '' : shown}
       </p>
     </section>
   )
@@ -2692,6 +2709,9 @@ export default function LibraryPage({
     text: string
   } | null>(null)
   const headingFocus = useRef<string | null>(null)
+  // The case being left for its successor: while it is, its own failed read
+  // and its absence from Library are the move, not something to report.
+  const [movingFrom, setMovingFrom] = useState<string | null>(null)
   const ownerField = useRef<string | null>(null)
   // The case whose owner form was open, or whose owner control had focus,
   // when the Library said it changed; the refetch that follows can unmount it.
@@ -3093,6 +3113,7 @@ export default function LibraryPage({
     )
       return
     pendingSuccessorRef.current.clear()
+    setMovingFrom(selectedTarget.caseId)
     void (async () => {
       try {
         const predecessor = await http.getCaseDetail(selectedTarget.caseId)
@@ -3101,10 +3122,17 @@ export default function LibraryPage({
           predecessor.target.connection !== selectedTarget.connection ||
           predecessor.target.library !== selectedTarget.library ||
           predecessor.target.item !== selectedTarget.item
-        )
+        ) {
+          setMovingFrom(null)
           return
-      } catch {
-        return
+        }
+      } catch (error) {
+        // The server refuses a superseded case's read as stale; that is the
+        // case no longer being current. Each successor's target is checked.
+        if (!(error instanceof ApiError && error.code === 'stale')) {
+          setMovingFrom(null)
+          return
+        }
       }
       for (const successorId of successorIds) {
         try {
@@ -3134,6 +3162,7 @@ export default function LibraryPage({
                 ? { ...current, preview: successor.id }
                 : current,
           })
+          setMovingFrom(null)
           return
         } catch {
           // A case can disappear again between the bounded page read and its
@@ -3141,6 +3170,7 @@ export default function LibraryPage({
           // still name its replacement.
         }
       }
+      setMovingFrom(null)
     })()
   }, [data, retained, works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
@@ -3301,6 +3331,7 @@ export default function LibraryPage({
         // The owner stays on the work: the refused command is said on the case
         // that replaced theirs, with focus on its field (M4).
         const predecessor = selectedReviewCaseId
+        setMovingFrom(predecessor)
         const successor = await http.getCaseSuccessor(predecessor).catch(() => null)
         if (successor !== null) {
           setReconciledSuccessorIdentity(successor)
@@ -3317,8 +3348,10 @@ export default function LibraryPage({
                 ? { ...current, preview: successor, field: command.destination }
                 : current,
           })
+          setMovingFrom(null)
           return
         }
+        setMovingFrom(null)
       }
       if (selected?.destination === 'cover') {
         setStaleCoverReview({
@@ -3422,6 +3455,13 @@ export default function LibraryPage({
   const identityPending =
     !displayedIdentity && (reading || attention.isPending || attention.isPlaceholderData)
   const identityError = !displayedIdentity && (failed || attention.isError)
+  // While a command records, the Library asks for the successor, the owner is
+  // moved to it, or its identity is still being read, the absence is the move.
+  const leaving =
+    movingFrom === search.preview ||
+    activeLineageReconciliation ||
+    controller.recording ||
+    (reconciledSuccessorIdentity === search.preview && detail.isPending)
   const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
   const selectedDetailReady =
@@ -4264,7 +4304,7 @@ export default function LibraryPage({
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
           ) : !displayedIdentity ? (
-            identityPending ? (
+            identityPending || leaving ? (
               <p role="status">Loading selected work…</p>
             ) : identityError ? (
               <p role="alert">
@@ -4287,7 +4327,7 @@ export default function LibraryPage({
                 <p role="status">This work is not available in the current Library result.</p>
               </div>
             )
-          ) : detail.isPending ? (
+          ) : detail.isPending || (detail.isError && leaving) ? (
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
@@ -4564,8 +4604,10 @@ export default function LibraryPage({
                         </>
                       ) : selectedRevisitable ? (
                         <p>
-                          The recorded outcome is marked below. You can select another eligible
-                          value.
+                          {selected.humanDecision === null && selected.manualHold
+                            ? 'Your earlier decision still holds this field.'
+                            : 'The recorded outcome is marked below.'}{' '}
+                          You can select another eligible value.
                         </p>
                       ) : selectedOptional ? (
                         <p>{fieldReason(selected)}</p>

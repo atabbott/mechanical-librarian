@@ -386,6 +386,7 @@ def _server(
     genre_current: tuple[str, ...] | None = None,
     owner_write: bool = False,
     owner_library_change: bool = False,
+    owner_readback: list[Callable[[str], str]] | None = None,
     language_fixture: tuple[str, ...] | None = None,
     language_current: str | None = None,
     language_audio: bool = False,
@@ -1570,6 +1571,21 @@ def _server(
                     repository, report, current, genre_destination, OWNER_EDIT, 910
                 )
             return await call_next(request)
+
+    if owner_readback is not None:
+        # The library edits the title while the page is open: read the work
+        # back as its successor and announce Library, as a scan does.
+        def read_back(title: str) -> str:
+            current = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            successor_id, _ = _read_back_title(
+                repository, report, current, genre_destination, title, 910
+            )
+            app.state.review_application.updates.publish("library", None)
+            return successor_id
+
+        owner_readback.append(read_back)
 
     stale_cover_published = False
     if stale_cover_successor or stale_cover_same_case:
@@ -8239,6 +8255,22 @@ def _choose_previous_title(page: Page, origin: str, case_id: str):
     return panel
 
 
+# Every alert and status text the page shows from now on, however briefly.
+_WATCH_ANNOUNCEMENTS = """() => { window.__said = new Set(); new MutationObserver(() => {
+  for (const node of document.querySelectorAll('[role=alert],[role=status]'))
+    if (node.textContent.trim()) window.__said.add(node.textContent.trim()) })
+  .observe(document.body, {subtree: true, childList: true, characterData: true}) }"""
+
+
+def _said_nothing_false_while_moving(page: Page) -> None:
+    said = page.evaluate("[...window.__said]")
+    assert not [
+        text
+        for text in said
+        if "could not be loaded" in text or "not available in the current" in text
+    ], said
+
+
 def test_owner_chooses_the_previous_title_again():
     """B4: the case that read the write back offers the value it replaced as a
     suggestion, and choosing it is an ordinary owner-entered decision."""
@@ -8274,6 +8306,7 @@ def test_the_previous_title_chosen_after_the_library_changed_is_refused():
         owner_library_change=True,
     ) as (page, origin, case_id):
         panel = _choose_previous_title(page, origin, case_id)
+        page.evaluate(_WATCH_ANNOUNCEMENTS)
         with page.expect_response(
             lambda response: response.url.endswith("/decisions")
         ) as refused:
@@ -8296,7 +8329,33 @@ def test_the_previous_title_chosen_after_the_library_changed_is_refused():
             )
         ).to_be_visible()
         expect(page.locator(".decision-canvas > header h2")).to_be_focused()
-        expect(page.get_by_text("Selected work could not be loaded")).to_have_count(0)
+        _said_nothing_false_while_moving(page)
+
+
+def test_an_open_entry_moves_to_the_case_that_superseded_it():
+    """MF1: the library edits the title while the owner types; the real
+    server refuses the superseded case's read as stale, and the owner still
+    reaches the current case, told why, with focus on the field heading."""
+    readback: list[Callable[[str], str]] = []
+    with _owner_page(
+        genre_fixture=("Fantasy",), genre_current=("Drama",), owner_readback=readback
+    ) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        panel = page.get_by_role("region", name="Your value for Title")
+        panel.get_by_role("button", name="Enter a value", exact=True).click()
+        panel.get_by_role("textbox", name="Your value for Title").fill("Half Typed")
+        page.evaluate(_WATCH_ANNOUNCEMENTS)
+        successor = readback[0](OWNER_EDIT)
+        assert successor != case_id
+        page.wait_for_url(re.compile(f"preview={successor}"))
+        moved = page.get_by_role("region", name="Your value for Title")
+        expect(
+            moved.get_by_role("status").get_by_text(
+                "The work changed. Review it again.", exact=True
+            )
+        ).to_be_visible()
+        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        _said_nothing_false_while_moving(page)
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))
