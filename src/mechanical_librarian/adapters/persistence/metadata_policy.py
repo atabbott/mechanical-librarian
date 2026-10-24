@@ -663,12 +663,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     "processing", "metadata policy transition is processing"
                 )
             # A new activation supersedes a finished transition the owner has
-            # not dismissed, so its notice ends here; its items stay as recorded
-            # (#1369).
+            # not dismissed, so its notice ends here. Its items and time stay
+            # as recorded: Activity dates the transition by updated_at (#1369).
             self._connection.execute(
-                "UPDATE metadata_policy_transitions SET acknowledged=1,updated_at=MAX(updated_at,?) "
+                "UPDATE metadata_policy_transitions SET acknowledged=1 "
                 "WHERE generation=? AND acknowledged=0 AND state IN ('completed','completed_with_failures')",
-                (activated_at, state[1]),
+                (state[1],),
             )
             draft = self._connection.execute(
                 "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",

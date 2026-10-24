@@ -1566,6 +1566,45 @@ def test_next_scan_reprepares_a_failed_item_a_new_activation_superseded(
     repository.close()
 
 
+def test_superseded_transition_keeps_its_own_time_in_activity(
+    state_directory: Path,
+) -> None:
+    repository, notebook, _, _, draft, _, _ = _partly_failed_activation(
+        state_directory / "activity.sqlite", "provider"
+    )
+    recorded = dict(
+        repository._connection.execute(
+            "SELECT generation,updated_at FROM metadata_policy_transitions"
+        ).fetchall()
+    )
+    assert 25 == recorded[2]
+    follow_up = _follow_up(repository, draft)
+
+    notebook.activate(
+        follow_up.policy_id, draft.policy_id, 28, expected_active_generation=2
+    )
+
+    events = repository.field_effect_activity_page(
+        search=None, event_type="policy", occurred_after=0, page=1, page_size=25
+    )["events"]
+    assert [
+        ("Policy generation 3", 28),
+        ("Policy generation 2", recorded[2]),
+        ("Policy generation 1", recorded[1]),
+    ] == [(event["record"]["generation"], event["occurred_at"]) for event in events]
+    assert (1, 1) == repository._connection.execute(
+        "SELECT acknowledged,updated_at=? FROM metadata_policy_transitions "
+        "WHERE generation=2",
+        (recorded[2],),
+    ).fetchone()
+    latest = repository.metadata_policy_transition()
+    assert latest is not None and (3, False) == (
+        latest.generation,
+        latest.acknowledged,
+    )
+    repository.close()
+
+
 def test_activation_still_refuses_while_a_transition_is_processing(
     state_path: Path,
 ) -> None:
