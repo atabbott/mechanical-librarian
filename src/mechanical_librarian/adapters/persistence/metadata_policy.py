@@ -658,16 +658,18 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "SELECT state,acknowledged FROM metadata_policy_transitions WHERE generation=?",
                 (state[1],),
             ).fetchone()
-            if active_transition is not None and (
-                active_transition[0] == "processing"
-                or (
-                    active_transition[0] == "completed_with_failures"
-                    and active_transition[1] == 0
-                )
-            ):
+            if active_transition is not None and active_transition[0] == "processing":
                 raise PolicyContentionError(
                     "processing", "metadata policy transition is processing"
                 )
+            # A new activation supersedes a finished transition the owner has
+            # not dismissed, so its notice ends here. Its items and time stay
+            # as recorded: Activity dates the transition by updated_at (#1369).
+            self._connection.execute(
+                "UPDATE metadata_policy_transitions SET acknowledged=1 "
+                "WHERE generation=? AND acknowledged=0 AND state IN ('completed','completed_with_failures')",
+                (state[1],),
+            )
             draft = self._connection.execute(
                 "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
                 (policy_id,),
@@ -804,7 +806,15 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                         checkpoint,
                     ),
                 ).rowcount
-                if updated != 1:
+                # The current-review join reads the package, so an item that
+                # fails reconciliation must not keep its old-policy case there
+                # (#1369).
+                retired = self._connection.execute(
+                    "UPDATE current_review_packages SET review_case_id=NULL,checkpoint=?,outcome='retired' "
+                    "WHERE connection_name=? AND library_name=? AND item_id=? AND review_case_id=? AND checkpoint=?",
+                    (checkpoint + 1, connection, library, item, case_id, checkpoint),
+                ).rowcount
+                if updated != 1 or retired != 1:
                     raise MetadataReportError("metadata policy cohort changed")
                 work = self._connection.execute(
                     "SELECT work_id,scan_id,stage,state,report_id FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=?",
@@ -945,45 +955,49 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 (transition_id,),
             ).fetchall()
             for connection, library, item, report_id, work_id in failed:
-                work_stage = None
-                work_state = None
-                if work_id is None:
-                    found = self._connection.execute(
-                        "SELECT work_id,stage,state FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? AND report_id=?",
-                        (connection, library, item, report_id),
-                    ).fetchone()
-                    if found is not None:
-                        work_id, work_stage, work_state = found
-                else:
-                    existing_work = self._connection.execute(
-                        "SELECT stage,state,report_id FROM review_preparation_work WHERE work_id=?",
-                        (work_id,),
-                    ).fetchone()
-                    if existing_work is None or existing_work[2] not in (
-                        {None, report_id}
-                        if existing_work[0] == "extraction"
-                        else {report_id}
-                    ):
-                        work_id = None
-                    else:
-                        work_stage, work_state = existing_work[:2]
-                if work_id is None:
+                found = self._connection.execute(
+                    "SELECT work_id,stage,state,report_id FROM review_preparation_work WHERE "
+                    + (
+                        "connection_name=? AND library_name=? AND item_id=?"
+                        if work_id is None
+                        else "work_id=?"
+                    ),
+                    (connection, library, item) if work_id is None else (work_id,),
+                ).fetchone()
+                if found is None:
+                    # No preparation work exists to restart, so the item stays
+                    # failed with its typed code.
+                    continue
+                work_id, work_stage, work_state, work_report = found
+                if work_report not in (
+                    {None, report_id} if work_stage == "extraction" else {report_id}
+                ):
+                    # The work moved on to a newer report, which prepares under
+                    # the current policy: this item is superseded, not
+                    # skipped, and keeps the stale code that says why (#1369).
+                    self._connection.execute(
+                        "UPDATE metadata_policy_transition_items SET work_id=?,state='complete',failure_code='stale',updated_at=? WHERE transition_id=? AND connection_name=? AND library_name=? AND item_id=?",
+                        (work_id, retried_at, transition_id, connection, library, item),
+                    )
                     continue
                 if work_state in {"failed", "stale"} or work_stage not in {
                     "extraction",
                     "provider",
                 }:
                     self._restart_metadata_policy_work(
-                        # Reaching here with work_id set means work_stage was
-                        # read from review_preparation_work.stage (NOT NULL).
-                        work_id,
-                        cast(str, work_stage),
-                        report_id,
-                        retried_at,
+                        work_id, work_stage, report_id, retried_at
                     )
                 self._connection.execute(
                     "UPDATE metadata_policy_transition_items SET work_id=?,state='pending',failure_code=NULL,updated_at=? WHERE transition_id=? AND connection_name=? AND library_name=? AND item_id=?",
                     (work_id, retried_at, transition_id, connection, library, item),
+                )
+                # Pending work is claimed only from a processing scan, and an
+                # idle claim may already have closed this one (#1369).
+                self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+                    "WHERE scan_id=(SELECT scan_id FROM review_preparation_work WHERE work_id=?) "
+                    "AND state IN ('completed','completed_with_failures')",
+                    (retried_at, work_id),
                 )
             self._refresh_metadata_policy_transition(transition_id, retried_at)
             result = self.metadata_policy_transition()

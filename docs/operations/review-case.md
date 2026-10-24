@@ -173,23 +173,31 @@ separate draft from the read-only built-in active policy; validate, immutable
 create, read, and preview use deterministic versioned responses. After exact
 preview, the owner may activate that immutable draft. One transaction persists
 the exact resolved per-library documents, retires every current unapplied
-old-policy pointer, fixes the transition total, and changes the active
-generation. Successors return progressively through the existing pipeline from
+old-policy pointer together with its current review package, fixes the
+transition total, and changes the active generation. An item that then fails
+reconciliation therefore leaves no old-policy case current to block a later
+preview or activation. Successors return progressively through the existing pipeline from
 eligible persisted evidence. Ask retains human work; Ignore removes that
 category from actionable attention with a typed policy result. Automatic stays
 unavailable until qualified and Explicit is unsupported.
 
 The compact transition status is server-authoritative and survives restart.
-`completed_with_failures` retains typed diagnostics and explicit retry;
-acknowledgement dismisses only that transition notification. New work uses the
+`completed_with_failures` retains typed diagnostics and explicit retry.
+Retry restarts each failed item whose fixed evidence is still current and
+reopens its preparation scan so the work is claimed; an item whose work has
+moved to a newer report is resolved as superseded, stored as complete with its
+`stale` code and shown to the owner as reconciled, because that report prepares
+under the current policy; an item with no preparation work stays failed.
+Acknowledgement dismisses only that transition notification. New work uses the
 current policy immediately without changing the fixed cutover total. Cutover
 adds no provider reacquisition, second queue, decision transfer, automatic
 authority, apply plan, target write, or media write. The policy-only script is
 served separately from the shared Library and Attention interaction bundle.
 While processing, the notebook refreshes this compact status at a bounded
 interval; retry restarts polling, while terminal or acknowledged state stops it.
-Another activation cannot overlap processing or unacknowledged failed
-completion. An exact response-loss retry returns the original transition.
+Another activation cannot overlap processing. It supersedes a completed or
+`completed_with_failures` transition the owner has not dismissed, acknowledging
+it in the same transaction while its items and counts stay as recorded. An exact response-loss retry returns the original transition.
 
 The owner-facing notebook groups the closed policy catalogue into Identity,
 Publication, Curation, and Unsupported content chapters. Its sticky desktop

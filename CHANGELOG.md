@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- A policy activation that completes with failures no longer blocks Validate
+  and preview, and a new activation now proceeds over it. After activation,
+  affected works leave Attention and show in Library without a case until they
+  are re-prepared under the new policy. Retry failed reconciliation counts a
+  book whose evidence moved to a newer report as reconciled, and retried work
+  always resumes, so retry and Dismiss reach a clean end (#1369).
+
 - The selected work now stays on screen with its fields after you enter a
   value, choose genres, change or withdraw a decision, after a search that no
   longer matches it, and when a link opens a work outside the current page. It

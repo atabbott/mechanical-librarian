@@ -897,12 +897,10 @@ def test_language_ask_stays_case_bound_then_retires_with_report_replacement(
             5,
             expected_active_generation=2,
         )
-        # The old case retains its original Ask resolution, not the new profile.
-        assert next(
-            f
-            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
-            if f["destination"] == "language"
-        )["needs_attention"]
+        # Activation retires the old case with its package (#1369), so it is
+        # never reinterpreted under the new profile: it is simply not current.
+        with pytest.raises(ReviewWebError, match="stale"):
+            InspectCurrentReviewCase(repository).run(case_id)
         successor = language_report(("English", "en", "UND"), audio=audio)
         repository.publish(successor, lambda: True, expected_current=report.report_id)
         proposal = evaluate_report(
