@@ -1273,7 +1273,7 @@ it('retains unconfirmed incumbent evidence in actual mapped owner history', asyn
   const http = createHttp()
   http.getHistory = vi.fn(async () =>
     mapHistory({
-      schema_version: 'review-case-history-v2',
+      schema_version: 'review-case-history-v3',
       review_case_id: 'case-1',
       next_cursor: null,
       items: [

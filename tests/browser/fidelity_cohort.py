@@ -366,6 +366,7 @@ def _field(
     navigation_role: str | None = None,
     inventory_role: str | None = None,
     preservation_only: bool | None = None,
+    owner_control: dict[str, object] | None = None,
 ) -> dict[str, object]:
     # The installed client fails closed to the exact owner-decision vocabulary.
     # Synthetic cases mirror the domain rule: an owner can retain the incumbent
@@ -467,6 +468,7 @@ def _field(
         "notices": notices or [],
         "provenance": provenance or [],
         "corroboration_sources": corroboration_sources or [],
+        "owner_control": owner_control,
         "uncertainty": [],
     }
 
@@ -474,7 +476,7 @@ def _field(
 def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
-            "schema_version": "review-case-detail-v5",
+            "schema_version": "review-case-detail-v6",
             "recording_identity_basis": None,
             "audiobook_review_scope": None,
             "media_health": [],
@@ -491,6 +493,63 @@ def _case(case_id: str) -> dict[str, object]:
                 "title": "Retired exact-current case",
             },
             "fields": [],
+        }
+
+    if case_id == "case-owner":
+        # Every owner control at once, with the longest words the store admits
+        # in a value, so the layout proof meets its worst case (#1285).
+        long_title = "The Incomprehensibilities of Counterrevolutionary Cartographers"
+        return {
+            **_case("case-1"),
+            "review_case_id": case_id,
+            "fields": [
+                _field(
+                    "title",
+                    long_title,
+                    ["Incomprehensibilities"],
+                    owner_control={
+                        "entry": {
+                            "max_characters": 512,
+                            "suggestions": [
+                                {"rule": "title_case", "value": long_title},
+                                {"rule": "strip_part", "value": "Counterrevolutionary"},
+                                {
+                                    "rule": "previous",
+                                    "value": "Uncharacteristically Interdisciplinary",
+                                },
+                            ],
+                        },
+                        "subset": None,
+                        "withdraw": None,
+                    },
+                ),
+                _field(
+                    "genres",
+                    ["Historiography"],
+                    [["Historiography", "Psychogeography"]],
+                    owner_control={
+                        "entry": None,
+                        "subset": {
+                            "max_items": 32,
+                            "options": [
+                                {
+                                    "value": value,
+                                    "current": value == "Historiography",
+                                    "proposed": value == "Psychogeography",
+                                    "previous": value
+                                    == "Counterfactual speculative fiction",
+                                }
+                                for value in (
+                                    "Historiography",
+                                    "Psychogeography",
+                                    "Counterfactual speculative fiction",
+                                )
+                            ],
+                        },
+                        "withdraw": None,
+                    },
+                ),
+            ],
         }
 
     resolved = case_id in {"case-7", "case-12"}
@@ -908,7 +967,7 @@ def _case(case_id: str) -> dict[str, object]:
         LIBRARY_WORKS[0],
     )
     return {
-        "schema_version": "review-case-detail-v5",
+        "schema_version": "review-case-detail-v6",
         "recording_identity_basis": None,
         "audiobook_review_scope": None,
         "media_health": [],
@@ -1702,7 +1761,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     }
                 )
             return {
-                "schema_version": "review-case-history-v2",
+                "schema_version": "review-case-history-v3",
                 "review_case_id": case_id,
                 "next_cursor": None,
                 "items": items,

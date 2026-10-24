@@ -28,6 +28,7 @@
         "needs_attention": true,
         "navigation_role": "attention",
         "notices": ["competing_evidence"],
+        "owner_control": null,
         "proposed_values": [
           {
             "kind": "list",
@@ -128,6 +129,7 @@
         "needs_attention": true,
         "navigation_role": "attention",
         "notices": ["competing_evidence"],
+        "owner_control": null,
         "proposed_values": [
           {
             "kind": "text",
@@ -216,6 +218,14 @@
         "needs_attention": false,
         "navigation_role": "attention",
         "notices": ["positive_preservation_evidence"],
+        "owner_control": {
+          "entry": {
+            "max_characters": 512,
+            "suggestions": []
+          },
+          "subset": null,
+          "withdraw": null
+        },
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -301,6 +311,7 @@
         "needs_attention": false,
         "navigation_role": "attention",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -347,6 +358,7 @@
         "needs_attention": false,
         "navigation_role": "attention",
         "notices": ["positive_preservation_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -432,6 +444,7 @@
         "needs_attention": false,
         "navigation_role": "attention",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -478,6 +491,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -524,6 +538,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -570,6 +585,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -616,6 +632,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -662,6 +679,7 @@
         "needs_attention": false,
         "navigation_role": "attention",
         "notices": ["identifier_applicability_unresolved"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -708,6 +726,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -754,6 +773,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -800,6 +820,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -846,6 +867,7 @@
         "needs_attention": false,
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
+        "owner_control": null,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -872,7 +894,7 @@
     ],
     "media_health": [],
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-detail-v5",
+    "schema_version": "review-case-detail-v6",
     "target": {
       "authors": ["Example Author"],
       "connection": "primary",

@@ -38,6 +38,8 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.audiobook_reports import admitted_audiobook_report
+from tests.support.genre_reports import genre_report
+from tests.support.owner_values import OwnerStore, rewritten
 
 
 def _actionable(report):
@@ -288,6 +290,93 @@ def test_an_audiobook_decision_applies_through_the_guarded_path():
             assert "verified" == service.apply(plan.plan_id).state
         assert settled == len(requests)
         repository.close()
+
+
+_ORCHARD = {"kind": "text", "value": "The Silent Orchard"}
+
+
+def _audit(store: OwnerStore, plan_id: str) -> list[str]:
+    return [
+        json.loads(document)["kind"]
+        for document in store.repository.field_effect_event_documents(plan_id)
+    ]
+
+
+def test_an_owner_entered_title_applies_through_the_guarded_path(tmp_path):
+    """A typed value is an ordinary guarded write, verified by read-back (#1285)."""
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        decision = store.decide("owner_entered", _ORCHARD)
+        assert "owner_entered" == decision.outcome
+        written = store.write(decision)
+        assert (written.plan.pre_value, written.plan.desired_value) == (
+            "Real Tigers",
+            "The Silent Orchard",
+        )
+        assert "The Silent Orchard" == store.target.read(written.plan).value
+        assert ["planned", "verified"] == [
+            kind
+            for kind in _audit(store, written.plan.plan_id)
+            if kind in {"planned", "verified"}
+        ]
+        assert store.patches == [written.plan.plan_id]
+    finally:
+        store.close()
+
+
+def test_a_genre_subset_writes_exactly_the_chosen_genres(tmp_path):
+    store = OwnerStore(
+        tmp_path,
+        genre_report(
+            genres=("Fantasy", "Mystery", "Romance"), current=("Drama", "Fantasy")
+        ),
+    )
+    try:
+        written = store.write(
+            store.decide(
+                "owner_entered",
+                {"kind": "list", "value": ["Drama", "Mystery"]},
+                destination="genres",
+            )
+        )
+        assert ["Drama", "Fantasy"] == written.plan.pre_value
+        assert ["Drama", "Mystery"] == store.target.read(written.plan).value
+    finally:
+        store.close()
+
+
+def test_withdraw_before_claim_issues_no_request(tmp_path):
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        operation = store.plan(store.decide("owner_entered", _ORCHARD))
+        store.decide("withdraw")
+        assert "superseded" == store.service.apply(operation.plan.plan_id).state
+        assert [] == store.patches
+        assert "Real Tigers" == store.target.read(operation.plan).value
+    finally:
+        store.close()
+
+
+def test_reselecting_the_previous_value_on_the_successor_writes_it_back(tmp_path):
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        written = store.write(store.decide("owner_entered", _ORCHARD))
+        store.publish(rewritten(genre_report(), title="The Silent Orchard"))
+        assert {"title": "Real Tigers"} == store.previous()
+        operation = store.plan(
+            store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+        )
+        assert (operation.plan.pre_value, operation.plan.desired_value) == (
+            written.plan.desired_value,
+            written.plan.pre_value,
+        )
+        verified = store.service.apply(operation.plan.plan_id)
+        assert ("verified", None) == (verified.state, verified.failure)
+        assert "Real Tigers" == store.target.read(operation.plan).value
+        assert store.patches == [written.plan.plan_id, operation.plan.plan_id]
+        assert {"title": "The Silent Orchard"} == store.previous()
+    finally:
+        store.close()
 
 
 def test_description_advice_uses_real_persisted_admission_and_guarded_installed_lifecycle():

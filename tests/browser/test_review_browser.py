@@ -384,6 +384,9 @@ def _server(
     genre_fixture: tuple[str, ...] | None = None,
     genre_destination: str = "automatic",
     genre_current: tuple[str, ...] | None = None,
+    owner_write: bool = False,
+    owner_library_change: bool = False,
+    owner_readback: list[Callable[[str, bool], str]] | None = None,
     language_fixture: tuple[str, ...] | None = None,
     language_current: str | None = None,
     language_audio: bool = False,
@@ -933,6 +936,10 @@ def _server(
         case_id, proposal_set = publish_genre_case(
             repository, report, genre_destination
         )
+        if owner_write:
+            case_id, report = _seed_owner_write(
+                repository, database.parent, report, case_id, genre_destination
+            )
     elif language_fixture is not None:
         from tests.support.language_reports import (
             language_report,
@@ -1543,6 +1550,46 @@ def _server(
         settings=settings,
         reviewer_access=reviewer_access,
     )
+    if owner_library_change:
+        owner_changed = False
+
+        @app.middleware("http")
+        async def change_title_before_decision(request, call_next):
+            # The library edits the written title just before the decision
+            # arrives, so the case the owner answered is now stale.
+            nonlocal owner_changed
+            if (
+                request.method == "POST"
+                and request.url.path.endswith("/decisions")
+                and not owner_changed
+            ):
+                owner_changed = True
+                current = ReviewCase.create_from_data(
+                    json.loads(repository.get_review_case(case_id))["case"]
+                )
+                _read_back_title(
+                    repository, report, current, genre_destination, OWNER_EDIT, 910
+                )
+            return await call_next(request)
+
+    if owner_readback is not None:
+        # The library edits the title while the page is open: read the work
+        # back as its successor and announce Library, as a scan does, naming
+        # the successor case or not.
+        def read_back(title: str, named: bool) -> str:
+            current = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            successor_id, _ = _read_back_title(
+                repository, report, current, genre_destination, title, 910
+            )
+            app.state.review_application.updates.publish(
+                "library", successor_id if named else None
+            )
+            return successor_id
+
+        owner_readback.append(read_back)
+
     stale_cover_published = False
     if stale_cover_successor or stale_cover_same_case:
         if cover_considerations is None:
@@ -1672,6 +1719,106 @@ def _server(
             server.force_exit = True
             thread.join(timeout=5)
         session_store.close()
+
+
+OWNER_TITLE = "Real Tigers Revisited"
+OWNER_EDIT = "Real Tigers: Library Edition"
+
+
+def _seed_owner_write(repository, root: Path, report, case_id: str, destination: str):
+    """Write an owner-entered title through the guarded pipeline over a fake
+    library, then read the work back as its successor case (#1285)."""
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from tests.support.description_advice import _guarded_application
+
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "title"
+    )
+    decision = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="title",
+        actor="owner",
+        outcome="owner_entered",
+        selected_value={"kind": "text", "value": OWNER_TITLE},
+        idempotency_key="browser-owner-entered-title",
+        occurred_at=900,
+    )
+    repository.record_human_decision(decision)
+    authority = PersistedFieldEffectAuthority(repository)
+    service, target = _guarded_application(repository, root, authority)
+    repository.grant_field_effect_consents(
+        report.target.connection, (report.target.library,), ("title",), 12
+    )
+    snapshot = authority.resolve(decision)
+    operation = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest="c" * 64,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    assert service.apply(operation.plan.plan_id).state == "verified"
+    return _read_back_title(repository, report, case, destination, OWNER_TITLE, 905)
+
+
+def _read_back_title(
+    repository, report, case: ReviewCase, destination: str, title: str, at: int
+):
+    """Publish the work as the library now reads it, with this title, under
+    the policy `publish_genre_case` activated, and admit its successor case."""
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.owner_values import rewritten
+
+    successor = rewritten(report, title=title)
+    repository.publish(successor, lambda: True, report.report_id)
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    } | {"genres": destination}
+    resolved = resolve_policy(
+        MetadataPolicyProfile.create(
+            "Genre evidence",
+            dict(DEFAULT_OPTIONS) | {"genres": "fill_empty"},
+            destinations,
+        ),
+        report.target.library,
+    )
+    assert (
+        resolved.resolved_id
+        == json.loads(repository.get_proposal(case.proposal_set_id))[
+            "resolved_policy_id"
+        ]
+    )
+    successor_proposal = evaluate_report(
+        successor, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish_proposal(successor_proposal)
+    admitted = json.loads(repository.admit_review_case(successor_proposal))
+    assert admitted["status"] == "superseded", admitted
+    repository.persist_shadow_outcome(admitted["review_case_id"], at)
+    return admitted["review_case_id"], successor
 
 
 def _login(page: Page, origin: str) -> None:
@@ -7948,6 +8095,356 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 expect(event.get_by_text("Fantasy", exact=True)).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
+
+
+@contextmanager
+def _owner_page(**fixture) -> Iterator[tuple[Page, str, str]]:
+    """A signed-in page over a genre work the owner reviews by hand (#1285)."""
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+        )
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "owner.sqlite",
+                hash_path=hash_path,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                genre_destination="ask",
+                **fixture,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            yield page, origin, case_id
+        browser.close()
+
+
+def _owner_layout_holds(page: Page) -> None:
+    """Every owner control word stays whole and the page never scrolls sideways."""
+    for width in (1440, 1100, 884, 761, 760, 390, 320):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => "
+            "requestAnimationFrame(resolve)))"
+        )
+        assert page.locator(".owner-controls").count(), width
+        assert not page.evaluate(_POLICY_MID_WORD, ".owner-controls"), width
+        assert page.evaluate("document.documentElement.scrollWidth") <= width
+        heights = page.evaluate(
+            "() => [...document.querySelectorAll('.owner-controls button')]"
+            ".map(node => node.getBoundingClientRect().height)"
+        )
+        assert all(height >= 44 for height in heights), (width, heights)
+    # At 320 px with 200% text, nothing in the controls passes the canvas edge.
+    # The page's CSP ignores a style attribute, so the text is enlarged by a
+    # constructed stylesheet, and the root size proves it applied.
+    page.set_viewport_size({"width": 320, "height": 900})
+    page.evaluate(
+        "() => { const sheet = new CSSStyleSheet(); "
+        "sheet.replaceSync('html { font-size: 200% }'); "
+        "document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet] }"
+    )
+    try:
+        # The reduced-motion rule leaves every property a transition, so the
+        # root size settles after it rather than at once; the wait is the proof.
+        page.wait_for_function(
+            "() => getComputedStyle(document.documentElement).fontSize === '32px'",
+            timeout=5_000,
+        )
+        page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => "
+            "requestAnimationFrame(resolve)))"
+        )
+        past = page.evaluate(
+            """() => {
+              const edge = document.querySelector('.decision-canvas')
+                .getBoundingClientRect().right
+              return [...document.querySelectorAll('.owner-controls, .owner-controls *')]
+                .filter(node => node.getBoundingClientRect().right > edge + 0.5)
+                .map(node => `${node.tagName}.${node.className}: ${
+                  Math.round(node.getBoundingClientRect().right)} > ${Math.round(edge)}`)
+            }"""
+        )
+        assert past == [], past
+    finally:
+        page.evaluate(
+            "() => { document.adoptedStyleSheets = "
+            "document.adoptedStyleSheets.slice(0, -1) }"
+        )
+
+
+def _attention_destinations(page: Page, case_id: str) -> list[str]:
+    return page.evaluate(
+        """async (caseId) => {
+          const response = await fetch('/api/v1/attention?page_size=100')
+          const body = await response.json()
+          return body.items.filter(item => item.review_case_id === caseId)
+            .map(item => item.destination)
+        }""",
+        case_id,
+    )
+
+
+# A value whose longest word is wide enough to set a column's width at 200% text.
+_LONG_TITLE = "The Extraordinarily Long-Winded Chronicle of the Silent Orchard"
+
+
+def test_owner_enters_a_title_at_enlarged_text():
+    """B1: enter a value, see it recorded, with words whole at every width."""
+    from tests.browser.test_live_updates_browser import _widen_text
+
+    with _owner_page(genre_fixture=("Fantasy",), genre_current=("Drama",)) as (
+        page,
+        origin,
+        case_id,
+    ):
+        _widen_text(page)
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        panel = page.get_by_role("region", name="Your value for Title")
+        expect(
+            page.get_by_text("There’s no other value to choose from.")
+        ).to_have_count(0)
+        panel.get_by_role("button", name="Enter a value", exact=True).click()
+        field = panel.get_by_role("textbox", name="Your value for Title")
+        expect(field).to_be_focused()
+        field.fill(_LONG_TITLE)
+        expect(panel.locator(".owner-count")).to_have_text(
+            f"{len(_LONG_TITLE)} of 512 characters"
+        )
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as recorded:
+            panel.get_by_role("button", name="Record this value", exact=True).click()
+        assert recorded.value.status == 200
+        entered = panel.get_by_text(f"You entered “{_LONG_TITLE}”.", exact=True)
+        expect(entered).to_be_focused()
+        expect(panel.get_by_role("button", name="Withdraw", exact=True)).to_be_visible()
+        expect(panel.get_by_role("button", name="Change", exact=True)).to_be_visible()
+        _owner_layout_holds(page)
+        # Changing it opens the entry prefilled with the long value.
+        page.set_viewport_size({"width": 1440, "height": 900})
+        panel.get_by_role("button", name="Change", exact=True).click()
+        expect(panel.get_by_role("textbox", name="Your value for Title")).to_have_value(
+            _LONG_TITLE
+        )
+        _owner_layout_holds(page)
+
+
+def test_owner_chooses_a_genre_subset_then_withdraws_it():
+    """B2 and B3: a union-order subset records; withdrawing returns the field
+    to Attention with focus on its heading."""
+    # Drama is both current and proposed, so its option carries two tags.
+    with _owner_page(
+        genre_fixture=("Drama", "Fantasy", "Mystery"), genre_current=("Drama",)
+    ) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.get_by_role("region", name="Your value for Genres")
+        panel.get_by_role("button", name="Choose genres", exact=True).click()
+        group = panel.get_by_role("group", name="Choose genres")
+        expect(group.get_by_role("checkbox")).to_have_count(3)
+        # Opening the subset puts focus on its first genre, never on body (D1).
+        expect(group.get_by_role("checkbox").first).to_be_focused()
+        expect(group.locator(".owner-option").first).to_contain_text(
+            "DramaCurrentProposed"
+        )
+        group.get_by_role("checkbox", name=re.compile("^Mystery")).check()
+        group.get_by_role("checkbox", name=re.compile("^Drama")).uncheck()
+        group.get_by_role("checkbox", name=re.compile("^Fantasy")).check()
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        with page.expect_request(
+            lambda request: request.url.endswith("/decisions")
+        ) as sent:
+            panel.get_by_role("button", name="Record these genres", exact=True).click()
+        body = json.loads(sent.value.post_data or "{}")
+        assert (body["outcome"], body["selected_value"]) == (
+            "owner_entered",
+            {"kind": "list", "value": ["Fantasy", "Mystery"]},
+        )
+        expect(panel.get_by_text("You chose 2 genres.", exact=True)).to_be_focused()
+        assert "genres" not in _attention_destinations(page, case_id)
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as withdrawn:
+            panel.get_by_role("button", name="Withdraw", exact=True).click()
+        assert withdrawn.value.status == 200
+        expect(
+            page.get_by_text(
+                "Withdrawn. This field needs a decision again.", exact=True
+            )
+        ).to_be_visible()
+        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        assert "genres" in _attention_destinations(page, case_id)
+        page.get_by_role("link", name="History", exact=True).click()
+        expect(page.get_by_text("Owner withdrew the decision.")).to_be_visible()
+        expect(page.get_by_text("Owner entered a value.")).to_be_visible()
+
+
+def _choose_previous_title(page: Page, origin: str, case_id: str):
+    """Open the entry on the case that read the write back, and fill it from
+    the value the write replaced."""
+    page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+    panel = page.get_by_role("region", name="Your value for Title")
+    expect(panel.get_by_role("button", name=re.compile("Restore"))).to_have_count(0)
+    panel.get_by_role("button", name="Enter a value", exact=True).click()
+    panel.get_by_role(
+        "button", name="Use previous value “Real Tigers”", exact=True
+    ).click()
+    expect(panel.get_by_role("textbox", name="Your value for Title")).to_have_value(
+        "Real Tigers"
+    )
+    return panel
+
+
+# Every alert and status text the page shows from now on, however briefly.
+_WATCH_ANNOUNCEMENTS = """() => { window.__said = new Set(); new MutationObserver(() => {
+  for (const node of document.querySelectorAll('[role=alert],[role=status]'))
+    if (node.textContent.trim()) window.__said.add(node.textContent.trim()) })
+  .observe(document.body, {subtree: true, childList: true, characterData: true}) }"""
+
+
+def _said_nothing_false_while_moving(page: Page) -> None:
+    said = page.evaluate("[...window.__said]")
+    assert not [
+        text
+        for text in said
+        if "could not be loaded" in text or "not available in the current" in text
+    ], said
+
+
+def test_owner_chooses_the_previous_title_again():
+    """B4: the case that read the write back offers the value it replaced as a
+    suggestion, and choosing it is an ordinary owner-entered decision."""
+    with _owner_page(
+        genre_fixture=("Fantasy",), genre_current=("Drama",), owner_write=True
+    ) as (page, origin, case_id):
+        panel = _choose_previous_title(page, origin, case_id)
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        with page.expect_request(
+            lambda request: request.url.endswith("/decisions")
+        ) as sent:
+            panel.get_by_role("button", name="Record this value", exact=True).click()
+        body = json.loads(sent.value.post_data or "{}")
+        assert (body["outcome"], body["selected_value"]) == (
+            "owner_entered",
+            {"kind": "text", "value": "Real Tigers"},
+        )
+        assert "reverts_plan_id" not in body
+        expect(
+            panel.get_by_text("You entered “Real Tigers”.", exact=True)
+        ).to_be_focused()
+        expect(panel.get_by_text("Your value is recorded.", exact=True)).to_be_visible()
+
+
+def test_the_previous_title_chosen_after_the_library_changed_is_refused():
+    """B4: the library edits the title while the entry is open; the store
+    refuses the stale entry and the owner reaches the current case."""
+    with _owner_page(
+        genre_fixture=("Fantasy",),
+        genre_current=("Drama",),
+        owner_write=True,
+        owner_library_change=True,
+    ) as (page, origin, case_id):
+        panel = _choose_previous_title(page, origin, case_id)
+        page.evaluate(_WATCH_ANNOUNCEMENTS)
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as refused:
+            panel.get_by_role("button", name="Record this value", exact=True).click()
+        assert refused.value.status == 409
+        assert refused.value.json()["error"]["code"] == "stale"
+        current = page.evaluate(
+            """async (caseId) => (await (await fetch(
+              `/api/v1/review-cases/${caseId}/successor`)).json()).review_case_id""",
+            case_id,
+        )
+        assert current and current != case_id
+        # The owner stays on the work, on the case that replaced theirs, and is
+        # told there why nothing was recorded (M4).
+        page.wait_for_url(re.compile(f"preview={current}"))
+        moved = page.get_by_role("region", name="Your value for Title")
+        expect(
+            moved.get_by_text(
+                "Not recorded: the work changed. Review it again.", exact=True
+            )
+        ).to_be_visible()
+        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        _said_nothing_false_while_moving(page)
+
+
+@pytest.mark.parametrize("named", (False, True), ids=("unnamed", "named"))
+@pytest.mark.parametrize(
+    "library_last", (False, True), ids=("library-first", "library-last")
+)
+def test_an_open_entry_moves_to_the_case_that_superseded_it(library_last, named):
+    """MF1: the library edits the title while the owner types; the real
+    server refuses the superseded case's read as stale, and the owner still
+    reaches the current case, told why, with focus on the field heading.
+    Whether the Library update names the successor or leaves the page to ask
+    for it, and whether the Library read answers before or after the other
+    read that drops the case, the page never says it is unavailable."""
+    readback: list[Callable[[str, bool], str]] = []
+    held: list[Route] = []
+    with _owner_page(
+        genre_fixture=("Fantasy",), genre_current=("Drama",), owner_readback=readback
+    ) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        panel = page.get_by_role("region", name="Your value for Title")
+        panel.get_by_role("button", name="Enter a value", exact=True).click()
+        panel.get_by_role("textbox", name="Your value for Title").fill("Half Typed")
+        page.evaluate(_WATCH_ANNOUNCEMENTS)
+
+        def library(url: str) -> bool:
+            return "/api/v1/library?" in url
+
+        def lineage(url: str) -> bool:
+            return url.endswith("/successor")
+
+        def attention(url: str) -> bool:
+            return "/api/v1/attention" in url
+
+        def hold(route: Route) -> None:
+            held.append(route)
+
+        # A named successor needs no lineage read; Attention then is the other
+        # read. The held read answers last, after the other and Attention.
+        other = attention if named else lineage
+        sooner, later = (other, library) if library_last else (library, other)
+        page.route(later, hold)
+        with (
+            page.expect_response(lambda response: sooner(response.url)),
+            nullcontext()
+            if attention in (sooner, later)
+            else page.expect_response(lambda response: attention(response.url)),
+        ):
+            successor = readback[0](OWNER_EDIT, named)
+        page.unroute(later)
+        for route in held:
+            route.continue_()
+        assert successor != case_id
+        page.wait_for_url(re.compile(f"preview={successor}"))
+        moved = page.get_by_role("region", name="Your value for Title")
+        expect(
+            moved.get_by_role("status").get_by_text(
+                "The work changed. Review it again.", exact=True
+            )
+        ).to_be_visible()
+        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        _said_nothing_false_while_moving(page)
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))

@@ -1086,6 +1086,13 @@ _LINEAGE_REWRITES = {
     ),
 }
 # SHA-256 of each statement's text at 2dcf75cd, as this module's store traces it.
+_HUMAN_PLANS = "human.outcome IN ('accept','owner_entered')"
+_HELD_DESCRIPTION = (
+    " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+    "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+    "hold.review_case_id=d.review_case_id AND "
+    "hold.destination='description' AND hold.active=1))"
+)
 _STATEMENTS_1204 = {
     "documents": "e62a8aca670e77687afeda2585f588070e80386e773408a62ef496edca4e4d16",
     "cursor": "820b901727766eaf3a516804cfe1cbd283381fd59b3f9ce36eea506539448608",
@@ -1151,8 +1158,15 @@ def test_lineage_membership_restores_the_1204_text(
     store: tuple[sqlite3.Connection, list[str]],
 ) -> None:
     connection, _ = store
+    # #1285 later let an owner-entered value plan as an accept does, and held
+    # an automatic description under the owner's hold as it holds the rest.
     restored = {
-        name: hashlib.sha256(_before_1205(name, statement).encode()).hexdigest()
+        name: hashlib.sha256(
+            _before_1205(name, statement)
+            .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
+            .replace(_HELD_DESCRIPTION, "", 1)
+            .encode()
+        ).hexdigest()
         for name, statement in _statements(connection).items()
     }
     assert restored == _STATEMENTS_1204

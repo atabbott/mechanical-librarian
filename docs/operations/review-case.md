@@ -152,9 +152,10 @@ and decisions, and explicit proxy trust. The `/api/v1` surface exposes
 exact-current case detail, bounded evidence, current-case admission and decision
 history, one individual field-decision operation, and authenticated OpenAPI.
 The mutation requires the displayed proposal ID and target fingerprint, an
-explicit `accept`, `keep_current`, or `reject` outcome, a 16–128 character
-`Idempotency-Key`, the session CSRF token, and an exact proposed value for
-`accept`. Same-key/same-payload retries return the original decision identity;
+explicit `accept`, `keep_current`, `reject`, `owner_entered` or `withdraw`
+outcome, a 16–128 character `Idempotency-Key`, the session CSRF token, an exact
+proposed value for `accept`, and the owner's value for `owner_entered` (#1285).
+Same-key/same-payload retries return the original decision identity;
 conflicts and stale state fail without a partial decision or event. The response
 also carries `confirmation`: either `confirmed` with the actual case detail or
 `unavailable` if its post-commit readback failed. An unavailable confirmation is
@@ -372,8 +373,9 @@ Library preparation shows “Title recovery requested” and the queued or runni
 re-evaluation, retaining unrelated work and earlier completion counts. Recovery
 creates a visible run if the earlier one was dismissed.
 Recovery does not apply metadata. Pause, global suspensions and other category
-suspensions still apply. Books with owner decisions, manual holds, stale evidence,
-Ask/Ignore policy or work already in progress are not requeued. An empty eligible
+suspensions still apply. Books with owner decisions, stale evidence, Ask/Ignore
+policy or work already in progress are not requeued. A book you hold is
+re-evaluated, and its new title stays held until you resume automatic handling. An empty eligible
 cohort is a successful recovery with no new work. A failed request retains the
 suspension and work; inspect current state and retry explicitly.
 

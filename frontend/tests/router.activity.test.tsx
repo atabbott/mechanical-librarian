@@ -701,6 +701,16 @@ describe('Activity route', () => {
       'Rejected',
     ],
     [
+      'owner-entered',
+      { events: [{ work_label: 'Entered work', state: 'owner_entered', origin: 'human' }] },
+      'Owner-entered',
+    ],
+    [
+      'withdrawn',
+      { events: [{ work_label: 'Withdrawn work', state: 'withdraw', origin: 'human' }] },
+      'Withdrawn',
+    ],
+    [
       'completed automatic cover advice',
       {
         events: [

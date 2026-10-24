@@ -18,7 +18,10 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+)
 from mechanical_librarian.application.live_updates import LiveUpdateChannel
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
@@ -1318,9 +1321,27 @@ class ReviewApplication:
         if destination not in SUPPORTED_DESTINATIONS:
             raise KeyError("not_found")
         application = self._continuous_application()
+        # Resume releases only a hold the case shows holding a decision, as its
+        # control does: with nothing to hold, an owner decision would remove
+        # the released row and let an older copy of the hold return (ADR-0085).
+        if not self.serialized(lambda: self._shows_hold(review_case_id, destination)):
+            raise GuardedApplicationError("manual_hold")
         application.return_to_automatic(review_case_id, destination)
         self._updates.publish("case", review_case_id)
         self._updates.publish("activity")
+
+    def _shows_hold(self, review_case_id: str, destination: str) -> bool:
+        try:
+            fields = self._cases.run(review_case_id)["fields"]
+        except ReviewWebError:
+            # A case that cannot be read shows nothing, so it releases nothing.
+            return False
+        return any(
+            isinstance(field, dict)
+            and field["destination"] == destination
+            and field["manual_hold"] is True
+            for field in cast("list[object]", fields)
+        )
 
     def field_effect_status(self, plan_id: str) -> dict[str, object]:
         return self._field_effect("status", plan_id)

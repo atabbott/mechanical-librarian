@@ -5,9 +5,9 @@ one live case for a target, the `current_review_packages` projection the
 pipeline and the browse read through, and the `review_case_transitions`
 history.
 
-`admit_review_case` is the aggregate's only writer and it writes across five
+`admit_review_case` is the aggregate's only writer and it writes across six
 aggregates' tables in one transaction -- the proposal set, the report lineage,
-the case, its transition and the package. Under the ownership rule it belongs
+the case, its transition, the package and any owner hold it carries forward. Under the ownership rule it belongs
 here because the case is what it creates; the other writes travel with it, as
 `publish`'s package write and `activate_metadata_policy`'s review writes do,
 until the composition root owns dispatch. It is also the method that exercises
@@ -77,6 +77,9 @@ from mechanical_librarian.adapters.persistence.transactions import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import LibraryLabels
+from mechanical_librarian.domain.field_effect import (
+    canonical_json as canonical_effect_json,
+)
 from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
@@ -351,6 +354,54 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     ),
                 )
             outcome = "superseded" if prior_case_id is not None else "admitted"
+            # The owner's hold follows the work, not the case (ADR-0085): the
+            # latest hold per destination across the item's cases carries
+            # forward while it is active and no return is pending, keeping
+            # its decision as the token "Return to automatic" names. A case
+            # admitted again takes that latest state into its own row, so a
+            # hold released or returning since never resurrects with it.
+            for destination, active, document in self._connection.execute(
+                "SELECT destination,active,document FROM (SELECT hold.destination,"
+                "hold.active,hold.document,row_number() OVER (PARTITION BY "
+                "hold.destination ORDER BY hold.updated_at DESC,hold.rowid DESC) "
+                "position FROM field_effect_manual_holds hold WHERE "
+                "hold.review_case_id IN (SELECT to_review_case_id FROM "
+                "review_case_transitions WHERE connection_name=? AND "
+                "library_name=? AND item_id=? AND to_review_case_id IS NOT NULL)) "
+                "WHERE position=1",
+                lineage,
+            ).fetchall():
+                hold = json.loads(document)
+                if hold["review_case_id"] == case.review_case_id:
+                    continue
+                hold["review_case_id"] = case.review_case_id
+                if not active or hold["pending_return"] is not None:
+                    if existing is not None:
+                        self._connection.execute(
+                            "UPDATE field_effect_manual_holds SET active=?,"
+                            "updated_at=?,document=? WHERE review_case_id=? "
+                            "AND destination=?",
+                            (
+                                active,
+                                hold["updated_at"],
+                                canonical_effect_json(hold),
+                                case.review_case_id,
+                                destination,
+                            ),
+                        )
+                    continue
+                self._connection.execute(
+                    "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+                    "active,updated_at,document) VALUES(?,?,1,?,?) "
+                    "ON CONFLICT(review_case_id,destination) DO UPDATE SET active=1,"
+                    "updated_at=excluded.updated_at,document=excluded.document",
+                    (
+                        case.review_case_id,
+                        destination,
+                        hold["updated_at"],
+                        canonical_effect_json(hold),
+                    ),
+                )
             transition = ReviewTransition(
                 *lineage,
                 checkpoint,

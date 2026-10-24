@@ -5,18 +5,48 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Literal, Mapping, Self
 
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+)
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectError,
+    field_value_version,
+    project_decision_value,
+)
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
     proposal_media_kind,
     review_proposals,
 )
+from mechanical_librarian.domain.validation import owner_text_value
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
-_OUTCOMES = {"accept", "keep_current", "reject"}
+# ``reject`` is readable history only; the last two are F59's owner commands
+# (ADR-0085). Exactly the value-bearing outcomes carry a selected value.
+_OUTCOMES = {
+    "accept",
+    "keep_current",
+    "reject",
+    "owner_entered",
+    "withdraw",
+}
+_VALUE_OUTCOMES = frozenset({"accept", "owner_entered"})
+# The owner may type a value only for these, and choose a genre subset; every
+# other destination keeps the proposal-only choices (ADR-0085).
+OWNER_TEXT_DESTINATIONS = ("title", "subtitle", "publisher")
+OWNER_SUBSET_DESTINATION = "genres"
+OWNER_TEXT_MAXIMUM = 512
+OWNER_SUBSET_MAXIMUM = 32
+OWNER_SUBSET_OPTIONS_MAXIMUM = 160
+# A cover and a description each have their own decision lineage; neither can
+# be withdrawn here.
+UNREVERSIBLE_DESTINATIONS = frozenset({"cover", "description"})
 # What a recorded decision may go on to do. Every decision formed since F47
 # carries `apply` on both media; `recorded_only` survives only as the F45
 # history of decisions taken before audiobook writes existed (#968).
@@ -118,6 +148,9 @@ def validate_decision_action(
     selected_value: dict[str, object] | None,
 ) -> None:
     """Apply the selection half of the human-decision contract."""
+    if outcome in {"owner_entered", "withdraw"}:
+        _validate_owner_command(proposal, outcome, selected_value)
+        return
     # Historical ``reject`` facts remain constructible and valid.  It is not
     # returned by ``decision_actions``, so no current projection can offer it.
     if outcome == "reject":
@@ -179,6 +212,372 @@ def _actionable(proposal: Mapping[str, object]) -> bool:
         in {"propose_change", "acceptable_choice", "unresolved_choice"}
         or proposal.get("manual_required") is True
     )
+
+
+def owner_text(value: object) -> bool:
+    """Owner-typed text: canonical, bounded, and safe to project (ADR-0085)."""
+    if not owner_text_value(value):
+        return False
+    try:
+        validate_projection_text(value, "owner value", OWNER_TEXT_MAXIMUM)
+    except EvidenceValueError:
+        return False
+    return True
+
+
+def owner_value_admitted(proposal: Mapping[str, object]) -> bool:
+    """Whether this field takes an owner-entered value or genre subset at all."""
+    result = proposal.get("result")
+    return (
+        proposal.get("destination")
+        in (*OWNER_TEXT_DESTINATIONS, OWNER_SUBSET_DESTINATION)
+        and type(result) is dict
+        and result.get("outcome") != "ineligible"
+    )
+
+
+def list_union(
+    proposal: Mapping[str, object], current: object, previous: object = None
+) -> tuple[tuple[str, bool, bool, bool], ...]:
+    """A list field's union in its one order: current, each proposal's, previous.
+
+    Each option says whether it is current, whether an eligible proposal holds
+    it, and whether it is offered only because the field held it before its
+    latest verified write. Values are compared exactly, never by their display
+    text.
+    """
+    current_items, previous_items = (
+        [item for item in value if type(item) is str] if type(value) is list else []
+        for value in (current, previous)
+    )
+    result = proposal.get("result")
+    alternatives = result.get("alternatives") if type(result) is dict else None
+    proposed: list[str] = []
+    for alternative in alternatives if type(alternatives) is list else ():
+        value = alternative.get("value") if type(alternative) is dict else None
+        if (
+            type(alternative) is dict
+            and alternative.get("assessment") != "preserves_target"
+            and type(value) is dict
+            and type(value.get("value")) is list
+        ):
+            proposed.extend(item for item in value["value"] if type(item) is str)
+    listed = {*current_items, *proposed}
+    union = list(dict.fromkeys([*current_items, *proposed, *previous_items]))
+    held = set(proposed)
+    return tuple(
+        (item, item in current_items, item in held, item not in listed)
+        for item in union
+    )
+
+
+def genre_subset_available(
+    proposal: Mapping[str, object], current: object, previous: object = None
+) -> bool:
+    options = list_union(proposal, current, previous)
+    return (
+        owner_value_admitted(proposal)
+        and proposal.get("destination") == OWNER_SUBSET_DESTINATION
+        and (
+            2 <= len(options) <= OWNER_SUBSET_OPTIONS_MAXIMUM
+            or (len(options) == 1 and not options[0][1])
+        )
+    )
+
+
+def _validate_owner_command(
+    proposal: Mapping[str, object],
+    outcome: str,
+    selected_value: dict[str, object] | None,
+) -> None:
+    """The shape half of an owner-entered or withdraw command.
+
+    What depends on the case's current value is checked where that value is
+    held: `validate_owner_value` and the store.
+    """
+    destination = proposal.get("destination")
+    if type(destination) is not str:
+        raise HumanDecisionError("unsupported")
+    if outcome == "withdraw":
+        if destination in UNREVERSIBLE_DESTINATIONS:
+            raise HumanDecisionError("unsupported")
+        if selected_value is not None:
+            raise HumanDecisionError("invalid_selection")
+        return
+    if not owner_value_admitted(proposal):
+        raise HumanDecisionError("unsupported")
+    value = selected_value.get("value") if type(selected_value) is dict else None
+    if destination == OWNER_SUBSET_DESTINATION:
+        valid = (
+            type(value) is list
+            and 1 <= len(value) <= OWNER_SUBSET_MAXIMUM
+            and all(type(item) is str for item in value)
+            and len(set(value)) == len(value)
+        )
+    else:
+        valid = owner_text(value)
+    try:
+        project_decision_value(destination, selected_value)
+    except FieldEffectError:
+        valid = False
+    if not valid:
+        raise HumanDecisionError("owner_value_invalid")
+
+
+def target_value(case: ReviewCase, destination: str) -> object:
+    """The case's recorded target value for one destination; ``None`` if empty."""
+    fields = case.target.get("fields")
+    field = next(
+        (
+            item
+            for item in (fields if type(fields) is list else ())
+            if type(item) is dict and item.get("destination") == destination
+        ),
+        None,
+    )
+    if type(field) is not dict or field.get("state") != "value":
+        return None
+    return field.get("value")
+
+
+def validate_owner_value(
+    case: ReviewCase,
+    proposal: Mapping[str, object],
+    selected_value: dict[str, object] | None,
+    previous: object = None,
+) -> None:
+    """The case half of an owner-entered value: in the union and a change.
+
+    It runs only for a new command, where the case's target is the one the
+    owner saw. ``previous`` is what the field held before its latest verified
+    write. The server compares; it never rewrites what was submitted.
+    """
+    destination = str(proposal["destination"])
+    assert type(selected_value) is dict
+    value = selected_value["value"]
+    current = target_value(case, destination)
+    if destination == OWNER_SUBSET_DESTINATION:
+        order = {
+            item: index
+            for index, (item, *_) in enumerate(list_union(proposal, current, previous))
+        }
+        assert type(value) is list
+        # The shape check refused duplicates, so in union order means sorted.
+        positions = [order[item] for item in value if item in order]
+        if (
+            not genre_subset_available(proposal, current, previous)
+            or len(positions) != len(value)
+            or positions != sorted(positions)
+        ):
+            raise HumanDecisionError("owner_value_invalid")
+    if field_value_version(destination, value) == field_value_version(
+        destination, current
+    ):
+        raise HumanDecisionError("owner_value_unchanged")
+
+
+OwnerSuggestionRule = Literal["title_case", "strip_part", "split_author", "combined"]
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerSuggestion:
+    """One pure normalisation of the current value; it only fills an input."""
+
+    rule: OwnerSuggestionRule
+    value: str
+
+
+_SUGGESTION_RULES: dict[str, tuple[OwnerSuggestionRule, ...]] = {
+    "title": ("title_case", "strip_part", "split_author", "combined"),
+    "subtitle": ("title_case", "strip_part"),
+    "publisher": ("title_case",),
+}
+_SMALL_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "as",
+        "at",
+        "but",
+        "by",
+        "for",
+        "in",
+        "nor",
+        "of",
+        "on",
+        "or",
+        "per",
+        "the",
+        "to",
+        "vs",
+        "via",
+    }
+)
+_ROMAN = re.compile(r"(?:X{0,3})(?:IX|IV|V?I{0,3})", re.IGNORECASE)
+_ROMAN_ONE_TO_TWENTY = "|".join(
+    sorted(
+        (
+            "X" * (number // 10)
+            + ("", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX")[number % 10]
+            for number in range(1, 21)
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+_PART_NUMBER = rf"(?:[0-9]{{1,3}}|{_ROMAN_ONE_TO_TWENTY})"
+_PART_TOKEN = re.compile(
+    r"(?:\s*[-–—:,]\s*|\s+)"
+    r"(?P<open>[(\[])?(?:disc|disk|cd|part|pt\.?)\s*"
+    + _PART_NUMBER
+    + r"(?:\s*(?:of|/)\s*"
+    + _PART_NUMBER
+    + r")?(?P<close>[)\]])?\Z",
+    re.IGNORECASE,
+)
+_PART_SEPARATORS = " \t-–—:,"
+_AUTHOR_DASHES = (" - ", " – ", " — ")
+
+
+def _letter(text: str) -> bool:
+    return any(unicodedata.category(character).startswith("L") for character in text)
+
+
+def _cased(character: str) -> bool:
+    return unicodedata.category(character) in {"Lu", "Ll", "Lt"}
+
+
+def _capitalized(segment: str) -> str:
+    lowered = segment.lower()
+    for index, character in enumerate(lowered):
+        if _cased(character):
+            titled = character.title()
+            if len(titled) != 1:
+                return lowered
+            return lowered[:index] + titled + lowered[index + 1 :]
+    return lowered
+
+
+def _title_case(value: str) -> str | None:
+    cased = [character for character in value if _cased(character)]
+    if len(cased) < 2 or not (
+        all(unicodedata.category(character) == "Lu" for character in cased)
+        or all(unicodedata.category(character) == "Ll" for character in cased)
+    ):
+        return None
+    words = value.split(" ")
+    if any(len(word.lower()) != len(word) for word in words):
+        return None
+    result = []
+    for index, word in enumerate(words):
+        start = 0
+        while start < len(word) and unicodedata.category(word[start])[0] not in "LN":
+            start += 1
+        end = len(word)
+        while end > start and unicodedata.category(word[end - 1])[0] not in "LN":
+            end -= 1
+        core = word[start:end]
+        previous = words[index - 1] if index else ""
+        if core and _ROMAN.fullmatch(core):
+            core = core.upper()
+        elif (
+            core.lower() in _SMALL_WORDS
+            and 0 < index < len(words) - 1
+            and not previous.endswith((":", "—", "–"))
+            and previous != "-"
+        ):
+            core = core.lower()
+        else:
+            core = "".join(
+                _capitalized(segment) if position % 2 == 0 else segment
+                for position, segment in enumerate(re.split("([-‐])", core))
+            )
+        result.append(word[:start] + core + word[end:])
+    return " ".join(result)
+
+
+def _strip_part(value: str) -> str | None:
+    match = _PART_TOKEN.search(value)
+    if match is None or {"(": ")", "[": "]", None: None}[
+        match.group("open")
+    ] != match.group("close"):
+        return None
+    remaining = value[: match.start()].rstrip(_PART_SEPARATORS)
+    depth = {"(": 0, "[": 0}
+    for character in remaining:
+        if character in "([":
+            depth[character] += 1
+        elif character in ")]":
+            opener = "(" if character == ")" else "["
+            depth[opener] -= 1
+            if depth[opener] < 0:
+                return None
+    if not _letter(remaining) or any(depth.values()):
+        return None
+    return remaining
+
+
+def _split_author(value: str, authors: tuple[str, ...]) -> str | None:
+    if sum(value.count(dash) for dash in _AUTHOR_DASHES) != 1:
+        return None
+    dash = next(dash for dash in _AUTHOR_DASHES if dash in value)
+    sides = [side.strip() for side in value.split(dash)]
+    if not all(_letter(side) for side in sides):
+        return None
+    known = {unicodedata.normalize("NFKC", author).casefold() for author in authors}
+    matches = [
+        unicodedata.normalize("NFKC", side).casefold() in known for side in sides
+    ]
+    if matches.count(True) != 1:
+        return None
+    return sides[matches.index(False)]
+
+
+def owner_value_suggestions(
+    destination: str, current: str | None, authors: tuple[str, ...]
+) -> tuple[OwnerSuggestion, ...]:
+    """Suggest at most four spellings of the current value, never applying one.
+
+    ``authors`` is the union of the current and eligible proposed authors. Each
+    suggestion is owner-admissible text that differs from the current value.
+    """
+    rules = _SUGGESTION_RULES.get(destination, ())
+    if type(current) is not str or not rules:
+        return ()
+    base = " ".join(unicodedata.normalize("NFC", current).split())
+    single: dict[OwnerSuggestionRule, str | None] = {
+        "title_case": _title_case(base),
+        "strip_part": _strip_part(base),
+        "split_author": _split_author(base, authors),
+    }
+    applied = 0
+    combined = base
+    for step in (
+        _strip_part,
+        lambda text: _split_author(text, authors),
+        _title_case,
+    ):
+        stepped = step(combined)
+        if stepped is not None:
+            applied += 1
+            combined = stepped
+    candidates: list[tuple[OwnerSuggestionRule, str | None]] = [
+        (rule, single[rule]) for rule in ("title_case", "strip_part", "split_author")
+    ]
+    if applied >= 2 and combined not in single.values():
+        candidates.append(("combined", combined))
+    suggestions: list[OwnerSuggestion] = []
+    for rule, value in candidates:
+        if (
+            rule in rules
+            and value is not None
+            and value != current
+            and owner_text(value)
+            and all(value != suggestion.value for suggestion in suggestions)
+        ):
+            suggestions.append(OwnerSuggestion(rule, value))
+    return tuple(suggestions[:4])
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +692,7 @@ class HumanDecision:
         selected_value: dict[str, object] | None,
         idempotency_key: str,
         occurred_at: int,
+        previous: object = None,
     ) -> Self:
         if (
             actor != "owner"
@@ -315,6 +715,8 @@ class HumanDecision:
         if proposal is None:
             raise HumanDecisionError("stale")
         validate_decision_action(proposal, outcome, selected_value)
+        if outcome == "owner_entered":
+            validate_owner_value(case, proposal, selected_value, previous)
         idempotency_digest = cls.idempotency_digest_for(idempotency_key)
         application = "apply"
         request = {
@@ -362,15 +764,30 @@ class HumanDecision:
             applications=scope.applications,
         )
 
-    def validate_new_for(self, case: ReviewCase) -> None:
-        """Validate a newly submitted command against the current owner envelope."""
+    def validate_new_for(self, case: ReviewCase, previous: object = None) -> None:
+        """Validate a newly submitted command against the current owner envelope.
+
+        ``previous`` is what the field held before its latest verified write.
+        """
+        proposals = case.proposals
         self._validate_for(
             case.review_case_id,
             case.target_fingerprint,
-            list(case.proposals),
+            list(proposals),
             new_command=True,
             applications=admitted_applications(case.media_kind),
         )
+        if self.outcome == "owner_entered":
+            validate_owner_value(
+                case,
+                next(
+                    value
+                    for value in proposals
+                    if value["proposal_id"] == self.proposal_id
+                ),
+                self.selected_value,
+                previous,
+            )
 
     def _validate_for(
         self,
@@ -437,7 +854,7 @@ class HumanDecision:
             "proposal_id": self.proposal_id,
             "request_digest": self.request_digest,
             "review_case_id": self.review_case_id,
-            "schema_version": "human-decision-v2",
+            "schema_version": "human-decision-v3",
             "selected_value": self.selected_value,
             "target_fingerprint": self.target_fingerprint,
         }
@@ -467,7 +884,7 @@ class HumanDecision:
                     "selected_value",
                     "target_fingerprint",
                 }
-                or raw["schema_version"] != "human-decision-v2"
+                or raw["schema_version"] != "human-decision-v3"
             ):
                 raise ValueError
             value = cls(
@@ -529,7 +946,8 @@ class HumanDecision:
                         value.target_fingerprint,
                     )
                 )
-                or (value.outcome == "accept") != (type(value.selected_value) is dict)
+                or (value.outcome in _VALUE_OUTCOMES)
+                != (type(value.selected_value) is dict)
             ):
                 raise ValueError
             return value

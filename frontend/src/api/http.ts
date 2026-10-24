@@ -169,8 +169,8 @@ export const settingsValidationCopy = settingsVocabulary.errors
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
 export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
-export type DecisionOutcome = 'accept' | 'keep_current' | 'reject'
-export type DecisionAction = Exclude<DecisionOutcome, 'reject'>
+export type DecisionOutcome = 'accept' | 'keep_current' | 'reject' | 'owner_entered' | 'withdraw'
+export type DecisionAction = Extract<DecisionOutcome, 'accept' | 'keep_current'>
 
 export interface LibrarySearch {
   lens: LibraryLens
@@ -404,9 +404,19 @@ export interface ReviewFieldView {
   preservationOnly: boolean
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
+  ownerControl?: OwnerControlView | null
   currentCoverSelectionId?: string | null
   currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null
+}
+// F59's owner controls (ADR-0085): each part is what the store would accept now.
+export interface OwnerControlView {
+  entry: { maxCharacters: number; suggestions: readonly { rule: string; value: string }[] } | null
+  subset: {
+    maxItems: number
+    options: readonly { value: string; current: boolean; proposed: boolean; previous: boolean }[]
+  } | null
+  withdraw: 'available' | 'automatic_hold' | 'in_progress' | 'written' | null
 }
 export interface CoverObservationView {
   candidateReference: string
@@ -3324,7 +3334,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-case-detail-v5' ||
+    value.schema_version !== 'review-case-detail-v6' ||
     !record(value.target) ||
     !Array.isArray(value.fields)
   )
@@ -3419,6 +3429,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         // is how this reads a field the generated DTO does not declare;
         // mapCoverConsideration then validates the value in full.
         descriptionAdvice: mapDescriptionAdvice(field.description_advice),
+        ownerControl: mapOwnerControl(field.owner_control),
         coverConsideration: mapCoverConsideration(field.cover_consideration),
         currentCoverSelectionArtifactId:
           optionalString(
@@ -3429,6 +3440,74 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
           optionalString(field.current_cover_selection_id, 'current_cover_selection_id') ?? null,
       }
     }),
+  }
+}
+
+const mapOwnerControl = (value: unknown): OwnerControlView | null => {
+  if (value === null) return null
+  if (!record(value) || !exactKeys(value, ['entry', 'subset', 'withdraw']))
+    throw new ApiError(502, 'invalid_owner_control')
+  const { entry, subset, withdraw } = value
+  if (
+    (entry !== null &&
+      (!record(entry) ||
+        !exactKeys(entry, ['max_characters', 'suggestions']) ||
+        !Array.isArray(entry.suggestions) ||
+        entry.suggestions.length > 5)) ||
+    (subset !== null &&
+      (!record(subset) ||
+        !exactKeys(subset, ['max_items', 'options']) ||
+        !Array.isArray(subset.options) ||
+        subset.options.length === 0 ||
+        subset.options.length > 160))
+  )
+    throw new ApiError(502, 'invalid_owner_control')
+  return {
+    entry:
+      entry === null
+        ? null
+        : {
+            maxCharacters: integerValue(entry.max_characters, 'owner_entry_max_characters'),
+            suggestions: (entry.suggestions as unknown[]).map((item) => {
+              if (!record(item) || !exactKeys(item, ['rule', 'value']))
+                throw new ApiError(502, 'invalid_owner_suggestion')
+              return {
+                rule: coverObservationValue(item.rule, 'owner_suggestion_rule', [
+                  'title_case',
+                  'strip_part',
+                  'split_author',
+                  'combined',
+                  'previous',
+                ] as const),
+                value: boundedStringValue(item.value, 'owner_suggestion_value', 512),
+              }
+            }),
+          },
+    subset:
+      subset === null
+        ? null
+        : {
+            maxItems: integerValue(subset.max_items, 'owner_subset_max_items'),
+            options: (subset.options as unknown[]).map((item) => {
+              if (!record(item) || !exactKeys(item, ['value', 'current', 'proposed', 'previous']))
+                throw new ApiError(502, 'invalid_owner_subset_option')
+              return {
+                value: boundedStringValue(item.value, 'owner_subset_value', 1024),
+                current: booleanValue(item.current, 'owner_subset_current'),
+                proposed: booleanValue(item.proposed, 'owner_subset_proposed'),
+                previous: booleanValue(item.previous, 'owner_subset_previous'),
+              }
+            }),
+          },
+    withdraw:
+      withdraw === null
+        ? null
+        : coverObservationValue(withdraw, 'owner_withdraw', [
+            'available',
+            'automatic_hold',
+            'in_progress',
+            'written',
+          ] as const),
   }
 }
 
@@ -3524,7 +3603,7 @@ const mapHistoryValue = (value: unknown, field: string): HistoryValueView | null
 export const mapHistory = (value: unknown): HistoryView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-case-history-v2' ||
+    value.schema_version !== 'review-case-history-v3' ||
     !Array.isArray(value.items) ||
     value.items.length > 150
   )
@@ -3562,7 +3641,7 @@ export const mapHistory = (value: unknown): HistoryView => {
         const outcome = stringValue(item.outcome, `history_item_${String(index)}_outcome`)
         const allowed =
           kind === 'human_decision_recorded'
-            ? ['accept', 'keep_current', 'reject']
+            ? ['accept', 'keep_current', 'reject', 'owner_entered', 'withdraw']
             : ['candidate', 'keep_current', 'ignore']
         if (!allowed.includes(outcome))
           throw new ApiError(502, `invalid_history_item_${String(index)}_outcome`)

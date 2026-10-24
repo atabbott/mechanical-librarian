@@ -136,6 +136,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
         validate_shadow_outcome_row: Callable[
             [tuple[object, ...] | sqlite3.Row], tuple[str, int]
         ],
+        previous_field_values: Callable[
+            [str, str, str], tuple[tuple[str, object], ...]
+        ],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
@@ -148,6 +151,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         )
         self._set_field_effect_manual_hold = set_field_effect_manual_hold
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
+        self._previous_field_values = previous_field_values
 
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
@@ -504,10 +508,24 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
-            decision.validate_new_for(case)
+            target = case.target
+            decision.validate_new_for(
+                case,
+                dict(
+                    self._previous_field_values(
+                        str(target["connection"]),
+                        str(target["library"]),
+                        str(target["item"]),
+                    )
+                ).get(decision.destination)
+                if decision.outcome == "owner_entered"
+                else None,
+            )
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )
+            if decision.outcome == "withdraw":
+                self._require_withdrawable(decision)
             cover_automatic = None
             if decision.destination == "cover":
                 target = case.target
@@ -622,7 +640,18 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 self._revoke_field_effect_authority_in_transaction(
                     previous[0], decision.occurred_at, required=False
                 )
-            if automatic is not None:
+            if automatic is None:
+                # A case admitted again can carry a release made on a later
+                # case, and a released row excludes its human decisions from
+                # planning. With no automatic decision here there is nothing
+                # to hold, so the row goes and the case reads as never held:
+                # the owner's decision plans and nothing carries (ADR-0085).
+                self._connection.execute(
+                    "DELETE FROM field_effect_manual_holds WHERE "
+                    "review_case_id=? AND destination=? AND active=0",
+                    (decision.review_case_id, decision.destination),
+                )
+            else:
                 if previous is None or automatic[0] != previous[0]:
                     self._revoke_field_effect_authority_in_transaction(
                         automatic[0], decision.occurred_at, required=False
@@ -662,6 +691,34 @@ class SQLiteDecisionRepository(ConnectionScoped):
         ) as error:
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
+
+    def _require_withdrawable(self, decision: HumanDecision) -> None:
+        """Refuse a withdraw in its fixed order; nothing is written (ADR-0085)."""
+        latest = self._connection.execute(
+            "SELECT decision_id,outcome FROM human_decisions "
+            "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
+            (decision.review_case_id, decision.destination),
+        ).fetchone()
+        if latest is None or latest[1] in {"withdraw", "reject"}:
+            raise HumanDecisionError("nothing_to_withdraw")
+        if self._connection.execute(
+            "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
+            (decision.review_case_id, decision.destination),
+        ).fetchone():
+            raise HumanDecisionError("automatic_hold")
+        states = {
+            row[0]
+            for row in self._connection.execute(
+                "SELECT state FROM field_effects WHERE rowid IN (SELECT rowid FROM "
+                "field_effects WHERE decision_id=? UNION ALL SELECT rowid FROM "
+                "field_effects WHERE " + _FIELD_EFFECT_COMPANION_DECISION_SQL + "=?)",
+                (latest[0], latest[0]),
+            )
+        }
+        if states & {"claimed", "applying", "reconciling"}:
+            raise HumanDecisionError("already_decided")
+        if "verified" in states:
+            raise HumanDecisionError("decision_written")
 
     @local_operation
     def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
@@ -1082,7 +1139,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 )
                 value["selected_value"] = (
                     decision.selected_value
-                    if decision.outcome == "accept"
+                    if decision.outcome in {"accept", "owner_entered"}
                     else {"kind": kind, "value": target.get("value")}
                     if decision.outcome == "keep_current"
                     and target.get("state") == "value"

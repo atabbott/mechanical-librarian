@@ -9484,6 +9484,59 @@ it.each(['human', 'automatic_policy'] as const)(
   },
 )
 
+it.each([true, false])(
+  'marks a held automatic authored description as chosen only after Resume (held: %s)',
+  async (held) => {
+    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')
+    if (!field?.descriptionAdvice?.candidate)
+      throw new Error('description fixture requires candidate')
+    const advice = field.descriptionAdvice
+    const candidate = field.descriptionAdvice.candidate
+    field.effectCapability = 'unavailable'
+    field.humanDecision = null
+    field.automaticDecision = null
+    field.manualHold = held
+    field.descriptionAdvice = {
+      ...advice,
+      current: true,
+      application_outcome: null,
+      selected_advice: { candidate, binding: advice.binding, current: true },
+      selection: {
+        schema_version: 'authored-description-decision-v1',
+        decision_id: `automatic_decision_${'a'.repeat(64)}`,
+        candidate_id: candidate.candidate_id,
+        binding: advice.binding,
+        origin: 'automatic_policy',
+        resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+        qualification_manifest_sha256: 'c'.repeat(64),
+        idempotency_digest: 'd'.repeat(64),
+        occurred_at: 10,
+        destination: 'description',
+        outcome: 'accept',
+        application: 'guarded',
+      },
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=description', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+    })
+    const choices = await screen.findAllByRole('button', { name: /^Choose advised value:/ })
+    const panel = screen.getByLabelText('External update status')
+    const [choice] = choices
+    expect(choices).toHaveLength(1)
+    expect(choice).toHaveAttribute('aria-pressed', String(!held))
+    expect(choice?.closest('article')?.classList.contains('is-selected')).toBe(!held)
+    expect(Boolean(screen.queryByText(/^Selected\. Activity shows/))).toBe(!held)
+    expect(panel.textContent.includes('Choice recorded')).toBe(!held)
+    expect(Boolean(screen.queryByRole('button', { name: 'Resume automatic handling' }))).toBe(held)
+    if (held)
+      expect(
+        screen.getByText('Your earlier decision still holds this field.', { exact: false }),
+      ).toBeVisible()
+  },
+)
+
 it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
   'does not infer external application from unselected %s advice',
   async (state) => {

@@ -113,9 +113,9 @@ The current installed contract is intentionally narrow:
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v10`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
-- `review-session-v1`, `review-library-v2`, `review-case-detail-v5`,
+- `review-session-v1`, `review-library-v2`, `review-case-detail-v6`,
   `review-case-evidence-v4`,
-  `review-report-detail-v5`, `review-case-history-v2`, `human-decision-v2`,
+  `review-report-detail-v5`, `review-case-history-v3`, `human-decision-v3`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded
   evidence/current-case history projections, and the exact-current
   opaque-session, login-throttle, immutable human-decision and decision-event
@@ -511,3 +511,16 @@ No persisted schema, report, proposal, decision or envelope version changes,
 so upgrading needs no clean rebuild. A report already published with a false
 Hardcover or Open Library `unavailable` keeps it; the product has no release
 install, so no adoption or relabelling is supplied.
+
+## Owner-entered values successor (#1285)
+
+#1285 moves owner decisions to `human-decision-v3`, whose outcomes add
+`owner_entered` and `withdraw`; the `human_decisions` outcome check widens with
+it. Case
+detail moves to `review-case-detail-v6` (each field's `owner_control`) and
+history to `review-case-history-v3`. Owner decisions are canonical authority, so
+upgrading requires a clean rebuild: a predecessor database is refused before
+any mutation and nothing is adopted or converted. Admission now carries a work's
+active manual hold to its successor case, without a schema change. F19a/F20/F46
+records are displaced because the decision, persistence and web modules they
+bind changed, with permission sets unchanged.

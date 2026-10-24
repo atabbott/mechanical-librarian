@@ -37,9 +37,16 @@ from tests.support.proposal_evidence import (
 
 
 def publish_title_case(
-    repository, report: MetadataReport, mode: str = "automatic", safety=None
+    repository,
+    report: MetadataReport,
+    mode: str = "automatic",
+    safety=None,
+    successor_of: MetadataReport | None = None,
 ):
-    """Publish through real policy, report, proposal, case and decision consumers."""
+    """Publish through real policy, report, proposal, case and decision consumers.
+
+    `successor_of` reads the work back over that report under the policy
+    already active, as a later scan does."""
     from mechanical_librarian.domain.metadata_policy import (
         MetadataPolicyProfile,
         resolve_policy,
@@ -56,18 +63,23 @@ def publish_title_case(
         "Title qualification", dict(base.options), destinations
     )
     policy = resolve_policy(profile, report.target.library)
-    repository.enter_shadow_preview(1)
-    repository.create_metadata_policy_draft(profile.canonical_json)
-    repository.activate_metadata_policy(
-        profile.policy_id,
-        base.policy_id,
-        ((report.target.library, policy.resolved_id, policy.canonical_json),),
-        2,
-        expected_active_generation=1,
-    )
-    repository.activate_qualified_automatic(3)
+    if successor_of is None:
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            base.policy_id,
+            ((report.target.library, policy.resolved_id, policy.canonical_json),),
+            2,
+            expected_active_generation=1,
+        )
+        repository.activate_qualified_automatic(3)
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
-    repository.publish(report, lambda: True)
+    repository.publish(
+        report,
+        lambda: True,
+        expected_current=None if successor_of is None else successor_of.report_id,
+    )
     repository.publish_proposal(proposal)
     case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
     if safety is not None:
@@ -374,12 +386,15 @@ def complete_title_work(
     mode="automatic",
     safety=None,
     before_projection=None,
+    successor_of: MetadataReport | None = None,
 ):
     """Finish an actual synthetic scan and retain its projection for owner recovery."""
     from mechanical_librarian.application.catalogue import CatalogueEntry
     from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 
-    case_id, proposal = publish_title_case(repository, report, mode, safety)
+    case_id, proposal = publish_title_case(
+        repository, report, mode, safety, successor_of
+    )
     repository.request_review_scan(
         report.target.connection,
         report.target.library,

@@ -1,4 +1,5 @@
 import {
+  invalidateBackgroundQueries,
   prefetchBackgroundQuery,
   runRequiredRead,
   useRequiredRead,
@@ -21,10 +22,16 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { SyntheticEvent } from 'react'
+import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { CsrfRenewedError, displayValue, refusalCopy, sessionRefreshedCopy } from '../api/http'
+import {
+  ApiError,
+  CsrfRenewedError,
+  displayValue,
+  refusalCopy,
+  sessionRefreshedCopy,
+} from '../api/http'
 import type {
   CaseDetailView,
   ChoiceContextView,
@@ -65,6 +72,7 @@ import {
   choiceAvailable,
   requestKey,
   useReviewDecisionController,
+  writtenRefusal,
 } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
@@ -77,6 +85,14 @@ const authoredOwnerRecorded = (field: ReviewField) =>
     field.descriptionAdvice.selected_advice?.current === true ||
     field.descriptionAdvice.application_outcome,
   )
+// A carried hold pauses an automatic authored choice as it pauses a title's
+// automatic decision, so nothing reads as chosen until Resume (ADR-0085).
+const shownAdvice = (field: ReviewField) =>
+  field.manualHold &&
+  field.humanDecision === null &&
+  field.descriptionAdvice?.selection?.origin === 'automatic_policy'
+    ? { ...field.descriptionAdvice, selection: null, selected_advice: null }
+    : field.descriptionAdvice
 const searchNavigationDelay = 150
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
@@ -512,7 +528,9 @@ const bounded = (value: string, fallback: string) =>
 const decisionValue = (field: ReviewField) => {
   if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
     return field.descriptionAdvice.selected_advice.candidate.output.description
-  const selected = (field.humanDecision ?? field.automaticDecision)?.selected_value
+  // A hold carried from an earlier case keeps the library's value (ADR-0085).
+  const selected = (field.humanDecision ?? (field.manualHold ? null : field.automaticDecision))
+    ?.selected_value
   if (field.destination === 'cover') {
     const candidates = field.coverConsideration?.candidates ?? []
     const candidate = candidates.find((item) => item.artifactId === selected?.value)
@@ -530,7 +548,7 @@ const decisionValue = (field: ReviewField) => {
 const optionalChoice = (field: ReviewField) =>
   field.classification === 'owner_choosable' && choiceAvailable(field)
 const fieldState = (field: ReviewField) =>
-  field.humanDecision
+  field.humanDecision || field.manualHold
     ? 'Owner decision recorded'
     : field.automaticDecision
       ? 'Resolved automatically'
@@ -557,7 +575,7 @@ const fieldReason = (field: ReviewField) =>
     'Retained reviewer notice',
   )
 const effectSummary = (field: ReviewField) => {
-  const advice = field.destination === 'description' ? field.descriptionAdvice : null
+  const advice = field.destination === 'description' ? shownAdvice(field) : null
   if (advice?.selection) {
     if (advice.application_outcome === 'verified')
       return {
@@ -611,6 +629,8 @@ const effectSummary = (field: ReviewField) => {
           detail: `${fieldLabel(field.effectCapability)} currently prevents an external update.`,
         }
 }
+const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
+  outcome === 'owner_entered' || outcome === 'withdraw'
 const completionOutcome = (field: ReviewField) =>
   authoredOwnerRecorded(field)
     ? 'Advised description selected'
@@ -644,7 +664,7 @@ const commandSelected = (
 // they have not decided themselves.
 const recordedSelected = (
   field: ReviewField,
-  outcome: DecisionCommand['outcome'],
+  outcome: 'accept' | 'keep_current',
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
   field.descriptionAdvice &&
@@ -654,12 +674,14 @@ const recordedSelected = (
     ? false
     : field.humanDecision !== null
       ? humanChoiceSelected(field.humanDecision, outcome, selectedValue)
-      : field.automaticDecision !== null &&
+      : // A carried hold pauses the automatic decision, so it chose nothing.
+        !field.manualHold &&
+        field.automaticDecision !== null &&
         automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
 const choiceSelected = (
   field: ReviewField,
   progress: ChoiceProgress,
-  outcome: DecisionCommand['outcome'],
+  outcome: 'accept' | 'keep_current',
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
   (progress?.phase !== 'failed' &&
@@ -1387,6 +1409,313 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
     sameSelectedValue(value, field.automaticDecision?.selected_value),
   )
 
+// F59's owner controls (ADR-0085): enter a value, choose genres and withdraw a
+// decision. Going back to an earlier value is choosing it again, from the same
+// suggestions. Each is offered only where the store would accept it now; the
+// store still decides, and a refusal is said here, beside the control used.
+type OwnerOutcome = 'owner_entered' | 'withdraw'
+// The open field's heading, the place focus returns to when the control that
+// was used is gone.
+const focusFieldHeading = () => {
+  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
+  heading?.setAttribute('tabindex', '-1')
+  heading?.focus({ preventScroll: true })
+}
+const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
+const quotedValue = (value: { value: unknown } | null | undefined) =>
+  value ? `“${displayValue(value.value)}”` : 'nothing'
+const withdrawCopy = {
+  automatic_hold:
+    'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
+  in_progress:
+    'This decision is being written to your library. You can change it once the write finishes.',
+  written: writtenRefusal,
+} as const
+
+function OwnerControls({
+  field,
+  disabled,
+  progress,
+  status,
+  failed,
+  submit,
+}: {
+  field: ReviewField
+  disabled: boolean
+  progress: { command: DecisionCommand; phase: 'recording' | 'confirmed' | 'failed' } | null
+  status: string
+  failed: boolean
+  submit: (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => string
+}) {
+  const control = field.ownerControl ?? null
+  const label = fieldLabel(field.destination)
+  const [mode, setMode] = useState<'idle' | 'entry' | 'subset'>('idle')
+  const [draft, setDraft] = useState('')
+  const [typed, setTyped] = useState(false)
+  const [chosen, setChosen] = useState<readonly string[]>([])
+  const [problem, setProblem] = useState('')
+  // The notice or refusal the owner has moved past by opening or closing a
+  // form; it stays unsaid until the next command.
+  const [dismissed, setDismissed] = useState<string | null>(null)
+  const inputId = useId()
+  const countId = useId()
+  const problemId = useId()
+  const input = useRef<HTMLInputElement>(null)
+  const subsetGroup = useRef<HTMLFieldSetElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const recorded = useRef<HTMLParagraphElement>(null)
+  const notice = useRef<HTMLParagraphElement>(null)
+  const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
+  const busy = progress?.phase === 'recording'
+  const decision = field.humanDecision
+  // Any standing decision is changed, not entered afresh (D5).
+  const changing = decision !== null && decision.outcome !== 'withdraw'
+  const refocus = useRef<RefObject<HTMLButtonElement | null> | null>(null)
+  useEffect(() => {
+    if (mode === 'entry') input.current?.focus()
+    if (mode === 'subset') subsetGroup.current?.querySelector('input')?.focus()
+    if (mode === 'idle') refocus.current?.current?.focus({ preventScroll: true })
+    refocus.current = null
+  }, [mode])
+  // A settled command leaves focus on something named: the recorded value,
+  // the field's heading after a withdrawal, or, when a refusal removed the
+  // control that was used, the refusal itself.
+  useEffect(() => {
+    const command = sent.current
+    if (!command) return
+    const own = progress?.command.idempotencyKey === command.key ? progress : null
+    if (own?.phase === 'recording') return
+    sent.current = null
+    if (own?.phase !== 'confirmed') {
+      requestAnimationFrame(() => {
+        if (!document.activeElement || document.activeElement === document.body)
+          notice.current?.focus({ preventScroll: true })
+      })
+      return
+    }
+    setMode('idle')
+    requestAnimationFrame(() => {
+      if (command.outcome !== 'withdraw') {
+        ;(recorded.current ?? notice.current)?.focus({ preventScroll: true })
+        return
+      }
+      focusFieldHeading()
+    })
+  }, [progress])
+  if (!control) return null
+  const { entry, subset } = control
+  const writing = control.withdraw === 'in_progress'
+  const blocked = disabled || busy
+  const send = (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => {
+    // The ref is the guard a second press meets before React re-renders.
+    if (blocked || sent.current !== null) return
+    setProblem('')
+    setDismissed(null)
+    sent.current = { key: submit(outcome, value), outcome }
+  }
+  const close = (target: RefObject<HTMLButtonElement | null>) => {
+    refocus.current = target
+    setMode('idle')
+    setProblem('')
+    setDismissed(status)
+  }
+  const escape = (event: KeyboardEvent) => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    close(trigger)
+  }
+  const openEntry = () => {
+    const recordedText = decision?.selected_value?.value
+    setDraft(changing && typeof recordedText === 'string' ? recordedText : '')
+    setTyped(false)
+    setProblem('')
+    setDismissed(status)
+    setMode('entry')
+  }
+  const openSubset = () => {
+    const recordedList = decision?.selected_value?.value
+    setChosen(
+      changing && Array.isArray(recordedList)
+        ? (recordedList as string[])
+        : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? []),
+    )
+    setProblem('')
+    setDismissed(status)
+    setMode('subset')
+  }
+  const recordEntry = (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!entry || blocked) return
+    const value = ownerText(draft)
+    setDraft(value)
+    if (!value) setProblem('Enter a value first.')
+    else if (Array.from(value).length > entry.maxCharacters)
+      setProblem(`Use up to ${String(entry.maxCharacters)} characters.`)
+    else if (value === field.currentRaw) setProblem('That is already the current value.')
+    else send('owner_entered', { kind: 'text', value })
+  }
+  const recordSubset = (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!subset || blocked) return
+    // Raw values in the store's union order, never display text.
+    const value = subset.options
+      .map((option) => option.value)
+      .filter((option) => chosen.includes(option))
+    const current = Array.isArray(field.currentRaw) ? (field.currentRaw as unknown[]) : []
+    if (!value.length) setProblem('Choose at least one genre.')
+    else if (value.length > subset.maxItems)
+      setProblem(`Choose up to ${String(subset.maxItems)} genres.`)
+    else if (value.length === current.length && value.every((item, i) => item === current[i]))
+      setProblem('Those are already the current genres.')
+    else send('owner_entered', { kind: 'list', value })
+  }
+  const recordedCopy =
+    decision?.outcome === 'owner_entered'
+      ? Array.isArray(decision.selected_value?.value)
+        ? `You chose ${String(decision.selected_value.value.length)} ${decision.selected_value.value.length === 1 ? 'genre' : 'genres'}.`
+        : `You entered ${quotedValue(decision.selected_value)}.`
+      : null
+  // A refusal is said in one place: beside the input while a form is open,
+  // and at the end of the section otherwise. Each place is mounted empty.
+  const shown = status === dismissed ? '' : status
+  const refusal = problem || (failed ? shown : '')
+  const refusalNotice = (
+    <p ref={notice} id={problemId} tabIndex={-1} className="owner-notice" role="alert">
+      {refusal}
+    </p>
+  )
+  return (
+    <section className="owner-controls" aria-label={`Your value for ${label}`}>
+      {recordedCopy ? (
+        <p ref={recorded} tabIndex={-1} className="owner-recorded">
+          {recordedCopy}
+        </p>
+      ) : null}
+      {writing ? <p className="owner-note">{withdrawCopy.in_progress}</p> : null}
+      {entry && mode !== 'entry' && !writing ? (
+        <button ref={trigger} type="button" className="owner-trigger" onClick={openEntry}>
+          {changing ? 'Change' : 'Enter a value'}
+        </button>
+      ) : null}
+      {subset && mode !== 'subset' && !writing ? (
+        <button ref={trigger} type="button" className="owner-trigger" onClick={openSubset}>
+          {changing ? 'Change' : 'Choose genres'}
+        </button>
+      ) : null}
+      {entry && mode === 'entry' ? (
+        <form className="owner-entry" onSubmit={recordEntry} onKeyDown={escape} noValidate>
+          <label htmlFor={inputId}>{`Your value for ${label}`}</label>
+          <input
+            ref={input}
+            id={inputId}
+            type="text"
+            value={draft}
+            autoComplete="off"
+            aria-invalid={refusal ? true : undefined}
+            aria-describedby={`${countId} ${problemId}`}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              setTyped(true)
+            }}
+            onBlur={() => setDraft((value) => ownerText(value))}
+          />
+          <small id={countId} className="owner-count" aria-live="polite">
+            {typed
+              ? `${String(Array.from(draft).length)} of ${String(entry.maxCharacters)} characters`
+              : ''}
+          </small>
+          {refusalNotice}
+          {entry.suggestions.length ? (
+            <div className="owner-suggestions">
+              {entry.suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.rule}
+                  type="button"
+                  onClick={() => {
+                    setDraft(suggestion.value)
+                    setTyped(true)
+                    input.current?.focus()
+                  }}
+                >
+                  {suggestion.rule === 'previous' ? 'Use previous value ' : 'Use '}
+                  {/* Library text may break anywhere; the copy around it never does. */}
+                  <span className="owner-suggestion-value">“{suggestion.value}”</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="owner-actions">
+            <button type="submit" aria-disabled={blocked}>
+              {busy ? 'Recording…' : 'Record this value'}
+            </button>
+            <button type="button" onClick={() => close(trigger)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+      {subset && mode === 'subset' ? (
+        <form className="owner-entry" onSubmit={recordSubset} onKeyDown={escape} noValidate>
+          <fieldset ref={subsetGroup} className="owner-subset" aria-describedby={problemId}>
+            <legend>Choose genres</legend>
+            {subset.options.map((option) => (
+              <label key={option.value} className="owner-option">
+                <input
+                  type="checkbox"
+                  checked={chosen.includes(option.value)}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setChosen((values) =>
+                      checked
+                        ? [...values, option.value]
+                        : values.filter((value) => value !== option.value),
+                    )
+                  }}
+                />
+                <span>{option.value}</span>
+                {/* One unit, so a narrow row wraps its tags together. */}
+                <span className="owner-tags">
+                  {option.current ? <small className="owner-tag">Current</small> : null}
+                  {option.proposed ? <small className="owner-tag">Proposed</small> : null}
+                  {option.previous ? <small className="owner-tag">Previous</small> : null}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          {refusalNotice}
+          <div className="owner-actions">
+            <button type="submit" aria-disabled={blocked}>
+              {busy ? 'Recording…' : 'Record these genres'}
+            </button>
+            <button type="button" onClick={() => close(trigger)}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : null}
+      {control.withdraw === 'available' ? (
+        <button
+          type="button"
+          className="owner-trigger"
+          aria-disabled={blocked}
+          onClick={() => send('withdraw', null)}
+        >
+          {busy && progress.command.outcome === 'withdraw' ? 'Withdrawing…' : 'Withdraw'}
+        </button>
+      ) : control.withdraw &&
+        control.withdraw !== 'in_progress' &&
+        // The refusal already says it in the same words.
+        !(control.withdraw === 'written' && refusal === writtenRefusal) ? (
+        <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
+      ) : null}
+      {mode === 'idle' ? refusalNotice : null}
+      <p className="owner-status" role="status">
+        {refusal || failed ? '' : shown}
+      </p>
+    </section>
+  )
+}
+
 function RecordedOutcome({
   field,
   mediaKind,
@@ -1424,7 +1753,7 @@ function RecordedOutcome({
     >
       <p>
         <strong>
-          {field.humanDecision === null && field.automaticDecision !== null
+          {field.humanDecision === null && field.automaticDecision !== null && !field.manualHold
             ? 'Resolved automatically'
             : completionOutcome(field)}
         </strong>
@@ -1443,7 +1772,13 @@ function RecordedOutcome({
           </div>
         ) : (
           <div>
-            <dt>{decision.outcome === 'keep_current' ? 'Retained value' : 'Current value'}</dt>
+            <dt>
+              {decision.outcome === 'keep_current'
+                ? 'Retained value'
+                : decision.outcome === 'owner_entered'
+                  ? 'Your value'
+                  : 'Current value'}
+            </dt>
             <dd>
               {field.destination === 'description' ? (
                 <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
@@ -2373,6 +2708,28 @@ export default function LibraryPage({
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
   const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
+  const [ownerCommand, setOwnerCommand] = useState<string | null>(null)
+  // What the owner is told on the case they were moved to when theirs was
+  // superseded under them, and the case whose field heading takes focus (M4).
+  const [ownerNotice, setOwnerNotice] = useState<{
+    caseId: string
+    destination: string
+    text: string
+  } | null>(null)
+  const headingFocus = useRef<string | null>(null)
+  // The case being left for its successor: while it is, its own failed read
+  // and its absence from Library are the move, not something to report.
+  const [movingFrom, setMovingFrom] = useState<string | null>(null)
+  // The selected case once any path knows a successor is pending for it (a
+  // lineage check, a Library update naming one, or a stale command): until
+  // the move settles, its absence from Library is that move, not news. It is
+  // set where the successor becomes known and cleared only where a move ends,
+  // since a move can start before a lineage check's own update lands.
+  const [successorPending, setSuccessorPending] = useState<string | null>(null)
+  const ownerField = useRef<string | null>(null)
+  // The case whose owner form was open, or whose owner control had focus,
+  // when the Library said it changed; the refetch that follows can unmount it.
+  const ownerEngaged = useRef<string | null>(null)
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error' | 'refreshed'>>
   >({})
@@ -2416,6 +2773,7 @@ export default function LibraryPage({
     if (selectedPreviewRef.current !== search.preview) {
       setActiveLineageGeneration(null)
       setLineageReconciliation(null)
+      setSuccessorPending(null)
     }
     selectedPreviewRef.current = search.preview
     pendingSuccessorRef.current.clear()
@@ -2672,7 +3030,10 @@ export default function LibraryPage({
   useEffect(() => {
     if (search.preview && detail.data?.id === search.preview) {
       selectedTargetRef.current = { caseId: search.preview, ...detail.data.target }
-      if (pendingSuccessorRef.current.size) setSuccessorGeneration((generation) => generation + 1)
+      if (pendingSuccessorRef.current.size) {
+        setSuccessorPending(search.preview)
+        setSuccessorGeneration((generation) => generation + 1)
+      }
     }
   }, [detail.data, search.preview])
   useLayoutEffect(() => {
@@ -2687,15 +3048,17 @@ export default function LibraryPage({
       return
     // A successful null is authoritative; only the query's single bounded
     // retry treats transport failure as pending reconciliation.
+    const named = lineageSuccessor.data
+    const following =
+      named !== null && pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
     queueMicrotask(() => {
       setActiveLineageGeneration(null)
       setLineageReconciliation(null)
+      if (following && selectedTargetRef.current?.caseId === reconciliation.selection)
+        setSuccessorPending(reconciliation.selection)
     })
-    if (
-      lineageSuccessor.data !== null &&
-      pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
-    ) {
-      pendingSuccessorRef.current.add(lineageSuccessor.data)
+    if (following) {
+      pendingSuccessorRef.current.add(named)
       setSuccessorGeneration((generation) => generation + 1)
     }
   }, [
@@ -2730,6 +3093,12 @@ export default function LibraryPage({
     if (!updates || !search.preview) return
     return updates.subscribe((update) => {
       if (update.topic !== 'library') return
+      if (
+        document.querySelector(
+          '.owner-controls form, .owner-controls button:focus, .owner-controls input:focus',
+        )
+      )
+        ownerEngaged.current = search.preview ?? null
       if (update.subject === null) {
         const predecessor = search.preview
         if (!predecessor) return
@@ -2744,6 +3113,8 @@ export default function LibraryPage({
         !pendingSuccessorRef.current.has(update.subject)
       ) {
         pendingSuccessorRef.current.add(update.subject)
+        if (selectedTargetRef.current?.caseId === search.preview)
+          setSuccessorPending(search.preview ?? null)
         // Query structural sharing can make the next bounded Library read
         // referentially identical after a no-match batch. Candidate arrival is
         // itself the reason to reconcile that read once more.
@@ -2764,6 +3135,7 @@ export default function LibraryPage({
     )
       return
     pendingSuccessorRef.current.clear()
+    setMovingFrom(selectedTarget.caseId)
     void (async () => {
       try {
         const predecessor = await http.getCaseDetail(selectedTarget.caseId)
@@ -2772,10 +3144,19 @@ export default function LibraryPage({
           predecessor.target.connection !== selectedTarget.connection ||
           predecessor.target.library !== selectedTarget.library ||
           predecessor.target.item !== selectedTarget.item
-        )
+        ) {
+          setMovingFrom(null)
+          setSuccessorPending(null)
           return
-      } catch {
-        return
+        }
+      } catch (error) {
+        // The server refuses a superseded case's read as stale; that is the
+        // case no longer being current. Each successor's target is checked.
+        if (!(error instanceof ApiError && error.code === 'stale')) {
+          setMovingFrom(null)
+          setSuccessorPending(null)
+          return
+        }
       }
       for (const successorId of successorIds) {
         try {
@@ -2788,6 +3169,16 @@ export default function LibraryPage({
           )
             continue
           setReconciledSuccessorIdentity(successor.id)
+          const destination = ownerField.current
+          if (destination && ownerEngaged.current === selectedTarget.caseId) {
+            ownerEngaged.current = null
+            setOwnerNotice({
+              caseId: successor.id,
+              destination,
+              text: 'The work changed. Review it again.',
+            })
+            headingFocus.current = successor.id
+          }
           await navigate({
             replace: true,
             search: (current) =>
@@ -2795,6 +3186,8 @@ export default function LibraryPage({
                 ? { ...current, preview: successor.id }
                 : current,
           })
+          setMovingFrom(null)
+          setSuccessorPending(null)
           return
         } catch {
           // A case can disappear again between the bounded page read and its
@@ -2802,6 +3195,8 @@ export default function LibraryPage({
           // still name its replacement.
         }
       }
+      setMovingFrom(null)
+      setSuccessorPending(null)
     })()
   }, [data, retained, works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
@@ -2843,6 +3238,31 @@ export default function LibraryPage({
     : railFields.filter((field) => !emptyUnproposed(field))
   const selected = urlSelected ?? renderedRailFields.find(actionable) ?? renderedRailFields[0]
   const attentionFields = railFields.filter(actionable)
+  const selectedOwnerDestination = selected?.ownerControl ? selected.destination : null
+  useEffect(() => {
+    ownerField.current = selectedOwnerDestination
+  }, [selectedOwnerDestination])
+  const shownCaseId = detail.data?.id
+  useEffect(() => {
+    if (!shownCaseId || headingFocus.current !== shownCaseId) return
+    headingFocus.current = null
+    requestAnimationFrame(focusFieldHeading)
+  }, [shownCaseId])
+  // An owner write settles after its decision recorded. The case topic is not
+  // published then, so while one is in flight each Activity frame re-reads the
+  // open case, and its controls stop saying the write is in progress (O1).
+  const ownerWriteInFlight =
+    detail.data?.fields.some((field) => field.ownerControl?.withdraw === 'in_progress') === true
+  useEffect(() => {
+    if (!updates || !ownerWriteInFlight || !shownCaseId) return
+    return updates.subscribe((update) => {
+      if (update.topic !== 'activity') return
+      void invalidateBackgroundQueries(queryClient, {
+        queryKey: ['review-case', shownCaseId],
+        exact: true,
+      })
+    })
+  }, [ownerWriteInFlight, queryClient, shownCaseId, updates])
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
   const activeQueueIndex = selected
@@ -2932,7 +3352,36 @@ export default function LibraryPage({
       if (destination !== 'cover') return
       setStaleCoverReview((current) => (current?.caseId === caseId ? null : current))
     },
-    onStale: async () => {
+    onStale: async (command) => {
+      if (ownerOutcome(command.outcome)) {
+        // The owner stays on the work: the refused command is said on the case
+        // that replaced theirs, with focus on its field (M4).
+        const predecessor = selectedReviewCaseId
+        setMovingFrom(predecessor)
+        setSuccessorPending(predecessor)
+        const successor = await http.getCaseSuccessor(predecessor).catch(() => null)
+        if (successor !== null) {
+          setReconciledSuccessorIdentity(successor)
+          setOwnerNotice({
+            caseId: successor,
+            destination: command.destination,
+            text: 'Not recorded: the work changed. Review it again.',
+          })
+          headingFocus.current = successor
+          await navigate({
+            replace: true,
+            search: (current) =>
+              current.preview === predecessor
+                ? { ...current, preview: successor, field: command.destination }
+                : current,
+          })
+          setMovingFrom(null)
+          setSuccessorPending(null)
+          return
+        }
+        setMovingFrom(null)
+        setSuccessorPending(null)
+      }
       if (selected?.destination === 'cover') {
         setStaleCoverReview({
           caseId: selectedReviewCaseId,
@@ -3035,6 +3484,13 @@ export default function LibraryPage({
   const identityPending =
     !displayedIdentity && (reading || attention.isPending || attention.isPlaceholderData)
   const identityError = !displayedIdentity && (failed || attention.isError)
+  // While a command records, the Library asks for the successor, the owner is
+  // moved to it, or its identity is still being read, the absence is the move.
+  const leaving =
+    movingFrom === search.preview ||
+    activeLineageReconciliation ||
+    controller.recording ||
+    (reconciledSuccessorIdentity === search.preview && detail.isPending)
   const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
   const selectedDetailReady =
@@ -3358,6 +3814,9 @@ export default function LibraryPage({
     selectedValue: DecisionCommand['selectedValue'] = null,
     authoredDescription?: DecisionCommand['authoredDescription'],
   ) => {
+    const idempotencyKey = requestKey()
+    setOwnerCommand(null)
+    setOwnerNotice(null)
     setFrozenFieldOrders((current) =>
       current[selectedReviewCaseId] === undefined
         ? { ...current, [selectedReviewCaseId]: currentActionableDestinations }
@@ -3369,7 +3828,7 @@ export default function LibraryPage({
       proposalId: field.proposalId,
       selectedValue,
       targetFingerprint: field.targetFingerprint,
-      idempotencyKey: requestKey(),
+      idempotencyKey,
       ...(field.coverConsideration
         ? {
             considerationId: field.coverConsideration.id,
@@ -3387,6 +3846,7 @@ export default function LibraryPage({
         : {}),
       ...(authoredDescription ? { authoredDescription } : {}),
     })
+    return idempotencyKey
   }
   const closeAutomaticPanel = () => {
     const closingKey = automaticPanel
@@ -3474,10 +3934,16 @@ export default function LibraryPage({
     selected !== undefined &&
     selectedRecorded &&
     selected.editable &&
-    selected.decisionActions.length > 0
+    (selected.decisionActions.length > 0 ||
+      Boolean(selected.ownerControl?.entry ?? selected.ownerControl?.subset))
+  const selectedOwnerEntry = Boolean(
+    selected?.ownerControl?.entry ?? selected?.ownerControl?.subset,
+  )
+  const ownerKey = selected ? `${selectedReviewCaseId}:${selected.destination}` : null
+  const ownerStatusShown = ownerKey !== null && ownerCommand === ownerKey
   const selectedOptional =
     selected !== undefined && !selectedActionable && !selectedRecorded && optionalChoice(selected)
-  const selectedAdvice = selected?.destination === 'description' ? selected.descriptionAdvice : null
+  const selectedAdvice = selected?.destination === 'description' ? shownAdvice(selected) : null
   const selectedChoiceMode =
     selectedActionable || selectedRevisitable || selectedOptional || Boolean(selectedAdvice)
   const selectedCoverPreparation =
@@ -3502,10 +3968,13 @@ export default function LibraryPage({
   // The one-tap teaching line is for someone who has not yet seen what a tap
   // does. It says so on the first field only, and gives way to what is actually
   // happening once they have chosen.
+  // An owner command says what it did in its own status, once (S4).
+  const choiceProgress =
+    selectedProgress && ownerOutcome(selectedProgress.command.outcome) ? null : selectedProgress
   const teachingLine =
-    selectedProgress?.phase === 'recording'
+    choiceProgress?.phase === 'recording'
       ? 'Recording choice…'
-      : selectedProgress?.phase === 'confirmed' ||
+      : choiceProgress?.phase === 'confirmed' ||
           (!selectedProgress && selected && authoredOwnerRecorded(selected))
         ? 'Choice recorded.'
         : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
@@ -3864,7 +4333,7 @@ export default function LibraryPage({
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
           ) : !displayedIdentity ? (
-            identityPending ? (
+            identityPending || leaving || successorPending === search.preview ? (
               <p role="status">Loading selected work…</p>
             ) : identityError ? (
               <p role="alert">
@@ -3882,12 +4351,22 @@ export default function LibraryPage({
               </p>
             ) : (
               <div className="library-selection">
-                <h2>Selected work</h2>
+                <h2
+                  tabIndex={-1}
+                  // Reached when the case under an open owner form could not
+                  // be followed: focus lands here, never on the page body.
+                  ref={(heading) => {
+                    if (heading && document.activeElement === document.body)
+                      heading.focus({ preventScroll: true })
+                  }}
+                >
+                  Selected work
+                </h2>
                 <p>Readable work identity is not available on this Library page.</p>
                 <p role="status">This work is not available in the current Library result.</p>
               </div>
             )
-          ) : detail.isPending ? (
+          ) : detail.isPending || (detail.isError && leaving) ? (
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
@@ -3949,7 +4428,9 @@ export default function LibraryPage({
                       {String(
                         detail.data.fields.filter(
                           (field) =>
-                            field.humanDecision === null && field.automaticDecision !== null,
+                            field.humanDecision === null &&
+                            field.automaticDecision !== null &&
+                            !field.manualHold,
                         ).length,
                       )}
                     </dd>
@@ -4162,8 +4643,10 @@ export default function LibraryPage({
                         </>
                       ) : selectedRevisitable ? (
                         <p>
-                          The recorded outcome is marked below. You can select another eligible
-                          value.
+                          {selected.humanDecision === null && selected.manualHold
+                            ? 'Your earlier decision still holds this field.'
+                            : 'The recorded outcome is marked below.'}{' '}
+                          You can select another eligible value.
                         </p>
                       ) : selectedOptional ? (
                         <p>{fieldReason(selected)}</p>
@@ -4444,11 +4927,15 @@ export default function LibraryPage({
                     />
                   ) : (
                     <>
-                      <p className={selectedActionable ? 'decision-recorded' : 'decision-context'}>
-                        {selectedActionable
-                          ? `${fieldReason(selected)}${selected.humanDecision || selected.automaticDecision ? ` The recorded value remains ${decisionValue(selected)}.` : ''}`
-                          : 'There’s no other value to choose from.'}
-                      </p>
+                      {selectedActionable || !selectedOwnerEntry ? (
+                        <p
+                          className={selectedActionable ? 'decision-recorded' : 'decision-context'}
+                        >
+                          {selectedActionable
+                            ? `${fieldReason(selected)}${selected.humanDecision || selected.automaticDecision ? ` The recorded value remains ${decisionValue(selected)}.` : ''}`
+                            : 'There’s no other value to choose from.'}
+                        </p>
+                      ) : null}
                       {!selectedActionable ? (
                         <ContextValue
                           field={selected}
@@ -4458,6 +4945,28 @@ export default function LibraryPage({
                       ) : null}
                     </>
                   )}
+                  {selected.ownerControl && !controller.reloadRequired ? (
+                    <OwnerControls
+                      key={ownerKey}
+                      field={selected}
+                      disabled={controller.recording || controller.reloadRequired}
+                      progress={selectedProgress}
+                      status={
+                        ownerNotice?.caseId === selectedReviewCaseId &&
+                        ownerNotice.destination === selected.destination
+                          ? ownerNotice.text
+                          : ownerStatusShown
+                            ? controller.statusFor(selected.destination)
+                            : ''
+                      }
+                      failed={controller.decision.isError}
+                      submit={(outcome, value) => {
+                        const key = choose(selected, outcome, value)
+                        setOwnerCommand(ownerKey)
+                        return key
+                      }}
+                    />
+                  ) : null}
                   {selected.manualHold ? (
                     <section
                       className="automatic-handling-panel"
@@ -4514,20 +5023,28 @@ export default function LibraryPage({
                           </div>
                         </>
                       ) : (
-                        <button
-                          ref={automaticTrigger}
-                          type="button"
-                          aria-disabled={automaticCompletedForSelected}
-                          onClick={
-                            automaticCompletedForSelected
-                              ? undefined
-                              : () => setAutomaticPanel(selectedAutomaticKey)
-                          }
-                        >
-                          {automaticCompletedForSelected
-                            ? 'Fresh checks requested'
-                            : 'Resume automatic handling'}
-                        </button>
+                        <>
+                          {selected.humanDecision === null ? (
+                            <p>
+                              An earlier owner decision is pausing automatic handling until you
+                              choose Resume automatic handling.
+                            </p>
+                          ) : null}
+                          <button
+                            ref={automaticTrigger}
+                            type="button"
+                            aria-disabled={automaticCompletedForSelected}
+                            onClick={
+                              automaticCompletedForSelected
+                                ? undefined
+                                : () => setAutomaticPanel(selectedAutomaticKey)
+                            }
+                          >
+                            {automaticCompletedForSelected
+                              ? 'Fresh checks requested'
+                              : 'Resume automatic handling'}
+                          </button>
+                        </>
                       )}
                     </section>
                   ) : null}
@@ -4572,6 +5089,7 @@ export default function LibraryPage({
                     </aside>
                   ) : null}
                   {selectedChoiceMode &&
+                  !ownerStatusShown &&
                   (controller.statusFor(selected.destination) ||
                     controller.messageFor(selected.destination)) ? (
                     <p

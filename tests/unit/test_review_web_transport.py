@@ -828,7 +828,7 @@ def test_login_case_evidence_history_and_logout_round_trip(
     assert invalid_cursor.status_code == 400
     assert invalid_cursor.json()["error"]["code"] == "request"
     assert history.json()["items"][0]["kind"] == "admitted"
-    assert history.json()["schema_version"] == "review-case-history-v2"
+    assert history.json()["schema_version"] == "review-case-history-v3"
     assert history.headers["cache-control"] == "no-store, private"
     assert "default-src 'none'" in detail.headers["content-security-policy"]
     missing = web.client.post(

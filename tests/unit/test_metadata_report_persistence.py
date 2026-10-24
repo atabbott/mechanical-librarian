@@ -45,6 +45,8 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from tests.support.metadata_report_schemas import (
+    PRIOR_ATTENTION_FACT_OBJECTS,
+    PRIOR_HUMAN_DECISIONS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     create_legacy_schema,
     create_prior_schema,
@@ -781,6 +783,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             "_REVIEW_CASE_FIELD_FACTS_INSERT_SQL",
             PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         )
+        old.setattr(schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL)
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes and #1232's
@@ -2462,6 +2465,14 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_REVIEW_CASE_FIELD_FACTS_INSERT_SQL",
             PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+        )
+        old.setattr(
+            persistence_schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL
+        )
+        old.setattr(
+            persistence_schema,
+            "_ATTENTION_FACT_OBJECTS",
+            PRIOR_ATTENTION_FACT_OBJECTS,
         )
         if not current_scaffolding:
             old.setattr(

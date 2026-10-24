@@ -7,11 +7,16 @@ import pytest
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
+    OwnerSuggestion,
     admitted_applications,
     decision_actions,
+    list_union,
+    owner_text,
+    owner_value_suggestions,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.genre_reports import genre_report
 from tests.support.review_cases import _report
 
 
@@ -51,22 +56,222 @@ def _create(
     )
 
 
-@pytest.mark.parametrize("outcome", ("accept", "keep_current", "reject"))
-def test_all_three_outcomes_are_canonical_and_exact_version_bound(
+@pytest.mark.parametrize(
+    "outcome",
+    ("accept", "keep_current", "reject", "owner_entered", "withdraw"),
+)
+def test_all_five_outcomes_are_canonical_and_exact_version_bound(
     case: ReviewCase, proposal: dict[str, object], outcome: str
 ) -> None:
-    value = (
-        proposal["result"]["alternatives"][0]["value"] if outcome == "accept" else None
-    )
-    decision = _create(
+    value = {
+        "accept": proposal["result"]["alternatives"][0]["value"],
+        "owner_entered": {"kind": "text", "value": "The Silent Orchard"},
+    }.get(outcome)
+    decision = HumanDecision.create(
         case,
-        proposal,
-        outcome,
-        value,
-        key=f"domain-{outcome}-decision",
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=proposal["destination"],
+        actor="owner",
+        outcome=outcome,
+        selected_value=value,
+        idempotency_key=f"domain-{outcome}-decision",
+        occurred_at=1_000,
     )
     assert HumanDecision.from_json(decision.to_json()) == decision
+    assert json.loads(decision.to_json())["schema_version"] == "human-decision-v3"
     decision.validate_for(case)
+    decision.validate_new_for(case)
+
+
+def _owner(
+    case: ReviewCase,
+    destination: str,
+    value: object,
+    *,
+    kind: str = "text",
+    outcome: str = "owner_entered",
+    previous: object = None,
+) -> HumanDecision:
+    proposal = next(
+        value for value in case.proposals if value["destination"] == destination
+    )
+    return HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=destination,
+        actor="owner",
+        outcome=outcome,
+        selected_value=None if value is None else {"kind": kind, "value": value},
+        idempotency_key="domain-owner-value-0001",
+        occurred_at=1_000,
+        previous=previous,
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    (
+        ("The Silent Orchard", None),
+        ("x" * 512, None),
+        ("x" * 513, "owner_value_invalid"),
+        ("", "owner_value_invalid"),
+        ("The\u0000Orchard", "owner_value_invalid"),
+        ("The\u200bOrchard", "owner_value_invalid"),
+        (" The Silent Orchard", "owner_value_invalid"),
+        ("The  Silent Orchard", "owner_value_invalid"),
+        ("Cafe\u0301 Society", "owner_value_invalid"),
+        ("https://example.invalid/book", "owner_value_invalid"),
+        ("/srv/library/book.epub", "owner_value_invalid"),
+        ("C:\\Books\\book", "owner_value_invalid"),
+        ("~/Books/title", "owner_value_invalid"),
+        ("Title", "owner_value_unchanged"),
+        (17, "owner_value_invalid"),
+    ),
+)
+def test_owner_entered_text_is_canonical_safe_and_a_change(
+    case: ReviewCase, value: object, code: str | None
+) -> None:
+    if code is None:
+        decision = _owner(case, "title", value)
+        assert decision.selected_value == {"kind": "text", "value": value}
+        return
+    with pytest.raises(HumanDecisionError) as refused:
+        _owner(case, "title", value)
+    assert refused.value.code == code
+
+
+def test_owner_entry_is_admitted_only_for_its_destinations_and_eligible_proposals(
+    case: ReviewCase,
+) -> None:
+    # Publisher is missing here, so its proposal is ineligible; ISBN is never
+    # free-form; a withdraw carries no value and refuses cover and description.
+    for destination, value, outcome, code in (
+        ("publisher", "Harbour Press", "owner_entered", "unsupported"),
+        ("isbn", "9780306406157", "owner_entered", "unsupported"),
+        ("description", None, "withdraw", "unsupported"),
+        ("cover", None, "withdraw", "unsupported"),
+    ):
+        with pytest.raises(HumanDecisionError) as refused:
+            _owner(case, destination, value, outcome=outcome)
+        assert refused.value.code == code
+    with pytest.raises(HumanDecisionError) as wrong_kind:
+        _owner(case, "title", ["The Silent Orchard"], kind="list")
+    assert wrong_kind.value.code == "owner_value_invalid"
+
+
+def test_v3_requires_exactly_its_keys_and_has_no_revert(
+    case: ReviewCase, proposal: dict[str, object]
+) -> None:
+    entered = _owner(case, "title", "An Earlier Title")
+    raw = json.loads(entered.to_json())
+    assert "reverts_plan_id" not in raw
+    for tampered in (
+        {**raw, "schema_version": "human-decision-v2"},
+        {**raw, "reverts_plan_id": None},
+        {**raw, "outcome": "revert"},
+        {**raw, "selected_value": None},
+    ):
+        with pytest.raises(HumanDecisionError):
+            HumanDecision.from_json(
+                json.dumps(tampered, separators=(",", ":"), sort_keys=True)
+            )
+    with pytest.raises(HumanDecisionError) as invalid:
+        _owner(case, "title", "An Earlier Title", outcome="revert")
+    assert invalid.value.code == "invalid"
+
+
+@pytest.fixture
+def genre_case() -> ReviewCase:
+    report = genre_report(
+        genres=("Fantasy", "Mystery", "Romance"), current=("Drama", "Fantasy")
+    )
+    return ReviewCase.create(evaluate_report(report), report)
+
+
+def test_genre_union_is_current_then_proposed_in_order(genre_case: ReviewCase) -> None:
+    proposal = next(
+        value for value in genre_case.proposals if value["destination"] == "genres"
+    )
+    assert list_union(proposal, ["Drama", "Fantasy"]) == (
+        ("Drama", True, False, False),
+        ("Fantasy", True, True, False),
+        ("Mystery", False, True, False),
+        ("Romance", False, True, False),
+    )
+    # What the field held before its latest write joins last, tagged only
+    # where nothing else lists it.
+    assert list_union(proposal, ["Drama", "Fantasy"], ["Mystery", "Horror"]) == (
+        ("Drama", True, False, False),
+        ("Fantasy", True, True, False),
+        ("Mystery", False, True, False),
+        ("Romance", False, True, False),
+        ("Horror", False, False, True),
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    (
+        (["Fantasy", "Mystery"], None),
+        (["Romance"], None),
+        (["Drama", "Fantasy", "Mystery", "Romance"], None),
+        (["Mystery", "Fantasy"], "owner_value_invalid"),
+        (["Fantasy", "Fantasy"], "owner_value_invalid"),
+        (["Fantasy", "Horror"], "owner_value_invalid"),
+        ([], "owner_value_invalid"),
+        (["Drama", "Fantasy"], "owner_value_unchanged"),
+        ([f"Genre {index}" for index in range(33)], "owner_value_invalid"),
+        (["fantasy"], "owner_value_invalid"),
+    ),
+)
+def test_genre_subset_is_a_nonempty_union_order_change(
+    genre_case: ReviewCase, value: list[str], code: str | None
+) -> None:
+    if code is None:
+        assert _owner(genre_case, "genres", value, kind="list").selected_value == {
+            "kind": "list",
+            "value": value,
+        }
+        return
+    with pytest.raises(HumanDecisionError) as refused:
+        _owner(genre_case, "genres", value, kind="list")
+    assert refused.value.code == code
+
+
+def test_a_previous_genre_is_admitted_only_with_its_pre_image(
+    genre_case: ReviewCase,
+) -> None:
+    with pytest.raises(HumanDecisionError) as refused:
+        _owner(genre_case, "genres", ["Fantasy", "Horror"], kind="list")
+    assert refused.value.code == "owner_value_invalid"
+    decision = _owner(
+        genre_case, "genres", ["Fantasy", "Horror"], kind="list", previous=["Horror"]
+    )
+    decision.validate_new_for(genre_case, ["Horror"])
+    with pytest.raises(HumanDecisionError) as unbound:
+        decision.validate_new_for(genre_case)
+    assert unbound.value.code == "owner_value_invalid"
+
+
+def test_owner_commands_leave_the_proposal_actions_unchanged(
+    genre_case: ReviewCase,
+) -> None:
+    """F59 adds commands, never proposal choices, so attention entry is fixed."""
+    actions = {
+        value["destination"]: decision_actions(value) for value in genre_case.proposals
+    }
+    assert actions["title"] == ()
+    assert actions["genres"] == ("keep_current", "accept")
+    assert {destination for destination, value in actions.items() if value} == {
+        "authors",
+        "series",
+        "genres",
+        "description",
+        "isbn",
+        "tags",
+    }
 
 
 def test_invalid_selection_nonactionable_field_and_tampering_fail_closed(
@@ -243,3 +448,135 @@ def test_admitted_applications_names_the_retained_history_one_medium_may_carry()
     """
     assert frozenset({"apply"}) == admitted_applications("ebook")
     assert frozenset({"apply", "recorded_only"}) == admitted_applications("audiobook")
+
+
+_SUGGESTION_TABLE = (
+    ("title", "THE SILENT ORCHARD", (), (("title_case", "The Silent Orchard"),)),
+    ("title", "the harbour of glass", (), (("title_case", "The Harbour of Glass"),)),
+    (
+        "title",
+        "VOLUME III: A WINTER FOR THE BRAVE",
+        (),
+        (("title_case", "Volume III: A Winter for the Brave"),),
+    ),
+    (
+        "title",
+        "well-kept secrets of the north",
+        (),
+        (("title_case", "Well-Kept Secrets of the North"),),
+    ),
+    ("title", "ÉTÉ À PARIS", (), (("title_case", "Été À Paris"),)),
+    ("title", "iPhone Stories", (), ()),
+    ("title", "東京物語", (), ()),
+    ("title", "X", (), ()),
+    (
+        "title",
+        "The Silent Orchard (Disc 2)",
+        (),
+        (("strip_part", "The Silent Orchard"),),
+    ),
+    (
+        "title",
+        "The Silent Orchard - Part 1 of 3",
+        (),
+        (("strip_part", "The Silent Orchard"),),
+    ),
+    ("title", "Harbour of Glass, CD 01", (), (("strip_part", "Harbour of Glass"),)),
+    ("title", "A Winter Tale Pt. IV", (), (("strip_part", "A Winter Tale"),)),
+    ("title", "Part 2", (), ()),
+    ("title", "Partition Lines", (), ()),
+    ("title", "The Second Part", (), ()),
+    ("title", "Disc 2: The Return", (), ()),
+    ("title", "Chapter 3", (), ()),
+    (
+        "title",
+        "Elena Marsh - The Silent Orchard",
+        ("Elena Marsh",),
+        (("split_author", "The Silent Orchard"),),
+    ),
+    (
+        "title",
+        "The Silent Orchard \u2014 ELENA MARSH",
+        ("Elena Marsh",),
+        (("split_author", "The Silent Orchard"),),
+    ),
+    ("title", "Spider-Man Returns", ("Elena Marsh",), ()),
+    ("title", "A - B - C", ("A",), ()),
+    (
+        "title",
+        "THE SILENT ORCHARD (Disc 2)",
+        (),
+        (("strip_part", "THE SILENT ORCHARD"), ("combined", "The Silent Orchard")),
+    ),
+    # Subtitle takes two rules and publisher one, whatever else would apply.
+    (
+        "subtitle",
+        "a novel (part 2)",
+        (),
+        (("title_case", "A Novel (Part 2)"), ("strip_part", "a novel")),
+    ),
+    ("publisher", "HARBOUR PRESS (Disc 2)", (), ()),
+    ("publisher", "HARBOUR PRESS", (), (("title_case", "Harbour Press"),)),
+    ("authors", "ELENA MARSH", (), ()),
+    ("title", None, (), ()),
+)
+
+
+@pytest.mark.parametrize(
+    ("destination", "current", "authors", "expected"), _SUGGESTION_TABLE
+)
+def test_owner_value_suggestions_follow_the_frozen_rules(
+    destination: str,
+    current: str | None,
+    authors: tuple[str, ...],
+    expected: tuple[tuple[str, str], ...],
+) -> None:
+    assert owner_value_suggestions(destination, current, authors) == tuple(
+        OwnerSuggestion(rule, value) for rule, value in expected
+    )
+
+
+_UNICODE_CORPUS = (
+    "THE SILENT ORCHARD",
+    "the harbour of glass",
+    "straße der träume",
+    "İSTANBUL GECELERİ",
+    "ΟΔΥΣΣΕΙΑ ΚΑΙ ΙΛΙΑΔΑ",
+    "КНИГА О ВКУСНОЙ ПИЩЕ",
+    "שלום עולם",
+    "كتاب الأغاني",
+    "東京物語 (Disc 2)",
+    "Cafe\u0301 society",
+    "a",
+    "ALL CAPS - PART 3 OF 4",
+    "x - y",
+    "III IV",
+    "o'neil and don't",
+    "ǅEMAL BIJEDIĆ",
+)
+
+
+@pytest.mark.parametrize("current", _UNICODE_CORPUS)
+def test_suggestions_are_bounded_admissible_changes_and_title_case_is_idempotent(
+    current: str,
+) -> None:
+    suggestions = owner_value_suggestions("title", current, ("Elena Marsh", "x"))
+    assert len(suggestions) <= 4
+    assert len({suggestion.value for suggestion in suggestions}) == len(suggestions)
+    for suggestion in suggestions:
+        assert owner_text(suggestion.value)
+        assert suggestion.value != current
+        if suggestion.rule == "title_case":
+            assert not any(
+                again.rule == "title_case"
+                for again in owner_value_suggestions("title", suggestion.value, ())
+            )
+
+
+def test_unicode_guards_withhold_a_length_changing_case_map() -> None:
+    # Lower-casing U+0130 adds a combining dot, so no title case is offered;
+    # title-casing ß would widen it, so it stays lowercase.
+    assert owner_value_suggestions("title", "İSTANBUL GECELERİ", ()) == ()
+    assert owner_value_suggestions("title", "ßtraße der träume", ()) == (
+        OwnerSuggestion("title_case", "ßtraße Der Träume"),
+    )

@@ -22,6 +22,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from tests.support.cover_retention import retained_cover_case
 from tests.support.metadata_report_schemas import (
+    PRIOR_HUMAN_DECISIONS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
 )
 
@@ -189,6 +190,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             "_REVIEW_CASE_FIELD_FACTS_INSERT_SQL",
             PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         ),
+        patch.object(schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL),
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's

@@ -111,6 +111,8 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
         ("accept", "Accepted"),
         ("keep_current", "Kept current"),
         ("reject", "Rejected"),
+        ("owner_entered", "Owner-entered"),
+        ("withdraw", "Withdrawn"),
         ("completed", "Cover advice completed"),
         ("unavailable", "Cover advice unavailable"),
         ("failed", "Cover advice failed safely"),
@@ -982,12 +984,20 @@ def _bounded_records() -> list[tuple[dict[str, object], MetadataReport | None]]:
                 "record": {
                     "source_kind": "human_decision",
                     "target_fingerprint": pinned,
-                    "selected_value": selected if state == "accept" else None,
+                    "selected_value": selected
+                    if state in {"accept", "owner_entered"}
+                    else None,
                 },
             },
             report,
         )
-        for state in ("accept", "keep_current", "reject")
+        for state in (
+            "accept",
+            "keep_current",
+            "reject",
+            "owner_entered",
+            "withdraw",
+        )
     ]
     records += [
         (

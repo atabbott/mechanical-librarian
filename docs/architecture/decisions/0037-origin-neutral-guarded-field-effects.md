@@ -2,6 +2,10 @@
 
 Status: Accepted
 
+[ADR-0085](0085-owner-entered-values-withdrawal-and-reselection.md) adds owner-entered
+values; going back means choosing the earlier value again as a new guarded
+write. Rollback, Undo, revert and clearing stay unavailable.
+
 ## Context
 
 Mechanical Librarian already records immutable owner decisions and sealed,

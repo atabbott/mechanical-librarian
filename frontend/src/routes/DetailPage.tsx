@@ -42,7 +42,11 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           ? 'Owner selected a proposed value.'
           : item.outcome === 'keep_current'
             ? 'Owner chose the current value.'
-            : 'Owner declined the proposed change.'
+            : item.outcome === 'owner_entered'
+              ? 'Owner entered a value.'
+              : item.outcome === 'withdraw'
+                ? 'Owner withdrew the decision.'
+                : 'Owner declined the proposed change.'
         : item.outcome === 'candidate'
           ? 'Automatic policy selected a candidate.'
           : item.outcome === 'keep_current'
@@ -58,6 +62,11 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         {isRetention(item) ? (
           <p className="diagnostic-value">
             <span>Retained</span> {displayRetainedHistoryValue(item)}
+          </p>
+        ) : item.category === 'owner' && item.outcome === 'withdraw' ? (
+          // A withdrawal selects nothing, so it has no value to change to.
+          <p className="diagnostic-value">
+            <span>Outcome</span> Withdrawn
           </p>
         ) : (
           <>

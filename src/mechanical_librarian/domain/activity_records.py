@@ -63,6 +63,8 @@ class ActivityResult(StrEnum):
     ACCEPTED = "Accepted"
     KEPT_CURRENT = "Kept current"
     REJECTED = "Rejected"
+    OWNER_ENTERED = "Owner-entered"
+    WITHDRAWN = "Withdrawn"
     COVER_ADVICE_COMPLETED = "Cover advice completed"
     COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
     COVER_ADVICE_FAILED_SAFELY = "Cover advice failed safely"
@@ -102,6 +104,8 @@ _RESULT_LABELS = {
     "accept": ActivityResult.ACCEPTED,
     "keep_current": ActivityResult.KEPT_CURRENT,
     "reject": ActivityResult.REJECTED,
+    "owner_entered": ActivityResult.OWNER_ENTERED,
+    "withdraw": ActivityResult.WITHDRAWN,
     "completed": ActivityResult.COVER_ADVICE_COMPLETED,
     "unavailable": ActivityResult.COVER_ADVICE_UNAVAILABLE,
     "failed": ActivityResult.COVER_ADVICE_FAILED_SAFELY,
@@ -325,6 +329,16 @@ def _decision_facts(
             {"label": "Current value", "value": value_text(destination, current)},
             {"label": "Selected value", "value": value_text(destination, current)},
             chosen,
+        ]
+    if state == "withdraw":
+        # A withdrawal records that no owner decision stands, so nothing of
+        # this field was chosen or left unchanged by it (ADR-0085).
+        return ReadableChange(
+            "Withdrawn", f"Withdrew the {destination_label(destination)} decision"
+        ), [
+            {"label": "Current value", "value": value_text(destination, current)},
+            chosen,
+            {"label": "Outcome", "value": "The earlier decision no longer applies"},
         ]
     if state == "reject" or type(selected) is not dict:
         return (

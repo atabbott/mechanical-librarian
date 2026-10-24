@@ -8586,13 +8586,125 @@ def test_actual_shadow_v6_store_is_rejected_without_mutation(tmp_path, name):
         assert decision.to_data() == document
 
 
+def _automatic_titles(repository, case_id: str) -> list[str]:
+    return [
+        row[0]
+        for row in repository._connection.execute(
+            "SELECT decision_id FROM automatic_decisions "
+            "WHERE review_case_id=? AND destination='title'",
+            (case_id,),
+        )
+    ]
+
+
+def _pending_titles(repository, case_id: str) -> list[str]:
+    return [
+        document["decision_id"]
+        for document in map(
+            json.loads, repository.pending_field_effect_decision_documents(32)
+        )
+        if document["review_case_id"] == case_id and document["destination"] == "title"
+    ]
+
+
+def test_title_recovery_reprojects_a_successor_that_carries_the_owners_hold(
+    tmp_path,
+):
+    """F59 R10: the owner's hold on a title follows the work to the case it is
+    admitted under again while titles are suspended. Recovery still projects
+    that case, so the hold has an automatic decision to hold, says so, and
+    Resume releases it."""
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from tests.support.evidence_led_titles import (
+        complete_title_work,
+        isbn_title_report,
+        publish_title_case,
+    )
+
+    repository = open_repository(tmp_path / "title.sqlite")
+    first = isbn_title_report()
+    held_case, _ = publish_title_case(repository, first)
+    assert len(_automatic_titles(repository, held_case)) == 1
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(held_case))["case"]
+    )
+    title = next(value for value in case.proposals if value["destination"] == "title")
+    owner = HumanDecision.create(
+        case,
+        proposal_id=title["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination="title",
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="title-owner-hold",
+        occurred_at=5,
+    )
+    repository.record_human_decision(owner)
+    assert repository.field_effect_manual_hold_token(held_case, "title") == (
+        owner.decision_id
+    )
+    repository.set_automatic_safety_state(
+        AutomaticSafetyState(
+            False, None, (("title_layout", "automatic_admission_failed"),)
+        ),
+        6,
+    )
+    # The providers fall silent and the case retires; when they answer again
+    # the work is admitted afresh, carrying the hold, with nothing projected.
+    silent = MetadataReport.create(
+        target=first.target,
+        file=first.file,
+        local_claims=(),
+        local_reasons=first.local_reasons,
+        providers=(),
+    )
+    assert publish_title_case(repository, silent, successor_of=first)[0] is None
+    successor, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Series 3 - Example Title"),
+        successor_of=silent,
+    )
+    assert successor != held_case
+    assert repository.field_effect_manual_hold_token(successor, "title") == (
+        owner.decision_id
+    )
+    assert _automatic_titles(repository, successor) == []
+    AutomaticSafetyControls(repository).recover(30, "title_layout")
+    action = repository.claim_review_pipeline_action(32)
+    assert action is not None and action.stage == "projection"
+    assert action.review_case_id == successor
+    repository.persist_shadow_outcome(successor, 33, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 34)
+    # Projected once, held, and said to be held; nothing is planned to write.
+    automatic = _automatic_titles(repository, successor)
+    assert len(automatic) == 1
+    field = next(
+        value
+        for value in InspectCurrentReviewCase(repository).run(successor)["fields"]
+        if value["destination"] == "title"
+    )
+    assert (field["manual_hold"], field["human_decision"]) == (True, None)
+    assert _pending_titles(repository, successor) == []
+    # Projecting it again changes nothing.
+    AutomaticSafetyControls(repository).recover(35, "title_layout")
+    assert repository.claim_review_pipeline_action(36) is None
+    assert _automatic_titles(repository, successor) == automatic
+    # Resume releases the hold, and the automatic decision is then planned.
+    assert repository.clear_field_effect_manual_hold(
+        successor, "title", 40, owner.decision_id
+    )
+    assert _pending_titles(repository, successor) == automatic
+    repository.close()
+
+
 @pytest.mark.parametrize(
     "excluded",
     [
         "ask",
         "ignore",
         "automatic_decision",
-        "manual_hold",
+        "owner_decision",
         "stale_report",
         "running",
         "queued",
@@ -8609,14 +8721,14 @@ def test_title_recovery_excludes_ineligible_completed_work(tmp_path, excluded):
     case_id, _ = complete_title_work(
         repository,
         isbn_title_report()
-        if excluded == "manual_hold"
+        if excluded == "owner_decision"
         else isbn_title_report(current="Example Title"),
         mode=excluded if excluded in {"ask", "ignore"} else "automatic",
         safety=None if excluded == "automatic_decision" else safety,
     )
     if excluded == "automatic_decision":
         repository.set_automatic_safety_state(safety, 24)
-    elif excluded == "manual_hold":
+    elif excluded == "owner_decision":
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
         )

@@ -215,7 +215,10 @@ present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state
 across the two lanes. A stale catalogue baseline is rebuilt progressively per
 successfully observed library, isolating unavailable connections; later work
-validates its exact item and revision against the latest generation. The
+validates its exact item and revision against the latest generation. A manual
+hold follows the work: admitting a successor case carries each destination's
+latest active hold with no pending return, under the same decision token, inside
+the admission transaction (#1285). The
 return-to-automatic control retains its durable manual hold until its requested
 scan is successfully complete. Release compares the hold's human-decision token,
 so a concurrent later manual decision remains held; failed or incomplete scans
@@ -1914,8 +1917,8 @@ completed title projections only when title permission changes from blocked to
 permitted; retained pause, global or title blockers leave completed work untouched.
 Resume changes only the pause flag. Both commands read safety inside their writer
 transaction, preserving suspensions committed by competing projection workers.
-Report/proposal/case and policy currentness, owner-final and manual holds constrain
-the cohort; final projection checks and insertion uniqueness remain authoritative.
+Report/proposal/case and policy currentness and owner-final constrain the cohort,
+while a manual hold withholds the planned write and never the decision; final projection checks and insertion uniqueness remain authoritative.
 No external acquisition, model, target or media write authority is added. A failed
 transaction rolls back safety, work, scan and presentation together. Predecessor
 v6 state requires a clean rebuild, never silent clearing or migration. See
@@ -2254,3 +2257,21 @@ after the settings commit, so a failed save cannot leave recovery ahead of
 configuration and stop the next start, and a cutover that fails after the
 commit fails the service closed rather than keep superseded settings running.
 
+## Owner-entered values, withdrawal and reselection (#1285)
+
+Owner-entered values, genre subsets and withdrawals use the existing
+session- and CSRF-bound decision command and grant no new destination, action
+kind, consent or permission. Owner text is refused, never rewritten, unless it
+is 1 to 512 code points of NFC text with collapsed whitespace and no control,
+path, credential or URI text; a genre subset must be an in-order subset of the
+current and eligible proposed genres, at most 32. Suggestions are pure local
+transforms of the current value. No proposal, shadow, automatic-decision,
+policy or qualification path reads an owner-entered or previous value. The
+previous value is the pre-image the guarded pipeline read back before the
+latest verified write of that field, read through a bounded index and offered
+only as a suggestion: it grants no authority, and choosing it is an ordinary
+owner-entered write, so a field changed since refuses as stale and the claim
+re-read and the adapter's re-check before its request both apply. The
+lost-update window between that re-check and the request remains, as
+Audiobookshelf offers no compare-and-set. Clearing, rollback, Undo and revert
+stay unavailable.

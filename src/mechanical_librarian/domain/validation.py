@@ -28,8 +28,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from ipaddress import ip_address
-from re import Pattern, fullmatch
+from re import Pattern, fullmatch, search
 from typing import cast
+from unicodedata import category, normalize
 from urllib.parse import urlsplit
 
 FieldCheck = Callable[[object], bool]
@@ -51,6 +52,25 @@ text = exact_type(str)
 def nonempty_text(value: object) -> bool:
     """Accept exact text carrying at least one character."""
     return text(value) and bool(value)
+
+
+def owner_text_value(value: object) -> bool:
+    """Accept owner-typed text that is already in its one canonical spelling.
+
+    That is 1 to 512 code points, NFC with whitespace collapsed and trimmed,
+    no control, format or surrogate code point (so no zero-width joiner
+    either, a documented limit), and no URI scheme. Refusing rather than repairing is the point: the owner
+    sees the value that will be written, so nothing here may rewrite it. The
+    projection-safety scan the domain adds on top lives beside the evidence
+    bounds, which this module cannot import.
+    """
+    return (
+        type(value) is str
+        and 1 <= len(value) <= 512
+        and value == " ".join(normalize("NFC", value).split())
+        and all(category(character) not in {"Cc", "Cf", "Cs"} for character in value)
+        and search(r"[A-Za-z][A-Za-z0-9+.-]*://", value) is None
+    )
 
 
 def bounded_utf8_text(maximum_bytes: int) -> FieldCheck:

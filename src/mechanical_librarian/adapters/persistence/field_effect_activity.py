@@ -118,11 +118,14 @@ from mechanical_librarian.domain.field_effect import (
     decision_value_kind,
     field_value_version,
     project_decision_value,
+    validate_effect_value,
 )
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
+    OWNER_SUBSET_DESTINATION,
+    OWNER_TEXT_DESTINATIONS,
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
@@ -794,6 +797,82 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "dependency_digests": dependency_digests,
         }
 
+    @local_operation
+    def previous_field_values(
+        self, connection: str, library: str, work_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        return self._previous_field_values(connection, library, work_id)
+
+    def _previous_field_values(
+        self, connection: str, library: str, work_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        """What each owner-entry field held before the work's latest verified write.
+
+        This is a read only: the value is offered as a suggestion, which grants
+        no authority, so a write of any origin counts. The latest write is the
+        one whose verified event was appended last: `updated_at` has one-second
+        resolution, and the append-only event log's rowid does not. A subtitle
+        a title plan wrote as its companion is that destination's latest write
+        too, and offers nothing. A pre-image the plan and its verified audit
+        disagree about is a corruption signal and is never offered (ADR-0085).
+        """
+        try:
+            rows = self._connection.execute(
+                "SELECT destination,plan_id,verified,document,companion FROM ("
+                "SELECT *,row_number() OVER (PARTITION BY destination "
+                "ORDER BY verified DESC,plan_id DESC) position FROM ("
+                "SELECT effect.destination,effect.plan_id,effect.document,"
+                "json_extract(effect.document,'$.plan.subtitle_companion') IS NOT NULL companion,"
+                "COALESCE((SELECT MAX(event.rowid) FROM field_effect_events event "
+                "WHERE event.plan_id=effect.plan_id AND event.kind='verified'),0) verified "
+                "FROM field_effects effect WHERE effect.connection_name=? "
+                "AND effect.library_name=? AND effect.work_id=? "
+                "AND effect.state='verified'"
+                ")) WHERE position=1 ORDER BY destination LIMIT 17",
+                (connection, library, work_id),
+            ).fetchall()
+            if len(rows) > 16:
+                raise FieldEffectError("persistence")
+            latest = {row[0]: row for row in rows}
+            title = latest.get("title")
+            subtitle = latest.get("subtitle")
+            if (
+                title is not None
+                and title[4]
+                and (
+                    subtitle is None
+                    or (title[2], title[1]) > (subtitle[2], subtitle[1])
+                )
+            ):
+                latest["subtitle"] = title
+            values = []
+            for destination, (_, plan_id, _, document, _) in sorted(latest.items()):
+                plan = FieldEffectOperation.from_json(document).plan
+                if (
+                    destination
+                    not in (*OWNER_TEXT_DESTINATIONS, OWNER_SUBSET_DESTINATION)
+                    or plan.destination != destination
+                    or plan.pre_value is None
+                ):
+                    continue
+                verified = self._connection.execute(
+                    "SELECT document FROM field_effect_events "
+                    "WHERE plan_id=? AND kind='verified' ORDER BY sequence DESC LIMIT 1",
+                    (plan_id,),
+                ).fetchone()
+                if verified is None or _canonical_json(
+                    json.loads(verified[0]).get("pre_value")
+                ) != _canonical_json(plan.pre_value):
+                    continue
+                try:
+                    validate_effect_value(destination, plan.pre_value)
+                except FieldEffectError:
+                    continue
+                values.append((destination, plan.pre_value))
+            return tuple(values)
+        except (sqlite3.Error, json.JSONDecodeError, AttributeError) as error:
+            raise FieldEffectError("persistence") from error
+
     @staticmethod
     def _decision_value_for_target(
         destination: str, value: object
@@ -1085,7 +1164,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
                 "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
-                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome='accept' OR ("
+                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered') OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
@@ -1134,6 +1213,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON lineage.review_case_id=consideration.review_case_id "
                 "WHERE selection.kind='automatic'"
                 " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
+                # An owner's description is the decision its own hold keeps; an
+                # automatic one under a hold waits for Resume (ADR-0085).
+                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+                "hold.review_case_id=d.review_case_id AND "
+                "hold.destination='description' AND hold.active=1))"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
                 "AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
                 + _FIELD_EFFECT_COMPANION_DECISION_SQL
@@ -1177,7 +1262,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
                 "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
-                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome='accept' OR ("
+                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered') OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
@@ -1216,7 +1301,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic' UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id) "
+                "WHERE selection.kind='automatic' UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
+                " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
+                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+                "hold.review_case_id=d.review_case_id AND "
+                "hold.destination='description' AND hold.active=1))) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "

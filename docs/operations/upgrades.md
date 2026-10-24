@@ -1,5 +1,13 @@
 # Upgrades and compatibility
 
+#1285 moves owner decisions to `human-decision-v3`, with the outcomes
+`owner_entered` and `withdraw`, and widens the `human_decisions`
+outcome check. **Clean rebuild required** for every predecessor application
+database; startup refuses it before mutation. Owner decisions are canonical
+authority, so no migration, adoption, conversion, import or downgrade is
+supplied; F19a/F20/F46 records are displaced to revision 63 with their
+permission sets unchanged.
+
 #1283 advances the proposal policy to `fixed-conservative-v36` and the shadow
 decision policy to `deterministic-shadow-decision-policy-v23`: an author or
 narrator that only drops a current name's accents keeps the current spelling,

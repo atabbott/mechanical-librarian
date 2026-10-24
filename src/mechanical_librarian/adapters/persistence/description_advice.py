@@ -284,10 +284,6 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination='description' LIMIT 1",
                 (case_id,),
             ).fetchone()
-            held = self._connection.execute(
-                "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? AND destination='description' AND active=1",
-                (case_id,),
-            ).fetchone()
             prior = self._connection.execute(
                 "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
                 (case_id,),
@@ -303,7 +299,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                     not self.current_settings().automatic_application
                     or candidate.output.disposition != "ready"
                     or human is not None
-                    or held is not None
+                    # An owner's hold does not refuse the decision: a successor
+                    # carries it with nothing yet to hold, and authority_value
+                    # holds the write (ADR-0085).
                     or posture != ("automatic",)
                     or safety is None
                     or safety[0]

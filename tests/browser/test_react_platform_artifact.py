@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Page, Route, expect, sync_playwright
@@ -3760,3 +3760,106 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                     page.locator(".attention-work-group").first.wait_for()
                     page.evaluate(_TWO_FRAMES)
                     probe(f"{where} rail", width)
+
+
+_OPTION_BESIDE_CHECKBOX = (
+    "() => [...document.querySelectorAll('.owner-option')].map(option => {"
+    " const box = option.querySelector('input').getBoundingClientRect();"
+    " const name = option.querySelector('span').getBoundingClientRect();"
+    " return name.left >= box.right && name.top < box.bottom })"
+)
+
+
+def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
+    """The entry and subset controls, with the previous value among their
+    choices, break no word at any width or text size, in light and dark, with
+    motion and reduced (#1285)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        # The first work opens on the cohort's case that holds every control.
+        owner_case = cast(
+            "dict[str, object]", rich_payload("/api/v1/review-cases/case-owner")
+        )
+        page.route(
+            "**/api/v1/review-cases/case-1",
+            lambda route: route.fulfill(
+                content_type="application/json",
+                body=json.dumps(owner_case | {"review_case_id": "case-1"}),
+            ),
+        )
+        # The library's own words in the suggestions may break; no other may.
+        title_field = cast("list[dict[str, Any]]", owner_case["fields"])[0]
+        library = {
+            word
+            for suggestion in title_field["owner_control"]["entry"]["suggestions"]
+            for word in suggestion["value"].split()
+        }
+        backgrounds = {}
+        # Light with motion, then dark with reduced motion.
+        for reduced in (False, True):
+            scheme = "dark" if reduced else "light"
+            page.emulate_media(
+                color_scheme="dark" if reduced else "light",
+                reduced_motion="reduce" if reduced else "no-preference",
+            )
+            for text in styles:
+                for width in (1440, 1100, 884, 761, 760, 390, 320):
+                    where = f"{scheme}, {text} text at {width}px"
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.goto(
+                        "https://react-platform.invalid/library?lens=all"
+                        "&preview=case-1&field=title"
+                    )
+                    title = page.get_by_role("region", name="Your value for Title")
+                    title.get_by_role("button", name="Enter a value").click()
+                    expect(
+                        title.get_by_role(
+                            "button",
+                            name="Use previous value “Uncharacteristically Interdisciplinary”",
+                        )
+                    ).to_be_visible()
+                    page.evaluate(_TWO_FRAMES)
+                    # The suggestions' own copy and every other word stay whole.
+                    broken = [
+                        word
+                        for word in page.evaluate(_POLICY_MID_WORD, ".owner-controls")
+                        if word.strip("“”") not in library
+                    ]
+                    assert not broken, f"{where}, entry: {broken}"
+                    page.goto(
+                        "https://react-platform.invalid/library?lens=all"
+                        "&preview=case-1&field=genres"
+                    )
+                    genres = page.get_by_role("region", name="Your value for Genres")
+                    genres.get_by_role("button", name="Choose genres").click()
+                    expect(genres.get_by_role("checkbox")).to_have_count(3)
+                    page.evaluate(_TWO_FRAMES)
+                    # A long genre wraps beside its checkbox; only a single
+                    # word too wide for that space at enlarged text may not.
+                    beside = page.evaluate(_OPTION_BESIDE_CHECKBOX)
+                    assert text != "default" or all(beside), f"{where}: {beside}"
+                    broken = page.evaluate(_POLICY_MID_WORD, ".owner-controls")
+                    assert not broken, f"{where}: {broken}"
+                    assert (
+                        page.evaluate("document.documentElement.scrollWidth") <= width
+                    ), where
+                    # The controls never animate; reduced motion's global
+                    # 0.01ms floor is the only duration they may carry.
+                    transitions = page.evaluate(
+                        "() => [...document.querySelectorAll('.owner-controls *')]"
+                        ".map(node => getComputedStyle(node).transitionDuration)"
+                        ".filter(value => parseFloat(value) > 0.0001)"
+                    )
+                    assert not transitions, f"{where}: {transitions}"
+            backgrounds[scheme] = page.evaluate(
+                "getComputedStyle(document.querySelector('.owner-controls'))"
+                ".backgroundColor + getComputedStyle(document.querySelector("
+                "'.owner-controls')).color"
+            )
+        assert backgrounds["light"] != backgrounds["dark"], backgrounds

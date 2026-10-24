@@ -1661,8 +1661,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "AND resolution.library_name=w.library_name AND resolution.resolved_policy_id=o.resolved_policy_id "
             "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
             "AND NOT EXISTS (SELECT 1 FROM human_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title') "
-            "AND NOT EXISTS (SELECT 1 FROM automatic_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title') "
-            "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds h WHERE h.review_case_id=w.review_case_id AND h.destination='title' AND h.active=1)"
+            "AND NOT EXISTS (SELECT 1 FROM automatic_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title')"
+            # An owner's hold is not a reason to leave the title unprojected: a
+            # successor carries it with nothing yet to hold, and it acts when a
+            # write would be planned, never when the decision is made (ADR-0085).
         ).fetchall()
         for work_id, scan_id in rows:
             self._connection.execute(

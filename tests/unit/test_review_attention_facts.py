@@ -37,6 +37,10 @@ from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     publish_audiobook_preview,
 )
+from tests.support.metadata_report_schemas import (
+    HUMAN_DECIDED_SQL,
+    PRIOR_HUMAN_DECIDED_SQL,
+)
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_browse_attention_statements import (
     _automatic_decision,
@@ -75,12 +79,14 @@ _AUTHORS_ASK = (
     "'$.destinations.contributor_names')='ask') OR "
 )
 _NARRATORS_ASK = _AUTHORS_ASK.replace("'authors'", "'narrators'")
-_PRE_1249_ATTENTION_FACT_SOURCE_SQL = _ATTENTION_FACT_SOURCE_SQL.replace(
-    _NARRATORS_ASK, "", 1
-).replace(
-    "OR result.manual_bibliographic_attention=1",
-    "OR facts.format <> 'epub' OR result.manual_bibliographic_attention=1",
-    1,
+_PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
+    _ATTENTION_FACT_SOURCE_SQL.replace(_NARRATORS_ASK, "", 1)
+    .replace(
+        "OR result.manual_bibliographic_attention=1",
+        "OR facts.format <> 'epub' OR result.manual_bibliographic_attention=1",
+        1,
+    )
+    .replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL, 1)
 )
 
 
@@ -991,13 +997,13 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
         == "1513216e8213975ceedf17f5ddd01cf7f3ba4c8ab6c68678f9013399bc7b9d86"
     )
     # Exactly two edits: the audiobook clause leaves, and narrators asks
-    # beside authors.
+    # beside authors; #1285 later lets a withdrawn field ask again.
     assert _ATTENTION_FACT_SOURCE_SQL.count(_NARRATORS_ASK) == 1
     assert _PRE_1249_ATTENTION_FACT_SOURCE_SQL.count(_AUTHORS_ASK) == 1
     assert (
-        _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace(
-            "OR facts.format <> 'epub' ", "", 1
-        ).replace(_AUTHORS_ASK, _AUTHORS_ASK + _NARRATORS_ASK, 1)
+        _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace("OR facts.format <> 'epub' ", "", 1)
+        .replace(_AUTHORS_ASK, _AUTHORS_ASK + _NARRATORS_ASK, 1)
+        .replace(PRIOR_HUMAN_DECIDED_SQL, HUMAN_DECIDED_SQL, 1)
         == _ATTENTION_FACT_SOURCE_SQL
     )
 

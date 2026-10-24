@@ -59,12 +59,17 @@ def classify_review_field(
     proposed_values: tuple[object, ...],
     override_available: bool = True,
     owner_choosable: bool = False,
+    changeable: bool = True,
+    owner_entry: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
     `owner_choosable` is a recording's undecided fill that no shared reason
     queues: it stays editable in its case but is never attention (#1249).
-    Every other input decides first.
+    Every other input decides first. `changeable` says whether any owner
+    control could replace a recorded decision, and `owner_entry` whether the
+    owner may type a value or choose genres; each changes only the reason
+    (ADR-0085).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -79,6 +84,8 @@ def classify_review_field(
             "human_recorded",
             (
                 "Your recorded decision is retained. You can change it here."
+                if override_available and changeable
+                else "Your recorded decision is retained."
                 if override_available
                 else "Your recorded decision is being applied and cannot be changed yet."
             ),
@@ -165,7 +172,9 @@ def classify_review_field(
         )
     return ReviewFieldClassification(
         "unsupported",
-        "There is no owner decision available for this field.",
+        "There is no other value to choose from. You can enter your own."
+        if owner_entry
+        else "There is no owner decision available for this field.",
         False,
         False,
         False,

@@ -23,6 +23,35 @@ export const choiceAvailable = (field: CaseDetailView['fields'][number]) =>
   (field.decisionActions.length > 0 ||
     Boolean(field.descriptionAdvice?.current && field.descriptionAdvice.candidate))
 export const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
+// F59's owner commands settle the field in place: the owner stays on it to see
+// what was recorded, and only a choice among offered values advances (ADR-0085).
+const ownerOutcomes: Readonly<Record<string, string>> = {
+  owner_entered: 'Your value is recorded.',
+  withdraw: 'Withdrawn. This field needs a decision again.',
+}
+const outcomeWords = (outcome: string) =>
+  ({ owner_entered: 'your value', withdraw: 'withdrawal' })[outcome] ?? labelWords(outcome)
+// One sentence for a written decision, shared by the refusal and the note.
+export const writtenRefusal =
+  'This decision has been written to your library, so it can’t be withdrawn.'
+// The store's refusal for an owner command, in the words the owner acts on.
+export const ownerRefusalCopy = (
+  error: unknown,
+  field: CaseDetailView['fields'][number] | undefined,
+): string | undefined => {
+  if (!(error instanceof ApiError)) return undefined
+  return {
+    owner_value_invalid:
+      field?.destination === 'genres'
+        ? 'These genres can’t be recorded. Choose up to 32 from the list.'
+        : 'This value can’t be recorded. Use plain text of up to 512 characters, with no links or file paths.',
+    owner_value_unchanged: 'That is already the current value.',
+    nothing_to_withdraw: 'There is no recorded decision to withdraw.',
+    automatic_hold:
+      'This decision is holding automatic handling. Use Resume automatic handling to release it.',
+    decision_written: writtenRefusal,
+  }[error.code]
+}
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
 export type DecisionFailure = 'permanent' | 'retryable' | 'stale' | 'uncertain'
 export const classifyDecisionFailure = (error: unknown): DecisionFailure => {
@@ -89,7 +118,7 @@ export const useReviewDecisionController = ({
   onAdvance: (field: string) => Promise<void> | void
   onComplete?: (fields: CaseDetailView['fields']) => Promise<void> | void
   onRecorded?: (caseId: string, destination: string) => Promise<void> | void
-  onStale: () => Promise<void> | void
+  onStale: (command: DecisionCommand) => Promise<void> | void
 }) => {
   const { http, queryClient } = useReviewContext()
   const [status, setStatus] = useState<{
@@ -245,7 +274,7 @@ export const useReviewDecisionController = ({
       if (!refreshed.current) {
         forget(command)
         announce(reviewCaseId, command.destination, '')
-        if (isMounted()) await onStale()
+        if (isMounted()) await onStale(command)
         return
       }
       if (!isMounted()) {
@@ -257,7 +286,16 @@ export const useReviewDecisionController = ({
         return
       }
       mark(command, 'confirmed')
-      announce(reviewCaseId, command.destination, 'Decision recorded from the authoritative case.')
+      const settledInPlace = ownerOutcomes[command.outcome]
+      announce(
+        reviewCaseId,
+        command.destination,
+        settledInPlace ?? 'Decision recorded from the authoritative case.',
+      )
+      if (settledInPlace) {
+        refreshAggregatesInBackground()
+        return
+      }
       const next = nextUnresolved(
         order.current,
         refreshed.fields,
@@ -291,7 +329,7 @@ export const useReviewDecisionController = ({
         // inherit its pressed/recording presentation or destination guard.
         forget(command)
         announce(reviewCaseId, command.destination, '')
-        await onStale()
+        await onStale(command)
         return
       }
       if (!refreshed) {
@@ -326,7 +364,11 @@ export const useReviewDecisionController = ({
         command.destination,
         classifyDecisionFailure(error) === 'uncertain'
           ? 'The response was lost. The current case was reloaded before any retry.'
-          : refusalCopy(error, 'The decision was not recorded. Your choice is unchanged.'),
+          : refusalCopy(
+              error,
+              ownerRefusalCopy(error, refreshedField) ??
+                'The decision was not recorded. Your choice is unchanged.',
+            ),
       )
       // The current field is already authoritative after reconciliation. Do
       // not make truthful failure feedback wait on a no-op same-field route
@@ -361,7 +403,7 @@ export const useReviewDecisionController = ({
     announce(
       reviewCaseId,
       failed.command.destination,
-      `Retrying ${labelWords(failed.command.outcome)}…`,
+      `Retrying ${outcomeWords(failed.command.outcome)}…`,
     )
     mark(failed.command, 'recording')
     decided.current = {
@@ -395,7 +437,7 @@ export const useReviewDecisionController = ({
         { command, phase: 'recording' as const },
       ],
     }))
-    announce(reviewCaseId, command.destination, `Recording ${labelWords(command.outcome)}…`)
+    announce(reviewCaseId, command.destination, `Recording ${outcomeWords(command.outcome)}…`)
     void decision.mutateAsync(command).catch(() => undefined)
   }
   return {
@@ -418,7 +460,9 @@ export const useReviewDecisionController = ({
       reconciliation.data?.destination === destination ? reconciliation.data.message : undefined,
     decision,
     settle,
-    announce: (destination: string, text: string) => announce(reviewCaseId, destination, text),
+    // A notice for this case, or for the case the owner is being moved to.
+    announce: (destination: string, text: string, caseId = reviewCaseId) =>
+      announce(caseId, destination, text),
     submit,
   }
 }

@@ -345,6 +345,10 @@ Human actions are explicit and field-aware:
 
 - accept the selected changes;
 - keep current values or reject the presented proposals;
+- enter a title, subtitle or publisher, or choose a subset of the current and
+  proposed genres, where no alternative fits;
+- withdraw a recorded decision that has not been written, returning the field
+  to Attention, or choose again the value a write replaced;
 - defer without pretending the case is resolved; or
 - provide the typed authorization required by a separate destructive flow.
 
@@ -610,7 +614,17 @@ revisiting restores those choices with the recorded choice marked; a later
 choice appends another immutable decision. Claimed, applying and reconciling
 effects remain temporarily non-replaceable, as does a verified cover effect;
 a verified reversible scalar effect may be replaced through the same current
-case's guarded correction path.
+case's guarded correction path. Where a field's admitted context offers no
+alternative, Enter a value takes owner text and suggests at most four cleaned
+forms of the current value without recording any; a genre field offers Choose
+genres over the union of current and proposed genres. Recording or
+withdrawing keeps focus on the field's controls and states the outcome there
+instead of advancing to the next field. If the work changes first, the owner
+stays on it: the page moves to its current case, the field says the work
+changed and nothing was recorded, and its heading takes focus. A hold carried
+from an earlier case says that an earlier owner decision is pausing automatic
+handling, and its paused automatic decision is neither marked chosen nor
+counted as resolved automatically.
 
 Recorded human decisions retain their exact selected value in the detail view.
 The deterministic disposition remains distinct from that live decision record.
@@ -670,7 +684,15 @@ and visually unresolved covers are never bulk eligible.
 
 Reversing unapplied decisions creates compensating decision events. Once apply
 begins, recovery uses the apply and rollback contracts instead of a user-
-interface undo action.
+interface undo action; Undo and revert stay unavailable. Going back means
+choosing the earlier value again: after a write is read back, Enter a value
+offers the value it replaced as one more suggestion, Previous value, and Choose
+genres tags previous genres Previous. Recording either is an ordinary
+owner-entered decision under the same guards. Fields without owner entry, such
+as authors, return to an earlier value only when a provider proposes it. A work
+read back to exactly an earlier content re-admits that earlier case, which can
+still show its old decision wording, for example a written entry while the
+library holds the earlier value; a hold released since stays released.
 
 ## Settings route
 
