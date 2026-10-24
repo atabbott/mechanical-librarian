@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Page, Route, expect, sync_playwright
@@ -3793,6 +3793,13 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                 body=json.dumps(owner_case | {"review_case_id": "case-1"}),
             ),
         )
+        # The library's own words in the suggestions may break; no other may.
+        title_field = cast("list[dict[str, Any]]", owner_case["fields"])[0]
+        library = {
+            word
+            for suggestion in title_field["owner_control"]["entry"]["suggestions"]
+            for word in suggestion["value"].split()
+        }
         backgrounds = {}
         # Light with motion, then dark with reduced motion.
         for reduced in (False, True):
@@ -3817,6 +3824,14 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                             name="Use previous value “Uncharacteristically Interdisciplinary”",
                         )
                     ).to_be_visible()
+                    page.evaluate(_TWO_FRAMES)
+                    # The suggestions' own copy and every other word stay whole.
+                    broken = [
+                        word
+                        for word in page.evaluate(_POLICY_MID_WORD, ".owner-controls")
+                        if word.strip("“”") not in library
+                    ]
+                    assert not broken, f"{where}, entry: {broken}"
                     page.goto(
                         "https://react-platform.invalid/library?lens=all"
                         "&preview=case-1&field=genres"

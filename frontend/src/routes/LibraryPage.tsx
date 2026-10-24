@@ -1629,9 +1629,9 @@ function OwnerControls({
                     input.current?.focus()
                   }}
                 >
-                  {suggestion.rule === 'previous'
-                    ? `Use previous value “${suggestion.value}”`
-                    : `Use “${suggestion.value}”`}
+                  {suggestion.rule === 'previous' ? 'Use previous value ' : 'Use '}
+                  {/* Library text may break anywhere; the copy around it never does. */}
+                  <span className="owner-suggestion-value">“{suggestion.value}”</span>
                 </button>
               ))}
             </div>
