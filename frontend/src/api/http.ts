@@ -737,6 +737,8 @@ export interface ProviderRecoveryActivityView {
   next_eligible_at: number | null
   state: 'waiting' | 'checking' | 'dormant' | 'recovered' | 'fanout' | 'exhausted'
 }
+/** A configured library whose write permission no longer applies, and why (#1370). */
+export type ActivityLapsedConsentView = Schema<'_ActivityLapsedConsent'>
 export interface ActivityDisplayView {
   backup_ready: null
   capabilities: readonly ActivityCapabilityView[]
@@ -746,6 +748,7 @@ export interface ActivityDisplayView {
   enabled_libraries: readonly ActivityLibraryView[]
   events: readonly ActivityEventView[]
   example: null
+  lapsed_consents: readonly ActivityLapsedConsentView[]
   last_failure: string | null
   ledger: ActivityLedgerView
   current_waiting: ActivityWaitingView | null
@@ -768,7 +771,7 @@ export type ActivityPermissionReadinessView = Pick<
  */
 export type ActivityConsentView = Pick<
   ActivityDisplayView,
-  'backup_ready' | 'capabilities' | 'configured_libraries' | 'waiting'
+  'backup_ready' | 'capabilities' | 'configured_libraries' | 'lapsed_consents' | 'waiting'
 >
 
 export type ActivityView = ActivityDisplayView
@@ -2587,10 +2590,37 @@ const activityWaiting = (raw: unknown): ActivityWaitingReasonsView => {
   }
 }
 
+const lapseReasons: readonly ActivityLapsedConsentView['reason'][] = [
+  'destinations_changed',
+  'library_unresolved',
+  'policy_changed',
+]
+const activityLapses = (raw: unknown): ActivityLapsedConsentView[] => {
+  if (!Array.isArray(raw)) throw new ApiError(502, 'invalid_activity_lapsed_consents')
+  return raw.map((item, index) => {
+    if (!record(item) || !exactKeys(item, ['connection', 'library', 'reason']))
+      throw new ApiError(502, `invalid_activity_lapsed_consent_${String(index)}`)
+    const reason = stringValue(item.reason, 'activity_lapsed_consent_reason')
+    if (!lapseReasons.includes(reason as ActivityLapsedConsentView['reason']))
+      throw new ApiError(502, 'invalid_activity_lapsed_consent_reason')
+    return {
+      connection: stringValue(item.connection, 'activity_lapsed_consent_connection'),
+      library: stringValue(item.library, 'activity_lapsed_consent_library'),
+      reason: reason as ActivityLapsedConsentView['reason'],
+    }
+  })
+}
+
 export const mapActivityConsent = (value: unknown): ActivityConsentView => {
   if (
     !record(value) ||
-    !exactKeys(value, ['backup_ready', 'capabilities', 'configured_libraries', 'waiting'])
+    !exactKeys(value, [
+      'backup_ready',
+      'capabilities',
+      'configured_libraries',
+      'lapsed_consents',
+      'waiting',
+    ])
   )
     throw new ApiError(502, 'invalid_activity_consent')
   return {
@@ -2600,6 +2630,7 @@ export const mapActivityConsent = (value: unknown): ActivityConsentView => {
       value.configured_libraries,
       'activity_configured_libraries',
     ),
+    lapsed_consents: activityLapses(value.lapsed_consents),
     waiting: activityWaiting(value.waiting),
   }
 }
@@ -2725,6 +2756,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
     ),
     counts,
     enabled_libraries: activityLibraries(value.enabled_libraries, 'activity_enabled_libraries'),
+    lapsed_consents: activityLapses(value.lapsed_consents),
     provider_recovery: recovery,
     events: events.map((event, index) => {
       if (!record(event) || !Array.isArray(event.evidence))

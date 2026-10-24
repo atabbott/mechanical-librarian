@@ -370,6 +370,7 @@
     }
   ],
   "example": null,
+  "lapsed_consents": [],
   "last_failure": null,
   "ledger": {
     "event_type": "all",

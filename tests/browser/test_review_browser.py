@@ -2490,6 +2490,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 review_activation.click()
                 page.get_by_text("Activate this reviewed draft?").wait_for()
                 assert page.get_by_role("dialog").count() == 0
+                # The served consent state holds no permission, so the Activate
+                # step says activating grants none rather than nothing (#1370).
+                page.get_by_text(
+                    "No library has write permission, and activating grants none."
+                ).wait_for()
                 page.locator("html").evaluate(
                     "node => { node.style.fontSize = '200%'; }"
                 )

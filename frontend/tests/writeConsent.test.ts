@@ -64,6 +64,32 @@ describe('the write consent offer', () => {
     expect(offer.actionable).toBe(true)
   })
 
+  it('is never complete while a lapse leaves no library holding permission (#1370)', () => {
+    const scoped = (consented: boolean) => ({
+      configured_libraries: [
+        { connection: 'primary', library: 'fiction' },
+        { connection: 'primary', library: 'history' },
+      ],
+      capabilities: [
+        capability('fiction', [{ destination: 'title', state: 'allowed', consented }]),
+        capability('history', [{ destination: 'title', state: 'allowed' }]),
+      ],
+      lapsed_consents: [
+        { connection: 'primary', library: 'history', reason: 'policy_changed' as const },
+        { connection: 'primary', library: 'fiction', reason: 'policy_changed' as const },
+      ],
+    })
+
+    const lapsed = readWriteConsent(view(scoped(false)))
+    expect([lapsed.state, lapsed.actionable]).toEqual(['off', true])
+    expect(lapsed.lapsed).toBe(
+      'Write permission for history and fiction lapsed because it was given under a policy that is no longer active.',
+    )
+    // Permission some library still holds keeps an empty queue complete.
+    expect(readWriteConsent(view(scoped(true))).state).toBe('complete')
+    expect(readWriteConsent(view({ ...scoped(false), lapsed_consents: [] })).state).toBe('complete')
+  })
+
   it('reads its state from the queue rather than from the last command', () => {
     const scoped = {
       configured_libraries: [{ connection: 'primary', library: 'fiction' }],
@@ -204,10 +230,16 @@ describe('the Library notice and Activity state one offer', () => {
         ],
         waiting: { ...queue[state], held_for_recovery: 0, retrying: 0 },
       }
-      const { backup_ready, capabilities, configured_libraries, waiting } = raw
+      const { backup_ready, capabilities, configured_libraries, lapsed_consents, waiting } = raw
       const options = { enabling, connectionUnavailable }
       const notice = readWriteConsent(
-        mapActivityConsent({ backup_ready, capabilities, configured_libraries, waiting }),
+        mapActivityConsent({
+          backup_ready,
+          capabilities,
+          configured_libraries,
+          lapsed_consents,
+          waiting,
+        }),
         options,
       )
       expect(notice).toEqual(readWriteConsent(mapActivity(raw), options))

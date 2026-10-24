@@ -16,6 +16,8 @@ import { readWriteConsent } from '../writeConsent'
  *
  * It is deliberately not a caution: nothing here has gone wrong. Work is ready
  * and a permission is available, which is a success the owner may act on.
+ * When permission lapsed without the owner withdrawing it, the same notice
+ * says writes are off and why, rather than disappearing (#1370).
  */
 export const WriteReadyNotice = () => {
   const { http } = useReviewContext()
@@ -61,7 +63,7 @@ export const WriteReadyNotice = () => {
           : `${inLibrary}Writes are enabled.`
   const copy =
     consent.state === 'off'
-      ? `Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
+      ? `${consent.lapsed ? `${consent.lapsed} ` : ''}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
       : consent.state === 'enabling'
         ? 'Confirming permission with the authoritative server. No change is sent twice.'
         : consent.state === 'applying'

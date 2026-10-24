@@ -10801,6 +10801,37 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(worksStatus()).toHaveTextContent(/^Count unavailable$/u)
   })
 
+  it('states a lapse in the write notice even with nothing prepared (#1370)', async () => {
+    const lapsed = activity({
+      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ consented: false, destination: 'title', prepared: 0, state: 'allowed' }],
+        },
+      ],
+      lapsed_consents: [
+        { connection: 'primary', library: 'fiction', reason: 'library_unresolved' },
+      ],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(lapsed)),
+      getLibrary: vi.fn(async () => counted(0, 5)),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const heading = await screen.findByRole('heading', {
+      name: '5 works are in Library. Writes are off.',
+    })
+    expect(heading.closest('.cm-library-handoff')).toHaveTextContent(
+      'Write permission for fiction lapsed because the active policy does not cover that library.',
+    )
+    expect(screen.getByRole('link', { name: 'Review write permissions' })).toBeVisible()
+  })
+
   it.each([
     ['', 'Count unavailable'],
     ['&q=needle', 'Matching: 1 work needing a decision'],

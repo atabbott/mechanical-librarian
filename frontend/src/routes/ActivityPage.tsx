@@ -954,6 +954,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // work requires consent, and three cascades each deciding that separately is
   // how one of them came to say it directly above the count that refutes it.
   const permissionNeeded = consentState === 'off' && reasons.awaiting_permission > 0
+  // Guarded work continues automatically only while some library holds write
+  // permission; with none, the status says writes are off and why (#1370).
+  const writesHeld = enabled.length > 0 || !needsConsent
   // The disclosure holds pause, removal and recovery only; reviewing write
   // permissions has one entry, outside it (#1279).
   const hasAuthority = enabled.length > 0 || suspensions.length > 0
@@ -1288,7 +1291,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <div>
               <h2 id="write-consent-title">
                 {consentState === 'off'
-                  ? permission?.backup_ready === true
+                  ? permission?.backup_ready === true && offeredChanges > 0
                     ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. Writes are off.`
                     : 'Writes are off. Review permissions when you are ready.'
                   : consentState === 'enabling'
@@ -1299,7 +1302,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </h2>
               <p>
                 {consentState === 'off'
-                  ? 'Open permission review to check backup readiness and the destinations available for writes.'
+                  ? `${consent.lapsed ? `${consent.lapsed} ` : ''}Open permission review to check backup readiness and the destinations available for writes.`
                   : consentState === 'enabling'
                     ? 'Confirming permission with the authoritative server. No change is sent twice.'
                     : consentState === 'enabled'
@@ -1532,7 +1535,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     ? 'Recovery needs attention'
                     : data.paused
                       ? 'New work is paused'
-                      : 'No intervention needed'}
+                      : writesHeld
+                        ? 'No intervention needed'
+                        : 'Writes are off'}
             </h2>
             <p>
               {connection?.state === 'checking'
@@ -1545,7 +1550,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       ? 'Affected work remains held until its current state can be reconciled safely.'
                       : data.paused
                         ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                        : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
+                        : writesHeld
+                          ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
+                          : (consent.lapsed ??
+                            'No library has write permission, so nothing is written to your libraries until you give it.')}
             </p>
             {statusEntry ? (
               <button

@@ -1529,6 +1529,59 @@ describe('Activity route', () => {
     ).toBeNull()
   })
 
+  it.each([
+    [
+      'a lapse',
+      [{ connection: 'primary', library: 'fiction', reason: 'destinations_changed' as const }],
+      'Write permission for fiction lapsed because this version can write a different set of fields.',
+    ],
+    [
+      'no permission at all',
+      [],
+      'No library has write permission, so nothing is written to your libraries until you give it.',
+    ],
+  ])('never reports calm while no library holds permission: %s (#1370)', async (_, lapsed, why) => {
+    const view = activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 0, human: 0, total: 0 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }],
+        },
+      ],
+      lapsed_consents: lapsed,
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => view),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+    }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Writes are off' })).toBeVisible()
+    expect(screen.getByText(why)).toBeVisible()
+    for (const calm of [
+      'No intervention needed',
+      'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
+    ])
+      expect(screen.queryByText(calm)).toBeNull()
+    // A lapse also opens the consent card, in its existing slot, with the reason.
+    if (lapsed.length)
+      expect(
+        screen.getByRole('region', {
+          name: 'Writes are off. Review permissions when you are ready.',
+        }),
+      ).toHaveTextContent(why)
+  })
+
   it('keeps the protected ledger query, evidence, and owner controls bounded', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = {

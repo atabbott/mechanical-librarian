@@ -1,6 +1,7 @@
 import type {
   ActivityDestinationView,
   ActivityDisplayView,
+  ActivityLapsedConsentView,
   ActivityPermissionReadinessView,
   ActivityWaitingReasonsView,
 } from './api/http'
@@ -42,6 +43,37 @@ export interface WriteConsentOffer {
   /** Whether this state is one an owner can act on right now. */
   readonly actionable: boolean
   readonly reasons: ActivityWaitingReasonsView
+  /** Why write permission a library had no longer applies, in the owner's words, or null. */
+  readonly lapsed: string | null
+}
+
+/** Library names as one phrase: `Books`, `Books and Audiobooks`, `A, B, and C`. */
+export const libraryList = (names: readonly string[]) =>
+  new Intl.ListFormat('en', { type: 'conjunction' }).format(names)
+
+const lapseReason = (reason: ActivityLapsedConsentView['reason'], libraries: number) =>
+  ({
+    destinations_changed: 'this version can write a different set of fields',
+    library_unresolved: `the active policy does not cover ${libraries === 1 ? 'that library' : 'those libraries'}`,
+    policy_changed: 'it was given under a policy that is no longer active',
+  })[reason]
+
+/**
+ * Each lapse as one sentence per reason. A lapse is never calm: write
+ * permission ended without the owner withdrawing it (#1370).
+ */
+const lapsedSentence = (lapses: readonly ActivityLapsedConsentView[]) => {
+  const reasons = [...new Set(lapses.map((item) => item.reason))].sort()
+  return reasons.length
+    ? reasons
+        .map((reason) => {
+          const names = [
+            ...new Set(lapses.filter((item) => item.reason === reason).map((item) => item.library)),
+          ]
+          return `Write permission for ${libraryList(names)} lapsed because ${lapseReason(reason, names.length)}.`
+        })
+        .join(' ')
+    : null
 }
 
 /**
@@ -59,7 +91,7 @@ export const destinationReason = (state: string) =>
   })[state] ?? 'it is not ready yet'
 
 export const readWriteConsent = (
-  data: Pick<ActivityDisplayView, 'waiting'> &
+  data: Pick<ActivityDisplayView, 'lapsed_consents' | 'waiting'> &
     Pick<ActivityPermissionReadinessView, 'backup_ready' | 'capabilities' | 'configured_libraries'>,
   options: { readonly enabling?: boolean; readonly connectionUnavailable?: boolean } = {},
 ): WriteConsentOffer => {
@@ -87,7 +119,10 @@ export const readWriteConsent = (
   // Read from the queue rather than from the last command's result: a state
   // that came from a response would keep claiming success after the queue had
   // moved on, and the queue is the only thing that knows whether a prepared
-  // change is still waiting on permission.
+  // change is still waiting on permission. An empty queue is complete only
+  // while some library still holds permission or none ever lapsed (#1370).
+  const lapsed = lapsedSentence(data.lapsed_consents)
+  const held = data.capabilities.some((item) => item.destinations.some((entry) => entry.consented))
   const state: WriteConsentState = options.enabling
     ? 'enabling'
     : reasons.applying > 0
@@ -96,7 +131,9 @@ export const readWriteConsent = (
         ? 'off'
         : reasons.scheduled > 0
           ? 'enabled'
-          : 'complete'
+          : lapsed && !held
+            ? 'off'
+            : 'complete'
   const excluded = scopes[0]?.excluded[0]
   const blocked =
     data.backup_ready === null
@@ -121,6 +158,7 @@ export const readWriteConsent = (
       !options.connectionUnavailable &&
       (data.configured_libraries.length > 0 || reasons.scheduled > 0),
     reasons,
+    lapsed,
   }
 }
 
