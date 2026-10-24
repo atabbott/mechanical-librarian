@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## First-throttle reason successor (#1367)
+
+The current F19a, F20 and F46 records move to semantic revision 65 over base
+`aae7c4dc`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows provider recovery naming an ebook lane's classified
+non-terminal failure when its recovery job is enrolled, without changing the
+scope's health, schedule or budgets. No schema or persisted document changes,
+so no clean rebuild is required, and no operation gains or loses automatic
+authority.
+
 ## Policy activation package successor (#1369)
 
 The current F19a, F20 and F46 records move to semantic revision 64 over base

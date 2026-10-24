@@ -2881,6 +2881,19 @@ _THROTTLE_ENTRY_LAYOUT = """() => {
       found.push(`${row.name} its link is ${Math.round(own)}px below it and ` +
         `${Math.round(toNext)}px above the next entry`);
   });
+  // No two entries' padded link targets share a point (#1367 R13).
+  const links = [...document.querySelectorAll('.provider-throttle-notice li a')];
+  links.forEach((link, index) => {
+    for (const other of links.slice(index + 1))
+      for (const a of link.getClientRects())
+        for (const b of other.getClientRects()) {
+          const across = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+          const down = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+          if (across > 0 && down > 0)
+            found.push(`"${link.textContent}" overlaps "${other.textContent}" by ` +
+              `${Math.round(across)}x${Math.round(down)}px`);
+        }
+  });
   const gaps = rows.slice(1).map((row, index) => row.all.top - rows[index].all.bottom);
   if (gaps.length && Math.max(...gaps) - Math.min(...gaps) > rows[0].line * 0.15)
     found.push(`entries are spaced unevenly: ${gaps.map(Math.round)}`);
@@ -3242,11 +3255,8 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                     _fits_its_container(page, ".provider-throttle-notice", width)
                     layout = page.evaluate(_THROTTLE_ENTRY_LAYOUT)
                     assert layout["found"] == [], f"{where}: {layout['found']}"
-                    floor = 44 if width <= 760 else 40
-                    small = [
-                        target for target in layout["targets"] if target[1] < floor
-                    ]
-                    assert small == [], f"{where}: links under {floor}px {small}"
+                    small = [target for target in layout["targets"] if target[1] < 44]
+                    assert small == [], f"{where}: links under 44px {small}"
                     together = page.evaluate(_TIME_TOGETHER, False)
                     assert together["found"] == [], f"{where}: {together['found']}"
                     split = page.evaluate(_POLICY_MID_WORD, ".provider-throttle-notice")

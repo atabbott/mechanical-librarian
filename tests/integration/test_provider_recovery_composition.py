@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 import tempfile
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -14,6 +15,8 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from argon2 import PasswordHasher
+from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     _provider_recovery_outbox_id,
@@ -31,7 +34,7 @@ from mechanical_librarian.adapters.providers.inventaire_metadata import (
 )
 from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
 from mechanical_librarian.application import provider_retry_successor
-from mechanical_librarian.application.catalogue import CatalogueReader
+from mechanical_librarian.application.catalogue import CatalogueEntry, CatalogueReader
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -44,6 +47,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     provider_result_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
+    InspectionResult,
     MetadataReportError,
     ProviderLaneResult,
     ProviderResult,
@@ -100,6 +104,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.proposal_evidence import _claim, _provider
+from tests.unit.review_app_fixture import create_transport_test_app
 
 
 class _ReviewerAccess:
@@ -1910,6 +1915,353 @@ def test_retry_now_has_exactly_the_effect_of_raising_the_generation_field() -> N
     jobs = states["retry"]["provider_recovery_jobs"]
     assert 3 == len(jobs) and {(3, "queued", 0)} == {
         (row[3], row[16], row[17]) for row in jobs
+    }
+
+
+def test_retry_now_leaves_an_already_recovered_scope_recovered() -> None:
+    """Retry now for one throttled scope never flags a recovered one (#1367 R15).
+
+    A scope with no deferred work has nothing to correct, so a raised
+    generation carries it forward as recovered rather than dormant, and
+    Activity reports no scope needing owner correction.
+    """
+    from mechanical_librarian.domain.provider_recovery import ProviderRecovery
+
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        _quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        runtime.seed()
+        store = SQLiteProviderRecoveryStore.open(runtime.recovery_path)
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="audio",
+                generation=1,
+                failure="transient",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        store.enqueue_jobs(
+            (
+                ProviderRecoveryJob(
+                    "google",
+                    "google_books",
+                    "audio",
+                    1,
+                    "member-audio",
+                    "primary",
+                    "audio",
+                    "item-audio",
+                    "f" * 64,
+                    "report-" + "3" * 64,
+                    None,
+                    "report-" + "3" * 64,
+                    None,
+                    None,
+                    "report_only",
+                    "[]",
+                ),
+            ),
+            enqueued_at=0,
+        )
+        runner = composition.ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=lambda *_: None,
+            classify_failure=lambda _: ("transient", None),
+        )
+        assert "recovered" == runner.run_one(now=2, token="audio").state
+        store.close()
+        application = runtime.start()
+        _raised_generation(application, 1, "retry")
+        assert 2 == runtime.generation()
+        health = {
+            row[2]: (row[3], row[4])
+            for row in runtime.recovery_state()["provider_recovery_health"]
+        }
+        store = SQLiteProviderRecoveryStore.open(runtime.recovery_path)
+        try:
+            activity = store.activity_snapshot()
+        finally:
+            store.close()
+    assert {"audio": (2, "recovered"), "books": (2, "waiting")} == health
+    assert "dormant" not in [phase["state"] for phase in activity]
+
+
+@pytest.mark.parametrize(
+    ("errors", "expected"),
+    (
+        pytest.param(
+            [],
+            {
+                "statuses": [429, 429],
+                "outcomes": ["rate_limited", "rate_limited"],
+                "reason": "rate_limited",
+            },
+            id="generic-429",
+        ),
+        pytest.param(
+            [{"reason": "rateLimitExceeded"}],
+            # The second work sends no request of its own.
+            {
+                "statuses": [429],
+                "outcomes": ["burst_throttled", "rate_limited"],
+                "reason": "rate_limited",
+            },
+            id="burst-then-inherited-window",
+        ),
+    ),
+)
+def test_a_real_first_throttle_names_its_reason_and_remedy(
+    errors: list[dict[str, str]], expected: dict[str, object]
+) -> None:
+    """Two fresh ebooks meet a keyless Google Books 429 in real preparation (#1367).
+
+    An ebook's non-terminal lane failure goes straight on to its proposal, so
+    the outbox drain is the only place recovery hears of it: each enrolment
+    names its classified failure without moving the scope's schedule, and the
+    review app's preparation API carries that reason and the key remedy. A
+    burst 429 holds Google for its window, so the second work sends nothing
+    and inherits that window, which is still a throttle and never transient.
+    """
+    items = ("item-1", "item-2")
+    isbn = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+
+    class Catalogue:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def probe_connection(self, *_args) -> None:
+            return None
+
+        def read_library(self, *_args) -> tuple[CatalogueEntry, ...]:
+            return tuple(
+                CatalogueEntry(
+                    "primary",
+                    "ebooks",
+                    "library-1",
+                    item,
+                    1,
+                    f"Title {index}",
+                    (),
+                    True,
+                    False,
+                    "singular-supported",
+                    f"{index + 10:064x}",
+                    f"/{item}.epub",
+                    "epub",
+                    "books",
+                )
+                for index, item in enumerate(items)
+            )
+
+    class Reader:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def read(self, item: str) -> TargetSnapshot:
+            index = items.index(item)
+            return TargetSnapshot(
+                "ebook",
+                f"Title {index}",
+                (TargetFile(f"{index + 10:064x}", f"{item}.epub", "epub"),),
+            )
+
+    class Inspector(_Inspector):
+        def inspect(self, *_args) -> InspectionResult:
+            return InspectionResult("c" * 64, (isbn,))
+
+    clock = [10_000.0]
+    statuses: list[int] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        response = httpx.Response(429, json={"error": {"code": 429, "errors": errors}})
+        statuses.append(response.status_code)
+        return response
+
+    def advance(seconds: float) -> None:
+        clock[0] += seconds
+
+    # Preparation sets each lane deadline on the real monotonic clock, so the
+    # adapter and its pacer read that clock, advanced by their synthetic sleeps;
+    # a synthetic one would fall before or after the deadline with host uptime.
+    def monotonic() -> float:
+        return time.monotonic() + clock[0] - 10_000
+
+    def google(name, _client, maximum_bytes, timeout_seconds, **kwargs):
+        return GoogleBooksMetadataProvider(
+            name,
+            httpx.Client(transport=httpx.MockTransport(answer)),
+            maximum_bytes,
+            timeout_seconds,
+            **kwargs,
+            clock=monotonic,
+            wall_clock=lambda: clock[0],
+            sleep=advance,
+        )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
+        held = open_repository(database)
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        with (
+            patch.object(composition.time, "time", side_effect=lambda: int(clock[0])),
+            patch.object(composition, "AudiobookshelfCatalogueReader", Catalogue),
+            patch.object(composition, "AudiobookshelfItemReader", Reader),
+            patch.object(composition, "_IsolatedEpubInspector", Inspector),
+            patch.object(
+                composition,
+                "GoogleBooksPacer",
+                return_value=ProviderRequestPacer(clock=monotonic, sleep=advance),
+            ),
+            patch.object(
+                composition, "GoogleBooksMetadataProvider", side_effect=google
+            ),
+        ):
+            supervisor = composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                _reviewer_access(database, configuration),
+                database_authority=held.authority,
+                provider_recovery=recovery,
+            )
+            pipeline = supervisor._pipeline
+            pipeline.request("primary", "ebooks")
+            for _ in range(64):
+                if not pipeline.run_next(1):
+                    break
+        work = held._connection.execute(
+            "SELECT stage,state,failure_code FROM review_preparation_work"
+        ).fetchall()
+        events = recovery._connection.execute(
+            "SELECT state,attempt,next_eligible_at,occurred_at,outcome "
+            "FROM provider_recovery_events ORDER BY sequence"
+        ).fetchall()
+        health = recovery._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        activity = recovery.activity_snapshot()
+        # The notice is driven by the preparation API of the real review app.
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash("synthetic-owner"))
+        password.chmod(0o600)
+        web = open_repository(database, cross_thread=True, authority=held.authority)
+        app = create_transport_test_app(
+            web,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+            ),
+            clock=lambda: int(clock[0]),
+            provider_throttling=composition._provider_throttling_reader(
+                recovery, configuration, {}, "available"
+            ),
+        )
+        with TestClient(app, base_url="https://review.test") as client:
+            assert 200 == (
+                client.post(
+                    "/api/v1/session/login",
+                    json={"password": "synthetic-owner"},
+                    headers={"Origin": "https://review.test"},
+                ).status_code
+            )
+            response = client.get("/api/v1/review-preparation")
+        assert 200 == response.status_code, response.text
+        throttling = response.json()["provider_throttling"]
+        web.close()
+        supervisor.stop()
+        held.close()
+    assert [("complete", "complete", None)] * 2 == work
+    # The preparation API that drives the notice names the reason and remedy.
+    assert throttling["entries"] == [
+        {
+            "library": "ebooks",
+            "adapter": "google_books",
+            "state": "waiting",
+            "reasons": [expected["reason"]],
+            "deferred": 2,
+            "next_retry_at": 17_200,
+            "remedy": "add_api_key",
+        }
+    ]
+    assert expected["statuses"] == statuses
+    # The fallback enrolment sets the schedule; each delivery names the reason.
+    first, second = cast("list[str]", expected["outcomes"])
+    assert [
+        ("waiting", 1, 17_200, 10_000, None),
+        ("waiting", 1, 17_200, 10_000, first),
+        # The pacer's spacing advances the synthetic clock by under a second.
+        ("waiting", 1, 17_200, 10_000, second),
+    ] == events
+    assert [("waiting", 1, 17_200)] == health
+    assert [expected["reason"]] == activity[0]["failure_reasons"]
+
+
+def test_the_first_throttle_names_its_reason_and_remedy_through_its_retry() -> None:
+    """The reason and the key link hold after the throttle's own retry (#1367)."""
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        _quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        runtime.seed()
+        application = runtime.start()
+        store = SQLiteProviderRecoveryStore.open(runtime.recovery_path)
+        try:
+
+            def entry() -> dict[str, object]:
+                throttling = application.preparation().to_data()["provider_throttling"]
+                ((value),) = throttling["entries"]
+                return value
+
+            first = entry()
+            # The first automatic retry leases the scope, then reschedules it
+            # without recording another outcome.
+            claimed = store.claim_one(generation=1, now=3_700, token="retry")
+            assert claimed is not None
+            checking = entry()
+            store.complete(
+                token="retry",
+                recovery=claimed,
+                now=3_700,
+                failure="rate_limited",
+                retry_after=3_600,
+            )
+            rescheduled = entry()
+        finally:
+            store.close()
+    for value, state in ((first, "waiting"), (checking, "checking")):
+        assert (value["state"], value["reasons"], value["remedy"]) == (
+            state,
+            ["rate_limited"],
+            "add_api_key",
+        )
+    assert rescheduled == {
+        "library": "books",
+        "adapter": "google_books",
+        "state": "waiting",
+        "reasons": ["rate_limited"],
+        "deferred": 3,
+        "next_retry_at": 7_300,
+        "remedy": "add_api_key",
     }
 
 

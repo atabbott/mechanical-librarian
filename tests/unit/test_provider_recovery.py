@@ -8,7 +8,7 @@ import tempfile
 import threading
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Literal, cast
 from unittest.mock import patch
 
@@ -848,7 +848,7 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
         observers=cast(object, lambda *_args: None),
         provider_resolver=cast(object, lambda *_args: None),
         pipeline=lambda: None,
-        enqueue=lambda _jobs, _enqueued_at: 0,
+        enqueue=lambda _jobs, _enqueued_at, _outcomes: 0,
         clock=lambda: 2,
     )
 
@@ -921,8 +921,8 @@ def test_activation_replay_after_ack_failure_keeps_recovery_state_idempotent() -
             observers=cast(object, lambda *_args: None),
             provider_resolver=cast(object, lambda *_args: None),
             pipeline=lambda: None,
-            enqueue=lambda jobs, enqueued_at: store.enqueue_jobs(
-                jobs, enqueued_at=enqueued_at
+            enqueue=lambda jobs, enqueued_at, outcomes: store.enqueue_jobs(
+                jobs, enqueued_at=enqueued_at, outcomes=outcomes
             ),
             clock=lambda: 7,
         )
@@ -5254,7 +5254,7 @@ def test_throttling_snapshot_counts_each_unrecovered_row_and_its_reason(
     store.close()
 
 
-def test_throttling_reason_is_the_latest_event_matching_current_health(
+def test_throttling_reason_is_the_latest_outcome_of_the_current_episode(
     tmp_path: Path,
 ) -> None:
     store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
@@ -5270,15 +5270,382 @@ def test_throttling_reason_is_the_latest_event_matching_current_health(
         )
     ((row),) = store.throttling_snapshot()
     assert ("quota_exhausted", 3_620) == (row["reason"], row["next_eligible_at"])
-    # An ordinary event that no longer describes the health row names nothing.
+    # A recorded outcome names the episode even once it no longer describes
+    # the health row exactly (#1367).
     store._connection.execute(
         "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,"
         "attempt,next_eligible_at,occurred_at,outcome) VALUES('google','google_books',"
         "'books',1,'waiting',3,99,30,'rate_limited')"
     )
     ((row),) = store.throttling_snapshot()
-    assert row["reason"] is None
+    assert row["reason"] == "rate_limited"
     store.close()
+
+
+def _throttle_reasons(
+    store: SQLiteProviderRecoveryStore,
+) -> list[tuple[object, object]]:
+    return [(row["state"], row["reason"]) for row in store.throttling_snapshot()]
+
+
+def _observe_burst(store: SQLiteProviderRecoveryStore, now: int = 0) -> None:
+    store.observe_failure(
+        connection="google",
+        adapter="google_books",
+        scope="books",
+        generation=1,
+        failure="burst_throttled",
+        now=now,
+        retry_after=60,
+    )
+
+
+def test_throttling_reason_survives_an_enqueue_first_checking_and_retry(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    # A replayed package enrols the scope before any observation: no reason.
+    store.enqueue_jobs((_job("a"), _job("b")), enqueued_at=0)
+    assert [("waiting", None)] == _throttle_reasons(store)
+    _observe_burst(store)
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    assert [("checking", "burst_throttled")] == _throttle_reasons(store)
+    # A canary that cannot run reschedules without recording an outcome.
+    store.complete(
+        token="owner",
+        recovery=claimed,
+        now=100,
+        failure="burst_throttled",
+        retry_after=60,
+    )
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    store.close()
+
+
+def test_throttling_reason_survives_fanout_and_its_finish(tmp_path: Path) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _observe_burst(store)
+    store.enqueue_jobs((_job("a"), _job("b")), enqueued_at=0)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    canary = store.claim_job(recovery=claimed, token="owner", now=100)
+    assert canary is not None
+    fanout = store.authorize_fanout(
+        job=canary, token="owner", recovery=claimed, now=100
+    )
+    assert [("fanout", "burst_throttled")] == _throttle_reasons(store)
+    # A later enrolment keeps the scope waiting after the cohort drains.
+    store.enqueue_jobs((_job("c"),), enqueued_at=100)
+    member = store.claim_job(recovery=fanout, token="owner", now=100)
+    assert member is not None
+    store.complete_job(
+        recovery=fanout, job=member, token="owner", now=100, success=True
+    )
+    assert (
+        "waiting" == store.finish_fanout(recovery=fanout, token="owner", now=100).state
+    )
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    store.close()
+
+
+def test_throttling_reason_survives_exhaustion_reopen_and_same_generation_reconcile(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _observe_burst(store)
+    store.enqueue_jobs((_job("a"),), enqueued_at=0)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    canary = store.claim_job(recovery=claimed, token="owner", now=100)
+    assert canary is not None
+    store.complete_exhausted_scope(job=canary, token="owner", recovery=claimed, now=100)
+    assert [("exhausted", "burst_throttled")] == _throttle_reasons(store)
+    # An exhausted scope reopened by a new enrolment is the same episode.
+    store.enqueue_jobs((_job("z"),), enqueued_at=200)
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    # A boot at the same generation reconciles nothing and keeps the reason.
+    assert 0 == store.reconcile_generation(generation=1, now=300)
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    # Retry now raises the generation, which starts a new episode.
+    assert 1 == store.reconcile_generation(generation=2, now=300)
+    assert [("waiting", None)] == _throttle_reasons(store)
+    store.close()
+
+
+def test_throttling_reason_survives_missing_jobs_and_ends_at_recovery(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _observe_burst(store)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    missing = store.complete_missing_jobs(token="owner", recovery=claimed, now=100)
+    assert missing is not None
+    assert [("exhausted", "burst_throttled")] == _throttle_reasons(store)
+    store.close()
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovered.sqlite")
+    _observe_burst(store)
+    store.enqueue_jobs((_job("a"),), enqueued_at=0)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    canary = store.claim_job(recovery=claimed, token="owner", now=100)
+    assert canary is not None
+    store.complete_job(
+        recovery=claimed, job=canary, token="owner", now=100, success=True
+    )
+    store.complete_success(token="owner", recovery=claimed, now=100)
+    assert [] == _throttle_reasons(store)
+    # Reopening a recovered scope starts an episode with no outcome yet.
+    store.enqueue_jobs((_job("y"),), enqueued_at=200)
+    assert [("waiting", None)] == _throttle_reasons(store)
+    store.close()
+
+
+def _scope_events(store: SQLiteProviderRecoveryStore) -> list[tuple[object, ...]]:
+    return store._connection.execute(
+        "SELECT scope,generation,state,attempt,next_eligible_at,occurred_at,outcome "
+        "FROM provider_recovery_events WHERE job_attempt IS NULL ORDER BY sequence"
+    ).fetchall()
+
+
+def test_an_enqueue_outcome_names_the_episode_once_without_moving_its_health(
+    tmp_path: Path,
+) -> None:
+    plain = SQLiteProviderRecoveryStore.open(tmp_path / "plain.sqlite")
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    job = _job("a")
+    assert 1 == plain.enqueue_jobs((job,), enqueued_at=0)
+    assert 1 == store.enqueue_jobs(
+        (job,), enqueued_at=0, outcomes={job: "rate_limited"}
+    )
+    health = "SELECT * FROM provider_recovery_health"
+    assert plain._connection.execute(health).fetchall() == (
+        store._connection.execute(health).fetchall()
+    )
+    assert [
+        ("books", 1, "waiting", 1, 7_200, 0, None),
+        ("books", 1, "waiting", 1, 7_200, 0, "rate_limited"),
+    ] == _scope_events(store)
+    assert [("waiting", "rate_limited")] == _throttle_reasons(store)
+    # Activity names the same reason the throttling notice does.
+    assert ["rate_limited"] == store.activity_snapshot()[0]["failure_reasons"]
+    # A replayed registration of the same package appends nothing.
+    assert 0 == store.enqueue_jobs(
+        (job,), enqueued_at=5, outcomes={job: "rate_limited"}
+    )
+    assert 2 == len(_scope_events(store))
+    store.close()
+    plain.close()
+    reopened = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    assert [("waiting", "rate_limited")] == _throttle_reasons(reopened)
+    reopened.close()
+
+
+def test_an_enqueue_outcome_copies_health_that_moved_on_and_skips_another_generation(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _observe_burst(store)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    job = _job("b")
+    store.enqueue_jobs((job,), enqueued_at=100, outcomes={job: "quota_exhausted"})
+    # The copy is the leased row exactly; the lease itself is untouched.
+    assert ("books", 1, "checking", 0, None, 100, "quota_exhausted") == (
+        _scope_events(store)[-1]
+    )
+    assert ("checking", 0, None, "owner") == store._connection.execute(
+        "SELECT state,attempt,next_eligible_at,claim_token FROM provider_recovery_health"
+    ).fetchone()
+    assert [("checking", "quota_exhausted")] == _throttle_reasons(store)
+    store.complete(token="owner", recovery=claimed, now=100, failure="transient")
+    assert 1 == store.reconcile_generation(generation=2, now=200)
+    before = _scope_events(store)
+    stale = _job("c")
+    store.enqueue_jobs((stale,), enqueued_at=300, outcomes={stale: "rate_limited"})
+    assert before == _scope_events(store)
+    assert [("waiting", None)] == _throttle_reasons(store)
+    store.close()
+
+
+def test_an_enqueue_outcome_leaves_a_dormant_credential_scope_alone(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    store.observe_failure(
+        connection="google",
+        adapter="google_books",
+        scope="books",
+        generation=1,
+        failure="authentication",
+        now=0,
+    )
+    before = _scope_events(store)
+    job = _job("a")
+    assert 1 == store.enqueue_jobs((job,), enqueued_at=10, outcomes={job: "transient"})
+    assert before == _scope_events(store)
+    rows = store.throttling_snapshot()
+    assert [("dormant", "authentication")] == _throttle_reasons(store)
+    view = provider_throttling_view(rows, {"google": True}, 1, "available")
+    assert [(["authentication"], "check_api_key")] == [
+        (entry["reasons"], entry["remedy"])
+        for entry in cast("list[dict[str, object]]", view["entries"])
+    ]
+    store.close()
+
+
+class _OutcomeText(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    (
+        lambda job: {job: "authentication"},
+        lambda job: {job: "completed"},
+        lambda job: {job: "429 Too Many Requests"},
+        lambda job: {_job("other"): "rate_limited"},
+        lambda job: [(job, "rate_limited")],
+        lambda job: MappingProxyType({job: "rate_limited"}),
+        lambda job: {job: ["rate_limited"]},
+        lambda job: {job: _OutcomeText("rate_limited")},
+    ),
+    ids=(
+        "credential",
+        "attempt-outcome",
+        "message",
+        "foreign-job",
+        "not-a-mapping",
+        "mapping-subclass",
+        "unhashable-value",
+        "str-subclass",
+    ),
+)
+def test_enqueue_outcomes_are_typed_non_terminal_failures_of_their_own_jobs(
+    tmp_path: Path, outcomes
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    job = _job("a")
+    with pytest.raises(ProviderRecoveryStoreError, match="jobs are invalid"):
+        store.enqueue_jobs((job,), enqueued_at=0, outcomes=outcomes(job))
+    assert [] == _scope_events(store)
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("audio", "status", "expected"),
+    (
+        (False, ProviderStatus.RATE_LIMITED, ["rate_limited"]),
+        (False, ProviderStatus.UNAVAILABLE, ["transient"]),
+        (False, ProviderStatus.AUTHENTICATION, []),
+        (True, ProviderStatus.RATE_LIMITED, []),
+    ),
+    ids=("ebook-throttle", "ebook-transient", "credential", "audiobook"),
+)
+def test_drain_names_only_an_ebook_non_terminal_provider_failure(
+    audio: bool, status: ProviderStatus, expected: list[str]
+) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        ProviderLaneResult,
+        TargetFile,
+        TargetSnapshot,
+        metadata_discovery_plan,
+        provider_observation,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        ClaimKind,
+        LocalClaim,
+        MetadataReport,
+        ProviderObservation,
+        ProviderQueryKind,
+    )
+    from tests.support.audiobook_reports import admitted_audiobook_report
+
+    seed = _report()
+    isbn = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Title", (TargetFile("b" * 64, "book.epub", "epub"),)),
+        (isbn,),
+    )
+    report = (
+        # The audiobook failed outright: its observation has no lane to carry.
+        admitted_audiobook_report(
+            library="ebooks",
+            additional_providers=(
+                ProviderObservation(
+                    "store", status, (), (), ProviderQueryKind.WORK, "itunes_search"
+                ),
+            ),
+        )
+        if audio
+        else MetadataReport.create(
+            target=seed.target,
+            file=seed.file,
+            local_claims=(isbn,),
+            local_reasons=("opening_matter_isbn",),
+            providers=(
+                provider_observation(
+                    "store",
+                    tuple(ProviderLaneResult(lane, status) for lane in plan.lanes),
+                    authority="google_books",
+                ),
+            ),
+        )
+    )
+    package = (None, report.report_id, None, None, "report_only")
+
+    class Outbox:
+        rows = [("outbox", "primary", "ebooks", "item-1", *package, 5)]
+
+        def pending_provider_recovery_outbox(self, **_kwargs):
+            rows, self.rows = self.rows, []
+            return rows
+
+        def current_review_package(self, *_args):
+            return package
+
+        def get(self, _report_id: str) -> str:
+            return report.to_json()
+
+        def complete_provider_recovery_outbox(self, *_args, **_kwargs) -> None:
+            return None
+
+    recorded: list[list[str]] = []
+
+    def enqueue(_jobs: object, _at: int, outcomes: dict[object, str]) -> int:
+        recorded.append(list(outcomes.values()))
+        return 1
+
+    activation = ProviderRecoveryActivation(
+        configuration=cast(object, SimpleNamespace()),
+        repository_factory=cast(object, Outbox),
+        observers=cast(object, lambda *_args: None),
+        provider_resolver=cast(object, lambda *_args: None),
+        pipeline=lambda: None,
+        enqueue=enqueue,
+        clock=lambda: 7,
+    )
+    with patch.object(
+        recovery_activation,
+        "provider_recovery_jobs",
+        return_value=(replace(_job("member"), connection="store"),),
+    ):
+        assert () == activation.drain_outbox(cast(ProviderRecoveryRepository, Outbox()))
+    assert [expected] == recorded
 
 
 def test_throttling_snapshot_failure_is_a_store_error(tmp_path: Path) -> None:

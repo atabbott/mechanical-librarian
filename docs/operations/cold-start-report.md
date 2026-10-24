@@ -163,6 +163,9 @@ without the option. Its keys:
   `source_failure`, `no_match`, `completed`). It also gives
   `physical_requests` with a `total` and the same `by_class` split.
 - `health_outcomes`: the ordinary health failures per provider and outcome.
+  From #1367 on it also counts one delivery-time classified outcome per newly
+  enrolled ebook report whose lookup was throttled or failed, so earlier runs
+  are not directly comparable on this figure.
 
 A `completed` or `no_match` attempt publishes a successor report. Its requests
 are already in that report's request accounting, and so in `dispatches`. A

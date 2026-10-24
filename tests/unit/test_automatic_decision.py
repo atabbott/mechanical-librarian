@@ -1680,6 +1680,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="policy-package-predecessor-f46",
         ),
+        pytest.param(
+            "a922e7f6ce9be48706b882dbfc975b1773b62d54e7b7a1a58d73b3712755df13",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="first-throttle-reason-predecessor-f19a",
+        ),
+        pytest.param(
+            "3d812b2e16a1144a97d7b8d6b99c59f25c1c1bdcc4b9fc291c02bb4906d8bd7b",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="first-throttle-reason-predecessor-f20",
+        ),
+        pytest.param(
+            "c8381cf5788b1db0092079c89a1f94015410081fa999d60de639ba89ed9d4986",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="first-throttle-reason-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

@@ -13,6 +13,7 @@ from mechanical_librarian.domain.provider_recovery import (
     DEFERRED_RECOVERY_FAILURES,
     MAX_TIMESTAMP,
     RECOVERY_FAILURES,
+    TRANSIENT_RECOVERY_FAILURES,
     ProviderRecovery,
     ProviderRecoveryError,
     ProviderRecoveryJob,
@@ -294,6 +295,11 @@ class SQLiteProviderRecoveryStore:
                     if has_jobs
                     else ProviderRecovery(
                         row[0], row[1], row[2], generation, "dormant", row[5], None
+                    )
+                    if row[4] != "recovered"
+                    # Nothing deferred and nothing to correct (#1367).
+                    else ProviderRecovery(
+                        row[0], row[1], row[2], generation, "recovered", 0, None
                     )
                 )
                 self._connection.execute(
@@ -1366,23 +1372,27 @@ class SQLiteProviderRecoveryStore:
     def throttling_snapshot(self) -> tuple[dict[str, int | str | None], ...]:
         """Read every unrecovered health row with its own deferred job count.
 
-        ``reason`` is the latest ordinary outcome recorded for the row's current
-        identity, the same join ``activity_snapshot`` uses; ``deferred`` counts
-        only queued or running jobs of that row's exact scope and generation.
-        This is one read under the store lock and never begins a transaction.
+        ``reason`` is the latest ordinary outcome recorded in the row's current
+        episode: its current generation's scope events since it last recovered.
+        Most transitions record no outcome, so the reason a throttle recorded
+        holds until the scope recovers or its generation changes (#1367).
+        ``deferred`` counts only queued or running jobs of that row's exact scope
+        and generation. This is one read under the store lock and never begins
+        a transaction.
         """
         try:
             with self._lock:
                 rows = self._connection.execute(
-                    "SELECT h.connection,h.adapter,h.scope,h.state,h.next_eligible_at,e.outcome,"
+                    "SELECT h.connection,h.adapter,h.scope,h.state,h.next_eligible_at,("
+                    "SELECT CASE WHEN state='recovered' THEN NULL ELSE outcome END "
+                    "FROM provider_recovery_events INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE connection=h.connection AND adapter=h.adapter AND scope=h.scope "
+                    "AND generation=h.generation AND job_attempt IS NULL "
+                    "AND (outcome IS NOT NULL OR state='recovered') ORDER BY sequence DESC LIMIT 1),"
                     "(SELECT count(*) FROM provider_recovery_jobs j WHERE j.connection=h.connection "
                     "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
                     "AND j.state IN ('queued','running')) "
-                    "FROM provider_recovery_health h LEFT JOIN provider_recovery_events e ON e.sequence=("
-                    "SELECT sequence FROM provider_recovery_events INDEXED BY provider_recovery_events_scope_latest "
-                    "WHERE connection=h.connection AND adapter=h.adapter AND scope=h.scope "
-                    "AND generation=h.generation AND job_attempt IS NULL ORDER BY sequence DESC LIMIT 1) "
-                    "AND e.state=h.state AND e.attempt=h.attempt AND e.next_eligible_at IS h.next_eligible_at "
+                    "FROM provider_recovery_health h "
                     "WHERE h.state!='recovered' ORDER BY h.scope,h.adapter,h.connection LIMIT 4096"
                 ).fetchall()
         except sqlite3.Error as error:
@@ -1459,15 +1469,32 @@ class SQLiteProviderRecoveryStore:
             ) from error
 
     def enqueue_jobs(
-        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
+        self,
+        jobs: tuple[ProviderRecoveryJob, ...],
+        *,
+        enqueued_at: int,
+        outcomes: dict[ProviderRecoveryJob, str] | None = None,
     ) -> int:
         """Durably register exact-current failed lanes before any canary runs.
 
         The full package tuple is deliberately stored with the job.  A caller
         must revalidate it before dispatch; a replayed registration is a no-op.
+        A newly registered job with a non-terminal ``outcomes`` entry appends
+        one event copying its scope's current-generation health unchanged with
+        that outcome, so the episode names its reason (#1367).  A dormant
+        credential scope keeps its own outcome and remedy.
         """
+        outcomes = {} if outcomes is None else outcomes
         if (
             not jobs
+            or type(outcomes) is not dict
+            or not outcomes.keys() <= set(jobs)
+            or any(
+                type(outcome) is not str
+                or outcome
+                not in TRANSIENT_RECOVERY_FAILURES | DEFERRED_RECOVERY_FAILURES
+                for outcome in outcomes.values()
+            )
             or type(enqueued_at) is not int
             or not 0 <= enqueued_at <= MAX_TIMESTAMP - 7_200
             or tuple(
@@ -1615,6 +1642,21 @@ class SQLiteProviderRecoveryStore:
                                     0,
                                     enqueued_at,
                                     enqueued_at,
+                                ),
+                            )
+                        if job in outcomes:
+                            self._connection.execute(
+                                "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome) "
+                                "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,?,? "
+                                "FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? "
+                                "AND generation=? AND state NOT IN ('recovered','dormant')",
+                                (
+                                    enqueued_at,
+                                    outcomes[job],
+                                    job.connection,
+                                    job.adapter,
+                                    job.scope,
+                                    job.generation,
                                 ),
                             )
                 self._connection.execute("COMMIT")

@@ -46,6 +46,23 @@ def _probe_version(codex: Path, version_home: str) -> str:
     return completed.stdout.strip()
 
 
+def _validate_requests(requests: list[dict[str, object]]) -> None:
+    """Judge every captured request; retries of one identical request are fine (#1377).
+
+    Kept apart from ``main`` so the decision is tested directly.
+    """
+    if not requests:
+        raise RuntimeError("contained Codex emitted no fixture request")
+    for document in requests:
+        if document.get("model") != COVER_MODEL or document.get("tools") not in (
+            None,
+            [],
+        ):
+            raise RuntimeError("contained Codex exposed a model-callable tool")
+    if any(document != requests[0] for document in requests[1:]):
+        raise RuntimeError("contained Codex emitted an ambiguous fixture request")
+
+
 def main(arguments: list[str] | None = None) -> int:
     values = sys.argv[1:] if arguments is None else arguments
     if len(values) != 1:
@@ -131,47 +148,46 @@ def main(arguments: list[str] | None = None) -> int:
                 "PATH": os.defpath,
                 "REVIEWER_FIXTURE_KEY": "synthetic-build-proof",
             }
-            process = subprocess.Popen(
-                command,
-                cwd=root,
-                env=environment,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-            assert process.stdin is not None
-            process.stdin.write("Return an empty JSON object.\n")
-            process.stdin.close()
-            if not received.wait(timeout=30):
-                os.killpg(process.pid, signal.SIGTERM)
-                process.wait(timeout=5)
-                assert process.stderr is not None
-                diagnostics = process.stderr.read()[-4_096:].replace(
-                    environment["REVIEWER_FIXTURE_KEY"], "[redacted]"
-                )
-                process = None
-                raise RuntimeError(
-                    "contained Codex emitted no fixture request: " + diagnostics
-                )
-    finally:
-        if process is not None and process.poll() is None:
-            os.killpg(process.pid, signal.SIGTERM)
             try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=5)
+                process = subprocess.Popen(
+                    command,
+                    cwd=root,
+                    env=environment,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                )
+                assert process.stdin is not None
+                process.stdin.write("Return an empty JSON object.\n")
+                process.stdin.close()
+                if not received.wait(timeout=30):
+                    os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=5)
+                    assert process.stderr is not None
+                    diagnostics = process.stderr.read()[-4_096:].replace(
+                        environment["REVIEWER_FIXTURE_KEY"], "[redacted]"
+                    )
+                    process = None
+                    raise RuntimeError(
+                        "contained Codex emitted no fixture request: " + diagnostics
+                    )
+            finally:
+                # The child is stopped while its home still exists (#1377).
+                if process is not None and process.poll() is None:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
+    finally:
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=5)
 
-    if len(request) != 1:
-        raise RuntimeError("contained Codex emitted an ambiguous fixture request")
-    document = request[0]
-    if document.get("model") != COVER_MODEL or document.get("tools") not in (None, []):
-        raise RuntimeError("contained Codex exposed a model-callable tool")
+    _validate_requests(request)
     return 0
 
 
