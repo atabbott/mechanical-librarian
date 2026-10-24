@@ -664,14 +664,14 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
             30,
             expected_active_generation=2,
         )
-    assert repository.current_unapplied_count(report.target.library) == 1
+    assert repository.current_unapplied_count(report.target.library) == 0
     assert repository._connection.execute(
         "SELECT review_case_id,outcome FROM current_review_case_lineages"
     ).fetchone() == (None, "retired")
     assert repository._connection.execute(
         "SELECT actor,kind,reason FROM review_case_transitions ORDER BY checkpoint DESC LIMIT 1"
     ).fetchone() == ("policy-activation-v1", "retired", "policy_changed")
-    assert json.loads(repository.get_review_case(old_case_id))["current"]
+    assert not json.loads(repository.get_review_case(old_case_id))["current"]
     with pytest.raises(MetadataReportError):
         repository.publish_proposal(old)
 
@@ -817,27 +817,6 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
     assert repository._connection.execute(
         "SELECT state,failure_code FROM metadata_policy_transition_items"
     ).fetchone() == ("failed", "pipeline_unavailable")
-    blocked = MetadataPolicyProfile.create(
-        "Blocked follow-up",
-        {**dict(draft.options), "language_rendering": "preserve"},
-        dict(draft.destinations),
-    )
-    repository.create_metadata_policy_draft(blocked.canonical_json)
-    blocked_resolution = resolve_policy(blocked, report.target.library)
-    with pytest.raises(MetadataReportError, match="processing"):
-        repository.activate_metadata_policy(
-            blocked.policy_id,
-            draft.policy_id,
-            (
-                (
-                    report.target.library,
-                    blocked_resolution.resolved_id,
-                    blocked_resolution.canonical_json,
-                ),
-            ),
-            41,
-            expected_active_generation=2,
-        )
     repository.request_review_scan(
         report.target.connection, report.target.library, "lib-1", _PRODUCER, 41
     )
@@ -1129,6 +1108,530 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
     repository.close()
 
 
+def _partly_failed_activation(path: Path, route: str):
+    """Activate while the only item's work moves to a newer report (#1369).
+
+    `provider` fails the item at activation, because its provider work already
+    carries the newer report; `extraction` fails it when the restarted
+    extraction publishes one.
+    """
+    repository, report, _, old_case_id = _current_case_with_completed_work(path)
+    newer = _report("Changed title", "c", "d")
+    if route == "provider":
+        repository.publish(newer, lambda: True, None, lambda value, exact: None)
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='queued',"
+            "report_id=?,outcome=NULL,updated_at=24",
+            (newer.report_id,),
+        )
+    else:
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+            "attempt=0,recovery_attempt=0,report_id=NULL,proposal_set_id=NULL,"
+            "review_case_id=NULL,failure_code=NULL,outcome=NULL,updated_at=24"
+        )
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='processing',updated_at=24"
+    )
+    repository._connection.commit()
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (report.target.library,), {})
+    transition = notebook.activate(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        25,
+        expected_active_generation=1,
+    ).transition
+    assert transition is not None
+    if route == "extraction":
+        extraction = repository.claim_review_pipeline_action(26)
+        assert extraction is not None
+        repository.publish(
+            newer,
+            lambda: True,
+            None,
+            lambda value, exact: value.complete_review_extraction_publication(
+                extraction, exact.report_id, 27
+            ),
+        )
+    failed = repository.metadata_policy_transition()
+    assert failed is not None
+    assert ("completed_with_failures", 0, 1, 1) == (
+        failed.state,
+        failed.completed,
+        failed.failed,
+        failed.total,
+    )
+    return repository, notebook, report, newer, draft, failed, old_case_id
+
+
+@pytest.mark.parametrize("route", ("provider", "extraction"))
+def test_partly_failed_activation_keeps_preview_and_next_activation_available(
+    state_directory: Path, route: str
+) -> None:
+    repository, notebook, report, _, draft, failed, old_case_id = (
+        _partly_failed_activation(state_directory / f"partly-{route}.sqlite", route)
+    )
+    follow_up = MetadataPolicyProfile.create(
+        "Follow-up policy",
+        {**dict(draft.options), "language_rendering": "preserve"},
+        dict(draft.destinations),
+    )
+    repository.create_metadata_policy_draft(follow_up.canonical_json)
+
+    preview = notebook.preview(follow_up)
+
+    assert (report.target.library,) == tuple(item.library for item in preview.libraries)
+    notebook.acknowledge(failed.transition_id, 28)
+    activation = notebook.activate(
+        follow_up.policy_id, draft.policy_id, 29, expected_active_generation=2
+    )
+    assert activation.transition is not None
+    assert (3, "completed", 0) == (
+        activation.transition.generation,
+        activation.transition.state,
+        activation.transition.total,
+    )
+    # The failed item's old package was retired with its lineage, so neither
+    # generation's case is current for it until its newer report is admitted.
+    assert (None, "retired") == repository._connection.execute(
+        "SELECT review_case_id,outcome FROM current_review_packages"
+    ).fetchone()
+    assert json.loads(repository.get_review_case(old_case_id))["current"] is False
+    repository.close()
+
+
+@pytest.mark.parametrize("route", ("provider", "extraction"))
+def test_retry_resolves_an_item_superseded_by_a_newer_report(
+    state_directory: Path, route: str
+) -> None:
+    repository, notebook, report, newer, _, failed, _ = _partly_failed_activation(
+        state_directory / f"superseded-{route}.sqlite", route
+    )
+    work = repository._connection.execute(
+        "SELECT stage,state,report_id FROM review_preparation_work"
+    ).fetchone()
+
+    retried = notebook.retry(failed.transition_id, 28)
+
+    assert ("completed", 1, 0, 1) == (
+        retried.state,
+        retried.completed,
+        retried.failed,
+        retried.total,
+    )
+    assert (newer.report_id, "complete", "stale") == repository._connection.execute(
+        "SELECT r.report_id,i.state,i.failure_code FROM metadata_policy_transition_items i "
+        "JOIN review_preparation_work r ON r.work_id=i.work_id"
+    ).fetchone()
+    assert (
+        report.report_id
+        == repository._connection.execute(
+            "SELECT report_id FROM metadata_policy_transition_items"
+        ).fetchone()[0]
+    )
+    # The newer report's own work is left exactly where it was: it prepares
+    # under the current policy without a restart from this transition.
+    assert (
+        work
+        == repository._connection.execute(
+            "SELECT stage,state,report_id FROM review_preparation_work"
+        ).fetchone()
+    )
+    assert notebook.acknowledge(failed.transition_id, 29).acknowledged
+    repository.close()
+
+
+def test_policy_route_previews_retries_and_dismisses_after_partial_failure(
+    state_directory: Path,
+) -> None:
+    """The /policy sequence an owner drives after a partly failed activation."""
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from tests.unit.review_app_fixture import (
+        TEST_REACT_BUILD_IDENTITY,
+        create_transport_test_app,
+    )
+
+    path = state_directory / "route.sqlite"
+    repository, _, report, _, draft, failed, _ = _partly_failed_activation(
+        path, "provider"
+    )
+    repository.close()
+    password = state_directory / "owner.hash"
+    password.write_text(PasswordHasher().hash("synthetic owner password"))
+    password.chmod(0o600)
+    repository = open_repository(path, cross_thread=True)
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin="http://review.test",
+            owner_password_hash_file=str(password),
+        ),
+        policy_libraries=((report.target.library, None),),
+    )
+    follow_up = {
+        "name": "Follow-up policy",
+        "options": {**dict(draft.options), "language_rendering": "preserve"},
+        "destinations": dict(draft.destinations),
+    }
+    try:
+        with TestClient(app, base_url="http://review.test") as client:
+            headers = {
+                "Origin": "http://review.test",
+                "X-ML-Build-Identity": TEST_REACT_BUILD_IDENTITY,
+            }
+            login = client.post(
+                "/api/v1/session/login",
+                headers=headers,
+                json={"password": "synthetic owner password"},
+            )
+            assert login.status_code == 200
+            headers["X-CSRF-Token"] = login.json()["csrf_token"]
+            api = "/api/v1/metadata-policy"
+            for action in ("validate", "drafts"):
+                response = client.post(
+                    f"{api}/{action}", headers=headers, json=follow_up
+                )
+                assert response.status_code in {200, 201}, response.text
+            preview = client.post(f"{api}/preview", headers=headers, json=follow_up)
+            assert preview.status_code == 200, preview.text
+            notice = client.get(f"{api}/transition").json()
+            assert ("completed_with_failures", 0, 1, 1) == (
+                notice["state"],
+                notice["completed"],
+                notice["failed"],
+                notice["total"],
+            )
+            retried = client.post(
+                f"{api}/transitions/{failed.transition_id}/retry", headers=headers
+            )
+            assert retried.status_code == 200, retried.text
+            assert ("completed", 1, 0, 1) == (
+                retried.json()["state"],
+                retried.json()["completed"],
+                retried.json()["failed"],
+                retried.json()["total"],
+            )
+            dismissed = client.post(
+                f"{api}/transitions/{failed.transition_id}/acknowledge",
+                headers=headers,
+            )
+            assert dismissed.status_code == 200, dismissed.text
+            assert dismissed.json()["acknowledged"] is True
+            activated = client.post(
+                f"{api}/activate",
+                headers=headers,
+                json={
+                    "policy_id": preview.json()["policy_id"],
+                    "expected_active_policy_id": preview.json()["active_policy_id"],
+                    "expected_active_generation": preview.json()["active_generation"],
+                },
+            )
+            assert activated.status_code == 200, activated.text
+            assert 3 == activated.json()["transition"]["generation"]
+    finally:
+        repository.close()
+
+
+def test_retry_restarts_failed_extraction_found_for_an_item_without_work(
+    state_path: Path,
+) -> None:
+    """An item that had no work at activation is found by item on retry (#1369)."""
+    repository = open_repository(state_path)
+    first = _report()
+    second = MetadataReport.create(
+        target=replace(first.target, item="item-2"),
+        file=replace(first.file, identity="d" * 64, content_digest="e" * 64),
+        local_claims=first.local_claims,
+        local_reasons=first.local_reasons,
+        providers=first.providers,
+        cover_sources=first.cover_sources,
+    )
+    for report in (first, second):
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (first.target.library,), {})
+    transition = notebook.activate(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        40,
+        expected_active_generation=1,
+    ).transition
+    assert transition is not None
+    assert ("completed_with_failures", 2) == (transition.state, transition.failed)
+    repository.request_review_scan(
+        first.target.connection, first.target.library, "lib-1", _PRODUCER, 41
+    )
+    discovery = repository.claim_review_pipeline_action(42)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "b" * 64,
+        (
+            replace(
+                _entry(first.target.item, first.file.identity),
+                library=first.target.library,
+            ),
+        ),
+        43,
+    )
+    extraction = repository.claim_review_pipeline_action(44)
+    assert extraction is not None
+    repository.fail_review_pipeline_action(extraction, "failed", False, 45)
+    assert ("extraction", "failed", None) == repository._connection.execute(
+        "SELECT stage,state,report_id FROM review_preparation_work"
+    ).fetchone()
+
+    retried = notebook.retry(transition.transition_id, 46)
+
+    assert ("processing", 0, 1, 2) == (
+        retried.state,
+        retried.completed,
+        retried.failed,
+        retried.total,
+    )
+    assert [
+        ("item-1", extraction.action_id, "pending", None),
+        ("item-2", None, "failed", "pipeline_unavailable"),
+    ] == repository._connection.execute(
+        "SELECT item_id,work_id,state,failure_code FROM metadata_policy_transition_items "
+        "ORDER BY item_id"
+    ).fetchall()
+    assert ("extraction", "queued", 0, None) == repository._connection.execute(
+        "SELECT stage,state,attempt,report_id FROM review_preparation_work"
+    ).fetchone()
+    repository.close()
+
+
+def test_retry_reopens_the_scan_an_idle_claim_closed(state_path: Path) -> None:
+    """Retried work is claimable even after its scan closed with the failure."""
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (report.target.library,), {})
+    transition = notebook.activate(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        25,
+        expected_active_generation=1,
+    ).transition
+    assert transition is not None
+    proposal_action = repository.claim_review_pipeline_action(26)
+    assert proposal_action is not None
+    repository.fail_review_pipeline_action(proposal_action, "failed", False, 27)
+    assert repository.claim_review_pipeline_action(28) is None
+    assert ("completed_with_failures",) == repository._connection.execute(
+        "SELECT state FROM review_preparation_scans"
+    ).fetchone()
+
+    notebook.retry(transition.transition_id, 29)
+
+    action = repository.claim_review_pipeline_action(30)
+    assert action is not None
+    assert ("proposal", report.report_id) == (action.stage, action.report_id)
+    current_policy = repository.current_resolved_metadata_policy(report.target.library)
+    assert current_policy is not None
+    successor = evaluate_report(
+        report, current_policy.resolved_id, dict(current_policy.destinations)
+    )
+    repository.publish_proposal(successor)
+    repository.advance_review_pipeline_action(action, successor.proposal_set_id, 31)
+    action = repository.claim_review_pipeline_action(32)
+    assert action is not None
+    admitted = json.loads(repository.admit_review_case(successor))
+    repository.advance_review_pipeline_action(action, admitted["review_case_id"], 33)
+    action = repository.claim_review_pipeline_action(34)
+    assert action is not None
+    repository.advance_review_pipeline_action(action, None, 35)
+    finished = repository.metadata_policy_transition()
+    assert finished is not None
+    assert ("completed", 1, 0) == (finished.state, finished.completed, finished.failed)
+    assert notebook.acknowledge(transition.transition_id, 36).acknowledged
+    repository.close()
+
+
+def _follow_up(repository, draft: MetadataPolicyProfile) -> MetadataPolicyProfile:
+    follow_up = MetadataPolicyProfile.create(
+        "Follow-up policy",
+        {**dict(draft.options), "language_rendering": "preserve"},
+        dict(draft.destinations),
+    )
+    repository.create_metadata_policy_draft(follow_up.canonical_json)
+    return follow_up
+
+
+def test_activation_supersedes_an_undismissed_partly_failed_transition(
+    state_directory: Path,
+) -> None:
+    repository, notebook, _, _, draft, failed, _ = _partly_failed_activation(
+        state_directory / "supersede.sqlite", "provider"
+    )
+    follow_up = _follow_up(repository, draft)
+
+    activation = notebook.activate(
+        follow_up.policy_id, draft.policy_id, 28, expected_active_generation=2
+    )
+
+    assert activation.transition is not None
+    assert 3 == activation.transition.generation
+    assert ("completed_with_failures", 1, 1, 1) == repository._connection.execute(
+        "SELECT t.state,t.acknowledged,t.total,"
+        "(SELECT count(*) FROM metadata_policy_transition_items i "
+        "WHERE i.transition_id=t.transition_id AND i.state='failed') "
+        "FROM metadata_policy_transitions t WHERE t.transition_id=?",
+        (failed.transition_id,),
+    ).fetchone()
+    repository.close()
+
+
+def test_next_scan_reprepares_a_failed_item_a_new_activation_superseded(
+    state_path: Path,
+) -> None:
+    """The superseded transition's failed work returns through the next scan."""
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (report.target.library,), {})
+    failed = notebook.activate(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        25,
+        expected_active_generation=1,
+    ).transition
+    assert failed is not None
+    proposal_action = repository.claim_review_pipeline_action(26)
+    assert proposal_action is not None and proposal_action.stage == "proposal"
+    repository.fail_review_pipeline_action(proposal_action, "failed", False, 27)
+    assert repository.claim_review_pipeline_action(28) is None
+    follow_up = _follow_up(repository, draft)
+    superseding = notebook.activate(
+        follow_up.policy_id, draft.policy_id, 29, expected_active_generation=2
+    ).transition
+    assert superseding is not None
+    assert (3, "completed", 0) == (
+        superseding.generation,
+        superseding.state,
+        superseding.total,
+    )
+    assert repository.claim_review_pipeline_action(30) is None
+
+    repository.request_review_scan(
+        report.target.connection, report.target.library, "lib-1", _PRODUCER, 31
+    )
+    discovery = repository.claim_review_pipeline_action(32)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        2,
+        "c" * 64,
+        (
+            replace(
+                _entry(report.target.item, report.file.identity),
+                library=report.target.library,
+            ),
+        ),
+        33,
+    )
+
+    action = repository.claim_review_pipeline_action(34)
+    assert action is not None
+    assert ("proposal", report.report_id) == (action.stage, action.report_id)
+    current = repository.current_resolved_metadata_policy(report.target.library)
+    assert current is not None
+    assert follow_up.policy_id == current.profile_id
+    successor = evaluate_report(report, current.resolved_id, dict(current.destinations))
+    repository.publish_proposal(successor)
+    repository.advance_review_pipeline_action(action, successor.proposal_set_id, 35)
+    action = repository.claim_review_pipeline_action(36)
+    assert action is not None
+    case_id = json.loads(repository.admit_review_case(successor))["review_case_id"]
+    repository.advance_review_pipeline_action(action, case_id, 37)
+    action = repository.claim_review_pipeline_action(38)
+    assert action is not None
+    repository.advance_review_pipeline_action(action, None, 39)
+    assert json.loads(repository.get_review_case(case_id))["current"]
+    assert (case_id, "admitted") == repository._connection.execute(
+        "SELECT review_case_id,outcome FROM current_review_packages"
+    ).fetchone()
+    assert 1 == repository.current_unapplied_count(report.target.library)
+    repository.close()
+
+
+def test_activation_still_refuses_while_a_transition_is_processing(
+    state_path: Path,
+) -> None:
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (report.target.library,), {})
+    transition = notebook.activate(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        25,
+        expected_active_generation=1,
+    ).transition
+    assert transition is not None and transition.state == "processing"
+    follow_up = _follow_up(repository, draft)
+    before = tuple(
+        repository._connection.execute("SELECT * FROM metadata_policy_transitions")
+    )
+
+    with pytest.raises(MetadataPolicyApplicationError, match="processing"):
+        notebook.activate(
+            follow_up.policy_id, draft.policy_id, 26, expected_active_generation=2
+        )
+
+    assert before == tuple(
+        repository._connection.execute("SELECT * FROM metadata_policy_transitions")
+    )
+    repository.close()
+
+
+def test_activation_rolls_back_when_a_cohort_package_changed(state_path: Path) -> None:
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    resolved = resolve_policy(draft, report.target.library)
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER skip_package BEFORE UPDATE ON main.current_review_packages "
+        "BEGIN SELECT RAISE(IGNORE); END"
+    )
+
+    def snapshot() -> tuple[tuple[object, ...], ...]:
+        return tuple(
+            tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+            for table in (
+                "current_review_case_lineages",
+                "current_review_packages",
+                "metadata_policy_state",
+                "metadata_policy_transitions",
+            )
+        )
+
+    before = snapshot()
+
+    with pytest.raises(MetadataReportError, match="metadata policy cohort changed"):
+        repository.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            30,
+            expected_active_generation=1,
+        )
+
+    assert before == snapshot()
+    repository.close()
+
+
 def test_new_library_preview_can_establish_next_generation_resolution(
     state_path: Path,
 ) -> None:
@@ -1284,7 +1787,7 @@ def test_activation_and_human_decision_commit_orderings_are_atomic(
         value["kind"] == "retired" and value["reason"] == "policy_changed"
         for value in history
     )
-    assert json.loads(activator.get_review_case(case_id))["current"]
+    assert not json.loads(activator.get_review_case(case_id))["current"]
     assert (1, 1) == activator._connection.execute(
         "SELECT (SELECT COUNT(*) FROM human_decisions),"
         "(SELECT COUNT(*) FROM human_decision_events)"
@@ -1325,7 +1828,7 @@ def test_activation_and_human_decision_commit_orderings_are_atomic(
         "SELECT (SELECT COUNT(*) FROM human_decisions),"
         "(SELECT COUNT(*) FROM human_decision_events)"
     ).fetchone()
-    assert json.loads(stale_writer.get_review_case(case_id))["current"]
+    assert not json.loads(stale_writer.get_review_case(case_id))["current"]
     stale_writer.close()
     activator.close()
 
