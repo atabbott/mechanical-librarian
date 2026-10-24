@@ -1559,8 +1559,8 @@ There is no TTL or cross-system atomicity claim.
 
 Library's write-ready notice reads authenticated `GET /api/v1/activity/consent-state`
 instead of an Activity page (#1236). It returns only what the consent offer
-reads: the waiting reasons, destination capabilities, configured libraries and
-the null backup readiness ordinary history reports, projected by the same code
+reads: the waiting reasons, destination capabilities, configured libraries,
+lapsed consents and the null backup readiness ordinary history reports, projected by the same code
 as Activity's. The permission reader serves it in one read snapshot that takes
 no Activity facts, no catch-up, no consistency check and never the readiness
 window, so neither history nor the projector delays it. It does share that
@@ -1579,7 +1579,15 @@ Activity. That set is the sixteen book-media destinations, including the exact b
 explicit field (#1056). Because the consent envelope identity digests the
 whole set, adding explicit lapses every
 existing library consent, and Activity re-offers it before anything is
-scheduled. Explicit receives no consent until the owner grants the newly
+scheduled. An owner's policy activation carries each library's consent that is
+current for the outgoing resolved policy to the incoming one inside the
+activation's own transaction, for the same connection, library, destination and
+action, and records the transition and the replaced consent as its closed basis
+(#1370). It never widens consent, and a replay, no-op or refused activation
+carries nothing. A consent it cannot carry -- after a changed destination set or
+envelope schema, or for a library the active policy does not resolve -- lapses,
+and Activity and Library state the lapse with its closed reason, which grants
+nothing. Explicit receives no consent until the owner grants the newly
 disclosed eligible subset; automatic application remains disabled by default. The submitted destination matrix must still equal a fresh capability
 probe before its atomic consent replacement is accepted; a changed subset fails
 closed and must be reviewed again. A partially consented library remains

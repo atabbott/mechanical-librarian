@@ -835,7 +835,9 @@ and late results cannot restore it. A partially consented library returns to
 the same panel when a newly eligible destination can be added. Confirmation
 binds the exact visible subset and fails safely if it changes. Collapsed history
 offers review without a ready count; Library likewise describes prepared work
-without implying write readiness.
+without implying write readiness. A permission that lapsed is stated with its
+reason in Library's write notice and in Activity's status and write card, and
+neither reads as calm while no library holds permission (#1370).
 Qualified automatic outcomes are named clearly, unknown
 origins remain neutral bounded text, and pause/resume/revoke remain the only
 prominent controls. Activity does not expose internal jobs or rates, add a
@@ -983,7 +985,10 @@ announced from one status region, and zero counts are omitted. A preview in
 which no library's fields change says so. An edited draft is named "Custom
 policy" and an exact revert keeps the active name. Libraries appear by Settings
 display name, or by slug while Settings is unavailable or the library has none.
-After activation, focus moves to the success message.
+After activation, focus moves to the success message. The Activate step names
+the libraries that keep write permission, since activation carries each
+library's current permission, or says that no library has it and activating
+grants none (#1370).
 
 Policy media guidance leads with the selected Automatic, Ask me, Ignore or
 unavailable behavior. Eligibility shown for another mode is explicitly labelled

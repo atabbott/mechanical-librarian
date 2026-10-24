@@ -9,6 +9,11 @@
   enrolled for retry, and no longer says a recovered source needs correction
   after Retry now (#1367).
 
+- Activating a policy now keeps each library's write permission, and the
+  Activate step names the libraries that keep it. A permission that lapses is
+  shown with its reason in Library and Activity, and Activity no longer reads
+  as calm while no library holds permission. Clean rebuild required (#1370).
+
 - A policy activation that completes with failures no longer blocks Validate
   and preview, and a new activation now proceeds over it. After activation,
   affected works leave Attention and show in Library without a case until they

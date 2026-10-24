@@ -1,5 +1,12 @@
 # Upgrades and compatibility
 
+#1370 moves each field-effect consent to `field-effect-consent-state-v2`, which
+records its closed basis: the owner's grant, or the policy activation that
+carried it. **Clean rebuild required** for every application database holding a
+consent; startup refuses a v1 consent before mutation. Consents are canonical
+owner authority, so no migration, adoption, conversion, import or downgrade is
+supplied.
+
 #1285 moves owner decisions to `human-decision-v3`, with the outcomes
 `owner_entered` and `withdraw`, and widens the `human_decisions`
 outcome check. **Clean rebuild required** for every predecessor application
@@ -306,6 +313,9 @@ because the consent envelope identity digests the whole destination set. An
 upgrading owner therefore issues a fresh library-scoped Activity grant before
 anything is planned, claimed or scheduled; nothing carries over from the
 previous grant. A fresh install has no consent to lapse and needs no such step.
+Activity and Library's write notice state a lapse with its reason. A policy
+activation does not lapse consent; it carries each library's current consent to
+the new policy (#1370).
 
 Post-release migration and restore policy remains deferred to #57. Nothing in
 this pre-release rebuild contract grants generic migration, retention, pruning,
