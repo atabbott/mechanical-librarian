@@ -3341,6 +3341,7 @@ _PRODUCTION_CSP = (
 _WRITES_OFF_CONSENT = {
     "backup_ready": None,
     "configured_libraries": [{"connection": "primary", "library": "Household ebooks"}],
+    "lapsed_consents": [],
     "capabilities": [
         {
             "connection": "primary",

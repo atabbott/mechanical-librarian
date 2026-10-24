@@ -275,6 +275,23 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
+            carry_field_effect_consents=(
+                lambda resolved, transition_id, activated_at: (
+                    self._field_effects._carry_field_effect_consents_in_transaction(
+                        tuple(
+                            (
+                                library,
+                                self._field_effect_activity._field_effect_consent_envelope_identity(
+                                    library, resolved_id
+                                ),
+                            )
+                            for library, resolved_id in resolved
+                        ),
+                        transition_id,
+                        activated_at,
+                    )
+                )
+            ),
         )
         self._owner_settings = OwnerSettingsStore(
             connection, self._setup_serialization_lock

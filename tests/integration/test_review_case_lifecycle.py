@@ -24,7 +24,10 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     authority_from_decision,
 )
-from mechanical_librarian.domain.field_effect import project_decision_value
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectOperation,
+    project_decision_value,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -300,6 +303,102 @@ def _audit(store: OwnerStore, plan_id: str) -> list[str]:
         json.loads(document)["kind"]
         for document in store.repository.field_effect_event_documents(plan_id)
     ]
+
+
+def test_activation_keeps_write_permission_for_the_next_decision(tmp_path):
+    """Consent, activate, and the next decision is scheduled and claimed (#1370)."""
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.adapters.field_effect_runtime import (
+        PersistedEffectConsent,
+    )
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+    from mechanical_librarian.application.metadata_policy import PolicyNotebook
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+
+    repository = open_repository(tmp_path / "reviews.sqlite", cross_thread=True)
+    try:
+        report = _report()
+        proposal = evaluate_report(report)
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        (granted,) = repository.grant_field_effect_consents(
+            "primary", ("ebooks",), ("title",), 10
+        )
+        builtin = MetadataPolicyProfile.builtin()
+        draft = MetadataPolicyProfile.create(
+            "Kept permission", dict(builtin.options), dict(builtin.destinations)
+        )
+        repository.create_metadata_policy_draft(draft.canonical_json)
+        activation = PolicyNotebook(repository, ("ebooks",), {}).activate(
+            draft.policy_id, builtin.policy_id, 20, expected_active_generation=1
+        )
+        assert activation.transition is not None
+        carried = repository.current_field_effect_consent("primary", "ebooks", "title")
+        assert (carried.granted_at, carried.destination) == (20, "title")
+        assert carried.consent_id != granted.consent_id
+
+        resolved = resolve_policy(draft, "ebooks")
+        successor = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish_proposal(successor)
+        case_id = json.loads(repository.admit_review_case(successor))["review_case_id"]
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        repository.record_human_decision(
+            _audiobook_accept(case, "title", "activation-kept-0001")
+        )
+        target = FakeTargetService()
+        authority = PersistedFieldEffectAuthority(repository)
+        capability = FakeCapabilityObserver("c" * 64)
+        service = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            capability,
+            authority,
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            PrivateCoverRecoveryStore(tmp_path / "recovery", lambda _: b"old"),
+            FakeForwardReevaluation(),
+            lambda: 30,
+        )
+        scheduler = ContinuousGuardedApplication(
+            repository,
+            {("primary", "ebooks"): service},
+            {("primary", "ebooks"): capability},
+            authority,
+            (("primary", "ebooks"),),
+            lambda: 30,
+            lambda *_: None,
+        )
+
+        assert 1 == scheduler.schedule()
+
+        ((document,),) = repository._connection.execute(
+            "SELECT document FROM field_effects"
+        ).fetchall()
+        planned = FieldEffectOperation.from_json(document)
+        assert planned.plan.consent == carried
+        target.seed(planned.plan)
+        verified = service.apply(planned.plan.plan_id)
+        assert ("verified", None) == (verified.state, verified.failure)
+        assert ["planned", "claimed"] == [
+            json.loads(event)["kind"]
+            for event in repository.field_effect_event_documents(planned.plan.plan_id)
+        ][:2]
+    finally:
+        repository.close()
 
 
 def test_an_owner_entered_title_applies_through_the_guarded_path(tmp_path):

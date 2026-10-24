@@ -44,7 +44,13 @@ from tests.unit.test_pending_field_effect_lookup import (  # noqa: F401
     store,
 )
 
-CONSENT_KEYS = ("backup_ready", "capabilities", "configured_libraries", "waiting")
+CONSENT_KEYS = (
+    "backup_ready",
+    "capabilities",
+    "configured_libraries",
+    "lapsed_consents",
+    "waiting",
+)
 BASIS_KEYS = ("capabilities", "configured_libraries")
 
 

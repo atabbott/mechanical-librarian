@@ -49,6 +49,9 @@ from collections.abc import Callable
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    _consent_state,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
     _ATTENTION_FACTS_JOIN_SQL,
@@ -297,9 +300,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             continue
                         revoked = canonical_effect_json(
                             {
+                                "basis": raw["basis"],
                                 "consent": consent.to_data(),
                                 "current": False,
-                                "schema_version": "field-effect-consent-state-v1",
+                                "schema_version": "field-effect-consent-state-v2",
                                 "updated_at": granted_at,
                             }
                         )
@@ -317,9 +321,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     )
                     document = canonical_effect_json(
                         {
+                            "basis": {"kind": "owner_grant"},
                             "consent": consent.to_data(),
                             "current": True,
-                            "schema_version": "field-effect-consent-state-v1",
+                            "schema_version": "field-effect-consent-state-v2",
                             "updated_at": granted_at,
                         }
                     )
@@ -398,9 +403,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             granted_at,
                             canonical_effect_json(
                                 {
+                                    "basis": raw["basis"],
                                     "consent": consent.to_data(),
                                     "current": False,
-                                    "schema_version": "field-effect-consent-state-v1",
+                                    "schema_version": "field-effect-consent-state-v2",
                                     "updated_at": granted_at,
                                 }
                             ),
@@ -431,9 +437,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                 granted_at,
                                 canonical_effect_json(
                                     {
+                                        "basis": raw["basis"],
                                         "consent": consent.to_data(),
                                         "current": False,
-                                        "schema_version": "field-effect-consent-state-v1",
+                                        "schema_version": "field-effect-consent-state-v2",
                                         "updated_at": granted_at,
                                     }
                                 ),
@@ -455,9 +462,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             granted_at,
                             canonical_effect_json(
                                 {
+                                    "basis": {"kind": "owner_grant"},
                                     "consent": consent.to_data(),
                                     "current": True,
-                                    "schema_version": "field-effect-consent-state-v1",
+                                    "schema_version": "field-effect-consent-state-v2",
                                     "updated_at": granted_at,
                                 }
                             ),
@@ -574,9 +582,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 consent = EffectConsent.from_data(raw["consent"])
                 revoked = canonical_effect_json(
                     {
+                        "basis": raw["basis"],
                         "consent": consent.to_data(),
                         "current": False,
-                        "schema_version": "field-effect-consent-state-v1",
+                        "schema_version": "field-effect-consent-state-v2",
                         "updated_at": changed_at,
                     }
                 )
@@ -599,6 +608,87 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
+
+    def _carry_field_effect_consents_in_transaction(
+        self,
+        envelopes: tuple[tuple[str, str], ...],
+        transition_id: str,
+        activated_at: int,
+    ) -> None:
+        """Carry each library's current consent into the policy being activated.
+
+        ``envelopes`` pairs every library the activation resolves with its
+        incoming envelope. Only a consent current for the outgoing policy is
+        carried, under the same connection, library, destination and action, so
+        an unresolved library, a changed destination set or an earlier lapse
+        stays lapsed. The caller's transaction owns the outcome (#1370).
+        """
+        for library, envelope_identity in envelopes:
+            try:
+                outgoing = self.field_effect_consent_envelope_identity(library)
+            except MetadataReportError:
+                # No outgoing resolution: nothing for this library is current.
+                continue
+            if outgoing == envelope_identity:
+                continue
+            for consent_id, document in self._connection.execute(
+                "SELECT consent_id,document FROM field_effect_consents WHERE current=1 "
+                "AND json_extract(document,'$.consent.library')=? ORDER BY consent_id",
+                (library,),
+            ).fetchall():
+                raw = json.loads(document)
+                if (
+                    not _consent_state(raw)
+                    or raw["current"] is not True
+                    or canonical_effect_json(raw) != document
+                ):
+                    raise FieldEffectError("invalid_consent")
+                prior = EffectConsent.from_data(raw["consent"])
+                if prior.consent_id != consent_id or prior.library != library:
+                    raise FieldEffectError("invalid_consent")
+                if prior.envelope_identity != outgoing:
+                    continue
+                carried = EffectConsent.create(
+                    connection=prior.connection,
+                    library=library,
+                    destination=prior.destination,
+                    envelope_identity=envelope_identity,
+                    granted_at=activated_at,
+                )
+                retired = self._connection.execute(
+                    "UPDATE field_effect_consents SET current=0,updated_at=?,document=? "
+                    "WHERE consent_id=? AND current=1",
+                    (
+                        activated_at,
+                        canonical_effect_json(
+                            {**raw, "current": False, "updated_at": activated_at}
+                        ),
+                        consent_id,
+                    ),
+                ).rowcount
+                if retired != 1:
+                    raise FieldEffectError("invalid_consent")
+                self._connection.execute(
+                    "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) "
+                    "VALUES(?,1,?,?)",
+                    (
+                        carried.consent_id,
+                        activated_at,
+                        canonical_effect_json(
+                            {
+                                "basis": {
+                                    "carried_from": consent_id,
+                                    "kind": "policy_activation",
+                                    "transition_id": transition_id,
+                                },
+                                "consent": carried.to_data(),
+                                "current": True,
+                                "schema_version": "field-effect-consent-state-v2",
+                                "updated_at": activated_at,
+                            }
+                        ),
+                    ),
+                )
 
     def _set_field_effect_manual_hold(
         self,
@@ -991,18 +1081,27 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                 member.authority.decision_id,
                             ),
                         )
-                consent_document = canonical_effect_json(
-                    {
-                        "consent": member.consent.to_data(),
-                        "current": True,
-                        "schema_version": "field-effect-consent-state-v1",
-                        "updated_at": member.consent.granted_at,
-                    }
-                )
                 consent_existing = self._connection.execute(
                     "SELECT document FROM field_effect_consents WHERE consent_id=?",
                     (member.consent.consent_id,),
                 ).fetchone()
+                # A plan never chooses a consent's basis: it is compared with
+                # the one the row records, and only a consent the plan brings
+                # with no row at all is the owner's own grant (#1370).
+                recorded = (
+                    {} if consent_existing is None else json.loads(consent_existing[0])
+                )
+                consent_document = canonical_effect_json(
+                    {
+                        "basis": recorded.get("basis", {"kind": "owner_grant"})
+                        if type(recorded) is dict
+                        else None,
+                        "consent": member.consent.to_data(),
+                        "current": True,
+                        "schema_version": "field-effect-consent-state-v2",
+                        "updated_at": member.consent.granted_at,
+                    }
+                )
                 if consent_existing is None:
                     self._connection.execute(
                         "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) VALUES(?,1,?,?)",

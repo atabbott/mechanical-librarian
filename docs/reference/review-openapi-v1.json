@@ -1924,6 +1924,13 @@
             "title": "Configured Libraries",
             "type": "array"
           },
+          "lapsed_consents": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityLapsedConsent"
+            },
+            "title": "Lapsed Consents",
+            "type": "array"
+          },
           "waiting": {
             "$ref": "#/components/schemas/_ActivityWaitingReasons"
           }
@@ -1932,6 +1939,7 @@
           "backup_ready",
           "capabilities",
           "configured_libraries",
+          "lapsed_consents",
           "waiting"
         ],
         "title": "_ActivityConsentState",
@@ -2212,6 +2220,36 @@
         "title": "_ActivityExample",
         "type": "object"
       },
+      "_ActivityLapsedConsent": {
+        "additionalProperties": false,
+        "description": "A library whose write permission no longer applies, and why (#1370).",
+        "properties": {
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "destinations_changed",
+              "library_unresolved",
+              "policy_changed"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection",
+          "library",
+          "reason"
+        ],
+        "title": "_ActivityLapsedConsent",
+        "type": "object"
+      },
       "_ActivityLedger": {
         "additionalProperties": false,
         "properties": {
@@ -2487,6 +2525,13 @@
             "title": "Example",
             "type": "null"
           },
+          "lapsed_consents": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityLapsedConsent"
+            },
+            "title": "Lapsed Consents",
+            "type": "array"
+          },
           "last_failure": {
             "anyOf": [
               {
@@ -2541,6 +2586,7 @@
           "enabled_libraries",
           "events",
           "example",
+          "lapsed_consents",
           "last_failure",
           "ledger",
           "current_waiting",

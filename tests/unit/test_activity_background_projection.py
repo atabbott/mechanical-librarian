@@ -956,6 +956,7 @@ def test_the_consent_read_never_waits_for_the_history_reader(
                 "backup_ready",
                 "capabilities",
                 "configured_libraries",
+                "lapsed_consents",
                 "waiting",
             )
         }

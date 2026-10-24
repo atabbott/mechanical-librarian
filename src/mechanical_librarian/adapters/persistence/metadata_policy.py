@@ -14,6 +14,10 @@ Three seams cross this aggregate's boundary, and each is resolved differently:
   transaction. Those writes travel with it until the aggregates that own those
   tables are extracted; the transaction is this method's own, so they stay
   atomic with the activation either way.
+- `_carry_field_effect_consents` writes `field_effect_consents`, which the
+  field-effect aggregate owns, so activation hands it each library's incoming
+  resolved policy inside this transaction rather than writing consent SQL here
+  (#1370).
 - `enter_shadow_preview` writes `metadata_policy_state` and now lives here. It
   calls `activate_metadata_policy` to reconcile the automatic cohort, and a
   unit test replaces that call on the composing repository to prove the posture
@@ -85,6 +89,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         *,
         restart_metadata_policy_work: Callable[[str, str, str, int], None],
         activate_metadata_policy: Callable[..., PolicyTransition | None],
+        carry_field_effect_consents: Callable[
+            [tuple[tuple[str, str], ...], str, int], None
+        ],
     ) -> None:
         super().__init__(connection, binding)
         # Review preparation owns `review_preparation_work`, so the restart it
@@ -97,6 +104,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         # the public name: binding it there would shadow the definition below
         # and make the composing repository's delegating stub recurse.
         self._activate_metadata_policy = activate_metadata_policy
+        self._carry_field_effect_consents = carry_field_effect_consents
 
     @local_operation
     def shadow_posture(self) -> str:
@@ -858,6 +866,17 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                         activated_at,
                     ),
                 )
+            # Before the state moves, so each library's outgoing resolution is
+            # still the active one: the owner's write permission follows the
+            # policy they activate, and nothing else carries it (#1370).
+            self._carry_field_effect_consents(
+                tuple(
+                    (library, resolved_id)
+                    for library, resolved_id, _ in parsed_resolutions
+                ),
+                transition_id,
+                activated_at,
+            )
             changed = self._connection.execute(
                 "UPDATE metadata_policy_state SET active_policy_id=?,generation=?,activated_at=? WHERE singleton=1 AND active_policy_id=? AND generation=?",
                 (policy_id, generation, activated_at, state[0], state[1]),

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -45,6 +45,7 @@ from mechanical_librarian.domain.metadata_policy import (
     QUALIFIED_AUTOMATIC,
     MetadataPolicyProfile,
     ResolvedMetadataPolicy,
+    human_review_destinations,
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -1668,6 +1669,151 @@ def test_activation_rolls_back_when_a_cohort_package_changed(state_path: Path) -
         )
 
     assert before == snapshot()
+    repository.close()
+
+
+def _consents(repository) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        repository._connection.execute(
+            "SELECT * FROM field_effect_consents ORDER BY consent_id"
+        )
+    )
+
+
+def test_a_failed_activation_carries_no_consent(state_path: Path) -> None:
+    """The carry commits with the activation or not at all (#1370)."""
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    repository.grant_field_effect_consents(
+        report.target.connection, (report.target.library,), ("title",), 24
+    )
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    resolved = resolve_policy(draft, report.target.library)
+    # The state update is the activation's last write, after the carry.
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER skip_state BEFORE UPDATE ON main.metadata_policy_state "
+        "BEGIN SELECT RAISE(IGNORE); END"
+    )
+    before = _consents(repository)
+    assert len(before) == 1
+
+    with pytest.raises(PolicyContentionError, match="stale"):
+        repository.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            30,
+            expected_active_generation=1,
+        )
+
+    assert before == _consents(repository)
+    repository._connection.execute("DROP TRIGGER temp.skip_state")
+    repository.activate_metadata_policy(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        30,
+        expected_active_generation=1,
+    )
+    assert [0, 1] == sorted(row[1] for row in _consents(repository))
+    repository.close()
+
+
+def test_replay_and_a_processing_refusal_carry_nothing(state_path: Path) -> None:
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    library = report.target.library
+    repository.grant_field_effect_consents(
+        report.target.connection, (library,), ("title",), 24
+    )
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (library,), {})
+    builtin = MetadataPolicyProfile.builtin().policy_id
+    transition = notebook.activate(
+        draft.policy_id, builtin, 25, expected_active_generation=1
+    ).transition
+    assert transition is not None and transition.state == "processing"
+    carried = _consents(repository)
+    assert [0, 1] == sorted(row[1] for row in carried)
+    assert (
+        repository.current_field_effect_consent(
+            report.target.connection, library, "title"
+        ).granted_at
+        == 25
+    )
+
+    replay = notebook.activate(
+        draft.policy_id, builtin, 26, expected_active_generation=1
+    ).transition
+    assert replay is not None and replay.transition_id == transition.transition_id
+    assert carried == _consents(repository)
+    follow_up = _follow_up(repository, draft)
+    with pytest.raises(MetadataPolicyApplicationError, match="processing"):
+        notebook.activate(
+            follow_up.policy_id, draft.policy_id, 27, expected_active_generation=2
+        )
+    assert carried == _consents(repository)
+    repository.close()
+
+
+def test_entering_preview_resolves_only_libraries_with_current_work(
+    state_path: Path,
+) -> None:
+    """The Preview gap (#1370 acceptance 5), stated rather than repaired.
+
+    Leaving automatic at the unbound first generation resolves only libraries
+    that hold current review work, so a consented library with none has no
+    resolution at the next generation. Its consent is not carried and lapses,
+    and Activity names the lapse instead of reporting calm.
+    """
+    from tests.support.genre_reports import genre_report
+
+    repository = open_repository(state_path)
+    assert (
+        "automatic"
+        == (
+            repository.enter_shadow_preview(1),
+            repository.activate_qualified_automatic(2),
+        )[1]
+    )
+    report = genre_report()
+    builtin = MetadataPolicyProfile.builtin()
+    resolved = resolve_policy(builtin, report.target.library)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    repository.persist_shadow_outcome(case_id, 3)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM automatic_decisions"
+    ).fetchone() != (0,)
+    connection = report.target.connection
+    _, audio = repository.grant_field_effect_consents(
+        connection, (report.target.library, "audio"), ("title",), 4
+    )
+
+    assert "preview" == repository.enter_shadow_preview(5)
+
+    assert (
+        2
+        == repository._connection.execute(
+            "SELECT generation FROM metadata_policy_state"
+        ).fetchone()[0]
+    )
+    assert (
+        repository.current_field_effect_consent(
+            connection, report.target.library, "title"
+        ).granted_at
+        == 4
+    )
+    assert not repository.field_effect_consent_is_current(audio)
+    assert repository.field_effect_activity_data(1, include_events=False)[
+        "lapsed_consents"
+    ] == [
+        {"connection": connection, "library": "audio", "reason": "library_unresolved"}
+    ]
     repository.close()
 
 

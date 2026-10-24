@@ -1019,6 +1019,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             ],
             "events": projected["events"],
             "example": None,
+            "lapsed_consents": [],
             "last_failure": None,
             "paused": self.paused,
             "ledger": projected["ledger"],
@@ -1060,6 +1061,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 "backup_ready",
                 "capabilities",
                 "configured_libraries",
+                "lapsed_consents",
                 "waiting",
             )
         }

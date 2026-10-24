@@ -1065,6 +1065,7 @@ class ContinuousGuardedApplication:
             "backup_ready": None,
             "capabilities": permission["capabilities"],
             "configured_libraries": permission["configured_libraries"],
+            "lapsed_consents": permission["lapsed_consents"],
             "waiting": waiting,
         }
 
@@ -1081,6 +1082,7 @@ class ContinuousGuardedApplication:
             self._repository.field_effect_activity_summary()
         )
         permission.pop("enabled_libraries")
+        permission.pop("lapsed_consents")
         example_document = (
             self._repository.pending_field_effect_activity_example_document()
         )
@@ -1180,6 +1182,15 @@ class ContinuousGuardedApplication:
             ],
             "capabilities": capabilities,
             "enabled_libraries": enabled,
+            # A lapse is stated only for a library this instance still
+            # configures, beside the offer that could restore it (#1370).
+            "lapsed_consents": [
+                value
+                for value in cast(
+                    "list[dict[str, object]]", data.pop("lapsed_consents", [])
+                )
+                if (value["connection"], value["library"]) in self._libraries
+            ],
             "prepared": prepared,
         }, prepared_by_destination
 

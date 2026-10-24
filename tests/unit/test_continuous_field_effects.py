@@ -1586,6 +1586,42 @@ def test_activity_exposes_incremental_consent_for_a_partially_enabled_library() 
     assert destinations["subtitle"]["state"] == "field_unavailable"
 
 
+def test_activity_states_a_lapse_only_for_a_configured_library() -> None:
+    """A removed library's lapse has no offer beside it, so it is not stated (#1370)."""
+    decision = _decisions(1)[0]
+    lapsed = [
+        {"connection": "primary", "library": "alpha", "reason": "destinations_changed"},
+        {"connection": "primary", "library": "removed", "reason": "library_unresolved"},
+    ]
+
+    class Repository(_PagedRepository):
+        def field_effect_activity_data(self, _):
+            return {
+                "consented_destinations": [],
+                "events": [],
+                "lapsed_consents": [dict(value) for value in lapsed],
+                "paused": False,
+                "suspensions": [],
+            }
+
+    service = ContinuousGuardedApplication(
+        Repository([decision]),
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _MixedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    activity = service.activity()
+    assert activity["enabled_libraries"] == []
+    assert activity["lapsed_consents"] == lapsed[:1]
+
+
 def test_waiting_is_split_by_next_step_and_counted_per_destination() -> None:
     """`46 Waiting safely` is four different next steps, and this separates them.
 
