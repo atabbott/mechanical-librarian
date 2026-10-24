@@ -26,6 +26,7 @@ import { activityOutcome, ledgerRows } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, writeFieldLabel } from '../labels'
+import { useLibraryName } from '../libraryNames'
 import { consentBasis, destinationReason, readWriteConsent } from '../writeConsent'
 import {
   activityRoute,
@@ -936,7 +937,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const enabling = mutation.isPending && mutation.variables.path === 'activity/consent'
   // Library states the same offer compactly, from this same reading, so the two
   // routes into the decision can never disagree about it (#639).
+  const libraryName = useLibraryName(http, data.lapsed_consents.length > 0)
   const consent = readWriteConsent(permission ? { ...data, ...permission } : data, {
+    libraryName,
     enabling,
     // A connection that needs an owner check is the one condition that makes
     // enabling writes the wrong next step. Preparation still running is not:

@@ -30,6 +30,7 @@ import { Dropdown } from '../components/Dropdown'
 import { FinishTray } from '../components/FinishTray'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { automaticRefusalReasons, fieldLabel } from '../labels'
+import { useLibraryName } from '../libraryNames'
 import { libraryList } from '../writeConsent'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
@@ -824,17 +825,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     retry: false,
     refetchInterval: (query) => (query.state.data?.state === 'processing' ? 1_500 : false),
   })
-  // The preview names a library by its settings slug. The owner's display name
-  // comes from the Settings read this route already shares, issued only once a
-  // preview exists; while it is pending or unavailable the slug stands.
-  const settings = useQuery({
-    queryKey: ['settings'],
-    queryFn: (queryContext) => http.getSettings(queryContext.signal, queryWorkClass(queryContext)),
-    retry: false,
-    enabled: preview !== undefined,
-  })
-  const libraryName = (name: string) =>
-    settings.data?.document.libraries.find((library) => library.name === name)?.display_name ?? name
+  // The preview names a library by its settings slug; the display name is read
+  // only once a preview exists.
+  const libraryName = useLibraryName(http, preview !== undefined)
   // Activation carries each library's write permission to the new policy, so
   // the step names the libraries that hold it now (#1370).
   const consent = useQuery({

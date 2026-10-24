@@ -62,13 +62,20 @@ const lapseReason = (reason: ActivityLapsedConsentView['reason'], libraries: num
  * Each lapse as one sentence per reason. A lapse is never calm: write
  * permission ended without the owner withdrawing it (#1370).
  */
-const lapsedSentence = (lapses: readonly ActivityLapsedConsentView[]) => {
+const lapsedSentence = (
+  lapses: readonly ActivityLapsedConsentView[],
+  libraryName: (name: string) => string,
+) => {
   const reasons = [...new Set(lapses.map((item) => item.reason))].sort()
   return reasons.length
     ? reasons
         .map((reason) => {
           const names = [
-            ...new Set(lapses.filter((item) => item.reason === reason).map((item) => item.library)),
+            ...new Set(
+              lapses
+                .filter((item) => item.reason === reason)
+                .map((item) => libraryName(item.library)),
+            ),
           ]
           return `Write permission for ${libraryList(names)} lapsed because ${lapseReason(reason, names.length)}.`
         })
@@ -93,7 +100,12 @@ export const destinationReason = (state: string) =>
 export const readWriteConsent = (
   data: Pick<ActivityDisplayView, 'lapsed_consents' | 'waiting'> &
     Pick<ActivityPermissionReadinessView, 'backup_ready' | 'capabilities' | 'configured_libraries'>,
-  options: { readonly enabling?: boolean; readonly connectionUnavailable?: boolean } = {},
+  options: {
+    readonly enabling?: boolean
+    readonly connectionUnavailable?: boolean
+    /** The owner's name for a library slug, which a lapse is stated in. */
+    readonly libraryName?: (name: string) => string
+  } = {},
 ): WriteConsentOffer => {
   const reasons = data.waiting
   const capability = (library: string) => data.capabilities.find((item) => item.library === library)
@@ -121,7 +133,7 @@ export const readWriteConsent = (
   // moved on, and the queue is the only thing that knows whether a prepared
   // change is still waiting on permission. An empty queue is complete only
   // while some library still holds permission or none ever lapsed (#1370).
-  const lapsed = lapsedSentence(data.lapsed_consents)
+  const lapsed = lapsedSentence(data.lapsed_consents, options.libraryName ?? ((name) => name))
   const held = data.capabilities.some((item) => item.destinations.some((entry) => entry.consented))
   const state: WriteConsentState = options.enabling
     ? 'enabling'

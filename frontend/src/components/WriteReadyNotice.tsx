@@ -2,6 +2,7 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { Link } from '@tanstack/react-router'
 
 import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
+import { useLibraryName } from '../libraryNames'
 import { readWriteConsent } from '../writeConsent'
 
 /**
@@ -38,8 +39,11 @@ export const WriteReadyNotice = () => {
     refetchInterval: live ? false : 15_000,
   })
   const data = query.data
+  // A lapse names its libraries as Settings does (#1370).
+  const libraryName = useLibraryName(http, Boolean(data?.lapsed_consents.length))
   if (!data) return null
   const consent = readWriteConsent(data, {
+    libraryName,
     enabling: false,
     connectionUnavailable: (preparation?.connections ?? []).some(
       (item) => item.state !== 'recovered',

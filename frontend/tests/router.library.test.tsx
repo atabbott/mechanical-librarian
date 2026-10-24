@@ -10820,14 +10820,28 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       ...createHttp(),
       getActivityConsent: vi.fn(async () => consentOf(lapsed)),
       getLibrary: vi.fn(async () => counted(0, 5)),
+      // The lapse names the library as Settings does, not by its slug.
+      getSettings: vi.fn(async () => ({
+        ...settingsView(),
+        document: {
+          ...settingsView().document,
+          libraries: settingsView().document.libraries.map((library) => ({
+            ...library,
+            name: 'fiction',
+            display_name: 'Fiction Shelf',
+          })),
+        },
+      })),
     }
     renderRoute('/library?lens=all', http)
 
     const heading = await screen.findByRole('heading', {
       name: '5 works are in Library. Writes are off.',
     })
-    expect(heading.closest('.cm-library-handoff')).toHaveTextContent(
-      'Write permission for fiction lapsed because the active policy does not cover that library.',
+    await waitFor(() =>
+      expect(heading.closest('.cm-library-handoff')).toHaveTextContent(
+        'Write permission for Fiction Shelf lapsed because the active policy does not cover that library.',
+      ),
     )
     expect(screen.getByRole('link', { name: 'Review write permissions' })).toBeVisible()
   })
