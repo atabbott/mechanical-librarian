@@ -1366,23 +1366,27 @@ class SQLiteProviderRecoveryStore:
     def throttling_snapshot(self) -> tuple[dict[str, int | str | None], ...]:
         """Read every unrecovered health row with its own deferred job count.
 
-        ``reason`` is the latest ordinary outcome recorded for the row's current
-        identity, the same join ``activity_snapshot`` uses; ``deferred`` counts
-        only queued or running jobs of that row's exact scope and generation.
-        This is one read under the store lock and never begins a transaction.
+        ``reason`` is the latest ordinary outcome recorded in the row's current
+        episode: its current generation's scope events since it last recovered.
+        Most transitions record no outcome, so the reason a throttle recorded
+        holds until the scope recovers or its generation changes (#1367).
+        ``deferred`` counts only queued or running jobs of that row's exact scope
+        and generation. This is one read under the store lock and never begins
+        a transaction.
         """
         try:
             with self._lock:
                 rows = self._connection.execute(
-                    "SELECT h.connection,h.adapter,h.scope,h.state,h.next_eligible_at,e.outcome,"
+                    "SELECT h.connection,h.adapter,h.scope,h.state,h.next_eligible_at,("
+                    "SELECT CASE WHEN state='recovered' THEN NULL ELSE outcome END "
+                    "FROM provider_recovery_events INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE connection=h.connection AND adapter=h.adapter AND scope=h.scope "
+                    "AND generation=h.generation AND job_attempt IS NULL "
+                    "AND (outcome IS NOT NULL OR state='recovered') ORDER BY sequence DESC LIMIT 1),"
                     "(SELECT count(*) FROM provider_recovery_jobs j WHERE j.connection=h.connection "
                     "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
                     "AND j.state IN ('queued','running')) "
-                    "FROM provider_recovery_health h LEFT JOIN provider_recovery_events e ON e.sequence=("
-                    "SELECT sequence FROM provider_recovery_events INDEXED BY provider_recovery_events_scope_latest "
-                    "WHERE connection=h.connection AND adapter=h.adapter AND scope=h.scope "
-                    "AND generation=h.generation AND job_attempt IS NULL ORDER BY sequence DESC LIMIT 1) "
-                    "AND e.state=h.state AND e.attempt=h.attempt AND e.next_eligible_at IS h.next_eligible_at "
+                    "FROM provider_recovery_health h "
                     "WHERE h.state!='recovered' ORDER BY h.scope,h.adapter,h.connection LIMIT 4096"
                 ).fetchall()
         except sqlite3.Error as error:

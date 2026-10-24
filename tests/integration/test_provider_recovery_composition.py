@@ -1913,6 +1913,55 @@ def test_retry_now_has_exactly_the_effect_of_raising_the_generation_field() -> N
     }
 
 
+def test_the_first_throttle_names_its_reason_and_remedy_through_its_retry() -> None:
+    """The reason and the key link hold after the throttle's own retry (#1367)."""
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        _quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        runtime.seed()
+        application = runtime.start()
+        store = SQLiteProviderRecoveryStore.open(runtime.recovery_path)
+        try:
+
+            def entry() -> dict[str, object]:
+                throttling = application.preparation().to_data()["provider_throttling"]
+                ((value),) = throttling["entries"]
+                return value
+
+            first = entry()
+            # The first automatic retry leases the scope, then reschedules it
+            # without recording another outcome.
+            claimed = store.claim_one(generation=1, now=3_700, token="retry")
+            assert claimed is not None
+            checking = entry()
+            store.complete(
+                token="retry",
+                recovery=claimed,
+                now=3_700,
+                failure="rate_limited",
+                retry_after=3_600,
+            )
+            rescheduled = entry()
+        finally:
+            store.close()
+    for value, state in ((first, "waiting"), (checking, "checking")):
+        assert (value["state"], value["reasons"], value["remedy"]) == (
+            state,
+            ["rate_limited"],
+            "add_api_key",
+        )
+    assert rescheduled == {
+        "library": "books",
+        "adapter": "google_books",
+        "state": "waiting",
+        "reasons": ["rate_limited"],
+        "deferred": 3,
+        "next_retry_at": 7_300,
+        "remedy": "add_api_key",
+    }
+
+
 @pytest.mark.parametrize("path", ["retry_now", "settings_save"])
 def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
     path: str,

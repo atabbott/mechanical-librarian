@@ -5254,7 +5254,7 @@ def test_throttling_snapshot_counts_each_unrecovered_row_and_its_reason(
     store.close()
 
 
-def test_throttling_reason_is_the_latest_event_matching_current_health(
+def test_throttling_reason_is_the_latest_outcome_of_the_current_episode(
     tmp_path: Path,
 ) -> None:
     store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
@@ -5270,14 +5270,136 @@ def test_throttling_reason_is_the_latest_event_matching_current_health(
         )
     ((row),) = store.throttling_snapshot()
     assert ("quota_exhausted", 3_620) == (row["reason"], row["next_eligible_at"])
-    # An ordinary event that no longer describes the health row names nothing.
+    # A recorded outcome names the episode even once it no longer describes
+    # the health row exactly (#1367).
     store._connection.execute(
         "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,"
         "attempt,next_eligible_at,occurred_at,outcome) VALUES('google','google_books',"
         "'books',1,'waiting',3,99,30,'rate_limited')"
     )
     ((row),) = store.throttling_snapshot()
-    assert row["reason"] is None
+    assert row["reason"] == "rate_limited"
+    store.close()
+
+
+def _throttle_reasons(
+    store: SQLiteProviderRecoveryStore,
+) -> list[tuple[object, object]]:
+    return [(row["state"], row["reason"]) for row in store.throttling_snapshot()]
+
+
+def _observe_burst(store: SQLiteProviderRecoveryStore, now: int = 0) -> None:
+    store.observe_failure(
+        connection="google",
+        adapter="google_books",
+        scope="books",
+        generation=1,
+        failure="burst_throttled",
+        now=now,
+        retry_after=60,
+    )
+
+
+def test_throttling_reason_survives_an_enqueue_first_checking_and_retry(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    # A replayed package enrols the scope before any observation: no reason.
+    store.enqueue_jobs((_job("a"), _job("b")), enqueued_at=0)
+    assert [("waiting", None)] == _throttle_reasons(store)
+    _observe_burst(store)
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    assert [("checking", "burst_throttled")] == _throttle_reasons(store)
+    # A canary that cannot run reschedules without recording an outcome.
+    store.complete(
+        token="owner",
+        recovery=claimed,
+        now=100,
+        failure="burst_throttled",
+        retry_after=60,
+    )
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    store.close()
+
+
+def test_throttling_reason_survives_fanout_and_its_finish(tmp_path: Path) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _observe_burst(store)
+    store.enqueue_jobs((_job("a"), _job("b")), enqueued_at=0)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    canary = store.claim_job(recovery=claimed, token="owner", now=100)
+    assert canary is not None
+    fanout = store.authorize_fanout(
+        job=canary, token="owner", recovery=claimed, now=100
+    )
+    assert [("fanout", "burst_throttled")] == _throttle_reasons(store)
+    # A later enrolment keeps the scope waiting after the cohort drains.
+    store.enqueue_jobs((_job("c"),), enqueued_at=100)
+    member = store.claim_job(recovery=fanout, token="owner", now=100)
+    assert member is not None
+    store.complete_job(
+        recovery=fanout, job=member, token="owner", now=100, success=True
+    )
+    assert (
+        "waiting" == store.finish_fanout(recovery=fanout, token="owner", now=100).state
+    )
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    store.close()
+
+
+def test_throttling_reason_survives_exhaustion_reopen_and_same_generation_reconcile(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _observe_burst(store)
+    store.enqueue_jobs((_job("a"),), enqueued_at=0)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    canary = store.claim_job(recovery=claimed, token="owner", now=100)
+    assert canary is not None
+    store.complete_exhausted_scope(job=canary, token="owner", recovery=claimed, now=100)
+    assert [("exhausted", "burst_throttled")] == _throttle_reasons(store)
+    # An exhausted scope reopened by a new enrolment is the same episode.
+    store.enqueue_jobs((_job("z"),), enqueued_at=200)
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    # A boot at the same generation reconciles nothing and keeps the reason.
+    assert 0 == store.reconcile_generation(generation=1, now=300)
+    assert [("waiting", "burst_throttled")] == _throttle_reasons(store)
+    # Retry now raises the generation, which starts a new episode.
+    assert 1 == store.reconcile_generation(generation=2, now=300)
+    assert [("waiting", None)] == _throttle_reasons(store)
+    store.close()
+
+
+def test_throttling_reason_survives_missing_jobs_and_ends_at_recovery(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _observe_burst(store)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    missing = store.complete_missing_jobs(token="owner", recovery=claimed, now=100)
+    assert missing is not None
+    assert [("exhausted", "burst_throttled")] == _throttle_reasons(store)
+    store.close()
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovered.sqlite")
+    _observe_burst(store)
+    store.enqueue_jobs((_job("a"),), enqueued_at=0)
+    claimed = store.claim_one(generation=1, now=100, token="owner")
+    assert claimed is not None
+    canary = store.claim_job(recovery=claimed, token="owner", now=100)
+    assert canary is not None
+    store.complete_job(
+        recovery=claimed, job=canary, token="owner", now=100, success=True
+    )
+    store.complete_success(token="owner", recovery=claimed, now=100)
+    assert [] == _throttle_reasons(store)
+    # Reopening a recovered scope starts an episode with no outcome yet.
+    store.enqueue_jobs((_job("y"),), enqueued_at=200)
+    assert [("waiting", None)] == _throttle_reasons(store)
     store.close()
 
 
