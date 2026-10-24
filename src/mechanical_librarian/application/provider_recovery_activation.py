@@ -15,7 +15,7 @@ an Audiobookshelf endpoint is.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
@@ -121,7 +121,7 @@ class ProviderRecoveryActivation:
         ],
         pipeline: Callable[[], ReviewPreparationPipeline | None],
         enqueue: Callable[
-            [tuple[ProviderRecoveryJob, ...], int, Mapping[ProviderRecoveryJob, str]],
+            [tuple[ProviderRecoveryJob, ...], int, dict[ProviderRecoveryJob, str]],
             int,
         ],
         clock: Callable[[], int],

@@ -8,7 +8,7 @@ import tempfile
 import threading
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import Literal, cast
 from unittest.mock import patch
 
@@ -5470,6 +5470,40 @@ def test_an_enqueue_outcome_copies_health_that_moved_on_and_skips_another_genera
     store.close()
 
 
+def test_an_enqueue_outcome_leaves_a_dormant_credential_scope_alone(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    store.observe_failure(
+        connection="google",
+        adapter="google_books",
+        scope="books",
+        generation=1,
+        failure="authentication",
+        now=0,
+    )
+    before = _scope_events(store)
+    job = _job("a")
+    assert 1 == store.enqueue_jobs((job,), enqueued_at=10, outcomes={job: "transient"})
+    assert before == _scope_events(store)
+    rows = store.throttling_snapshot()
+    assert [("dormant", "authentication")] == _throttle_reasons(store)
+    view = provider_throttling_view(rows, {"google": True}, 1, "available")
+    assert [(["authentication"], "check_api_key")] == [
+        (entry["reasons"], entry["remedy"])
+        for entry in cast("list[dict[str, object]]", view["entries"])
+    ]
+    store.close()
+
+
+class _OutcomeText(str):
+    pass
+
+
 @pytest.mark.parametrize(
     "outcomes",
     (
@@ -5478,8 +5512,20 @@ def test_an_enqueue_outcome_copies_health_that_moved_on_and_skips_another_genera
         lambda job: {job: "429 Too Many Requests"},
         lambda job: {_job("other"): "rate_limited"},
         lambda job: [(job, "rate_limited")],
+        lambda job: MappingProxyType({job: "rate_limited"}),
+        lambda job: {job: ["rate_limited"]},
+        lambda job: {job: _OutcomeText("rate_limited")},
     ),
-    ids=("credential", "attempt-outcome", "message", "foreign-job", "not-a-mapping"),
+    ids=(
+        "credential",
+        "attempt-outcome",
+        "message",
+        "foreign-job",
+        "not-a-mapping",
+        "mapping-subclass",
+        "unhashable-value",
+        "str-subclass",
+    ),
 )
 def test_enqueue_outcomes_are_typed_non_terminal_failures_of_their_own_jobs(
     tmp_path: Path, outcomes

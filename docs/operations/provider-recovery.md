@@ -60,9 +60,12 @@ the durable outbox. Each delivery atomically enrolls its exact member and
 health scope before its job can be claimed; an existing current health record
 is preserved. If the outbox is the first record of the scope, its fallback is
 the documented two-hour transient cooldown rather than immediate provider
-egress. A failed row stays pending for a later retry while the bounded
-drain continues to younger deliverable rows, so startup remains available and
-does not discard recovery work. Authentication and authorization wake only
+egress. A newly registered job whose ebook lane failed non-terminally also
+appends one scope event naming that typed outcome; it copies the scope's
+current health and changes none of it, and a recovered or dormant scope gets no
+such event (#1367). A failed row stays pending for a later retry while the
+bounded drain continues to younger deliverable rows, so startup remains
+available and does not discard recovery work. Authentication and authorization wake only
 when that delivered exact job proves the new configured generation; otherwise
 they remain dormant. Outbox delivery and job registration are idempotent, so a
 crash between cutover and enqueue is recovered on restart. No environment variable,
@@ -166,9 +169,10 @@ ebook work lanes where a library connects it.
 ## Settlement diagnostics
 
 Recovery event history separates ordinary health transitions from one diagnostic
-per settled executing member (#1157). `outcome` is a closed failure or result;
-`job_attempt` is the charged attempt after settlement. `physical_requests` counts
-only the actual replacement observation's initial and retry dispatches, before
+per settled executing member (#1157). The delivery-time outcome event above is
+an ordinary health event without `job_attempt`. `outcome` is a closed failure
+or result; `job_attempt` is the charged attempt after settlement.
+`physical_requests` counts only the actual replacement observation's initial and retry dispatches, before
 retained lanes are merged. A shared scope failure records this cost once, not once
 per affected scope. Burst/quota deferral can therefore record physical requests
 while retaining a zero charged attempt. Existing pacing and retry allowances do

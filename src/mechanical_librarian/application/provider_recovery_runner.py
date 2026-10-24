@@ -9,7 +9,7 @@ caller and the background caller cannot fan out concurrently.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol, cast
 from uuid import uuid4
@@ -35,7 +35,7 @@ class ProviderRecoveryStore(Protocol):
         jobs: tuple[ProviderRecoveryJob, ...],
         *,
         enqueued_at: int,
-        outcomes: Mapping[ProviderRecoveryJob, str] | None = None,
+        outcomes: dict[ProviderRecoveryJob, str] | None = None,
     ) -> int: ...
     def claim_one(
         self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str]
@@ -218,7 +218,7 @@ class ScopedProviderRecoveryRunner:
         jobs: tuple[ProviderRecoveryJob, ...],
         *,
         enqueued_at: int,
-        outcomes: Mapping[ProviderRecoveryJob, str] | None = None,
+        outcomes: dict[ProviderRecoveryJob, str] | None = None,
     ) -> int:
         """Persist the complete eligible set before it becomes claimable."""
         return self._store.enqueue_jobs(

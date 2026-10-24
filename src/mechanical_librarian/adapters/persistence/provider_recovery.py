@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
@@ -1468,7 +1468,7 @@ class SQLiteProviderRecoveryStore:
         jobs: tuple[ProviderRecoveryJob, ...],
         *,
         enqueued_at: int,
-        outcomes: Mapping[ProviderRecoveryJob, str] | None = None,
+        outcomes: dict[ProviderRecoveryJob, str] | None = None,
     ) -> int:
         """Durably register exact-current failed lanes before any canary runs.
 
@@ -1476,15 +1476,20 @@ class SQLiteProviderRecoveryStore:
         must revalidate it before dispatch; a replayed registration is a no-op.
         A newly registered job with a non-terminal ``outcomes`` entry appends
         one event copying its scope's current-generation health unchanged with
-        that outcome, so the episode names its reason (#1367).
+        that outcome, so the episode names its reason (#1367).  A dormant
+        credential scope keeps its own outcome and remedy.
         """
         outcomes = {} if outcomes is None else outcomes
         if (
             not jobs
-            or not isinstance(outcomes, Mapping)
+            or type(outcomes) is not dict
             or not outcomes.keys() <= set(jobs)
-            or not set(outcomes.values())
-            <= TRANSIENT_RECOVERY_FAILURES | DEFERRED_RECOVERY_FAILURES
+            or any(
+                type(outcome) is not str
+                or outcome
+                not in TRANSIENT_RECOVERY_FAILURES | DEFERRED_RECOVERY_FAILURES
+                for outcome in outcomes.values()
+            )
             or type(enqueued_at) is not int
             or not 0 <= enqueued_at <= MAX_TIMESTAMP - 7_200
             or tuple(
@@ -1639,7 +1644,7 @@ class SQLiteProviderRecoveryStore:
                                 "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome) "
                                 "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,?,? "
                                 "FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? "
-                                "AND generation=? AND state!='recovered'",
+                                "AND generation=? AND state NOT IN ('recovered','dormant')",
                                 (
                                     enqueued_at,
                                     outcomes[job],

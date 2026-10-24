@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from argon2 import PasswordHasher
+from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     _provider_recovery_outbox_id,
@@ -101,6 +103,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.proposal_evidence import _claim, _provider
+from tests.unit.review_app_fixture import create_transport_test_app
 
 
 class _ReviewerAccess:
@@ -1919,7 +1922,8 @@ def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
 
     An ebook's non-terminal lane failure goes straight on to its proposal, so
     the outbox drain is the only place recovery hears of it: each enrolment
-    names its classified failure without moving the scope's schedule.
+    names its classified failure without moving the scope's schedule, and the
+    review app's preparation API carries that reason and the key remedy.
     """
     items = ("item-1", "item-2")
     isbn = LocalClaim.create(
@@ -2047,21 +2051,40 @@ def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
             "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
         ).fetchall()
         activity = recovery.activity_snapshot()
-        throttling = composition._provider_throttling_reader(
-            recovery, configuration, {}, "available"
-        )()
+        # The notice is driven by the preparation API of the real review app.
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash("synthetic-owner"))
+        password.chmod(0o600)
+        web = open_repository(database, cross_thread=True, authority=held.authority)
+        app = create_transport_test_app(
+            web,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+            ),
+            clock=lambda: int(clock[0]),
+            provider_throttling=composition._provider_throttling_reader(
+                recovery, configuration, {}, "available"
+            ),
+        )
+        with TestClient(app, base_url="https://review.test") as client:
+            assert 200 == (
+                client.post(
+                    "/api/v1/session/login",
+                    json={"password": "synthetic-owner"},
+                    headers={"Origin": "https://review.test"},
+                ).status_code
+            )
+            response = client.get("/api/v1/review-preparation")
+        assert 200 == response.status_code, response.text
+        throttling = response.json()["provider_throttling"]
+        web.close()
         supervisor.stop()
         held.close()
     assert [("complete", "complete", None)] * 2 == work
-    assert [429, 429] == statuses
-    # The fallback enrolment sets the schedule; each delivery names the reason.
-    assert [
-        ("waiting", 1, 17_200, 10_000, None),
-        ("waiting", 1, 17_200, 10_000, "rate_limited"),
-        ("waiting", 1, 17_200, 10_001, "rate_limited"),
-    ] == events
-    assert [("waiting", 1, 17_200)] == health
-    assert ["rate_limited"] == activity[0]["failure_reasons"]
+    # The preparation API that drives the notice names the reason and remedy.
     assert throttling["entries"] == [
         {
             "library": "ebooks",
@@ -2073,6 +2096,15 @@ def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
             "remedy": "add_api_key",
         }
     ]
+    assert [429, 429] == statuses
+    # The fallback enrolment sets the schedule; each delivery names the reason.
+    assert [
+        ("waiting", 1, 17_200, 10_000, None),
+        ("waiting", 1, 17_200, 10_000, "rate_limited"),
+        ("waiting", 1, 17_200, 10_001, "rate_limited"),
+    ] == events
+    assert [("waiting", 1, 17_200)] == health
+    assert ["rate_limited"] == activity[0]["failure_reasons"]
 
 
 def test_the_first_throttle_names_its_reason_and_remedy_through_its_retry() -> None:

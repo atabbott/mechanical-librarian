@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- When an ebook's source first throttles or fails lookups, Library, Settings and
-  Activity now say why, and Library and Settings offer the Google Books key
-  link, without waiting for a retry. The reason stays through later retries and
-  clears once the source recovers or Retry now starts over (#1367).
+- When an ebook's source first throttles or fails lookups, Library and Settings
+  now say why and offer the Google Books key link without waiting for a retry,
+  and keep both until the source recovers or Retry now starts over. Activity
+  names the same reason when the lookups are enrolled for retry (#1367).
 
 - A policy activation that completes with failures no longer blocks Validate
   and preview, and a new activation now proceeds over it. After activation,
