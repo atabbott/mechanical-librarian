@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Policy activation package successor (#1369)
+
+The current F19a, F20 and F46 records move to semantic revision 64 over base
+`96e1728e`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows policy activation retiring each cohort item's current review
+package with its lineage and superseding an undismissed finished transition,
+and retry resolving an item superseded by a newer report and reopening the
+scan of work it restarts. No schema or persisted document changes, so no clean rebuild is
+required, and no operation gains or loses automatic authority.
+
 ## Owner-entered values successor (#1285)
 
 The current F19a, F20 and F46 records move to semantic revision 63 over base
