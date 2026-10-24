@@ -1917,6 +1917,80 @@ def test_retry_now_has_exactly_the_effect_of_raising_the_generation_field() -> N
     }
 
 
+def test_retry_now_leaves_an_already_recovered_scope_recovered() -> None:
+    """Retry now for one throttled scope never flags a recovered one (#1367 R15).
+
+    A scope with no deferred work has nothing to correct, so a raised
+    generation carries it forward as recovered rather than dormant, and
+    Activity reports no scope needing owner correction.
+    """
+    from mechanical_librarian.domain.provider_recovery import ProviderRecovery
+
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        _quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        runtime.seed()
+        store = SQLiteProviderRecoveryStore.open(runtime.recovery_path)
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="audio",
+                generation=1,
+                failure="transient",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        store.enqueue_jobs(
+            (
+                ProviderRecoveryJob(
+                    "google",
+                    "google_books",
+                    "audio",
+                    1,
+                    "member-audio",
+                    "primary",
+                    "audio",
+                    "item-audio",
+                    "f" * 64,
+                    "report-" + "3" * 64,
+                    None,
+                    "report-" + "3" * 64,
+                    None,
+                    None,
+                    "report_only",
+                    "[]",
+                ),
+            ),
+            enqueued_at=0,
+        )
+        runner = composition.ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=lambda *_: None,
+            classify_failure=lambda _: ("transient", None),
+        )
+        assert "recovered" == runner.run_one(now=2, token="audio").state
+        store.close()
+        application = runtime.start()
+        _raised_generation(application, 1, "retry")
+        assert 2 == runtime.generation()
+        health = {
+            row[2]: (row[3], row[4])
+            for row in runtime.recovery_state()["provider_recovery_health"]
+        }
+        store = SQLiteProviderRecoveryStore.open(runtime.recovery_path)
+        try:
+            activity = store.activity_snapshot()
+        finally:
+            store.close()
+    assert {"audio": (2, "recovered"), "books": (2, "waiting")} == health
+    assert "dormant" not in [phase["state"] for phase in activity]
+
+
 def test_a_real_first_throttle_names_its_reason_and_remedy() -> None:
     """Two fresh ebooks meet a keyless Google Books 429 in real preparation (#1367).
 

@@ -51,7 +51,9 @@ runtime is rebuilt, and the recovery cutover below runs only after the new
 settings revision has committed. A save that fails leaves recovery exactly as
 it was, so a restart still starts. A cutover that fails after the commit stops
 the service instead of running on the previous settings; restart the container
-and the next start delivers the committed generation.
+and the next start delivers the committed generation. The cutover carries a
+recovered scope with no deferred lookups forward as recovered, never as dormant,
+so it is not counted as needing correction (#1367).
 
 Startup first performs a read-only generation compatibility check;
 it rejects persisted generations newer than configuration before any outbox

@@ -296,6 +296,11 @@ class SQLiteProviderRecoveryStore:
                     else ProviderRecovery(
                         row[0], row[1], row[2], generation, "dormant", row[5], None
                     )
+                    if row[4] != "recovered"
+                    # Nothing deferred and nothing to correct (#1367).
+                    else ProviderRecovery(
+                        row[0], row[1], row[2], generation, "recovered", 0, None
+                    )
                 )
                 self._connection.execute(
                     "DELETE FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
