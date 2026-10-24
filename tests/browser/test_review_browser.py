@@ -8153,7 +8153,8 @@ def _owner_layout_holds(page: Page) -> None:
         "document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet] }"
     )
     try:
-        # The new root size lands a frame later; waiting on it is the proof.
+        # The reduced-motion rule leaves every property a transition, so the
+        # root size settles after it rather than at once; the wait is the proof.
         page.wait_for_function(
             "() => getComputedStyle(document.documentElement).fontSize === '32px'",
             timeout=5_000,
