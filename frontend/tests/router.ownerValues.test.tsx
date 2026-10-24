@@ -530,34 +530,58 @@ describe('owner review fixes', () => {
     expect(within(moved).queryByText('The work changed. Review it again.')).toBeNull()
   })
 
-  it.each(['current', 'gone'] as const)(
-    'M4 calls the work unavailable only once the successor it was given is %s',
-    async (successorState) => {
+  it.each([
+    ['lineage', 'moved'],
+    ['lineage', 'successor gone'],
+    ['library', 'moved'],
+    ['library', 'successor gone'],
+    ['library', 'predecessor unavailable'],
+    ['library', 'predecessor current'],
+    ['named', 'moved'],
+    ['named', 'successor gone'],
+    ['named', 'predecessor unavailable'],
+    ['named', 'predecessor current'],
+  ] as const)(
+    // Which of Library and the lineage read answers first, or `named` where the
+    // Library update itself names the successor and no lineage read is made.
+    'M4 calls the work unavailable only once the move ends (%s, %s)',
+    async (first, outcome) => {
       const user = userEvent.setup()
       let stale = false
       const updates = createLiveStream()
-      let answered: () => void = () => undefined
-      const lineage = new Promise<void>((resolve) => {
-        answered = resolve
-      })
+      const answered = { library: () => undefined, lineage: () => undefined } as Record<
+        'library' | 'lineage',
+        () => void
+      >
+      const settled = {
+        library: new Promise<void>((resolve) => (answered.library = resolve)),
+        lineage: new Promise<void>((resolve) => (answered.lineage = resolve)),
+      }
+      // The read that answers second waits for the other one to have answered.
+      const after = async (read: 'library' | 'lineage') => {
+        answered[read]()
+        if (first === 'named' || first === read) return
+        await settled[first]
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
       const http = {
         ...owner(() => [contextTitle]),
-        // Library answers only after the successor read has: the case is gone
-        // from Library while nothing has started moving yet.
         getLibrary: vi.fn(async () => {
           if (!stale) return quietLibrary
-          await lineage
-          await new Promise((resolve) => setTimeout(resolve, 20))
+          await after('library')
           return { ...quietLibrary, works: [] }
         }),
         getCaseSuccessor: vi.fn(async () => {
           if (!stale) return null
-          answered()
+          await after('lineage')
           return 'case-2'
         }),
         getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
-          if (stale && id === 'case-1') throw new ApiError(409, 'stale')
-          if (id === 'case-2' && successorState === 'gone') throw new ApiError(404, 'not_found')
+          if (stale && id === 'case-1') {
+            if (outcome === 'predecessor unavailable') throw new ApiError(503, 'unavailable')
+            if (outcome !== 'predecessor current') throw new ApiError(409, 'stale')
+          }
+          if (id === 'case-2' && outcome === 'successor gone') throw new ApiError(404, 'not_found')
           return { ...detail, id, fields: [contextTitle] }
         }),
       }
@@ -573,10 +597,14 @@ describe('owner review fixes', () => {
       observer.observe(document.body, { childList: true, subtree: true })
       stale = true
       await act(async () => {
-        updates.announce({ sequence: 83, subject: null, topic: 'library' })
+        updates.announce({
+          sequence: 83,
+          subject: first === 'named' ? 'case-2' : null,
+          topic: 'library',
+        })
         await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 60))
       })
-      if (successorState === 'gone') {
+      if (outcome !== 'moved') {
         // The move ends with nowhere to go, so the absence is news after all.
         expect(await screen.findByRole('heading', { name: 'Selected work' })).toBeVisible()
         expect(router.state.location.search.preview).toBe('case-1')

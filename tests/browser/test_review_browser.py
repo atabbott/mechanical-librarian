@@ -386,7 +386,7 @@ def _server(
     genre_current: tuple[str, ...] | None = None,
     owner_write: bool = False,
     owner_library_change: bool = False,
-    owner_readback: list[Callable[[str], str]] | None = None,
+    owner_readback: list[Callable[[str, bool], str]] | None = None,
     language_fixture: tuple[str, ...] | None = None,
     language_current: str | None = None,
     language_audio: bool = False,
@@ -1574,15 +1574,18 @@ def _server(
 
     if owner_readback is not None:
         # The library edits the title while the page is open: read the work
-        # back as its successor and announce Library, as a scan does.
-        def read_back(title: str) -> str:
+        # back as its successor and announce Library, as a scan does, naming
+        # the successor case or not.
+        def read_back(title: str, named: bool) -> str:
             current = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(case_id))["case"]
             )
             successor_id, _ = _read_back_title(
                 repository, report, current, genre_destination, title, 910
             )
-            app.state.review_application.updates.publish("library", None)
+            app.state.review_application.updates.publish(
+                "library", successor_id if named else None
+            )
             return successor_id
 
         owner_readback.append(read_back)
@@ -8383,14 +8386,18 @@ def test_the_previous_title_chosen_after_the_library_changed_is_refused():
         _said_nothing_false_while_moving(page)
 
 
-@pytest.mark.parametrize("first", ("library", "lineage"))
-def test_an_open_entry_moves_to_the_case_that_superseded_it(first):
+@pytest.mark.parametrize("named", (False, True), ids=("unnamed", "named"))
+@pytest.mark.parametrize(
+    "library_last", (False, True), ids=("library-first", "library-last")
+)
+def test_an_open_entry_moves_to_the_case_that_superseded_it(library_last, named):
     """MF1: the library edits the title while the owner types; the real
     server refuses the superseded case's read as stale, and the owner still
     reaches the current case, told why, with focus on the field heading.
-    Whichever of the Library read and the successor read answers first, the
-    page never says the work is unavailable on the way."""
-    readback: list[Callable[[str], str]] = []
+    Whether the Library update names the successor or leaves the page to ask
+    for it, and whether the Library read answers before or after the other
+    read that drops the case, the page never says it is unavailable."""
+    readback: list[Callable[[str, bool], str]] = []
     held: list[Route] = []
     with _owner_page(
         genre_fixture=("Fantasy",), genre_current=("Drama",), owner_readback=readback
@@ -8407,17 +8414,24 @@ def test_an_open_entry_moves_to_the_case_that_superseded_it(first):
         def lineage(url: str) -> bool:
             return url.endswith("/successor")
 
+        def attention(url: str) -> bool:
+            return "/api/v1/attention" in url
+
         def hold(route: Route) -> None:
             held.append(route)
 
-        # The read held back answers last, after the other and Attention.
-        sooner, later = (library, lineage) if first == "library" else (lineage, library)
+        # A named successor needs no lineage read; Attention then is the other
+        # read. The held read answers last, after the other and Attention.
+        other = attention if named else lineage
+        sooner, later = (other, library) if library_last else (library, other)
         page.route(later, hold)
         with (
             page.expect_response(lambda response: sooner(response.url)),
-            page.expect_response(lambda response: "/api/v1/attention" in response.url),
+            nullcontext()
+            if attention in (sooner, later)
+            else page.expect_response(lambda response: attention(response.url)),
         ):
-            successor = readback[0](OWNER_EDIT)
+            successor = readback[0](OWNER_EDIT, named)
         page.unroute(later)
         for route in held:
             route.continue_()

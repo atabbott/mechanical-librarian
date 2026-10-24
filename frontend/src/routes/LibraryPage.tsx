@@ -2712,9 +2712,12 @@ export default function LibraryPage({
   // The case being left for its successor: while it is, its own failed read
   // and its absence from Library are the move, not something to report.
   const [movingFrom, setMovingFrom] = useState<string | null>(null)
-  // The case whose lineage check named a successor the move has not yet
-  // started following: its absence from Library is that move, not news.
-  const [successorNamed, setSuccessorNamed] = useState<string | null>(null)
+  // The selected case once any path knows a successor is pending for it (a
+  // lineage check, a Library update naming one, or a stale command): until
+  // the move settles, its absence from Library is that move, not news. It is
+  // set where the successor becomes known and cleared only where a move ends,
+  // since a move can start before a lineage check's own update lands.
+  const [successorPending, setSuccessorPending] = useState<string | null>(null)
   const ownerField = useRef<string | null>(null)
   // The case whose owner form was open, or whose owner control had focus,
   // when the Library said it changed; the refetch that follows can unmount it.
@@ -2762,6 +2765,7 @@ export default function LibraryPage({
     if (selectedPreviewRef.current !== search.preview) {
       setActiveLineageGeneration(null)
       setLineageReconciliation(null)
+      setSuccessorPending(null)
     }
     selectedPreviewRef.current = search.preview
     pendingSuccessorRef.current.clear()
@@ -3018,7 +3022,10 @@ export default function LibraryPage({
   useEffect(() => {
     if (search.preview && detail.data?.id === search.preview) {
       selectedTargetRef.current = { caseId: search.preview, ...detail.data.target }
-      if (pendingSuccessorRef.current.size) setSuccessorGeneration((generation) => generation + 1)
+      if (pendingSuccessorRef.current.size) {
+        setSuccessorPending(search.preview)
+        setSuccessorGeneration((generation) => generation + 1)
+      }
     }
   }, [detail.data, search.preview])
   useLayoutEffect(() => {
@@ -3040,7 +3047,7 @@ export default function LibraryPage({
       setActiveLineageGeneration(null)
       setLineageReconciliation(null)
       if (following && selectedTargetRef.current?.caseId === reconciliation.selection)
-        setSuccessorNamed(reconciliation.selection)
+        setSuccessorPending(reconciliation.selection)
     })
     if (following) {
       pendingSuccessorRef.current.add(named)
@@ -3098,6 +3105,8 @@ export default function LibraryPage({
         !pendingSuccessorRef.current.has(update.subject)
       ) {
         pendingSuccessorRef.current.add(update.subject)
+        if (selectedTargetRef.current?.caseId === search.preview)
+          setSuccessorPending(search.preview ?? null)
         // Query structural sharing can make the next bounded Library read
         // referentially identical after a no-match batch. Candidate arrival is
         // itself the reason to reconcile that read once more.
@@ -3119,7 +3128,6 @@ export default function LibraryPage({
       return
     pendingSuccessorRef.current.clear()
     setMovingFrom(selectedTarget.caseId)
-    setSuccessorNamed(null)
     void (async () => {
       try {
         const predecessor = await http.getCaseDetail(selectedTarget.caseId)
@@ -3130,6 +3138,7 @@ export default function LibraryPage({
           predecessor.target.item !== selectedTarget.item
         ) {
           setMovingFrom(null)
+          setSuccessorPending(null)
           return
         }
       } catch (error) {
@@ -3137,6 +3146,7 @@ export default function LibraryPage({
         // case no longer being current. Each successor's target is checked.
         if (!(error instanceof ApiError && error.code === 'stale')) {
           setMovingFrom(null)
+          setSuccessorPending(null)
           return
         }
       }
@@ -3169,6 +3179,7 @@ export default function LibraryPage({
                 : current,
           })
           setMovingFrom(null)
+          setSuccessorPending(null)
           return
         } catch {
           // A case can disappear again between the bounded page read and its
@@ -3177,6 +3188,7 @@ export default function LibraryPage({
         }
       }
       setMovingFrom(null)
+      setSuccessorPending(null)
     })()
   }, [data, retained, works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
@@ -3338,6 +3350,7 @@ export default function LibraryPage({
         // that replaced theirs, with focus on its field (M4).
         const predecessor = selectedReviewCaseId
         setMovingFrom(predecessor)
+        setSuccessorPending(predecessor)
         const successor = await http.getCaseSuccessor(predecessor).catch(() => null)
         if (successor !== null) {
           setReconciledSuccessorIdentity(successor)
@@ -3355,9 +3368,11 @@ export default function LibraryPage({
                 : current,
           })
           setMovingFrom(null)
+          setSuccessorPending(null)
           return
         }
         setMovingFrom(null)
+        setSuccessorPending(null)
       }
       if (selected?.destination === 'cover') {
         setStaleCoverReview({
@@ -4310,7 +4325,7 @@ export default function LibraryPage({
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
           ) : !displayedIdentity ? (
-            identityPending || leaving || successorNamed === search.preview ? (
+            identityPending || leaving || successorPending === search.preview ? (
               <p role="status">Loading selected work…</p>
             ) : identityError ? (
               <p role="alert">
