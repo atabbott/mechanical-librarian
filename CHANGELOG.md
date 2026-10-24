@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The selected work now stays on screen with its fields after you enter a
+  value, choose genres, change or withdraw a decision, after a search that no
+  longer matches it, and when a link opens a work outside the current page. It
+  is called unavailable only when the work itself cannot be read (#1365).
+
 - Where no proposed value fits, you can now enter a title, subtitle or
   publisher yourself, with suggested clean-ups, or choose which genres to keep.
   A recorded decision can be changed or withdrawn, and after a write the value

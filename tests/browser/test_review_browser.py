@@ -384,6 +384,7 @@ def _server(
     genre_fixture: tuple[str, ...] | None = None,
     genre_destination: str = "automatic",
     genre_current: tuple[str, ...] | None = None,
+    genre_others: str = "ask",
     owner_write: bool = False,
     owner_library_change: bool = False,
     owner_readback: list[Callable[[str, bool], str]] | None = None,
@@ -934,7 +935,7 @@ def _server(
 
         report = genre_report(genres=genre_fixture, current=genre_current)
         case_id, proposal_set = publish_genre_case(
-            repository, report, genre_destination
+            repository, report, genre_destination, genre_others
         )
         if owner_write:
             case_id, report = _seed_owner_write(
@@ -8285,8 +8286,7 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
             page.get_by_text(
                 "Withdrawn. This field needs a decision again.", exact=True
             )
-        ).to_be_visible()
-        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        ).to_be_focused()
         assert "genres" in _attention_destinations(page, case_id)
         page.get_by_role("link", name="History", exact=True).click()
         expect(page.get_by_text("Owner withdrew the decision.")).to_be_visible()
@@ -8445,6 +8445,171 @@ def test_an_open_entry_moves_to_the_case_that_superseded_it(library_last, named)
         ).to_be_visible()
         expect(page.locator(".decision-canvas > header h2")).to_be_focused()
         _said_nothing_false_while_moving(page)
+
+
+# Genres is the work's only attention field, so a decision moves it between
+# the Needs attention and No attention needed lenses.
+_SOLE_GENRES: dict[str, Any] = {
+    "genre_fixture": ("Drama", "Fantasy", "Mystery"),
+    "genre_current": ("Drama",),
+    "genre_others": "ignore",
+}
+
+
+def _lens_read(lens: str) -> Callable[[Any], bool]:
+    return lambda response: (
+        "/api/v1/library?" in response.url and f"lens={lens}" in response.url
+    )
+
+
+def _work_stays_in_view(page: Page) -> None:
+    """The selected work keeps its identity and field controls although the
+    Library result no longer lists it (#1365)."""
+    expect(
+        page.get_by_role("button", name=re.compile(r"^Real Tigers\."))
+    ).to_have_count(0)
+    expect(page.get_by_role("heading", name="Real Tigers", exact=True)).to_be_visible()
+    expect(page.get_by_role("region", name="Your value for Genres")).to_be_visible()
+    _said_nothing_false_while_moving(page)
+
+
+def _record_genres(
+    panel, *names: str, said: str, opener: str = "Choose genres"
+) -> None:
+    panel.get_by_role("button", name=opener, exact=True).click()
+    group = panel.get_by_role("group", name="Choose genres")
+    for name in names:
+        group.get_by_role("checkbox", name=re.compile(f"^{name}")).click()
+    panel.get_by_role("button", name="Record these genres", exact=True).click()
+    expect(panel.get_by_text(said, exact=True)).to_be_focused()
+
+
+def test_owner_values_keep_the_work_that_leaves_attention_in_view():
+    """#1365: a genre subset recorded for the work's last attention field, and
+    then changed, takes the work off the Needs attention page; the work, its
+    field and the outcome stay on screen with focus on the field's controls."""
+    with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
+        page.goto(
+            f"{origin}/library?lens=needs_attention&preview={case_id}&field=genres"
+        )
+        panel = page.get_by_role("region", name="Your value for Genres")
+        expect(
+            page.get_by_role("button", name=re.compile(r"^Real Tigers\."))
+        ).to_be_visible()
+        assert _attention_destinations(page, case_id) == ["genres"]
+        page.evaluate(_WATCH_ANNOUNCEMENTS)
+        with page.expect_response(_lens_read("needs_attention")):
+            _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+        _work_stays_in_view(page)
+        expect(panel.get_by_text("You chose 2 genres.", exact=True)).to_be_focused()
+        _record_genres(panel, "Drama", said="You chose 1 genre.", opener="Change")
+        _work_stays_in_view(page)
+
+
+def test_withdrawing_keeps_the_work_that_leaves_its_lens_in_view():
+    """#1365: withdrawing returns the field to Attention, which takes the work
+    off the No attention needed page; the work and field stay on screen."""
+    with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.get_by_role("region", name="Your value for Genres")
+        _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+        page.goto(
+            f"{origin}/library?lens=no_attention_needed&preview={case_id}&field=genres"
+        )
+        expect(
+            page.get_by_role("button", name=re.compile(r"^Real Tigers\."))
+        ).to_be_visible()
+        page.evaluate(_WATCH_ANNOUNCEMENTS)
+        with page.expect_response(_lens_read("no_attention_needed")):
+            panel.get_by_role("button", name="Withdraw", exact=True).click()
+            expect(
+                panel.get_by_text(
+                    "Withdrawn. This field needs a decision again.", exact=True
+                )
+            ).to_be_visible()
+        _work_stays_in_view(page)
+        expect(
+            panel.get_by_text(
+                "Withdrawn. This field needs a decision again.", exact=True
+            )
+        ).to_be_focused()
+
+
+# The focused element lies inside the viewport and below the sticky masthead.
+_FOCUS_IN_VIEW = """() => {
+  const box = document.activeElement.getBoundingClientRect()
+  const masthead = document.querySelector('.masthead').getBoundingClientRect()
+  return box.top >= masthead.bottom - 0.5 && box.bottom <= innerHeight + 0.5
+}"""
+
+
+@pytest.mark.parametrize("width", (390, 320))
+def test_withdrawing_at_compact_width_focuses_its_outcome_in_place(width):
+    """#1365: after a withdrawal focus is on its outcome line, where Withdraw
+    was, inside the viewport below the masthead, and the page barely moves."""
+    with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.get_by_role("region", name="Your value for Genres")
+        _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+        page.set_viewport_size({"width": width, "height": 844})
+        page.goto(
+            f"{origin}/library?lens=no_attention_needed&preview={case_id}&field=genres"
+        )
+        withdraw = panel.get_by_role("button", name="Withdraw", exact=True)
+        withdraw.scroll_into_view_if_needed()
+        before = page.evaluate("scrollY")
+        withdraw.click()
+        outcome = panel.get_by_text(
+            "Withdrawn. This field needs a decision again.", exact=True
+        )
+        expect(outcome).to_be_focused()
+        # Still so once the confirmed case and Library reads have painted.
+        page.wait_for_timeout(1_000)
+        expect(outcome).to_be_focused()
+        moved = abs(page.evaluate("scrollY") - before)
+        assert page.evaluate(_FOCUS_IN_VIEW), page.evaluate(
+            "() => [document.activeElement.getBoundingClientRect().top,"
+            " document.querySelector('.masthead').getBoundingClientRect().bottom]"
+        )
+        assert moved < 100, moved
+
+
+def test_a_search_that_excludes_the_selected_work_leaves_it_in_view():
+    """#1365 and #1284: search scopes only the result list."""
+    with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        expect(
+            page.get_by_role("button", name=re.compile(r"^Real Tigers\."))
+        ).to_be_visible()
+        page.evaluate(_WATCH_ANNOUNCEMENTS)
+        with page.expect_response(
+            lambda response: (
+                _lens_read("all")(response) and "q=Nothing+here" in response.url
+            )
+        ):
+            page.get_by_role("searchbox").fill("Nothing here")
+        _work_stays_in_view(page)
+        expect(
+            page.get_by_role("button", name="Choose genres", exact=True)
+        ).to_be_visible()
+
+
+def test_a_deep_link_to_a_work_off_the_current_page_shows_it():
+    """#1365: the linked work is in neither the Library page nor Attention."""
+    with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.get_by_role("region", name="Your value for Genres")
+        _record_genres(panel, "Fantasy", said="You chose 2 genres.")
+        assert _attention_destinations(page, case_id) == []
+        # Watch from the first paint, so a passing absence is caught too.
+        page.add_init_script(
+            f"({_WATCH_ANNOUNCEMENTS.replace('document.body', 'document')})()"
+        )
+        page.goto(
+            f"{origin}/library?lens=needs_attention&preview={case_id}&field=genres"
+        )
+        _work_stays_in_view(page)
+        expect(panel.get_by_role("button", name="Withdraw", exact=True)).to_be_visible()
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))

@@ -1465,6 +1465,7 @@ function OwnerControls({
   const trigger = useRef<HTMLButtonElement>(null)
   const recorded = useRef<HTMLParagraphElement>(null)
   const notice = useRef<HTMLParagraphElement>(null)
+  const statusLine = useRef<HTMLParagraphElement>(null)
   const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
   const busy = progress?.phase === 'recording'
   const decision = field.humanDecision
@@ -1478,8 +1479,8 @@ function OwnerControls({
     refocus.current = null
   }, [mode])
   // A settled command leaves focus on something named: the recorded value,
-  // the field's heading after a withdrawal, or, when a refusal removed the
-  // control that was used, the refusal itself.
+  // the withdrawal's own outcome line where its controls were (#1365), or,
+  // when a refusal removed the control that was used, the refusal itself.
   useEffect(() => {
     const command = sent.current
     if (!command) return
@@ -1495,11 +1496,10 @@ function OwnerControls({
     }
     setMode('idle')
     requestAnimationFrame(() => {
-      if (command.outcome !== 'withdraw') {
-        ;(recorded.current ?? notice.current)?.focus({ preventScroll: true })
-        return
-      }
-      focusFieldHeading()
+      ;(command.outcome === 'withdraw'
+        ? statusLine.current
+        : (recorded.current ?? notice.current)
+      )?.focus({ preventScroll: true })
     })
   }, [progress])
   if (!control) return null
@@ -1709,7 +1709,7 @@ function OwnerControls({
         <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
       ) : null}
       {mode === 'idle' ? refusalNotice : null}
-      <p className="owner-status" role="status">
+      <p ref={statusLine} tabIndex={-1} className="owner-status" role="status">
         {refusal || failed ? '' : shown}
       </p>
     </section>
@@ -2995,7 +2995,9 @@ export default function LibraryPage({
           (attention.isPlaceholderData
             ? undefined
             : attentionItems.find((item) => item.id === search.preview)) ??
-          (detail.data && reconciledSuccessorIdentity === search.preview
+          // A readable case names its own work, so the selection survives a
+          // Library result or Attention page that no longer lists it.
+          (!detail.isError && detail.data?.id === search.preview
             ? {
                 id: detail.data.id,
                 title: detail.data.title,
@@ -3012,7 +3014,7 @@ export default function LibraryPage({
       attention.isPlaceholderData,
       currentWorks,
       detail.data,
-      reconciledSuccessorIdentity,
+      detail.isError,
       search.preview,
     ],
   )
@@ -3153,6 +3155,12 @@ export default function LibraryPage({
         // The server refuses a superseded case's read as stale; that is the
         // case no longer being current. Each successor's target is checked.
         if (!(error instanceof ApiError && error.code === 'stale')) {
+          // The check itself failed, so the case is read again while what the
+          // owner has open stays; a failed read then drops it (#1365).
+          void queryClient.refetchQueries({
+            queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
+            exact: true,
+          })
           setMovingFrom(null)
           setSuccessorPending(null)
           return
@@ -3195,10 +3203,16 @@ export default function LibraryPage({
           // still name its replacement.
         }
       }
+      // A move that ends nowhere leaves a predecessor its own read refused, so
+      // its retained case read is read again rather than shown as current.
+      void queryClient.resetQueries({
+        queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
+        exact: true,
+      })
       setMovingFrom(null)
       setSuccessorPending(null)
     })()
-  }, [data, retained, works, http, navigate, search.preview, successorGeneration])
+  }, [data, retained, works, http, navigate, queryClient, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const [pendingIdentity, setPendingIdentity] = useState<{
     id: string
@@ -3482,7 +3496,8 @@ export default function LibraryPage({
     return () => cancelAnimationFrame(frame)
   }, [preparationSelected, presentation?.run_id])
   const identityPending =
-    !displayedIdentity && (reading || attention.isPending || attention.isPlaceholderData)
+    !displayedIdentity &&
+    (reading || attention.isPending || attention.isPlaceholderData || detail.isPending)
   const identityError = !displayedIdentity && (failed || attention.isError)
   // While a command records, the Library asks for the successor, the owner is
   // moved to it, or its identity is still being read, the absence is the move.
@@ -4344,6 +4359,8 @@ export default function LibraryPage({
                     selectedDetailRetry.current = search.preview ?? null
                     retry()
                     void attention.refetch()
+                    // The case read names the work too, so it is read again (#1365).
+                    if (detail.isError) void detail.refetch()
                   }}
                 >
                   Try again

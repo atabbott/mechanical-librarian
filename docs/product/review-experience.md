@@ -217,8 +217,9 @@ Evidence and History preserve the originating Library lens, bounded search,
 Library page cursor, Attention cursor and selected field through tab switches,
 refresh and Back to work. Return links use the case identity in the diagnostic
 path, including while diagnostics load or cannot be read. Unknown or malformed
-query values never become return settings; returning does not independently
-fetch an off-page work to disguise lost Library context.
+query values never become return settings; returning restores the selected
+work from its own case read and does not fetch another Library page to
+disguise lost Library context.
 
 A `ReviewGroup` is a display/query projection for confirmed instances of the
 same work, such as an Audiobookshelf ebook and audiobook or a future target in
@@ -273,7 +274,11 @@ While a newer Library, Attention or diagnostic read is pending, the content the
 view last showed stays in place, dimmed and marked busy, and its selection,
 paging and queue controls stay inert; it is cleared rather than revived once
 that read settles or fails, and the route is announced as loaded only then. The
-selected-work panel never keeps another work's fields while it loads. Pointer
+selected-work panel never keeps another work's fields while it loads. Its
+identity comes from its own case read when the Library result, page or
+Attention no longer lists the work, so a search, a lens, a deep link or an
+owner outcome that moves the work off the page leaves it on screen; it is
+called unavailable only when that read fails (#1365). Pointer
 or keyboard intent on pager controls, lenses and work rows prefetches that read
 and its route code as background work.
 Owner navigation, typing, paging, retries and command results take priority over
@@ -619,7 +624,8 @@ alternative, Enter a value takes owner text and suggests at most four cleaned
 forms of the current value without recording any; a genre field offers Choose
 genres over the union of current and proposed genres. Recording or
 withdrawing keeps focus on the field's controls and states the outcome there
-instead of advancing to the next field. If the work changes first, the owner
+instead of advancing to the next field; withdrawing moves focus to its outcome
+line, where Withdraw was, so a compact page does not scroll (#1365). If the work changes first, the owner
 stays on it: the page moves to its current case, the field says the work
 changed and nothing was recorded, and its heading takes focus. A hold carried
 from an earlier case says that an earlier owner decision is pausing automatic

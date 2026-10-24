@@ -6106,12 +6106,14 @@ describe('Library route', () => {
         cursor: 'library-page',
       })
       cleanup()
+      // Without the Attention page the case read still names the work (#1365).
       renderRoute('/library?lens=all&preview=case-2&field=authors', http)
+      expect(await screen.findByRole('heading', { name: target.title })).toBeVisible()
       expect(
-        await screen.findByText('This work is not available in the current Library result.'),
+        await screen.findByRole('button', { name: 'Choose current value: Later author' }),
       ).toBeVisible()
       expect(
-        screen.queryByRole('button', { name: 'Choose current value: Later author' }),
+        screen.queryByText('This work is not available in the current Library result.'),
       ).toBeNull()
     },
   )
@@ -6175,8 +6177,8 @@ describe('Library route', () => {
     },
   )
 
-  it.each(['ready', 'absent', 'retry', 'persistent'] as const)(
-    'settles the newly anchored Attention identity truthfully: %s',
+  it.each(['ready', 'absent', 'failed', 'persistent'] as const)(
+    'settles the newly anchored work from its case read whatever its Attention page says: %s',
     async (outcome) => {
       const user = userEvent.setup()
       const title = detail.fields[0]
@@ -6196,6 +6198,8 @@ describe('Library route', () => {
       type Page = Awaited<ReturnType<ReviewHttp['getAttention']>>
       let settle: ((value: Page) => void) | undefined
       let fail: ((error: Error) => void) | undefined
+      let releaseDetail: (() => void) | undefined
+      const detailRead = new Promise<void>((resolve) => (releaseDetail = resolve))
       let laterReads = 0
       const http = createHttp()
       http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) => {
@@ -6208,16 +6212,16 @@ describe('Library route', () => {
           fail = reject
         })
       })
-      http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) =>
-        id === 'case-2'
-          ? {
-              ...detail,
-              id,
-              title: target.title,
-              fields: [{ ...title, currentValue: 'Anchored choice' }],
-            }
-          : detail,
-      )
+      http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        if (id !== 'case-2') return detail
+        await detailRead
+        return {
+          ...detail,
+          id,
+          title: target.title,
+          fields: [{ ...title, currentValue: 'Anchored choice' }],
+        }
+      })
       renderRoute('/library?lens=all&attention=open', http)
       await waitFor(() => expect(screen.getByLabelText('Attention queue')).toHaveFocus())
       await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
@@ -6227,46 +6231,102 @@ describe('Library route', () => {
       const loading = await screen.findByText('Loading selected work…')
       const workspace = loading.closest('section')
       await waitFor(() => expect(workspace).toHaveFocus())
+      const search = screen.getByRole('searchbox')
+      if (outcome === 'persistent') search.focus()
+      await act(async () => {
+        if (outcome === 'failed') fail?.(new Error('anchored identity unavailable'))
+        else settle?.({ total: 2, items: outcome === 'absent' ? [] : [target] })
+      })
+      // Until the case read settles, the work is loading, never absent (#1365).
+      expect(screen.getByText('Loading selected work…')).toBeVisible()
       expect(
         screen.queryByText('This work is not available in the current Library result.'),
       ).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
       expect(
         screen.queryByRole('button', { name: 'Choose current value: Anchored choice' }),
       ).toBeNull()
-      const search = screen.getByRole('searchbox')
-      if (outcome === 'persistent') search.focus()
-      if (outcome === 'retry') {
-        await act(async () => fail?.(new Error('anchored identity unavailable')))
-        const retry = await screen.findByRole('button', { name: 'Try again' })
-        retry.focus()
-        await user.click(retry)
-        await waitFor(() => expect(laterReads).toBe(3))
-        await act(async () => fail?.(new Error('still unavailable')))
-        await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus())
-        await user.keyboard('{Enter}')
-        await waitFor(() => expect(laterReads).toBe(4))
-      }
-      await act(async () => settle?.({ total: 2, items: outcome === 'absent' ? [] : [target] }))
-      if (outcome === 'absent') {
-        expect(
-          await screen.findByText('This work is not available in the current Library result.'),
-        ).toBeVisible()
-        expect(
-          screen.queryByRole('button', { name: 'Choose current value: Anchored choice' }),
-        ).toBeNull()
-      } else {
-        const heading = await screen.findByRole('heading', { name: target.title })
-        expect(
-          await screen.findByRole('button', { name: 'Choose current value: Anchored choice' }),
-        ).toBeVisible()
-        if (outcome === 'persistent') expect(search).toHaveFocus()
-        else await waitFor(() => expect(heading.closest('[data-route-focus]')).toHaveFocus())
-      }
+      await act(async () => releaseDetail?.())
+      const heading = await screen.findByRole('heading', { name: target.title })
+      expect(
+        await screen.findByRole('button', { name: 'Choose current value: Anchored choice' }),
+      ).toBeVisible()
+      if (outcome === 'persistent') expect(search).toHaveFocus()
+      else await waitFor(() => expect(heading.closest('[data-route-focus]')).toHaveFocus())
     },
   )
 
+  it('settles the newly anchored work after Try again reads its failed case and Attention again: retry', async () => {
+    const user = userEvent.setup()
+    const title = detail.fields[0]
+    if (!title) throw new Error('title fixture required')
+    const firstItem = {
+      id: 'case-1',
+      destination: 'title',
+      title: 'A Book',
+      authors: [],
+      library: 'Books',
+      mediaKind: 'ebook',
+      notices: [],
+      provenance: [],
+      workAttentionCount: 1,
+    }
+    const target = { ...firstItem, id: 'case-2', title: 'Anchored target' }
+    type Page = Awaited<ReturnType<ReviewHttp['getAttention']>>
+    let settle: ((value: Page) => void) | undefined
+    let fail: ((error: Error) => void) | undefined
+    let laterReads = 0
+    let caseReads = 0
+    const http = createHttp()
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) => {
+      if (cursor !== 'later-page') return { total: 2, items: [firstItem], nextCursor: 'later-page' }
+      laterReads += 1
+      if (laterReads === 1) return { total: 2, items: [target] }
+      return new Promise<Page>((resolve, reject) => {
+        settle = resolve
+        fail = reject
+      })
+    })
+    // The anchored case's own read fails twice, then recovers.
+    http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+      if (id !== 'case-2') return detail
+      caseReads += 1
+      if (caseReads < 3) throw new ApiError(503, 'unavailable')
+      return {
+        ...detail,
+        id,
+        title: target.title,
+        fields: [{ ...title, currentValue: 'Anchored choice' }],
+      }
+    })
+    renderRoute('/library?lens=all&attention=open', http)
+    await waitFor(() => expect(screen.getByLabelText('Attention queue')).toHaveFocus())
+    await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
+    const row = await screen.findByRole('button', { description: 'Anchored target' })
+    row.focus()
+    await user.keyboard('{Enter}')
+    await screen.findByText('Loading selected work…')
+    await act(async () => fail?.(new Error('anchored identity unavailable')))
+    const retry = await screen.findByRole('button', { name: 'Try again' })
+    retry.focus()
+    await user.click(retry)
+    await waitFor(() => expect(laterReads).toBe(3))
+    await waitFor(() => expect(caseReads).toBe(2))
+    await act(async () => fail?.(new Error('still unavailable')))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus())
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(laterReads).toBe(4))
+    await act(async () => settle?.({ total: 2, items: [target] }))
+    const heading = await screen.findByRole('heading', { name: target.title })
+    expect(
+      await screen.findByRole('button', { name: 'Choose current value: Anchored choice' }),
+    ).toBeVisible()
+    expect(caseReads).toBe(3)
+    await waitFor(() => expect(heading.closest('[data-route-focus]')).toHaveFocus())
+  })
+
   it.each(['not_found', 'pending'])(
-    'keeps successful identity absence authoritative when detail is %s',
+    'calls an off-page work unavailable only once its case read fails: %s',
     async (state) => {
       const http = createHttp()
       http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async () => {
@@ -6274,9 +6334,15 @@ describe('Library route', () => {
         throw new ApiError(404, 'not_found')
       })
       renderRoute('/library?lens=all&preview=missing-case', http)
-      expect(
-        await screen.findByText('This work is not available in the current Library result.'),
-      ).toBeVisible()
+      if (state === 'pending') {
+        // The Library result has settled without it, but its own read has not (#1365).
+        expect(await screen.findByRole('button', { name: /^A Book\./u })).toBeVisible()
+        expect(await screen.findByText('Loading selected work…')).toBeVisible()
+        expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+      } else
+        expect(
+          await screen.findByText('This work is not available in the current Library result.'),
+        ).toBeVisible()
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
       expect(screen.queryByText('Case superseded')).toBeNull()
       expect(http.getCaseDetail).toHaveBeenCalledWith(
@@ -7082,11 +7148,13 @@ describe('Library route', () => {
     })
     await waitFor(() => expect(libraryReads()).toBe(2))
     await waitFor(() => expect(detailReads('case-3')).toBe(1))
-    expect(detailReads('case-1')).toBe(2)
+    // The move's own read, then the selected-case query read again because
+    // the move ended nowhere and the retained read is no longer current (#1365).
+    await waitFor(() => expect(detailReads('case-1')).toBe(3))
     // No loop, and the next frame arrives past the Library refresh bound.
     await new Promise((resolve) => setTimeout(resolve, libraryRefreshMilliseconds + 20))
     expect(libraryReads()).toBe(2)
-    expect(detailReads('case-1')).toBe(2)
+    expect(detailReads('case-1')).toBe(3)
     expect(detailReads('case-3')).toBe(1)
 
     await act(async () => {
@@ -7102,7 +7170,7 @@ describe('Library route', () => {
     )
     expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
     await waitFor(() => expect(libraryReads()).toBe(3))
-    expect(detailReads('case-1')).toBe(3)
+    expect(detailReads('case-1')).toBe(4)
     expect(detailReads('case-3')).toBe(1)
     // One read proves target identity before navigation; the other is the
     // ordinary selected-case query for the replacement URL.
@@ -8293,7 +8361,7 @@ describe('Library route', () => {
   })
 
   it.each(['absent', 'error'] as const)(
-    'retains public identity only during pending search and clears it after %s',
+    'keeps the selected work through a search that settles %s and clears only its rows',
     async (result) => {
       let settle: ((value: LibraryView) => void) | undefined
       let reject: ((error: Error) => void) | undefined
@@ -8326,15 +8394,11 @@ describe('Library route', () => {
           settle?.({ ...library, works: [], counts: { attention: 0, all: 0, clear: 0 } })
         else reject?.(new Error('Collection unavailable'))
       })
-      expect(
-        await screen.findByText(
-          result === 'absent'
-            ? 'This work is not available in the current Library result.'
-            : 'Selected work could not be loaded.',
-        ),
-      ).toBeVisible()
-      expect(screen.queryByRole('heading', { level: 2, name: 'A Book' })).toBeNull()
-      expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull()
+      // Search scopes the result list; the case read keeps the selection (#1365).
+      await waitFor(() => expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull())
+      expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+      expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+      expect(screen.queryByText('Selected work could not be loaded.')).toBeNull()
       expect(list).not.toHaveAttribute('aria-busy')
       await act(async () => {
         await router.navigate({
@@ -8342,8 +8406,7 @@ describe('Library route', () => {
           search: { lens: 'all', preview: 'case-1', q: 'later' },
         })
       })
-      expect(await screen.findByText('Loading selected work…')).toBeVisible()
-      expect(screen.queryByRole('heading', { level: 2, name: 'A Book' })).toBeNull()
+      expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
       // Rows a settled read already cleared are never revived for a later read.
       expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull()
     },
@@ -8565,7 +8628,7 @@ describe('Library route', () => {
     delayedNavigate.mockRestore()
   })
 
-  it('preserves an off-page preview deep link without exposing detail target identity', async () => {
+  it('shows an off-page preview deep link from its case read without detail-only identity', async () => {
     const emptyLibrary: LibraryView = {
       lens: 'all',
       page: 1,
@@ -8575,20 +8638,16 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => emptyLibrary),
-      getCaseDetail: vi.fn(async () => ({
-        ...detail,
-        title: 'item-1',
-        subtitle: 'internal identity',
-      })),
+      getCaseDetail: vi.fn(async () => ({ ...detail, subtitle: 'internal identity' })),
     }
     renderRoute('/library?lens=all&preview=case-1', http)
 
-    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalled())
-    expect(await screen.findByRole('heading', { name: 'Selected work' })).toBeVisible()
+    // The case read carries the same readable title, authors, library and
+    // format a Library row does (#1365).
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     expect(
-      screen.getByText('Readable work identity is not available on this Library page.'),
-    ).toBeVisible()
-    expect(screen.queryByText('item-1')).toBeNull()
+      screen.queryByText('Readable work identity is not available on this Library page.'),
+    ).toBeNull()
     expect(screen.queryByText('internal identity')).toBeNull()
     expect(screen.queryByRole('link', { name: /Open full review|Open all evidence/u })).toBeNull()
   })
