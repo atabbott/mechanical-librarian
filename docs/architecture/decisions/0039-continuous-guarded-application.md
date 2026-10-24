@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-[ADR-0085](0085-owner-entered-values-and-guarded-revert.md) amends manual holds:
+[ADR-0085](0085-owner-entered-values-withdrawal-and-reselection.md) amends manual holds:
 admission carries a work's active hold to its successor case.
 
 ## Context

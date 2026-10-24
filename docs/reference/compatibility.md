@@ -515,8 +515,8 @@ install, so no adoption or relabelling is supplied.
 ## Owner-entered values successor (#1285)
 
 #1285 moves owner decisions to `human-decision-v3`, whose outcomes add
-`owner_entered`, `withdraw` and `revert` and whose new `reverts_plan_id` joins
-the request digest; the `human_decisions` outcome check widens with it. Case
+`owner_entered` and `withdraw`; the `human_decisions` outcome check widens with
+it. Case
 detail moves to `review-case-detail-v6` (each field's `owner_control`) and
 history to `review-case-history-v3`. Owner decisions are canonical authority, so
 upgrading requires a clean rebuild: a predecessor database is refused before

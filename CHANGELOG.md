@@ -4,8 +4,8 @@
 
 - Where no proposed value fits, you can now enter a title, subtitle or
   publisher yourself, with suggested clean-ups, or choose which genres to keep.
-  A recorded decision can be changed or withdrawn, and a written one restored
-  to the value it replaced while the field still holds it. Your hold on
+  A recorded decision can be changed or withdrawn, and after a write the value
+  it replaced is offered as Previous value to choose again. Your hold on
   automatic handling now follows the work when it is re-read. Upgrading
   requires a clean rebuild (#1285).
 

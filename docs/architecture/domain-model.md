@@ -225,10 +225,10 @@ decision concept.
 `HumanDecision` (`human-decision-v3`) is one immutable owner fact for one case,
 proposal and destination. Its outcome is `accept` (a retained alternative),
 `keep_current`, historical `reject`, `owner_entered` (owner text for title,
-subtitle or publisher, or an in-order genre subset), `withdraw` (no value; the
-field is undecided again) or `revert` (the recorded pre-image of the named
-`reverts_plan_id`). The latest row for a case and destination decides it unless
-it is a withdrawal. A decision is not write authority by itself; the guarded
+subtitle or publisher, or an in-order genre subset) or `withdraw` (no value;
+the field is undecided again). Going back to an earlier value is a new
+`owner_entered` row choosing it again. The latest row for a case and
+destination decides it unless it is a withdrawal. A decision is not write authority by itself; the guarded
 effect boundary plans, claims and verifies every write (ADR-0085).
 
 ## Current book catalogue

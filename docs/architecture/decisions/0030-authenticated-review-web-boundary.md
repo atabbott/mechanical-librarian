@@ -1,8 +1,9 @@
 # ADR-0030: Use one authenticated Python review web boundary
 
 Transport provisions are superseded by [ADR-0072](0072-explicit-local-transport.md);
-all other provisions remain in force. [ADR-0085](0085-owner-entered-values-and-guarded-revert.md)
-admits guarded revert of a written owner decision; bulk editing stays excluded.
+all other provisions remain in force. [ADR-0085](0085-owner-entered-values-withdrawal-and-reselection.md)
+keeps reversal excluded: an earlier value returns only as a new owner-entered
+decision. Undo and revert stay unavailable; bulk editing stays excluded.
 
 
 Status: accepted

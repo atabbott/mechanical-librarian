@@ -2,8 +2,9 @@
 
 Status: Accepted
 
-[ADR-0085](0085-owner-entered-values-and-guarded-revert.md) adds owner-confirmed
-revert as a new guarded write; rollback, Undo and clearing stay unavailable.
+[ADR-0085](0085-owner-entered-values-withdrawal-and-reselection.md) adds owner-entered
+values; going back means choosing the earlier value again as a new guarded
+write. Rollback, Undo, revert and clearing stay unavailable.
 
 ## Context
 

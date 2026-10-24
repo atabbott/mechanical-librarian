@@ -195,8 +195,8 @@ Every earlier application database is rejected before mutation and needs a
 clean rebuild; no adoption is supplied.
 
 Issue #1285 also takes the clean-rebuild branch. Owner decisions move to
-`human-decision-v3`, whose new outcomes and `reverts_plan_id` change the
-document, its request digest and the `human_decisions` outcome check. Owner
+`human-decision-v3`, whose new outcomes change the document, its request
+digest and the `human_decisions` outcome check. Owner
 decisions are canonical authority rather than reconstructible derived objects,
 so the adoption branch does not apply. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.

@@ -323,7 +323,7 @@ applicable`.
 
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
-| F59 Owner-entered values, changeable decisions and genre subsets | #1285 | A field with no fitting alternative takes an owner-entered value or genre subset; a recorded decision can be changed or withdrawn; and a written owner decision can be restored to the value it replaced through a guarded write. | Delivered; ADR-0085, amending ADR-0030, ADR-0037 and ADR-0039. |
+| F59 Owner-entered values, changeable decisions and genre subsets | #1285 | A field with no fitting alternative takes an owner-entered value or genre subset; a recorded decision can be changed or withdrawn; and after a write the value it replaced can be chosen again as an ordinary owner-entered value. Fields without owner entry return to an earlier value only through a provider proposal. | Delivered; ADR-0085, amending ADR-0030, ADR-0037 and ADR-0039. |
 
 | Order | Issues | Outcome |
 | --- | --- | --- |

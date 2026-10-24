@@ -1,7 +1,7 @@
 # Upgrades and compatibility
 
 #1285 moves owner decisions to `human-decision-v3`, with the outcomes
-`owner_entered`, `withdraw` and `revert`, and widens the `human_decisions`
+`owner_entered` and `withdraw`, and widens the `human_decisions`
 outcome check. **Clean rebuild required** for every predecessor application
 database; startup refuses it before mutation. Owner decisions are canonical
 authority, so no migration, adoption, conversion, import or downgrade is
