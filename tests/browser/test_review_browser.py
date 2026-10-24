@@ -8383,11 +8383,15 @@ def test_the_previous_title_chosen_after_the_library_changed_is_refused():
         _said_nothing_false_while_moving(page)
 
 
-def test_an_open_entry_moves_to_the_case_that_superseded_it():
+@pytest.mark.parametrize("first", ("library", "lineage"))
+def test_an_open_entry_moves_to_the_case_that_superseded_it(first):
     """MF1: the library edits the title while the owner types; the real
     server refuses the superseded case's read as stale, and the owner still
-    reaches the current case, told why, with focus on the field heading."""
+    reaches the current case, told why, with focus on the field heading.
+    Whichever of the Library read and the successor read answers first, the
+    page never says the work is unavailable on the way."""
     readback: list[Callable[[str], str]] = []
+    held: list[Route] = []
     with _owner_page(
         genre_fixture=("Fantasy",), genre_current=("Drama",), owner_readback=readback
     ) as (page, origin, case_id):
@@ -8396,7 +8400,27 @@ def test_an_open_entry_moves_to_the_case_that_superseded_it():
         panel.get_by_role("button", name="Enter a value", exact=True).click()
         panel.get_by_role("textbox", name="Your value for Title").fill("Half Typed")
         page.evaluate(_WATCH_ANNOUNCEMENTS)
-        successor = readback[0](OWNER_EDIT)
+
+        def library(url: str) -> bool:
+            return "/api/v1/library?" in url
+
+        def lineage(url: str) -> bool:
+            return url.endswith("/successor")
+
+        def hold(route: Route) -> None:
+            held.append(route)
+
+        # The read held back answers last, after the other and Attention.
+        sooner, later = (library, lineage) if first == "library" else (lineage, library)
+        page.route(later, hold)
+        with (
+            page.expect_response(lambda response: sooner(response.url)),
+            page.expect_response(lambda response: "/api/v1/attention" in response.url),
+        ):
+            successor = readback[0](OWNER_EDIT)
+        page.unroute(later)
+        for route in held:
+            route.continue_()
         assert successor != case_id
         page.wait_for_url(re.compile(f"preview={successor}"))
         moved = page.get_by_role("region", name="Your value for Title")

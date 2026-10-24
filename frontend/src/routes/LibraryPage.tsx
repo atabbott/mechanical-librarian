@@ -2712,6 +2712,9 @@ export default function LibraryPage({
   // The case being left for its successor: while it is, its own failed read
   // and its absence from Library are the move, not something to report.
   const [movingFrom, setMovingFrom] = useState<string | null>(null)
+  // The case whose lineage check named a successor the move has not yet
+  // started following: its absence from Library is that move, not news.
+  const [successorNamed, setSuccessorNamed] = useState<string | null>(null)
   const ownerField = useRef<string | null>(null)
   // The case whose owner form was open, or whose owner control had focus,
   // when the Library said it changed; the refetch that follows can unmount it.
@@ -3030,15 +3033,17 @@ export default function LibraryPage({
       return
     // A successful null is authoritative; only the query's single bounded
     // retry treats transport failure as pending reconciliation.
+    const named = lineageSuccessor.data
+    const following =
+      named !== null && pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
     queueMicrotask(() => {
       setActiveLineageGeneration(null)
       setLineageReconciliation(null)
+      if (following && selectedTargetRef.current?.caseId === reconciliation.selection)
+        setSuccessorNamed(reconciliation.selection)
     })
-    if (
-      lineageSuccessor.data !== null &&
-      pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
-    ) {
-      pendingSuccessorRef.current.add(lineageSuccessor.data)
+    if (following) {
+      pendingSuccessorRef.current.add(named)
       setSuccessorGeneration((generation) => generation + 1)
     }
   }, [
@@ -3114,6 +3119,7 @@ export default function LibraryPage({
       return
     pendingSuccessorRef.current.clear()
     setMovingFrom(selectedTarget.caseId)
+    setSuccessorNamed(null)
     void (async () => {
       try {
         const predecessor = await http.getCaseDetail(selectedTarget.caseId)
@@ -4304,7 +4310,7 @@ export default function LibraryPage({
           ) : !displayedIdentity && staleCoverNotice ? (
             staleCoverNotice
           ) : !displayedIdentity ? (
-            identityPending || leaving ? (
+            identityPending || leaving || successorNamed === search.preview ? (
               <p role="status">Loading selected work…</p>
             ) : identityError ? (
               <p role="alert">

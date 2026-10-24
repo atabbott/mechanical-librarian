@@ -530,6 +530,68 @@ describe('owner review fixes', () => {
     expect(within(moved).queryByText('The work changed. Review it again.')).toBeNull()
   })
 
+  it.each(['current', 'gone'] as const)(
+    'M4 calls the work unavailable only once the successor it was given is %s',
+    async (successorState) => {
+      const user = userEvent.setup()
+      let stale = false
+      const updates = createLiveStream()
+      let answered: () => void = () => undefined
+      const lineage = new Promise<void>((resolve) => {
+        answered = resolve
+      })
+      const http = {
+        ...owner(() => [contextTitle]),
+        // Library answers only after the successor read has: the case is gone
+        // from Library while nothing has started moving yet.
+        getLibrary: vi.fn(async () => {
+          if (!stale) return quietLibrary
+          await lineage
+          await new Promise((resolve) => setTimeout(resolve, 20))
+          return { ...quietLibrary, works: [] }
+        }),
+        getCaseSuccessor: vi.fn(async () => {
+          if (!stale) return null
+          answered()
+          return 'case-2'
+        }),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+          if (stale && id === 'case-1') throw new ApiError(409, 'stale')
+          if (id === 'case-2' && successorState === 'gone') throw new ApiError(404, 'not_found')
+          return { ...detail, id, fields: [contextTitle] }
+        }),
+      }
+      const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+      const panel = await screen.findByRole('region', { name: 'Your value for Title' })
+      await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+      // Every frame counts, including one a later effect replaces at once.
+      const frames: string[] = []
+      const observer = new MutationObserver((records) => {
+        for (const record of records)
+          for (const node of record.addedNodes) frames.push(node.textContent ?? '')
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+      stale = true
+      await act(async () => {
+        updates.announce({ sequence: 83, subject: null, topic: 'library' })
+        await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 60))
+      })
+      if (successorState === 'gone') {
+        // The move ends with nowhere to go, so the absence is news after all.
+        expect(await screen.findByRole('heading', { name: 'Selected work' })).toBeVisible()
+        expect(router.state.location.search.preview).toBe('case-1')
+        observer.disconnect()
+        expect(frames.some((frame) => frame.includes('Loading selected work…'))).toBe(true)
+        return
+      }
+      await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+      await screen.findByRole('region', { name: 'Your value for Title' })
+      observer.disconnect()
+      expect(frames.some((frame) => frame.includes('Loading selected work…'))).toBe(true)
+      expect(frames.filter((frame) => frame.includes('not available in the current'))).toEqual([])
+    },
+  )
+
   it('M4 leaves focus on the work, not the page, when no successor is found', async () => {
     const user = userEvent.setup()
     let stale = false
