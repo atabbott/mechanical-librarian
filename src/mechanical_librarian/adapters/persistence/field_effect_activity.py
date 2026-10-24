@@ -124,7 +124,8 @@ from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
-    UNREVERSIBLE_DESTINATIONS,
+    OWNER_SUBSET_DESTINATION,
+    OWNER_TEXT_DESTINATIONS,
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
@@ -797,37 +798,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         }
 
     @local_operation
-    def revert_candidates(
+    def previous_field_values(
         self, connection: str, library: str, work_id: str
-    ) -> tuple[dict[str, object], ...]:
-        return self._revert_candidates(connection, library, work_id)
+    ) -> tuple[tuple[str, object], ...]:
+        return self._previous_field_values(connection, library, work_id)
 
-    def _revert_candidates(
+    def _previous_field_values(
         self, connection: str, library: str, work_id: str
-    ) -> tuple[dict[str, object], ...]:
-        """Say, per destination, whether the work's latest write can be reverted.
+    ) -> tuple[tuple[str, object], ...]:
+        """What each owner-entry field held before the work's latest verified write.
 
-        The latest plan is ordered by (`updated_at`, `plan_id`) through the
-        target index. A superseded, stale or abandoned plan wrote nothing it
-        kept, so it is never the latest write. A subtitle a title plan wrote as its companion
-        counts as that destination's latest write too, and is never revertible.
-        `eligibility` is `eligible`, `no_previous_value`, `unavailable`,
-        `reverted` (the latest write was itself a revert: no redo) or `pending`
-        (a later plan is still in flight). Whether the field still holds the
-        written value is the caller's comparison against its case target.
+        This is a read only: the value is offered as a suggestion, which grants
+        no authority, so a write of any origin counts. The latest write is
+        ordered by (`updated_at`, `plan_id`) through the target index. A subtitle
+        a title plan wrote as its companion is that destination's latest write
+        too, and offers nothing. A pre-image the plan and its verified audit
+        disagree about is a corruption signal and is never offered (ADR-0085).
         """
         try:
             rows = self._connection.execute(
-                "SELECT destination,plan_id,state,updated_at,document,outcome,companion FROM ("
-                "SELECT effect.destination,effect.plan_id,effect.state,effect.updated_at,"
-                "effect.document,human.outcome,"
+                "SELECT destination,plan_id,updated_at,document,companion FROM ("
+                "SELECT effect.destination,effect.plan_id,effect.updated_at,"
+                "effect.document,"
                 "json_extract(effect.document,'$.plan.subtitle_companion') IS NOT NULL companion,"
                 "row_number() OVER (PARTITION BY effect.destination "
                 "ORDER BY effect.updated_at DESC,effect.plan_id DESC) position "
-                "FROM field_effects effect LEFT JOIN human_decisions human "
-                "ON human.decision_id=effect.decision_id WHERE effect.connection_name=? "
+                "FROM field_effects effect WHERE effect.connection_name=? "
                 "AND effect.library_name=? AND effect.work_id=? "
-                "AND effect.state NOT IN ('superseded','stale','abandoned')"
+                "AND effect.state='verified'"
                 ") WHERE position=1 ORDER BY destination LIMIT 17",
                 (connection, library, work_id),
             ).fetchall()
@@ -838,62 +836,38 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             subtitle = latest.get("subtitle")
             if (
                 title is not None
-                and title[6]
+                and title[4]
                 and (
                     subtitle is None
-                    or (title[3], title[1]) > (subtitle[3], subtitle[1])
+                    or (title[2], title[1]) > (subtitle[2], subtitle[1])
                 )
             ):
                 latest["subtitle"] = title
-            candidates = []
-            for destination, row in sorted(latest.items()):
-                _, plan_id, state, _, document, outcome, companion = row
-                operation = FieldEffectOperation.from_json(document)
-                plan = operation.plan
-                if destination in UNREVERSIBLE_DESTINATIONS:
-                    continue
-                if state != "verified":
-                    eligibility = "pending"
-                elif plan.authority.origin != "human":
-                    continue
-                elif outcome == "revert":
-                    eligibility = "reverted"
-                elif outcome not in {"accept", "owner_entered", "keep_current"} or (
-                    companion or plan.destination != destination
+            values = []
+            for destination, (_, plan_id, _, document, _) in sorted(latest.items()):
+                plan = FieldEffectOperation.from_json(document).plan
+                if (
+                    destination
+                    not in (*OWNER_TEXT_DESTINATIONS, OWNER_SUBSET_DESTINATION)
+                    or plan.destination != destination
+                    or plan.pre_value is None
                 ):
-                    eligibility = "unavailable"
-                else:
-                    verified = self._connection.execute(
-                        "SELECT occurred_at,document FROM field_effect_events "
-                        "WHERE plan_id=? AND kind='verified' ORDER BY sequence DESC LIMIT 1",
-                        (plan_id,),
-                    ).fetchone()
-                    eligibility = "eligible"
-                    if verified is None or _canonical_json(
-                        json.loads(verified[1]).get("pre_value")
-                    ) != _canonical_json(plan.pre_value):
-                        # The audit and the plan disagree about what was there
-                        # before: a corruption signal, never a guess (ADR-0085).
-                        eligibility = "unavailable"
-                    elif plan.pre_value is None:
-                        eligibility = "no_previous_value"
-                    else:
-                        try:
-                            validate_effect_value(destination, plan.pre_value)
-                        except FieldEffectError:
-                            eligibility = "no_previous_value"
-                candidates.append(
-                    {
-                        "destination": destination,
-                        "plan_id": plan_id,
-                        "eligibility": eligibility,
-                        "pre_value": plan.pre_value,
-                        "desired_value": plan.desired_value,
-                        "written_at": operation.updated_at,
-                        "review_case_id": plan.authority.review_case_id,
-                    }
-                )
-            return tuple(candidates)
+                    continue
+                verified = self._connection.execute(
+                    "SELECT document FROM field_effect_events "
+                    "WHERE plan_id=? AND kind='verified' ORDER BY sequence DESC LIMIT 1",
+                    (plan_id,),
+                ).fetchone()
+                if verified is None or _canonical_json(
+                    json.loads(verified[0]).get("pre_value")
+                ) != _canonical_json(plan.pre_value):
+                    continue
+                try:
+                    validate_effect_value(destination, plan.pre_value)
+                except FieldEffectError:
+                    continue
+                values.append((destination, plan.pre_value))
+            return tuple(values)
         except (sqlite3.Error, json.JSONDecodeError, AttributeError) as error:
             raise FieldEffectError("persistence") from error
 
@@ -1188,7 +1162,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
                 "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
-                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered','revert') OR ("
+                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered') OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
@@ -1280,7 +1254,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
                 "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
-                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered','revert') OR ("
+                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered') OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
@@ -1964,26 +1938,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 if candidate.candidate_id != authored.candidate_id:
                     raise FieldEffectError("persistence")
                 authored_records[authored.decision_id] = authored, candidate
-        # A write that restores a pre-image says so when it stops (ADR-0085).
-        effect_ids = sorted(
-            {
-                row[17]
-                for row in rows
-                if row[13] == "field_effect" and type(row[17]) is str
-            }
-        )
-        restoring = {
-            row[0]
-            for row in (
-                self._connection.execute(
-                    "SELECT decision_id FROM human_decisions WHERE outcome='revert' "
-                    "AND decision_id IN (" + ",".join("?" for _ in effect_ids) + ")",
-                    effect_ids,
-                )
-                if effect_ids
-                else ()
-            )
-        }
         projected_events: list[dict[str, object]] = []
         decision: (
             HumanDecision
@@ -2442,8 +2396,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 durable["desired_value"] = raw["desired_value"]
                 if "subtitle_companion" in raw:
                     durable["subtitle_companion"] = raw["subtitle_companion"]
-                if source_identity in restoring:
-                    durable["restores"] = True
             elif source_kind == "human_decision":
                 if type(decision) is not HumanDecision:
                     raise FieldEffectError("persistence")

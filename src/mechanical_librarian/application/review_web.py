@@ -45,10 +45,7 @@ from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceBinding,
 )
-from mechanical_librarian.domain.field_effect import (
-    decision_value_kind,
-    field_value_version,
-)
+from mechanical_librarian.domain.field_effect import decision_value_kind
 from mechanical_librarian.domain.field_outcomes import language_is_unknown
 from mechanical_librarian.domain.human_decision import (
     OWNER_SUBSET_DESTINATION,
@@ -63,6 +60,7 @@ from mechanical_librarian.domain.human_decision import (
     decision_actions,
     genre_subset_available,
     list_union,
+    owner_text,
     owner_value_admitted,
     owner_value_suggestions,
 )
@@ -229,10 +227,10 @@ class CurrentReviewCaseSnapshot:
     current_cover_automatic_decision_id: str | None = None
     resolved_policy_document: str | None = None
     description_advice: dict[str, object] | None = None
-    # F59's owner controls: each latest owner decision's write state, and the
-    # work's revertible writes as `revert_candidates` states them (ADR-0085).
+    # F59's owner controls: each latest owner decision's write state, and what
+    # each owner-entry field held before its latest verified write (ADR-0085).
     decision_effect_states: tuple[tuple[str, str], ...] = ()
-    revert_candidates: tuple[dict[str, object], ...] = ()
+    previous_values: tuple[tuple[str, object], ...] = ()
     # Destinations whose automatic handling an owner hold keeps off on this
     # case, including a hold carried forward from an earlier case (ADR-0085).
     held_destinations: tuple[str, ...] = ()
@@ -458,6 +456,9 @@ class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
     ) -> str: ...
 
     def find_human_decision(self, idempotency_digest: str) -> str | None: ...
+    def previous_field_values(
+        self, connection: str, library: str, work_id: str
+    ) -> tuple[tuple[str, object], ...]: ...
     def record_human_decision(
         self,
         decision: HumanDecision,
@@ -825,7 +826,6 @@ class InspectCurrentReviewCase:
             actions = () if cover_preparation_available else decision_actions(proposal)
             owner_control = _owner_control(
                 proposal,
-                case,
                 target_fields,
                 proposals,
                 decision,
@@ -1400,7 +1400,6 @@ class RecordHumanDecision:
         idempotency_key: str,
         consideration_id: str | None = None,
         cover_confirmation: dict[str, object] | None = None,
-        reverts_plan_id: str | None = None,
     ) -> dict[str, object]:
         try:
             idempotency_digest = HumanDecision.idempotency_digest_for(idempotency_key)
@@ -1425,7 +1424,6 @@ class RecordHumanDecision:
                     outcome=outcome,
                     selected_value=selected_value,
                     idempotency_key=idempotency_key,
-                    reverts_plan_id=reverts_plan_id,
                 ):
                     raise ReviewWebError("idempotency_conflict")
                 try:
@@ -1474,6 +1472,19 @@ class RecordHumanDecision:
                 # cannot name -- must leave the decision itself unaffected. The
                 # only consequence is that no ``human_wait`` sample is recorded.
                 ready_at = None
+            previous = None
+            if outcome == "owner_entered":
+                target = case.target
+                try:
+                    previous = dict(
+                        self._repository.previous_field_values(
+                            str(target["connection"]),
+                            str(target["library"]),
+                            str(target["item"]),
+                        )
+                    ).get(destination)
+                except Exception as error:
+                    raise ReviewWebError("persistence") from error
             decision = HumanDecision.create(
                 case,
                 proposal_id=proposal_id,
@@ -1484,7 +1495,7 @@ class RecordHumanDecision:
                 selected_value=selected_value,
                 idempotency_key=idempotency_key,
                 occurred_at=self._clock(),
-                reverts_plan_id=reverts_plan_id,
+                previous=previous,
             )
             try:
                 stored = HumanDecision.from_json(
@@ -2024,17 +2035,8 @@ def _decision_projection(decision: HumanDecision) -> dict[str, object]:
     }
 
 
-def _proposed(destination: str, value: object) -> dict[str, object] | None:
-    return (
-        None
-        if value is None
-        else {"kind": decision_value_kind(destination), "value": value}
-    )
-
-
 def _owner_control(
     proposal: dict[str, object],
-    case: ReviewCase,
     target_fields: dict[str, dict[str, object]],
     proposals: tuple[dict[str, object], ...],
     decision: HumanDecision | None,
@@ -2048,6 +2050,7 @@ def _owner_control(
     """
     destination = cast(str, proposal["destination"])
     current = target_fields[destination]["value"]
+    previous = dict(snapshot.previous_values).get(destination)
     open_ = (
         destination not in snapshot.suspended_destinations
         and destination not in snapshot.override_blocked_destinations
@@ -2064,37 +2067,49 @@ def _owner_control(
             (
                 tuple(
                     item
-                    for item, _, _ in list_union(
-                        value, target_fields["authors"]["value"]
-                    )
+                    for item, *_ in list_union(value, target_fields["authors"]["value"])
                 )
                 for value in proposals
                 if value["destination"] == "authors"
             ),
             (),
         )
-        entry = {
-            "max_characters": OWNER_TEXT_MAXIMUM,
-            "suggestions": [
-                {"rule": suggestion.rule, "value": suggestion.value}
-                for suggestion in owner_value_suggestions(
-                    destination,
-                    current if type(current) is str else None,
-                    authors,
-                )
-            ],
-        }
+        suggestions = [
+            {"rule": suggestion.rule, "value": suggestion.value}
+            for suggestion in owner_value_suggestions(
+                destination,
+                current if type(current) is str else None,
+                authors,
+            )
+        ]
+        # What the field held before its latest verified write is one more
+        # suggestion: it only fills the input, like every other (ADR-0085).
+        if (
+            type(previous) is str
+            and owner_text(previous)
+            and previous != current
+            and all(previous != item["value"] for item in suggestions)
+        ):
+            suggestions.append({"rule": "previous", "value": previous})
+        entry = {"max_characters": OWNER_TEXT_MAXIMUM, "suggestions": suggestions}
     subset = None
     if (
         open_
         and destination == OWNER_SUBSET_DESTINATION
-        and genre_subset_available(proposal, current)
+        and genre_subset_available(proposal, current, previous)
     ):
         subset = {
             "max_items": OWNER_SUBSET_MAXIMUM,
             "options": [
-                {"value": value, "current": in_current, "proposed": proposed}
-                for value, in_current, proposed in list_union(proposal, current)
+                {
+                    "value": value,
+                    "current": in_current,
+                    "proposed": proposed,
+                    "previous": earlier,
+                }
+                for value, in_current, proposed, earlier in list_union(
+                    proposal, current, previous
+                )
             ],
         }
     withdraw = None
@@ -2108,41 +2123,9 @@ def _owner_control(
             if automatic
             else dict(snapshot.decision_effect_states).get(destination, "available")
         )
-    candidate = next(
-        (
-            value
-            for value in snapshot.revert_candidates
-            if value["destination"] == destination
-        ),
-        None,
-    )
-    revert = None
-    if (
-        candidate is not None
-        and candidate["eligibility"] != "pending"
-        # A write is reverted from the case that read it back: until the work
-        # is re-read, this case still holds the value from before the write.
-        and candidate["review_case_id"] != case.review_case_id
-    ):
-        state = {
-            "eligible": "available",
-            "no_previous_value": "no_previous_value",
-            "reverted": "reverted",
-        }.get(cast(str, candidate["eligibility"]), "unavailable")
-        if state == "available" and field_value_version(
-            destination, current
-        ) != field_value_version(destination, candidate["desired_value"]):
-            state = "field_changed"
-        revert = {
-            "state": state,
-            "plan_id": candidate["plan_id"],
-            "written_value": _proposed(destination, candidate["desired_value"]),
-            "previous_value": _proposed(destination, candidate["pre_value"]),
-            "written_at": candidate["written_at"],
-        }
-    if (entry, subset, withdraw, revert) == (None, None, None, None):
+    if (entry, subset, withdraw) == (None, None, None):
         return None
-    return {"entry": entry, "subset": subset, "withdraw": withdraw, "revert": revert}
+    return {"entry": entry, "subset": subset, "withdraw": withdraw}
 
 
 def _corroboration_source_labels(

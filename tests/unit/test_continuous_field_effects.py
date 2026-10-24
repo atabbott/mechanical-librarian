@@ -730,7 +730,6 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
         "outcome": "accept",
         "proposal_id": "review_proposal_" + "a" * 64,
         "review_case_id": "review_case_" + "b" * 64,
-        "reverts_plan_id": None,
         "selected_value": selected,
         "target_fingerprint": "c" * 64,
     }
@@ -2317,7 +2316,6 @@ def _decisions(count: int):
             "outcome": "accept",
             "proposal_id": proposal_id,
             "review_case_id": review_case_id,
-            "reverts_plan_id": None,
             "selected_value": selected,
             "target_fingerprint": "b" * 64,
         }

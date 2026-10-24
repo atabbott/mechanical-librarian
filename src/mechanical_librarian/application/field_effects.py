@@ -282,9 +282,9 @@ def authority_from_decision(
             # instead of returning the same `None` an unaccepted decision
             # returns (#968).
             raise GuardedApplicationError("recorded_only")
-        # An owner-entered value and a revert write exactly the value they
-        # carry, as an accept does (ADR-0085); a withdraw carries none.
-        if decision.outcome not in {"accept", "owner_entered", "revert"} and not (
+        # An owner-entered value writes exactly the value it carries, as an
+        # accept does (ADR-0085); a withdraw carries none.
+        if decision.outcome not in {"accept", "owner_entered"} and not (
             allow_corrective_keep_current and decision.outcome == "keep_current"
         ):
             return None

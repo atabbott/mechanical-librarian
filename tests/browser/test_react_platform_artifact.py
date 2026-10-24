@@ -3763,8 +3763,9 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
 
 
 def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
-    """The entry, subset and restore controls break no word at any width or
-    text size, in light and dark, with motion and reduced (#1285)."""
+    """The entry and subset controls, with the previous value among their
+    choices, break no word at any width or text size, in light and dark, with
+    motion and reduced (#1285)."""
     styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
     text = "default"
     with ExitStack() as stack:
@@ -3802,7 +3803,12 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                     )
                     title = page.get_by_role("region", name="Your value for Title")
                     title.get_by_role("button", name="Enter a value").click()
-                    title.get_by_role("button", name="Restore earlier value…").click()
+                    expect(
+                        title.get_by_role(
+                            "button",
+                            name="Use previous value “Uncharacteristically Interdisciplinary”",
+                        )
+                    ).to_be_visible()
                     page.goto(
                         "https://react-platform.invalid/library?lens=all"
                         "&preview=case-1&field=genres"

@@ -28,11 +28,9 @@ export const reconciliationKey = (id: string) => ['decision-reconciliation', id]
 const ownerOutcomes: Readonly<Record<string, string>> = {
   owner_entered: 'Your value is recorded.',
   withdraw: 'Withdrawn. This field needs a decision again.',
-  revert: 'The restore is recorded.',
 }
 const outcomeWords = (outcome: string) =>
-  ({ owner_entered: 'your value', withdraw: 'withdrawal', revert: 'restore' })[outcome] ??
-  labelWords(outcome)
+  ({ owner_entered: 'your value', withdraw: 'withdrawal' })[outcome] ?? labelWords(outcome)
 // The store's refusal for an owner command, in the words the owner acts on.
 export const ownerRefusalCopy = (
   error: unknown,
@@ -48,15 +46,7 @@ export const ownerRefusalCopy = (
     nothing_to_withdraw: 'There is no recorded decision to withdraw.',
     automatic_hold:
       'This decision is holding automatic handling. Use Resume automatic handling to release it.',
-    decision_written:
-      field?.ownerControl?.revert?.state === 'available'
-        ? 'This decision has been written to your library. You can restore the earlier value instead.'
-        : 'This decision has been written to your library, so it can’t be withdrawn.',
-    revert_field_changed:
-      'This field has changed since it was written, so the earlier value can’t be restored safely.',
-    revert_no_previous_value:
-      'The field was empty before this write. Clearing a field isn’t available.',
-    revert_unavailable: 'This write can’t be reverted.',
+    decision_written: 'This decision has been written to your library, so it can’t be withdrawn.',
   }[error.code]
 }
 const decisionStatusKey = (id: string) => ['decision-status', id] as const

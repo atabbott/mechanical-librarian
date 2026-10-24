@@ -274,7 +274,7 @@ PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
 
 # Every producer before #1285 admitted only the three original human outcomes.
 PRIOR_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
-    "'reject','owner_entered','withdraw','revert')", "'reject')"
+    "'reject','owner_entered','withdraw')", "'reject')"
 )
 # Before #1285 any owner decision settled a field; now only its latest one
 # does, unless it withdrew the field.

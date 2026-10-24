@@ -462,7 +462,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             validate_shadow_outcome_row=(
                 lambda row: self._validate_shadow_outcome_row(row)
             ),
-            revert_candidates=self._field_effect_activity._revert_candidates,
+            previous_field_values=self._field_effect_activity._previous_field_values,
         )
         self._review_projections = SQLiteReviewProjectionRepository(
             connection,
@@ -523,7 +523,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
-            revert_candidates=self._field_effect_activity._revert_candidates,
+            previous_field_values=self._field_effect_activity._previous_field_values,
         )
         self.bind_operation_admission(None)
 
@@ -752,10 +752,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         return self._field_effect_activity.field_effect_authority_is_current(authority)
 
-    def revert_candidates(
+    def previous_field_values(
         self, connection: str, library: str, work_id: str
-    ) -> tuple[dict[str, object], ...]:
-        return self._field_effect_activity.revert_candidates(
+    ) -> tuple[tuple[str, object], ...]:
+        return self._field_effect_activity.previous_field_values(
             connection, library, work_id
         )
 

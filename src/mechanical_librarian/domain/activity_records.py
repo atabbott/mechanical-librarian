@@ -65,7 +65,6 @@ class ActivityResult(StrEnum):
     REJECTED = "Rejected"
     OWNER_ENTERED = "Owner-entered"
     WITHDRAWN = "Withdrawn"
-    REVERTED = "Reverted"
     COVER_ADVICE_COMPLETED = "Cover advice completed"
     COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
     COVER_ADVICE_FAILED_SAFELY = "Cover advice failed safely"
@@ -107,7 +106,6 @@ _RESULT_LABELS = {
     "reject": ActivityResult.REJECTED,
     "owner_entered": ActivityResult.OWNER_ENTERED,
     "withdraw": ActivityResult.WITHDRAWN,
-    "revert": ActivityResult.REVERTED,
     "completed": ActivityResult.COVER_ADVICE_COMPLETED,
     "unavailable": ActivityResult.COVER_ADVICE_UNAVAILABLE,
     "failed": ActivityResult.COVER_ADVICE_FAILED_SAFELY,
@@ -300,12 +298,7 @@ def _write_facts(
                 "value": "The selected change was not confirmed",
             }
         )
-        closed = (
-            "Not restored: the field changed before the write."
-            if record.get("restores") is True and failure == "target_changed"
-            else "Prepared change closed"
-        )
-        return ReadableChange(closed, closed), facts
+        return ReadableChange("Prepared change closed", "Prepared change closed"), facts
     facts = [
         {"label": "Previous value", "value": value_text(destination, previous)},
         {"label": "New value", "value": value_text(destination, desired)},

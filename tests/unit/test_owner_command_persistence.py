@@ -1,4 +1,4 @@
-"""Change, withdraw and revert against a real store (#1285, ADR-0085).
+"""Change, withdraw and reselection against a real store (#1285, ADR-0085).
 
 Each refusal is asserted with nothing appended, and each write with the fake
 library's request count, so a command that is refused is shown to have changed
@@ -73,18 +73,6 @@ def _successor(store: OwnerStore, **values: str | tuple[str, ...]) -> None:
     store.publish(rewritten(genre_report(), **values))
 
 
-def _revert_command(store: OwnerStore, destination: str = "title") -> dict:
-    candidate = store.candidates()[destination]
-    return {
-        "selected_value": {
-            "kind": "list" if destination == "genres" else "text",
-            "value": candidate["pre_value"],
-        },
-        "destination": destination,
-        "reverts_plan_id": candidate["plan_id"],
-    }
-
-
 # U6: a change while the earlier effect is in flight keeps today's refusal.
 @pytest.mark.parametrize(
     "outcome,value",
@@ -155,7 +143,7 @@ def test_withdraw_refuses_in_its_fixed_order(store: OwnerStore) -> None:
     store.decide("owner_entered", ORCHARD)
     store.decide("withdraw")
     _refused(store, "nothing_to_withdraw", "withdraw")
-    # A written decision can only be reverted.
+    # A written decision stays; going back is choosing the earlier value again.
     store.write(store.decide("owner_entered", ORCHARD))
     _refused(store, "decision_written", "withdraw")
     assert _field(store, "title")["owner_control"]["withdraw"] == "written"
@@ -204,7 +192,7 @@ def test_an_automatic_hold_outranks_a_written_decision(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("destination", ["cover", "description"])
-def test_withdraw_is_unsupported_where_revert_is(
+def test_withdraw_is_unsupported_for_cover_and_description(
     store: OwnerStore, destination: str
 ) -> None:
     _refused(store, "unsupported", "withdraw", destination=destination)
@@ -237,66 +225,128 @@ def test_withdraw_returns_the_field_to_attention(store: OwnerStore) -> None:
     assert store.repository.count_current_attention_fields(None) == before
 
 
-# U9: what `revert_candidates` offers for the work's latest write.
-def test_only_the_latest_verified_human_write_is_offered(store: OwnerStore) -> None:
-    first = store.write(store.decide("owner_entered", ORCHARD))
-    assert store.candidates()["title"]["eligibility"] == "eligible"
-    store.write(store.decide("owner_entered", {"kind": "text", "value": "Orchard"}))
-    latest = store.candidates()["title"]
-    assert latest["plan_id"] != first.plan.plan_id
-    assert (latest["pre_value"], latest["desired_value"]) == (
+# U9: the value a field held before its latest verified write is offered as
+# one more suggestion, and choosing it is an ordinary owner-entered write.
+def _suggestions(store: OwnerStore) -> list[dict[str, object]]:
+    entry = _field(store, "title")["owner_control"]["entry"]
+    return cast("list[dict[str, object]]", entry["suggestions"])
+
+
+def test_the_previous_value_is_offered_after_a_write(store: OwnerStore) -> None:
+    assert store.previous() == {}
+    assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
+    store.write(store.decide("owner_entered", ORCHARD))
+    # On the writing case the field still reads as before the write, so the
+    # earlier value is the current one and is not suggested.
+    assert store.previous() == {"title": "Real Tigers"}
+    assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
+    _successor(store, title="The Silent Orchard")
+    assert _suggestions(store)[-1] == {"rule": "previous", "value": "Real Tigers"}
+
+
+def test_reselecting_the_previous_value_writes_it_back_under_the_guards(
+    store: OwnerStore,
+) -> None:
+    store.write(store.decide("owner_entered", ORCHARD))
+    earlier = store.case
+    _successor(store, title="The Silent Orchard")
+    back = {"kind": "text", "value": "Real Tigers"}
+    # A panel left open on the earlier case is stale, and nothing is appended.
+    _refused(store, "stale", "owner_entered", ORCHARD | {"value": "X"}, case=earlier)
+    operation = store.plan(store.decide("owner_entered", back))
+    assert (operation.plan.pre_value, operation.plan.desired_value) == (
         "The Silent Orchard",
-        "Orchard",
+        "Real Tigers",
     )
-    # An unwritten later plan is pending, not a write to revert.
-    pending = store.plan(store.decide("owner_entered", {"kind": "text", "value": "O"}))
-    assert store.candidates()["title"]["eligibility"] == "pending"
-    # Superseded, it wrote nothing, so the verified write is latest again.
-    store.decide("withdraw")
-    assert store.repository.get_field_effect(pending.plan.plan_id).state == "superseded"
-    assert store.candidates()["title"]["plan_id"] == latest["plan_id"]
+    # The library changed before the write: the guard stops it unwritten.
+    store.target.drift(operation.plan, "Edited in the library")
+    staled = store.service.apply(operation.plan.plan_id)
+    assert (staled.state, staled.failure) == ("stale", "target_changed")
+    assert operation.plan.plan_id not in store.patches
+    _successor(store, title="Edited in the library")
+    written = store.write(store.decide("owner_entered", back))
+    assert written.plan.desired_value == "Real Tigers"
+    assert store.previous() == {"title": "Edited in the library"}
 
 
 def test_a_stale_plan_wrote_nothing_so_the_earlier_write_stays_latest(
     store: OwnerStore,
 ) -> None:
-    written = store.write(store.decide("owner_entered", ORCHARD))
+    store.write(store.decide("owner_entered", ORCHARD))
     _successor(store, title="The Silent Orchard")
-    revert = store.decide("revert", **_revert_command(store))
-    operation = store.plan(revert)
+    operation = store.plan(
+        store.decide("owner_entered", {"kind": "text", "value": "O"})
+    )
     store.target.drift(operation.plan, "Changed elsewhere")
-    staled = store.service.apply(operation.plan.plan_id)
-    assert (staled.state, staled.failure) == ("stale", "target_changed")
-    assert store.candidates()["title"]["plan_id"] == written.plan.plan_id
+    assert store.service.apply(operation.plan.plan_id).state == "stale"
+    assert store.previous() == {"title": "Real Tigers"}
 
 
-def test_an_empty_pre_image_is_no_previous_value(store: OwnerStore) -> None:
+def test_previous_genres_join_the_subset_options(tmp_path: Path) -> None:
+    store = OwnerStore(tmp_path, genre_report(current=("Drama", "Mystery")))
+    try:
+        store.write(
+            store.decide(
+                "owner_entered",
+                {"kind": "list", "value": ["Drama"]},
+                destination="genres",
+            )
+        )
+        store.publish(
+            rewritten(genre_report(current=("Drama", "Mystery")), genres=("Drama",))
+        )
+        options = _field(store, "genres")["owner_control"]["subset"]["options"]
+        assert options == [
+            {"value": "Drama", "current": True, "proposed": False, "previous": False},
+            {"value": "Fantasy", "current": False, "proposed": True, "previous": False},
+            {"value": "Mystery", "current": False, "proposed": False, "previous": True},
+        ]
+        _refused(
+            store,
+            "owner_value_invalid",
+            "owner_entered",
+            {"kind": "list", "value": ["Drama", "Other"]},
+            destination="genres",
+        )
+        written = store.write(
+            store.decide(
+                "owner_entered",
+                {"kind": "list", "value": ["Drama", "Mystery"]},
+                destination="genres",
+            )
+        )
+        assert written.plan.desired_value == ["Drama", "Mystery"]
+    finally:
+        store.close()
+
+
+def test_an_empty_pre_image_offers_nothing(store: OwnerStore) -> None:
     store.write(
         store.decide(
             "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
         )
     )
-    assert store.candidates()["genres"]["eligibility"] == "no_previous_value"
-    assert store.candidates()["genres"]["pre_value"] is None
+    assert store.previous() == {}
+    _successor(store, genres=("Fantasy",))
+    options = _field(store, "genres")["owner_control"]
+    assert options is None or not any(
+        option["previous"]
+        for option in (options["subset"] or {"options": []})["options"]
+    )
 
 
-def test_a_revert_write_is_never_itself_revertible(store: OwnerStore) -> None:
-    store.write(store.decide("owner_entered", ORCHARD))
-    _successor(store, title="The Silent Orchard")
-    store.write(store.decide("revert", **_revert_command(store)))
-    assert store.candidates()["title"]["eligibility"] == "reverted"
-
-
-def test_cover_description_and_automatic_writes_are_never_offered(
+def test_an_automatic_write_offers_its_pre_image_and_a_description_never_does(
     tmp_path: Path,
 ) -> None:
     store = OwnerStore(tmp_path, None)
     try:
-        case_id, _ = publish_genre_case(store.repository, genre_report())
-        store.load(case_id)
+        store.automatic("genres", "replace", _HELD.target.library)
+        store.publish(_HELD)
         automatic = next(
             AutomaticDecision.from_json(raw)
-            for raw in store.repository.get_review_case_decisions(case_id)
+            for raw in store.repository.get_review_case_decisions(
+                store.case.review_case_id
+            )
             if json.loads(raw)["schema_version"] == "automatic-decision-v1"
             and json.loads(raw)["destination"] == "genres"
         )
@@ -308,108 +358,27 @@ def test_cover_description_and_automatic_writes_are_never_offered(
                 destination="description",
             )
         )
-        assert store.candidates() == {}
+        assert store.previous() == {"genres": ["Drama"]}
     finally:
         store.close()
 
 
-def test_a_verified_event_that_disagrees_with_its_plan_refuses(
+def test_a_verified_event_that_disagrees_with_its_plan_offers_nothing(
     store: OwnerStore,
 ) -> None:
     written = store.write(store.decide("owner_entered", ORCHARD))
-    _successor(store, title="The Silent Orchard")
-    command = _revert_command(store)
-    connection = store.repository._connection
-    connection.executescript(
+    store.repository._connection.executescript(
         "DROP TRIGGER field_effect_events_no_update;"
         "UPDATE field_effect_events SET document=json_set(document,'$.pre_value','Other') "
         f"WHERE plan_id='{written.plan.plan_id}' AND kind='verified';"
     )
-    assert store.candidates()["title"]["eligibility"] == "unavailable"
-    _refused(store, "revert_unavailable", "revert", **command)
+    assert store.previous() == {}
 
 
-# U10: revert refusal precedence (P6), each case holding several conditions.
-def test_revert_refuses_in_its_fixed_order(store: OwnerStore) -> None:
-    written = store.write(store.decide("owner_entered", ORCHARD))
-    command = _revert_command(store)
-    # On the writing case the field still reads as before the write: the
-    # version check fails, and so does nothing earlier.
-    _refused(store, "revert_field_changed", "revert", **command)
-    assert _field(store, "title")["owner_control"]["revert"] is None
-    earlier = store.case
-    _successor(store, title="The Silent Orchard")
-    # Stale outranks everything.
-    _refused(store, "stale", "revert", case=earlier, **command)
-    # A plan that is not the latest write, with a field that has changed too.
-    _refused(
-        store,
-        "revert_unavailable",
-        "revert",
-        **{**command, "reverts_plan_id": "effect_plan_" + "0" * 64},
-    )
-    # A value other than the recorded pre-image.
-    _refused(
-        store,
-        "revert_unavailable",
-        "revert",
-        **{**command, "selected_value": {"kind": "text", "value": "Something else"}},
-    )
-    assert _field(store, "title")["owner_control"]["revert"]["state"] == "available"
-    # The field changed since the write; the plan is still the latest.
-    _successor(store, title="Edited elsewhere")
-    _refused(store, "revert_field_changed", "revert", **command)
-    assert _field(store, "title")["owner_control"]["revert"]["state"] == "field_changed"
-    assert store.candidates()["title"]["plan_id"] == written.plan.plan_id
-
-
-def test_no_previous_value_outranks_a_changed_field(store: OwnerStore) -> None:
-    store.write(
-        store.decide(
-            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
-        )
-    )
-    command = {
-        **_revert_command(store, "genres"),
-        "selected_value": {"kind": "list", "value": ["Fantasy"]},
-    }
-    _successor(store, genres=("Drama",))
-    _refused(store, "revert_no_previous_value", "revert", **command)
-    assert (
-        _field(store, "genres")["owner_control"]["revert"]["state"]
-        == "no_previous_value"
-    )
-
-
-def test_a_later_write_in_flight_leaves_nothing_to_revert(store: OwnerStore) -> None:
-    store.write(store.decide("owner_entered", ORCHARD))
-    _successor(store, title="The Silent Orchard")
-    command = _revert_command(store)
-    pending = store.plan(
-        store.decide("owner_entered", {"kind": "text", "value": "Next"})
-    )
-    codes: list[str] = []
-
-    def revert(_plan) -> None:
-        # The in-flight write is now the latest, so the earlier one is gone.
-        try:
-            store.decide("revert", **command)
-        except HumanDecisionError as error:
-            codes.append(error.code)
-
-    store.target.before_apply = revert
-    assert store.service.apply(pending.plan.plan_id).state == "verified"
-    assert codes == ["revert_unavailable"]
-
-
-# Activity names each new command and a restore that stopped unwritten.
-def test_activity_states_withdraw_and_an_unwritten_restore(store: OwnerStore) -> None:
+# Activity names each new command.
+def test_activity_states_owner_entry_and_withdraw(store: OwnerStore) -> None:
     written = store.write(store.decide("owner_entered", ORCHARD))
     _successor(store, title="The Silent Orchard")
-    revert = store.decide("revert", **_revert_command(store))
-    operation = store.plan(revert)
-    store.target.drift(operation.plan, "Edited in the library")
-    assert store.service.apply(operation.plan.plan_id).state == "stale"
     store.decide("owner_entered", {"kind": "text", "value": "Another"})
     store.decide("withdraw")
     target = store.case.target
@@ -431,8 +400,6 @@ def test_activity_states_withdraw_and_an_unwritten_restore(store: OwnerStore) ->
     assert changes == [
         ("withdraw", "Withdrawn"),
         ("owner_entered", "The Silent Orchard → Another"),
-        ("stale", "Not restored: the field changed before the write."),
-        ("revert", "The Silent Orchard → Real Tigers"),
         ("verified", "Real Tigers → The Silent Orchard"),
         ("owner_entered", "Real Tigers → The Silent Orchard"),
     ]

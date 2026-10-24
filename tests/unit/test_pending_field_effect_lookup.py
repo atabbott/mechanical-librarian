@@ -1086,7 +1086,7 @@ _LINEAGE_REWRITES = {
     ),
 }
 # SHA-256 of each statement's text at 2dcf75cd, as this module's store traces it.
-_HUMAN_PLANS = "human.outcome IN ('accept','owner_entered','revert')"
+_HUMAN_PLANS = "human.outcome IN ('accept','owner_entered')"
 _STATEMENTS_1204 = {
     "documents": "e62a8aca670e77687afeda2585f588070e80386e773408a62ef496edca4e4d16",
     "cursor": "820b901727766eaf3a516804cfe1cbd283381fd59b3f9ce36eea506539448608",
@@ -1152,7 +1152,7 @@ def test_lineage_membership_restores_the_1204_text(
     store: tuple[sqlite3.Connection, list[str]],
 ) -> None:
     connection, _ = store
-    # #1285 later let an owner-entered value and a revert plan as an accept does.
+    # #1285 later let an owner-entered value plan as an accept does.
     restored = {
         name: hashlib.sha256(
             _before_1205(name, statement)

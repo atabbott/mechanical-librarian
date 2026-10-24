@@ -27,7 +27,7 @@ from mechanical_librarian.domain.review_case import (
 from mechanical_librarian.domain.validation import owner_text_value
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
-# ``reject`` is readable history only; the last three are F59's owner commands
+# ``reject`` is readable history only; the last two are F59's owner commands
 # (ADR-0085). Exactly the value-bearing outcomes carry a selected value.
 _OUTCOMES = {
     "accept",
@@ -35,10 +35,8 @@ _OUTCOMES = {
     "reject",
     "owner_entered",
     "withdraw",
-    "revert",
 }
-_VALUE_OUTCOMES = frozenset({"accept", "owner_entered", "revert"})
-_REVERT_PLAN = re.compile(r"effect_plan_[0-9a-f]{64}")
+_VALUE_OUTCOMES = frozenset({"accept", "owner_entered"})
 # The owner may type a value only for these, and choose a genre subset; every
 # other destination keeps the proposal-only choices (ADR-0085).
 OWNER_TEXT_DESTINATIONS = ("title", "subtitle", "publisher")
@@ -47,7 +45,7 @@ OWNER_TEXT_MAXIMUM = 512
 OWNER_SUBSET_MAXIMUM = 32
 OWNER_SUBSET_OPTIONS_MAXIMUM = 160
 # A cover and a description each have their own decision lineage; neither can
-# be withdrawn or reverted here.
+# be withdrawn here.
 UNREVERSIBLE_DESTINATIONS = frozenset({"cover", "description"})
 # What a recorded decision may go on to do. Every decision formed since F47
 # carries `apply` on both media; `recorded_only` survives only as the F45
@@ -150,7 +148,7 @@ def validate_decision_action(
     selected_value: dict[str, object] | None,
 ) -> None:
     """Apply the selection half of the human-decision contract."""
-    if outcome in {"owner_entered", "withdraw", "revert"}:
+    if outcome in {"owner_entered", "withdraw"}:
         _validate_owner_command(proposal, outcome, selected_value)
         return
     # Historical ``reject`` facts remain constructible and valid.  It is not
@@ -239,15 +237,18 @@ def owner_value_admitted(proposal: Mapping[str, object]) -> bool:
 
 
 def list_union(
-    proposal: Mapping[str, object], current: object
-) -> tuple[tuple[str, bool, bool], ...]:
-    """A list field's union in its one order: current, then each proposal's.
+    proposal: Mapping[str, object], current: object, previous: object = None
+) -> tuple[tuple[str, bool, bool, bool], ...]:
+    """A list field's union in its one order: current, each proposal's, previous.
 
-    Each option says whether it is current and whether an eligible proposal
-    holds it. Values are compared exactly, never by their display text.
+    Each option says whether it is current, whether an eligible proposal holds
+    it, and whether it is offered only because the field held it before its
+    latest verified write. Values are compared exactly, never by their display
+    text.
     """
-    current_items = (
-        [item for item in current if type(item) is str] if type(current) is list else []
+    current_items, previous_items = (
+        [item for item in value if type(item) is str] if type(value) is list else []
+        for value in (current, previous)
     )
     result = proposal.get("result")
     alternatives = result.get("alternatives") if type(result) is dict else None
@@ -261,13 +262,19 @@ def list_union(
             and type(value.get("value")) is list
         ):
             proposed.extend(item for item in value["value"] if type(item) is str)
-    union = list(dict.fromkeys([*current_items, *proposed]))
+    listed = {*current_items, *proposed}
+    union = list(dict.fromkeys([*current_items, *proposed, *previous_items]))
     held = set(proposed)
-    return tuple((item, item in current_items, item in held) for item in union)
+    return tuple(
+        (item, item in current_items, item in held, item not in listed)
+        for item in union
+    )
 
 
-def genre_subset_available(proposal: Mapping[str, object], current: object) -> bool:
-    options = list_union(proposal, current)
+def genre_subset_available(
+    proposal: Mapping[str, object], current: object, previous: object = None
+) -> bool:
+    options = list_union(proposal, current, previous)
     return (
         owner_value_admitted(proposal)
         and proposal.get("destination") == OWNER_SUBSET_DESTINATION
@@ -283,10 +290,10 @@ def _validate_owner_command(
     outcome: str,
     selected_value: dict[str, object] | None,
 ) -> None:
-    """The shape half of an owner-entered, withdraw or revert command.
+    """The shape half of an owner-entered or withdraw command.
 
-    What depends on the case's current value, or on a written plan, is checked
-    where that value is held: `validate_owner_value` and the store.
+    What depends on the case's current value is checked where that value is
+    held: `validate_owner_value` and the store.
     """
     destination = proposal.get("destination")
     if type(destination) is not str:
@@ -296,12 +303,6 @@ def _validate_owner_command(
             raise HumanDecisionError("unsupported")
         if selected_value is not None:
             raise HumanDecisionError("invalid_selection")
-        return
-    if outcome == "revert":
-        try:
-            project_decision_value(destination, selected_value)
-        except FieldEffectError as error:
-            raise HumanDecisionError("invalid_selection") from error
         return
     if not owner_value_admitted(proposal):
         raise HumanDecisionError("unsupported")
@@ -343,11 +344,13 @@ def validate_owner_value(
     case: ReviewCase,
     proposal: Mapping[str, object],
     selected_value: dict[str, object] | None,
+    previous: object = None,
 ) -> None:
     """The case half of an owner-entered value: in the union and a change.
 
     It runs only for a new command, where the case's target is the one the
-    owner saw. The server compares; it never rewrites what was submitted.
+    owner saw. ``previous`` is what the field held before its latest verified
+    write. The server compares; it never rewrites what was submitted.
     """
     destination = str(proposal["destination"])
     assert type(selected_value) is dict
@@ -356,13 +359,13 @@ def validate_owner_value(
     if destination == OWNER_SUBSET_DESTINATION:
         order = {
             item: index
-            for index, (item, _, _) in enumerate(list_union(proposal, current))
+            for index, (item, *_) in enumerate(list_union(proposal, current, previous))
         }
         assert type(value) is list
         # The shape check refused duplicates, so in union order means sorted.
         positions = [order[item] for item in value if item in order]
         if (
-            not genre_subset_available(proposal, current)
+            not genre_subset_available(proposal, current, previous)
             or len(positions) != len(value)
             or positions != sorted(positions)
         ):
@@ -643,9 +646,6 @@ class HumanDecision:
     request_digest: str
     occurred_at: int
     application: str
-    # The written plan a ``revert`` restores the pre-image of; ``None`` for
-    # every other outcome (ADR-0085).
-    reverts_plan_id: str | None = None
 
     @staticmethod
     def idempotency_digest_for(idempotency_key: str) -> str:
@@ -667,7 +667,6 @@ class HumanDecision:
         outcome: str,
         selected_value: dict[str, object] | None,
         idempotency_key: str,
-        reverts_plan_id: str | None = None,
     ) -> bool:
         return (
             self.review_case_id == review_case_id
@@ -677,7 +676,6 @@ class HumanDecision:
             and self.actor == actor
             and self.outcome == outcome
             and self.selected_value == selected_value
-            and self.reverts_plan_id == reverts_plan_id
             and self.idempotency_digest == self.idempotency_digest_for(idempotency_key)
         )
 
@@ -694,17 +692,11 @@ class HumanDecision:
         selected_value: dict[str, object] | None,
         idempotency_key: str,
         occurred_at: int,
-        reverts_plan_id: str | None = None,
+        previous: object = None,
     ) -> Self:
         if (
             actor != "owner"
             or outcome not in _OUTCOMES
-            or (outcome == "revert")
-            != (
-                type(reverts_plan_id) is str
-                and _REVERT_PLAN.fullmatch(reverts_plan_id) is not None
-            )
-            or (outcome != "revert" and reverts_plan_id is not None)
             or type(occurred_at) is not int
             or occurred_at < 0
             or _IDEMPOTENCY_KEY.fullmatch(idempotency_key) is None
@@ -724,7 +716,7 @@ class HumanDecision:
             raise HumanDecisionError("stale")
         validate_decision_action(proposal, outcome, selected_value)
         if outcome == "owner_entered":
-            validate_owner_value(case, proposal, selected_value)
+            validate_owner_value(case, proposal, selected_value, previous)
         idempotency_digest = cls.idempotency_digest_for(idempotency_key)
         application = "apply"
         request = {
@@ -735,7 +727,6 @@ class HumanDecision:
             "outcome": outcome,
             "proposal_id": proposal_id,
             "review_case_id": case.review_case_id,
-            "reverts_plan_id": reverts_plan_id,
             "selected_value": selected_value,
             "target_fingerprint": target_fingerprint,
         }
@@ -756,7 +747,6 @@ class HumanDecision:
             request_digest,
             occurred_at,
             application,
-            reverts_plan_id,
         )
         value.validate_for(case)
         return value
@@ -774,8 +764,11 @@ class HumanDecision:
             applications=scope.applications,
         )
 
-    def validate_new_for(self, case: ReviewCase) -> None:
-        """Validate a newly submitted command against the current owner envelope."""
+    def validate_new_for(self, case: ReviewCase, previous: object = None) -> None:
+        """Validate a newly submitted command against the current owner envelope.
+
+        ``previous`` is what the field held before its latest verified write.
+        """
         proposals = case.proposals
         self._validate_for(
             case.review_case_id,
@@ -793,6 +786,7 @@ class HumanDecision:
                     if value["proposal_id"] == self.proposal_id
                 ),
                 self.selected_value,
+                previous,
             )
 
     def _validate_for(
@@ -836,7 +830,6 @@ class HumanDecision:
             "outcome": self.outcome,
             "proposal_id": self.proposal_id,
             "review_case_id": self.review_case_id,
-            "reverts_plan_id": self.reverts_plan_id,
             "selected_value": self.selected_value,
             "target_fingerprint": self.target_fingerprint,
         }
@@ -860,7 +853,6 @@ class HumanDecision:
             "outcome": self.outcome,
             "proposal_id": self.proposal_id,
             "request_digest": self.request_digest,
-            "reverts_plan_id": self.reverts_plan_id,
             "review_case_id": self.review_case_id,
             "schema_version": "human-decision-v3",
             "selected_value": self.selected_value,
@@ -887,7 +879,6 @@ class HumanDecision:
                     "outcome",
                     "proposal_id",
                     "request_digest",
-                    "reverts_plan_id",
                     "review_case_id",
                     "schema_version",
                     "selected_value",
@@ -909,7 +900,6 @@ class HumanDecision:
                 raw["request_digest"],
                 raw["occurred_at"],
                 raw["application"],
-                raw["reverts_plan_id"],
             )
             request = {
                 "actor": value.actor,
@@ -919,7 +909,6 @@ class HumanDecision:
                 "outcome": value.outcome,
                 "proposal_id": value.proposal_id,
                 "review_case_id": value.review_case_id,
-                "reverts_plan_id": value.reverts_plan_id,
                 "selected_value": value.selected_value,
                 "target_fingerprint": value.target_fingerprint,
             }
@@ -959,12 +948,6 @@ class HumanDecision:
                 )
                 or (value.outcome in _VALUE_OUTCOMES)
                 != (type(value.selected_value) is dict)
-                or (value.outcome == "revert")
-                != (
-                    type(value.reverts_plan_id) is str
-                    and _REVERT_PLAN.fullmatch(value.reverts_plan_id) is not None
-                )
-                or (value.outcome != "revert" and value.reverts_plan_id is not None)
             ):
                 raise ValueError
             return value

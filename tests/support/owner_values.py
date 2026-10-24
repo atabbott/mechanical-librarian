@@ -185,9 +185,12 @@ class OwnerStore:
         *,
         destination: str = "title",
         case: ReviewCase | None = None,
-        reverts_plan_id: str | None = None,
     ) -> HumanDecision:
-        """Record one owner command on the case, through the repository."""
+        """Record one owner command on the case, through the repository.
+
+        An owner-entered value is checked against what the field held before
+        its latest verified write, as the web command reads it.
+        """
         case = case or self.case
         proposal = next(
             value for value in case.proposals if value["destination"] == destination
@@ -202,7 +205,9 @@ class OwnerStore:
             selected_value=None if selected_value is None else dict(selected_value),
             idempotency_key=f"owner-command-{self.ticks:08d}",
             occurred_at=self.clock(),
-            reverts_plan_id=reverts_plan_id,
+            previous=self.previous().get(destination)
+            if outcome == "owner_entered"
+            else None,
         )
         self.repository.record_human_decision(decision)
         return decision
@@ -212,9 +217,7 @@ class OwnerStore:
     ) -> FieldEffectOperation:
         """Plan the decision from its persisted authority, as the scheduler does.
 
-        `seed` gives the fake library the plan's pre-image and version. A revert
-        plan reseeds only after its caller has shown the fake already holds that
-        value, because the fake's version token is not the case's.
+        `seed` gives the fake library the plan's pre-image and version.
         """
         target = self.case.target
         self.consent.allow(
@@ -250,14 +253,14 @@ class OwnerStore:
         assert (verified.state, verified.failure) == ("verified", None), verified
         return verified
 
-    def candidates(self) -> dict[str, dict[str, object]]:
+    def previous(self) -> dict[str, object]:
+        """What each owner-entry field held before its latest verified write."""
         target = self.case.target
-        return {
-            str(value["destination"]): value
-            for value in self.repository.revert_candidates(
+        return dict(
+            self.repository.previous_field_values(
                 str(target["connection"]), str(target["library"]), str(target["item"])
             )
-        }
+        )
 
     def close(self) -> None:
         self.repository.close()

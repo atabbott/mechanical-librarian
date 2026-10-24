@@ -69,7 +69,6 @@ const stateLabel = (state: string, advice?: 'description' | 'cover') =>
     reject: 'Rejected',
     owner_entered: 'Owner-entered',
     withdraw: 'Withdrawn',
-    revert: 'Reverted',
     completed: 'Completed',
     unavailable: 'Unavailable',
     failed: 'Failed safely',

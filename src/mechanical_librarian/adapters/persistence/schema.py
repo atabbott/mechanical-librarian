@@ -553,7 +553,7 @@ _HUMAN_DECISIONS_SQL = (
     "target_fingerprint TEXT NOT NULL CHECK(length(target_fingerprint)=64 AND target_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
     "actor TEXT NOT NULL CHECK(actor='owner'), "
-    "outcome TEXT NOT NULL CHECK(outcome IN ('accept','keep_current','reject','owner_entered','withdraw','revert')), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('accept','keep_current','reject','owner_entered','withdraw')), "
     "selected_value_document TEXT NOT NULL CHECK(typeof(selected_value_document)='text' AND length(CAST(selected_value_document AS BLOB)) BETWEEN 4 AND 32768), "
     "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
     "request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'), "

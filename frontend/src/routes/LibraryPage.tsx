@@ -1389,22 +1389,14 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
     sameSelectedValue(value, field.automaticDecision?.selected_value),
   )
 
-// F59's owner controls (ADR-0085): enter a value, choose genres, withdraw a
-// decision, and restore what a write replaced. Each is offered only where the
-// store would accept it now; the store still decides, and a refusal is said
-// here, beside the control that was used.
-type OwnerOutcome = 'owner_entered' | 'withdraw' | 'revert'
+// F59's owner controls (ADR-0085): enter a value, choose genres and withdraw a
+// decision. Going back to an earlier value is choosing it again, from the same
+// suggestions. Each is offered only where the store would accept it now; the
+// store still decides, and a refusal is said here, beside the control used.
+type OwnerOutcome = 'owner_entered' | 'withdraw'
 const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
-const writtenDate = (seconds: number) =>
-  new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(seconds * 1000))
 const quotedValue = (value: { value: unknown } | null | undefined) =>
   value ? `“${displayValue(value.value)}”` : 'nothing'
-const revertCopy = {
-  field_changed:
-    'This field has changed since it was written, so the earlier value can’t be restored safely.',
-  no_previous_value: 'The field was empty before this write. Clearing a field isn’t available.',
-  unavailable: 'This write can’t be reverted.',
-} as const
 const withdrawCopy = {
   automatic_hold:
     'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
@@ -1426,15 +1418,11 @@ function OwnerControls({
   progress: { command: DecisionCommand; phase: 'recording' | 'confirmed' | 'failed' } | null
   status: string
   failed: boolean
-  submit: (
-    outcome: OwnerOutcome,
-    value: DecisionCommand['selectedValue'],
-    revertsPlanId?: string,
-  ) => string
+  submit: (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => string
 }) {
   const control = field.ownerControl ?? null
   const label = fieldLabel(field.destination)
-  const [mode, setMode] = useState<'idle' | 'entry' | 'subset' | 'restore'>('idle')
+  const [mode, setMode] = useState<'idle' | 'entry' | 'subset'>('idle')
   const [draft, setDraft] = useState('')
   const [typed, setTyped] = useState(false)
   const [chosen, setChosen] = useState<readonly string[]>([])
@@ -1443,18 +1431,15 @@ function OwnerControls({
   const countId = useId()
   const input = useRef<HTMLInputElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
-  const restore = useRef<HTMLButtonElement>(null)
   const recorded = useRef<HTMLParagraphElement>(null)
   const notice = useRef<HTMLParagraphElement>(null)
   const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
   const busy = progress?.phase === 'recording'
   const decision = field.humanDecision
   const ownerValue = decision?.outcome === 'owner_entered' ? decision.selected_value : null
-  const restoreTrigger = useRef<HTMLButtonElement>(null)
   const refocus = useRef<RefObject<HTMLButtonElement | null> | null>(null)
   useEffect(() => {
     if (mode === 'entry') input.current?.focus()
-    if (mode === 'restore') restore.current?.focus()
     if (mode === 'idle') refocus.current?.current?.focus({ preventScroll: true })
     refocus.current = null
   }, [mode])
@@ -1486,14 +1471,14 @@ function OwnerControls({
     })
   }, [progress])
   if (!control) return null
-  const { entry, subset, revert } = control
+  const { entry, subset } = control
   const writing = control.withdraw === 'in_progress'
   const blocked = disabled || busy
-  const send = (outcome: OwnerOutcome, value: DecisionCommand['selectedValue'], plan?: string) => {
+  const send = (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => {
     // The ref is the guard a second press meets before React re-renders.
     if (blocked || sent.current !== null) return
     setProblem('')
-    sent.current = { key: submit(outcome, value, plan), outcome }
+    sent.current = { key: submit(outcome, value), outcome }
   }
   const close = (target: RefObject<HTMLButtonElement | null>) => {
     refocus.current = target
@@ -1546,9 +1531,7 @@ function OwnerControls({
       ? Array.isArray(decision.selected_value?.value)
         ? `You chose ${String(decision.selected_value.value.length)} ${decision.selected_value.value.length === 1 ? 'genre' : 'genres'}.`
         : `You entered ${quotedValue(decision.selected_value)}.`
-      : decision?.outcome === 'revert'
-        ? `You restored ${quotedValue(decision.selected_value)}.`
-        : null
+      : null
   return (
     <section className="owner-controls" aria-label={`Your value for ${label}`}>
       {recordedCopy ? (
@@ -1600,7 +1583,9 @@ function OwnerControls({
                     input.current?.focus()
                   }}
                 >
-                  {`Use “${suggestion.value}”`}
+                  {suggestion.rule === 'previous'
+                    ? `Use previous value “${suggestion.value}”`
+                    : `Use “${suggestion.value}”`}
                 </button>
               ))}
             </div>
@@ -1636,6 +1621,7 @@ function OwnerControls({
                 <span>{option.value}</span>
                 {option.current ? <small className="owner-tag">Current</small> : null}
                 {option.proposed ? <small className="owner-tag">Proposed</small> : null}
+                {option.previous ? <small className="owner-tag">Previous</small> : null}
               </label>
             ))}
           </fieldset>
@@ -1660,48 +1646,6 @@ function OwnerControls({
         </button>
       ) : control.withdraw && control.withdraw !== 'in_progress' ? (
         <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
-      ) : null}
-      {revert ? (
-        <div className="owner-revert">
-          <p>
-            {`Written ${writtenDate(revert.writtenAt)}: changed from ${quotedValue(revert.previousValue)} to ${quotedValue(revert.writtenValue)}.`}
-            {revert.state === 'reverted' ? ' The earlier value has been restored.' : ''}
-          </p>
-          {revert.state === 'available' ? (
-            mode === 'restore' ? (
-              <div className="owner-confirm" role="group" aria-label="Confirm restore">
-                <p>{`Restore ${quotedValue(revert.previousValue)} to ${label}? This writes to your library.`}</p>
-                <div className="owner-actions">
-                  <button
-                    ref={restore}
-                    type="button"
-                    aria-disabled={blocked}
-                    onClick={() => send('revert', revert.previousValue, revert.planId)}
-                  >
-                    {busy ? 'Restoring…' : 'Restore'}
-                  </button>
-                  <button type="button" onClick={() => close(restoreTrigger)}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                ref={restoreTrigger}
-                type="button"
-                className="owner-trigger"
-                onClick={() => {
-                  setProblem('')
-                  setMode('restore')
-                }}
-              >
-                Restore earlier value…
-              </button>
-            )
-          ) : revert.state !== 'reverted' ? (
-            <p className="owner-note">{revertCopy[revert.state]}</p>
-          ) : null}
-        </div>
       ) : null}
       <p ref={notice} tabIndex={-1} className="owner-notice" role="alert">
         {problem || (failed ? status : '')}
@@ -3684,7 +3628,6 @@ export default function LibraryPage({
     outcome: DecisionCommand['outcome'],
     selectedValue: DecisionCommand['selectedValue'] = null,
     authoredDescription?: DecisionCommand['authoredDescription'],
-    revertsPlanId?: string,
   ) => {
     const idempotencyKey = requestKey()
     setOwnerCommand(null)
@@ -3700,7 +3643,6 @@ export default function LibraryPage({
       selectedValue,
       targetFingerprint: field.targetFingerprint,
       idempotencyKey,
-      ...(revertsPlanId ? { revertsPlanId } : {}),
       ...(field.coverConsideration
         ? {
             considerationId: field.coverConsideration.id,
@@ -4808,8 +4750,8 @@ export default function LibraryPage({
                       progress={selectedProgress}
                       status={ownerStatusShown ? controller.statusFor(selected.destination) : ''}
                       failed={controller.decision.isError}
-                      submit={(outcome, value, plan) => {
-                        const key = choose(selected, outcome, value, undefined, plan)
+                      submit={(outcome, value) => {
+                        const key = choose(selected, outcome, value)
                         setOwnerCommand(ownerKey)
                         return key
                       }}

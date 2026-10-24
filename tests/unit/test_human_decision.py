@@ -56,20 +56,16 @@ def _create(
     )
 
 
-_PLAN = "effect_plan_" + "e" * 64
-
-
 @pytest.mark.parametrize(
     "outcome",
-    ("accept", "keep_current", "reject", "owner_entered", "withdraw", "revert"),
+    ("accept", "keep_current", "reject", "owner_entered", "withdraw"),
 )
-def test_all_six_outcomes_are_canonical_and_exact_version_bound(
+def test_all_five_outcomes_are_canonical_and_exact_version_bound(
     case: ReviewCase, proposal: dict[str, object], outcome: str
 ) -> None:
     value = {
         "accept": proposal["result"]["alternatives"][0]["value"],
         "owner_entered": {"kind": "text", "value": "The Silent Orchard"},
-        "revert": {"kind": "text", "value": "An Earlier Title"},
     }.get(outcome)
     decision = HumanDecision.create(
         case,
@@ -81,7 +77,6 @@ def test_all_six_outcomes_are_canonical_and_exact_version_bound(
         selected_value=value,
         idempotency_key=f"domain-{outcome}-decision",
         occurred_at=1_000,
-        reverts_plan_id=_PLAN if outcome == "revert" else None,
     )
     assert HumanDecision.from_json(decision.to_json()) == decision
     assert json.loads(decision.to_json())["schema_version"] == "human-decision-v3"
@@ -96,6 +91,7 @@ def _owner(
     *,
     kind: str = "text",
     outcome: str = "owner_entered",
+    previous: object = None,
 ) -> HumanDecision:
     proposal = next(
         value for value in case.proposals if value["destination"] == destination
@@ -110,6 +106,7 @@ def _owner(
         selected_value=None if value is None else {"kind": kind, "value": value},
         idempotency_key="domain-owner-value-0001",
         occurred_at=1_000,
+        previous=previous,
     )
 
 
@@ -164,89 +161,25 @@ def test_owner_entry_is_admitted_only_for_its_destinations_and_eligible_proposal
     assert wrong_kind.value.code == "owner_value_invalid"
 
 
-def test_v3_requires_exactly_its_keys_and_binds_the_reverted_plan(
+def test_v3_requires_exactly_its_keys_and_has_no_revert(
     case: ReviewCase, proposal: dict[str, object]
 ) -> None:
-    revert = HumanDecision.create(
-        case,
-        proposal_id=proposal["proposal_id"],
-        target_fingerprint=case.target_fingerprint,
-        destination="title",
-        actor="owner",
-        outcome="revert",
-        selected_value={"kind": "text", "value": "An Earlier Title"},
-        idempotency_key="domain-revert-binding-01",
-        occurred_at=1_000,
-        reverts_plan_id=_PLAN,
-    )
-    other = HumanDecision.create(
-        case,
-        proposal_id=proposal["proposal_id"],
-        target_fingerprint=case.target_fingerprint,
-        destination="title",
-        actor="owner",
-        outcome="revert",
-        selected_value={"kind": "text", "value": "An Earlier Title"},
-        idempotency_key="domain-revert-binding-01",
-        occurred_at=1_000,
-        reverts_plan_id="effect_plan_" + "f" * 64,
-    )
-    assert revert.request_digest != other.request_digest
-    assert not revert.matches_request(
-        review_case_id=case.review_case_id,
-        proposal_id=proposal["proposal_id"],
-        target_fingerprint=case.target_fingerprint,
-        destination="title",
-        actor="owner",
-        outcome="revert",
-        selected_value={"kind": "text", "value": "An Earlier Title"},
-        idempotency_key="domain-revert-binding-01",
-        reverts_plan_id=other.reverts_plan_id,
-    )
-    raw = json.loads(revert.to_json())
+    entered = _owner(case, "title", "An Earlier Title")
+    raw = json.loads(entered.to_json())
+    assert "reverts_plan_id" not in raw
     for tampered in (
         {**raw, "schema_version": "human-decision-v2"},
-        {key: value for key, value in raw.items() if key != "reverts_plan_id"},
         {**raw, "reverts_plan_id": None},
+        {**raw, "outcome": "revert"},
         {**raw, "selected_value": None},
     ):
         with pytest.raises(HumanDecisionError):
             HumanDecision.from_json(
                 json.dumps(tampered, separators=(",", ":"), sort_keys=True)
             )
-    for outcome, plan in (
-        ("revert", None),
-        ("revert", "effect_plan_short"),
-        ("owner_entered", _PLAN),
-    ):
-        with pytest.raises(HumanDecisionError) as invalid:
-            HumanDecision.create(
-                case,
-                proposal_id=proposal["proposal_id"],
-                target_fingerprint=case.target_fingerprint,
-                destination="title",
-                actor="owner",
-                outcome=outcome,
-                selected_value={"kind": "text", "value": "An Earlier Title"},
-                idempotency_key="domain-revert-binding-02",
-                occurred_at=1_000,
-                reverts_plan_id=plan,
-            )
-        assert invalid.value.code == "invalid"
-    with pytest.raises(HumanDecisionError) as shapeless:
-        HumanDecision.create(
-            case,
-            proposal_id=proposal["proposal_id"],
-            target_fingerprint=case.target_fingerprint,
-            destination="title",
-            actor="owner",
-            outcome="revert",
-            selected_value={"kind": "list", "value": ["An Earlier Title"]},
-            idempotency_key="domain-revert-binding-03",
-            occurred_at=1_000,
-            reverts_plan_id=_PLAN,
-        )
-    assert shapeless.value.code == "invalid_selection"
+    with pytest.raises(HumanDecisionError) as invalid:
+        _owner(case, "title", "An Earlier Title", outcome="revert")
+    assert invalid.value.code == "invalid"
 
 
 @pytest.fixture
@@ -262,10 +195,19 @@ def test_genre_union_is_current_then_proposed_in_order(genre_case: ReviewCase) -
         value for value in genre_case.proposals if value["destination"] == "genres"
     )
     assert list_union(proposal, ["Drama", "Fantasy"]) == (
-        ("Drama", True, False),
-        ("Fantasy", True, True),
-        ("Mystery", False, True),
-        ("Romance", False, True),
+        ("Drama", True, False, False),
+        ("Fantasy", True, True, False),
+        ("Mystery", False, True, False),
+        ("Romance", False, True, False),
+    )
+    # What the field held before its latest write joins last, tagged only
+    # where nothing else lists it.
+    assert list_union(proposal, ["Drama", "Fantasy"], ["Mystery", "Horror"]) == (
+        ("Drama", True, False, False),
+        ("Fantasy", True, True, False),
+        ("Mystery", False, True, False),
+        ("Romance", False, True, False),
+        ("Horror", False, False, True),
     )
 
 
@@ -296,6 +238,21 @@ def test_genre_subset_is_a_nonempty_union_order_change(
     with pytest.raises(HumanDecisionError) as refused:
         _owner(genre_case, "genres", value, kind="list")
     assert refused.value.code == code
+
+
+def test_a_previous_genre_is_admitted_only_with_its_pre_image(
+    genre_case: ReviewCase,
+) -> None:
+    with pytest.raises(HumanDecisionError) as refused:
+        _owner(genre_case, "genres", ["Fantasy", "Horror"], kind="list")
+    assert refused.value.code == "owner_value_invalid"
+    decision = _owner(
+        genre_case, "genres", ["Fantasy", "Horror"], kind="list", previous=["Horror"]
+    )
+    decision.validate_new_for(genre_case, ["Horror"])
+    with pytest.raises(HumanDecisionError) as unbound:
+        decision.validate_new_for(genre_case)
+    assert unbound.value.code == "owner_value_invalid"
 
 
 def test_owner_commands_leave_the_proposal_actions_unchanged(

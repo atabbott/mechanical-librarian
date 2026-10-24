@@ -932,6 +932,29 @@ describe('ReviewApiClient', () => {
 
     expect(mapCaseDetail(response([field()])).fields[0]?.currentValue).toBe('A Book')
     expect(mapCaseDetail(response([field()])).fields[0]?.automaticWithheldReason).toBeNull()
+    // The earlier value is one more suggestion and one more tagged genre; a
+    // restore control is not part of the contract (ADR-0085).
+    const ownerControl = {
+      entry: { max_characters: 512, suggestions: [{ rule: 'previous', value: 'Old Title' }] },
+      subset: {
+        max_items: 32,
+        options: [{ value: 'Drama', current: false, proposed: false, previous: true }],
+      },
+      withdraw: null,
+    }
+    expect(
+      mapCaseDetail(response([field({ owner_control: ownerControl })])).fields[0]?.ownerControl,
+    ).toEqual({
+      entry: { maxCharacters: 512, suggestions: [{ rule: 'previous', value: 'Old Title' }] },
+      subset: {
+        maxItems: 32,
+        options: [{ value: 'Drama', current: false, proposed: false, previous: true }],
+      },
+      withdraw: null,
+    })
+    expect(() =>
+      mapCaseDetail(response([field({ owner_control: { ...ownerControl, revert: null } })])),
+    ).toThrow(ApiError)
     // A recording's optional choice maps; a state the server never states does not.
     expect(
       mapCaseDetail(

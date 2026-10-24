@@ -224,8 +224,7 @@
             "suggestions": []
           },
           "subset": null,
-          "withdraw": null,
-          "revert": null
+          "withdraw": null
         },
         "proposed_values": [],
         "choice_contexts": [

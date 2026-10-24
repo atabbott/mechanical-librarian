@@ -181,7 +181,6 @@ class FakeAuthorityCurrentness:
         if type(decision) is HumanDecision and decision.outcome in {
             "accept",
             "owner_entered",
-            "revert",
         }:
             value: object = decision.selected_value
         elif type(decision) is AuthoredDescriptionDecision:

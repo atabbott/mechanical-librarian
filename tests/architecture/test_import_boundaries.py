@@ -195,18 +195,18 @@ def test_runtime_has_only_the_closed_installed_command_set() -> None:
     assert "UPDATE metadata_reports" not in source
 
 
-def test_learning_and_policy_code_never_reads_owner_entered_or_revert() -> None:
-    """An owner-typed value or a restore is never evidence (#1285, ADR-0085).
+def test_learning_and_policy_code_never_reads_owner_entered_values() -> None:
+    """An owner-typed or previous value is never evidence (#1285, ADR-0085).
 
     Policy, shadow, qualification, provider, automatic-decision and proposal
-    modules may neither name the two outcomes, in code or in SQL text, nor
-    import the owner-value vocabulary that carries them.
+    modules may neither name the outcome or the previous-value read, in code
+    or in SQL text, nor import the owner-value vocabulary that carries them.
     """
     import re
 
     learning = re.compile(r"polic|shadow|qualif|provider|automatic_decision|proposal")
     owner = re.compile(
-        r"\b(owner_entered|revert|reverts_plan_id|revert_candidates|"
+        r"\b(owner_entered|previous_field_values|previous_values|"
         r"owner_value_\w+|owner_text|list_union|UNREVERSIBLE_DESTINATIONS)\b"
     )
     modules = [

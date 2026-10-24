@@ -484,34 +484,25 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
 
 
 class _OwnerSuggestion(_ClosedModel):
-    rule: Literal["title_case", "strip_part", "split_author", "combined"]
+    rule: Literal["title_case", "strip_part", "split_author", "combined", "previous"]
     value: StrictStr = Field(min_length=1, max_length=512)
 
 
 class _OwnerEntry(_ClosedModel):
     max_characters: Literal[512]
-    suggestions: list[_OwnerSuggestion] = Field(max_length=4)
+    suggestions: list[_OwnerSuggestion] = Field(max_length=5)
 
 
 class _OwnerSubsetOption(_ClosedModel):
     value: StrictStr = Field(min_length=1, max_length=1024)
     current: StrictBool
     proposed: StrictBool
+    previous: StrictBool
 
 
 class _OwnerSubset(_ClosedModel):
     max_items: Literal[32]
     options: list[_OwnerSubsetOption] = Field(min_length=1, max_length=160)
-
-
-class _OwnerRevert(_ClosedModel):
-    state: Literal[
-        "available", "field_changed", "no_previous_value", "unavailable", "reverted"
-    ]
-    plan_id: StrictStr = Field(pattern=r"^effect_plan_[0-9a-f]{64}$")
-    written_value: _ProposedValue | None
-    previous_value: _ProposedValue | None
-    written_at: int = Field(ge=0)
 
 
 class _OwnerControl(_ClosedModel):
@@ -520,7 +511,6 @@ class _OwnerControl(_ClosedModel):
     entry: _OwnerEntry | None
     subset: _OwnerSubset | None
     withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
-    revert: _OwnerRevert | None
 
 
 class _ReviewField(_ClosedModel):
@@ -693,9 +683,7 @@ class _HistoryDecisionItem(_ClosedModel):
     event_id: str
     kind: Literal["human_decision_recorded"]
     occurred_at: int
-    outcome: Literal[
-        "accept", "keep_current", "reject", "owner_entered", "withdraw", "revert"
-    ]
+    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
     previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: Literal["human-decision-event-v1"]
@@ -1351,14 +1339,9 @@ class _CoverConfirmation(_ClosedModel):
 class _DecisionRequest(_ClosedModel):
     cover_confirmation: _CoverConfirmation | None = None
     destination: StrictStr = Field(min_length=1, max_length=64)
-    outcome: Literal[
-        "accept", "keep_current", "reject", "owner_entered", "withdraw", "revert"
-    ]
+    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
     selected_value: _ProposedValue | None = None
-    reverts_plan_id: StrictStr | None = Field(
-        default=None, pattern=r"^effect_plan_[0-9a-f]{64}$"
-    )
     target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     consideration_id: StrictStr | None = Field(
         default=None, pattern=r"^cover_consideration_[0-9a-f]{64}$"
@@ -3466,7 +3449,6 @@ def _register_case_and_effect_routes(
                     cover_confirmation=None
                     if payload.cover_confirmation is None
                     else payload.cover_confirmation.model_dump(mode="json"),
-                    reverts_plan_id=payload.reverts_plan_id,
                 )
             )
         )
@@ -4443,9 +4425,6 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,
             "decision_written": 409,
-            "revert_unavailable": 409,
-            "revert_no_previous_value": 409,
-            "revert_field_changed": 409,
         }.get(error.code, 503)
         raise HTTPException(status, detail={"code": error.code}) from None
 

@@ -117,7 +117,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         current_resolved_metadata_policy: Callable[
             [str], ResolvedMetadataPolicy | None
         ],
-        revert_candidates: Callable[[str, str, str], tuple[dict[str, object], ...]],
+        previous_field_values: Callable[
+            [str, str, str], tuple[tuple[str, object], ...]
+        ],
     ) -> None:
         super().__init__(connection, binding)
         self._require_staged_shadow_projection_current = (
@@ -134,7 +136,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.read_current_attention_page = read_current_attention_page
         self._current_cover_authority = current_cover_authority
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
-        self._revert_candidates = revert_candidates
+        self._previous_field_values = previous_field_values
 
     @contextmanager
     def _consistent_review_read(self) -> Iterator[None]:
@@ -313,7 +315,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (review_case_id,),
                     )
                 ),
-                revert_candidates=self._revert_candidates(
+                previous_values=self._previous_field_values(
                     report.target.connection,
                     report.target.library,
                     report.target.item,

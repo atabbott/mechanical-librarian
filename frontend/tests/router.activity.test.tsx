@@ -711,11 +711,6 @@ describe('Activity route', () => {
       'Withdrawn',
     ],
     [
-      'reverted',
-      { events: [{ work_label: 'Reverted work', state: 'revert', origin: 'human' }] },
-      'Reverted',
-    ],
-    [
       'completed automatic cover advice',
       {
         events: [

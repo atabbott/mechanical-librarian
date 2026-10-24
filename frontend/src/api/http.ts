@@ -169,8 +169,7 @@ export const settingsValidationCopy = settingsVocabulary.errors
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
 export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
-export type DecisionOutcome =
-  'accept' | 'keep_current' | 'reject' | 'owner_entered' | 'withdraw' | 'revert'
+export type DecisionOutcome = 'accept' | 'keep_current' | 'reject' | 'owner_entered' | 'withdraw'
 export type DecisionAction = Extract<DecisionOutcome, 'accept' | 'keep_current'>
 
 export interface LibrarySearch {
@@ -415,16 +414,9 @@ export interface OwnerControlView {
   entry: { maxCharacters: number; suggestions: readonly { rule: string; value: string }[] } | null
   subset: {
     maxItems: number
-    options: readonly { value: string; current: boolean; proposed: boolean }[]
+    options: readonly { value: string; current: boolean; proposed: boolean; previous: boolean }[]
   } | null
   withdraw: 'available' | 'automatic_hold' | 'in_progress' | 'written' | null
-  revert: {
-    state: 'available' | 'field_changed' | 'no_previous_value' | 'unavailable' | 'reverted'
-    planId: string
-    writtenValue: Schema<'_ProposedValue'> | null
-    previousValue: Schema<'_ProposedValue'> | null
-    writtenAt: number
-  } | null
 }
 export interface CoverObservationView {
   candidateReference: string
@@ -854,7 +846,6 @@ export interface DecisionCommand {
   outcome: DecisionOutcome
   proposalId: string
   selectedValue?: Schema<'_ProposedValue'> | null
-  revertsPlanId?: string
   targetFingerprint: string
   idempotencyKey: string
   considerationId?: string
@@ -1337,7 +1328,6 @@ export class ReviewApiClient implements ReviewHttp {
       outcome,
       considerationId,
       coverConfirmation,
-      revertsPlanId,
     } = command
     return mapDecisionAcknowledgement(
       await this.mutate(
@@ -1350,7 +1340,6 @@ export class ReviewApiClient implements ReviewHttp {
           target_fingerprint: targetFingerprint,
           consideration_id: considerationId ?? null,
           cover_confirmation: coverConfirmation ?? null,
-          reverts_plan_id: revertsPlanId ?? null,
         },
         signal,
         { 'idempotency-key': idempotencyKey },
@@ -3454,30 +3443,23 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
   }
 }
 
-const mapOwnerValue = (value: unknown, field: string): Schema<'_ProposedValue'> | null => {
-  if (value === null) return null
-  if (!record(value) || !exactKeys(value, ['kind', 'value']))
-    throw new ApiError(502, `invalid_${field}`)
-  return mapHistoryValue(value, field)
-}
 const mapOwnerControl = (value: unknown): OwnerControlView | null => {
   if (value === null) return null
-  if (!record(value) || !exactKeys(value, ['entry', 'subset', 'withdraw', 'revert']))
+  if (!record(value) || !exactKeys(value, ['entry', 'subset', 'withdraw']))
     throw new ApiError(502, 'invalid_owner_control')
-  const { entry, subset, withdraw, revert } = value
+  const { entry, subset, withdraw } = value
   if (
     (entry !== null &&
       (!record(entry) ||
         !exactKeys(entry, ['max_characters', 'suggestions']) ||
         !Array.isArray(entry.suggestions) ||
-        entry.suggestions.length > 4)) ||
+        entry.suggestions.length > 5)) ||
     (subset !== null &&
       (!record(subset) ||
         !exactKeys(subset, ['max_items', 'options']) ||
         !Array.isArray(subset.options) ||
         subset.options.length === 0 ||
-        subset.options.length > 160)) ||
-    (revert !== null && (!record(revert) || Object.keys(revert).length !== 5))
+        subset.options.length > 160))
   )
     throw new ApiError(502, 'invalid_owner_control')
   return {
@@ -3495,6 +3477,7 @@ const mapOwnerControl = (value: unknown): OwnerControlView | null => {
                   'strip_part',
                   'split_author',
                   'combined',
+                  'previous',
                 ] as const),
                 value: boundedStringValue(item.value, 'owner_suggestion_value', 512),
               }
@@ -3506,12 +3489,13 @@ const mapOwnerControl = (value: unknown): OwnerControlView | null => {
         : {
             maxItems: integerValue(subset.max_items, 'owner_subset_max_items'),
             options: (subset.options as unknown[]).map((item) => {
-              if (!record(item) || !exactKeys(item, ['value', 'current', 'proposed']))
+              if (!record(item) || !exactKeys(item, ['value', 'current', 'proposed', 'previous']))
                 throw new ApiError(502, 'invalid_owner_subset_option')
               return {
                 value: boundedStringValue(item.value, 'owner_subset_value', 1024),
                 current: booleanValue(item.current, 'owner_subset_current'),
                 proposed: booleanValue(item.proposed, 'owner_subset_proposed'),
+                previous: booleanValue(item.previous, 'owner_subset_previous'),
               }
             }),
           },
@@ -3524,22 +3508,6 @@ const mapOwnerControl = (value: unknown): OwnerControlView | null => {
             'in_progress',
             'written',
           ] as const),
-    revert:
-      revert === null
-        ? null
-        : {
-            state: coverObservationValue(revert.state, 'owner_revert_state', [
-              'available',
-              'field_changed',
-              'no_previous_value',
-              'unavailable',
-              'reverted',
-            ] as const),
-            planId: boundedStringValue(revert.plan_id, 'owner_revert_plan_id', 76),
-            writtenValue: mapOwnerValue(revert.written_value, 'owner_revert_written_value'),
-            previousValue: mapOwnerValue(revert.previous_value, 'owner_revert_previous_value'),
-            writtenAt: integerValue(revert.written_at, 'owner_revert_written_at'),
-          },
   }
 }
 
@@ -3673,7 +3641,7 @@ export const mapHistory = (value: unknown): HistoryView => {
         const outcome = stringValue(item.outcome, `history_item_${String(index)}_outcome`)
         const allowed =
           kind === 'human_decision_recorded'
-            ? ['accept', 'keep_current', 'reject', 'owner_entered', 'withdraw', 'revert']
+            ? ['accept', 'keep_current', 'reject', 'owner_entered', 'withdraw']
             : ['candidate', 'keep_current', 'ignore']
         if (!allowed.includes(outcome))
           throw new ApiError(502, `invalid_history_item_${String(index)}_outcome`)

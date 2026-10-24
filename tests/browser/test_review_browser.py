@@ -1553,9 +1553,9 @@ def _server(
         owner_changed = False
 
         @app.middleware("http")
-        async def change_title_before_restore(request, call_next):
-            # The library edits the written title just before the restore
-            # arrives, so the panel the owner confirmed is now stale.
+        async def change_title_before_decision(request, call_next):
+            # The library edits the written title just before the decision
+            # arrives, so the case the owner answered is now stale.
             nonlocal owner_changed
             if (
                 request.method == "POST"
@@ -8221,90 +8221,69 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         expect(page.get_by_text("Owner entered a value.")).to_be_visible()
 
 
-def _open_restore(page: Page, origin: str, case_id: str):
+def _choose_previous_title(page: Page, origin: str, case_id: str):
+    """Open the entry on the case that read the write back, and fill it from
+    the value the write replaced."""
     page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
     panel = page.get_by_role("region", name="Your value for Title")
-    expect(
-        panel.get_by_text(
-            re.compile(
-                f"^Written .+: changed from “Real Tigers” to “{OWNER_TITLE}”\\.$"
-            )
-        )
-    ).to_be_visible()
-    panel.get_by_role("button", name="Restore earlier value…", exact=True).click()
-    confirm = panel.get_by_role("group", name="Confirm restore")
-    expect(
-        confirm.get_by_text(
-            "Restore “Real Tigers” to Title? This writes to your library.", exact=True
-        )
-    ).to_be_visible()
-    restore = confirm.get_by_role("button", name="Restore", exact=True)
-    expect(restore).to_be_focused()
-    return panel, restore
+    expect(panel.get_by_role("button", name=re.compile("Restore"))).to_have_count(0)
+    panel.get_by_role("button", name="Enter a value", exact=True).click()
+    panel.get_by_role(
+        "button", name="Use previous value “Real Tigers”", exact=True
+    ).click()
+    expect(panel.get_by_role("textbox", name="Your value for Title")).to_have_value(
+        "Real Tigers"
+    )
+    return panel
 
 
-def test_owner_restores_a_written_title():
-    """B4: the case that read the write back offers its pre-image, and the
-    restore is recorded as an ordinary guarded decision."""
+def test_owner_chooses_the_previous_title_again():
+    """B4: the case that read the write back offers the value it replaced as a
+    suggestion, and choosing it is an ordinary owner-entered decision."""
     with _owner_page(
         genre_fixture=("Fantasy",), genre_current=("Drama",), owner_write=True
     ) as (page, origin, case_id):
-        panel, restore = _open_restore(page, origin, case_id)
+        panel = _choose_previous_title(page, origin, case_id)
         _owner_layout_holds(page)
         page.set_viewport_size({"width": 1440, "height": 900})
         with page.expect_request(
             lambda request: request.url.endswith("/decisions")
         ) as sent:
-            restore.click()
+            panel.get_by_role("button", name="Record this value", exact=True).click()
         body = json.loads(sent.value.post_data or "{}")
         assert (body["outcome"], body["selected_value"]) == (
-            "revert",
+            "owner_entered",
             {"kind": "text", "value": "Real Tigers"},
         )
-        assert re.fullmatch(r"effect_plan_[0-9a-f]{64}", body["reverts_plan_id"])
+        assert "reverts_plan_id" not in body
         expect(
-            panel.get_by_text("You restored “Real Tigers”.", exact=True)
+            panel.get_by_text("You entered “Real Tigers”.", exact=True)
         ).to_be_focused()
-        expect(
-            panel.get_by_text("The restore is recorded.", exact=True)
-        ).to_be_visible()
+        expect(panel.get_by_text("Your value is recorded.", exact=True)).to_be_visible()
 
 
-def test_a_restore_confirmed_after_the_library_changed_is_refused():
-    """B4: the library edits the title while the confirmation is open; the
-    store refuses the stale restore and the current case says why."""
+def test_the_previous_title_chosen_after_the_library_changed_is_refused():
+    """B4: the library edits the title while the entry is open; the store
+    refuses the stale entry and the owner reaches the current case."""
     with _owner_page(
         genre_fixture=("Fantasy",),
         genre_current=("Drama",),
         owner_write=True,
         owner_library_change=True,
     ) as (page, origin, case_id):
-        _panel, restore = _open_restore(page, origin, case_id)
+        panel = _choose_previous_title(page, origin, case_id)
         with page.expect_response(
             lambda response: response.url.endswith("/decisions")
         ) as refused:
-            restore.click()
+            panel.get_by_role("button", name="Record this value", exact=True).click()
         assert refused.value.status == 409
         assert refused.value.json()["error"]["code"] == "stale"
-        page.wait_for_url(re.compile(r"lens=needs_attention"))
         current = page.evaluate(
             """async (caseId) => (await (await fetch(
               `/api/v1/review-cases/${caseId}/successor`)).json()).review_case_id""",
             case_id,
         )
         assert current and current != case_id
-        page.goto(f"{origin}/library?lens=all&preview={current}&field=title")
-        panel = page.get_by_role("region", name="Your value for Title")
-        expect(
-            panel.get_by_text(
-                "This field has changed since it was written, so the earlier "
-                "value can’t be restored safely.",
-                exact=True,
-            )
-        ).to_be_visible()
-        expect(
-            panel.get_by_role("button", name="Restore earlier value…")
-        ).to_have_count(0)
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))

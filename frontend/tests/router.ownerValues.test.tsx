@@ -14,7 +14,6 @@ const control = (value: Partial<OwnerControlView>): OwnerControlView => ({
   entry: null,
   subset: null,
   withdraw: null,
-  revert: null,
   ...value,
 })
 const entry = control({
@@ -215,9 +214,9 @@ describe('owner-entered values', () => {
         subset: {
           maxItems: 32,
           options: [
-            { value: 'Drama', current: true, proposed: false },
-            { value: 'Fantasy', current: false, proposed: true },
-            { value: 'Mystery', current: false, proposed: true },
+            { value: 'Drama', current: true, proposed: false, previous: false },
+            { value: 'Fantasy', current: false, proposed: true, previous: false },
+            { value: 'Mystery', current: false, proposed: true, previous: false },
           ],
         },
       }),
@@ -304,100 +303,80 @@ describe('owner-entered values', () => {
   })
 })
 
-describe('guarded revert', () => {
-  const written = (state: NonNullable<OwnerControlView['revert']>['state']): Field => ({
+describe('choosing the previous value again', () => {
+  // After a write, the value it replaced is one more suggestion; going back is
+  // an ordinary entry under the same guards (ADR-0085).
+  const written: Field = {
     ...contextTitle,
     currentValue: 'The Silent Orchard',
     currentRaw: 'The Silent Orchard',
     ownerControl: control({
-      revert: {
-        state,
-        planId: `effect_plan_${'a'.repeat(64)}`,
-        writtenValue: { kind: 'text', value: 'The Silent Orchard' },
-        previousValue: { kind: 'text', value: 'THE SILENT ORCHARD (Disc 2)' },
-        writtenAt: 1_700_000_000,
+      entry: {
+        maxCharacters: 512,
+        suggestions: [{ rule: 'previous', value: 'THE SILENT ORCHARD (Disc 2)' }],
       },
     }),
+  }
+
+  it('V7 offers the previous value as a suggestion that only fills the input', async () => {
+    const user = userEvent.setup()
+    const http = owner(() => [written])
+    const panel = await open(http)
+    expect(within(panel).queryByRole('button', { name: /Restore/u })).toBeNull()
+    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    await user.click(
+      within(panel).getByRole('button', {
+        name: 'Use previous value “THE SILENT ORCHARD (Disc 2)”',
+      }),
+    )
+    const input = within(panel).getByRole('textbox', { name: 'Your value for Title' })
+    expect(input).toHaveValue('THE SILENT ORCHARD (Disc 2)')
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+    expect(sent(http)).toEqual([
+      expect.objectContaining({
+        outcome: 'owner_entered',
+        selectedValue: { kind: 'text', value: 'THE SILENT ORCHARD (Disc 2)' },
+      }),
+    ])
+    expect(sent(http)[0]).not.toHaveProperty('revertsPlanId')
   })
 
-  it('V7 confirms inline and restores the recorded pre-image', async () => {
+  it('V7 tags a previous genre beside Current and Proposed', async () => {
     const user = userEvent.setup()
-    const http = owner(() => [written('available')])
-    const panel = await open(http)
+    const genres: Field = {
+      ...contextTitle,
+      destination: 'genres',
+      currentValue: 'Fantasy',
+      currentRaw: ['Fantasy'],
+      proposedValues: [],
+      ownerControl: control({
+        subset: {
+          maxItems: 32,
+          options: [
+            { value: 'Fantasy', current: true, proposed: false, previous: false },
+            { value: 'Drama', current: false, proposed: false, previous: true },
+          ],
+        },
+      }),
+    }
+    const http = owner(() => [genres])
+    renderRoute('/library?lens=all&preview=case-1&field=genres', http)
+    const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
+    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    const group = within(panel).getByRole('group', { name: 'Choose genres' })
     expect(
-      within(panel).getByText(
-        /^Written .+: changed from “THE SILENT ORCHARD \(Disc 2\)” to “The Silent Orchard”\.$/u,
-      ),
-    ).toBeVisible()
-    await user.click(within(panel).getByRole('button', { name: 'Restore earlier value…' }))
-    const confirm = within(panel).getByRole('group', { name: 'Confirm restore' })
-    expect(
-      within(confirm).getByText(
-        'Restore “THE SILENT ORCHARD (Disc 2)” to Title? This writes to your library.',
-      ),
-    ).toBeVisible()
-    expect(within(confirm).getByRole('button', { name: 'Restore' })).toHaveFocus()
-    await user.click(within(confirm).getByRole('button', { name: 'Cancel' }))
-    expect(within(panel).getByRole('button', { name: 'Restore earlier value…' })).toHaveFocus()
-    await user.click(within(panel).getByRole('button', { name: 'Restore earlier value…' }))
-    await user.click(within(panel).getByRole('button', { name: 'Restore' }))
+      within(group)
+        .getAllByRole('checkbox')
+        .map((box) => box.closest('label')?.textContent),
+    ).toEqual(['FantasyCurrent', 'DramaPrevious'])
+    await user.click(within(group).getByRole('checkbox', { name: /Drama/u }))
+    await user.click(within(group).getByRole('checkbox', { name: /Fantasy/u }))
+    await user.click(within(panel).getByRole('button', { name: 'Record these genres' }))
     expect(sent(http)[0]).toMatchObject({
-      outcome: 'revert',
-      revertsPlanId: `effect_plan_${'a'.repeat(64)}`,
-      selectedValue: { kind: 'text', value: 'THE SILENT ORCHARD (Disc 2)' },
+      outcome: 'owner_entered',
+      selectedValue: { kind: 'list', value: ['Drama'] },
     })
-  })
-
-  it('V7 announces a stale panel refusal and keeps focus on a named control', async () => {
-    const user = userEvent.setup()
-    let fields: readonly Field[] = [written('available')]
-    const http = owner(
-      () => fields,
-      async () => {
-        fields = [written('field_changed')]
-        throw new ApiError(409, 'revert_field_changed')
-      },
-    )
-    const panel = await open(http)
-    await user.click(within(panel).getByRole('button', { name: 'Restore earlier value…' }))
-    await user.click(within(panel).getByRole('button', { name: 'Restore' }))
-    const alert = within(panel).getByRole('alert')
-    await waitFor(() =>
-      expect(alert).toHaveTextContent(
-        'This field has changed since it was written, so the earlier value can’t be restored safely.',
-      ),
-    )
-    expect(within(panel).queryByRole('button', { name: 'Restore' })).toBeNull()
-    await waitFor(() => expect(alert).toHaveFocus())
-    expect(document.activeElement).not.toBe(document.body)
-  })
-
-  it.each([
-    [
-      'field_changed',
-      'This field has changed since it was written, so the earlier value can’t be restored safely.',
-    ],
-    [
-      'no_previous_value',
-      'The field was empty before this write. Clearing a field isn’t available.',
-    ],
-    ['unavailable', 'This write can’t be reverted.'],
-  ] as const)('V7 shows the %s copy without a button', async (state, copy) => {
-    const http = owner(() => [written(state)])
-    const panel = await open(http)
-    expect(within(panel).getByText(copy)).toBeVisible()
-    expect(within(panel).queryByRole('button', { name: 'Restore earlier value…' })).toBeNull()
-  })
-
-  it('V7 keeps the write it restored and says the earlier value is back', async () => {
-    const http = owner(() => [written('reverted')])
-    const panel = await open(http)
-    expect(
-      within(panel).getByText(
-        /^Written .+: changed from “THE SILENT ORCHARD \(Disc 2\)” to “The Silent Orchard”\. The earlier value has been restored\.$/u,
-      ),
-    ).toBeVisible()
-    expect(within(panel).queryByRole('button', { name: 'Restore earlier value…' })).toBeNull()
   })
 })
 
@@ -413,17 +392,12 @@ describe('owner command labels', () => {
       selectedValue: null,
     })
     const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
-      items: [
-        item('title', 'owner_entered'),
-        item('subtitle', 'withdraw'),
-        item('publisher', 'revert'),
-      ],
+      items: [item('title', 'owner_entered'), item('subtitle', 'withdraw')],
     }))
     renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
     const article = async (name: string) =>
       (await screen.findByRole('heading', { name })).closest('article')
     expect(await article('Title')).toHaveTextContent('Owner entered a value.')
     expect(await article('Subtitle')).toHaveTextContent('Owner withdrew the decision.')
-    expect(await article('Publisher')).toHaveTextContent('Owner restored the earlier value.')
   })
 })

@@ -397,7 +397,6 @@ def retained_recorded_only_decision(
                     "outcome",
                     "proposal_id",
                     "review_case_id",
-                    "reverts_plan_id",
                     "selected_value",
                     "target_fingerprint",
                 )

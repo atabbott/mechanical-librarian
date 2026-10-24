@@ -63,13 +63,11 @@ from mechanical_librarian.domain.description_advice import (
 from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     decision_value_kind,
-    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import (
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
-    target_value,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
@@ -138,7 +136,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
         validate_shadow_outcome_row: Callable[
             [tuple[object, ...] | sqlite3.Row], tuple[str, int]
         ],
-        revert_candidates: Callable[[str, str, str], tuple[dict[str, object], ...]],
+        previous_field_values: Callable[
+            [str, str, str], tuple[tuple[str, object], ...]
+        ],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
@@ -151,7 +151,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         )
         self._set_field_effect_manual_hold = set_field_effect_manual_hold
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
-        self._revert_candidates = revert_candidates
+        self._previous_field_values = previous_field_values
 
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
@@ -508,14 +508,24 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
-            decision.validate_new_for(case)
+            target = case.target
+            decision.validate_new_for(
+                case,
+                dict(
+                    self._previous_field_values(
+                        str(target["connection"]),
+                        str(target["library"]),
+                        str(target["item"]),
+                    )
+                ).get(decision.destination)
+                if decision.outcome == "owner_entered"
+                else None,
+            )
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )
             if decision.outcome == "withdraw":
                 self._require_withdrawable(decision)
-            elif decision.outcome == "revert":
-                self._require_revertible(decision, case)
             cover_automatic = None
             if decision.destination == "cover":
                 target = case.target
@@ -698,45 +708,6 @@ class SQLiteDecisionRepository(ConnectionScoped):
             raise HumanDecisionError("already_decided")
         if "verified" in states:
             raise HumanDecisionError("decision_written")
-
-    def _require_revertible(self, decision: HumanDecision, case: ReviewCase) -> None:
-        """Refuse a revert in its fixed order, before anything is written.
-
-        Only the work's latest write, made from a human decision, may be
-        reverted, and only while this case says the field still holds what it
-        wrote. The value restored is the plan's recorded pre-image and must be
-        exactly what the command carries (ADR-0085).
-        """
-        target = case.target
-        candidate = next(
-            (
-                value
-                for value in self._revert_candidates(
-                    str(target["connection"]),
-                    str(target["library"]),
-                    str(target["item"]),
-                )
-                if value["destination"] == decision.destination
-            ),
-            None,
-        )
-        if (
-            candidate is None
-            or candidate["plan_id"] != decision.reverts_plan_id
-            or candidate["eligibility"] not in {"eligible", "no_previous_value"}
-        ):
-            raise HumanDecisionError("revert_unavailable")
-        if candidate["eligibility"] == "no_previous_value":
-            raise HumanDecisionError("revert_no_previous_value")
-        if json.loads(_canonical_json(decision.selected_value)) != {
-            "kind": decision_value_kind(decision.destination),
-            "value": candidate["pre_value"],
-        }:
-            raise HumanDecisionError("revert_unavailable")
-        if field_value_version(
-            decision.destination, target_value(case, decision.destination)
-        ) != field_value_version(decision.destination, candidate["desired_value"]):
-            raise HumanDecisionError("revert_field_changed")
 
     @local_operation
     def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
@@ -1157,7 +1128,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 )
                 value["selected_value"] = (
                     decision.selected_value
-                    if decision.outcome in {"accept", "owner_entered", "revert"}
+                    if decision.outcome in {"accept", "owner_entered"}
                     else {"kind": kind, "value": target.get("value")}
                     if decision.outcome == "keep_current"
                     and target.get("state") == "value"

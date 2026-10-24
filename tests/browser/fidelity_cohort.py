@@ -513,20 +513,14 @@ def _case(case_id: str) -> dict[str, object]:
                             "suggestions": [
                                 {"rule": "title_case", "value": long_title},
                                 {"rule": "strip_part", "value": "Counterrevolutionary"},
+                                {
+                                    "rule": "previous",
+                                    "value": "Uncharacteristically Interdisciplinary",
+                                },
                             ],
                         },
                         "subset": None,
                         "withdraw": None,
-                        "revert": {
-                            "state": "available",
-                            "plan_id": "effect_plan_" + "a" * 64,
-                            "written_value": {"kind": "text", "value": long_title},
-                            "previous_value": {
-                                "kind": "text",
-                                "value": "Uncharacteristically Interdisciplinary",
-                            },
-                            "written_at": 1_700_000_000,
-                        },
                     },
                 ),
                 _field(
@@ -541,7 +535,9 @@ def _case(case_id: str) -> dict[str, object]:
                                 {
                                     "value": value,
                                     "current": value == "Historiography",
-                                    "proposed": value != "Historiography",
+                                    "proposed": value == "Psychogeography",
+                                    "previous": value
+                                    == "Counterfactual speculative fiction",
                                 }
                                 for value in (
                                     "Historiography",
@@ -551,7 +547,6 @@ def _case(case_id: str) -> dict[str, object]:
                             ],
                         },
                         "withdraw": None,
-                        "revert": None,
                     },
                 ),
             ],

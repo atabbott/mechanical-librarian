@@ -357,30 +357,15 @@ def test_withdraw_before_claim_issues_no_request(tmp_path):
         store.close()
 
 
-def _reverted(store: OwnerStore):
-    """Write a typed title, read the work back, and record its revert."""
-    written = store.write(store.decide("owner_entered", _ORCHARD))
-    store.publish(rewritten(genre_report(), title="The Silent Orchard"))
-    candidate = store.candidates()["title"]
-    assert (candidate["plan_id"], candidate["eligibility"]) == (
-        written.plan.plan_id,
-        "eligible",
-    )
-    revert = store.decide(
-        "revert",
-        {"kind": "text", "value": candidate["pre_value"]},
-        reverts_plan_id=written.plan.plan_id,
-    )
-    # The library still holds the written value; only its version token is
-    # the fake's own, so the plan reseeds the same value.
-    assert "The Silent Orchard" == store.target.read(written.plan).value
-    return written, store.plan(revert)
-
-
-def test_a_revert_on_the_successor_restores_the_pre_image(tmp_path):
+def test_reselecting_the_previous_value_on_the_successor_writes_it_back(tmp_path):
     store = OwnerStore(tmp_path, genre_report())
     try:
-        written, operation = _reverted(store)
+        written = store.write(store.decide("owner_entered", _ORCHARD))
+        store.publish(rewritten(genre_report(), title="The Silent Orchard"))
+        assert {"title": "Real Tigers"} == store.previous()
+        operation = store.plan(
+            store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+        )
         assert (operation.plan.pre_value, operation.plan.desired_value) == (
             written.plan.desired_value,
             written.plan.pre_value,
@@ -389,20 +374,7 @@ def test_a_revert_on_the_successor_restores_the_pre_image(tmp_path):
         assert ("verified", None) == (verified.state, verified.failure)
         assert "Real Tigers" == store.target.read(operation.plan).value
         assert store.patches == [written.plan.plan_id, operation.plan.plan_id]
-        assert "reverted" == store.candidates()["title"]["eligibility"]
-    finally:
-        store.close()
-
-
-def test_a_field_changed_after_the_revert_was_recorded_stales_unwritten(tmp_path):
-    store = OwnerStore(tmp_path, genre_report())
-    try:
-        written, operation = _reverted(store)
-        store.target.drift(operation.plan, "Edited in the library")
-        staled = store.service.apply(operation.plan.plan_id)
-        assert ("stale", "target_changed") == (staled.state, staled.failure)
-        assert store.patches == [written.plan.plan_id]
-        assert "Edited in the library" == store.target.read(operation.plan).value
+        assert {"title": "The Silent Orchard"} == store.previous()
     finally:
         store.close()
 
