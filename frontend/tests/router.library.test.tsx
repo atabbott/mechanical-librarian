@@ -6256,6 +6256,75 @@ describe('Library route', () => {
     },
   )
 
+  it('settles the newly anchored work after Try again reads its failed case and Attention again: retry', async () => {
+    const user = userEvent.setup()
+    const title = detail.fields[0]
+    if (!title) throw new Error('title fixture required')
+    const firstItem = {
+      id: 'case-1',
+      destination: 'title',
+      title: 'A Book',
+      authors: [],
+      library: 'Books',
+      mediaKind: 'ebook',
+      notices: [],
+      provenance: [],
+      workAttentionCount: 1,
+    }
+    const target = { ...firstItem, id: 'case-2', title: 'Anchored target' }
+    type Page = Awaited<ReturnType<ReviewHttp['getAttention']>>
+    let settle: ((value: Page) => void) | undefined
+    let fail: ((error: Error) => void) | undefined
+    let laterReads = 0
+    let caseReads = 0
+    const http = createHttp()
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) => {
+      if (cursor !== 'later-page') return { total: 2, items: [firstItem], nextCursor: 'later-page' }
+      laterReads += 1
+      if (laterReads === 1) return { total: 2, items: [target] }
+      return new Promise<Page>((resolve, reject) => {
+        settle = resolve
+        fail = reject
+      })
+    })
+    // The anchored case's own read fails twice, then recovers.
+    http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+      if (id !== 'case-2') return detail
+      caseReads += 1
+      if (caseReads < 3) throw new ApiError(503, 'unavailable')
+      return {
+        ...detail,
+        id,
+        title: target.title,
+        fields: [{ ...title, currentValue: 'Anchored choice' }],
+      }
+    })
+    renderRoute('/library?lens=all&attention=open', http)
+    await waitFor(() => expect(screen.getByLabelText('Attention queue')).toHaveFocus())
+    await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
+    const row = await screen.findByRole('button', { description: 'Anchored target' })
+    row.focus()
+    await user.keyboard('{Enter}')
+    await screen.findByText('Loading selected work…')
+    await act(async () => fail?.(new Error('anchored identity unavailable')))
+    const retry = await screen.findByRole('button', { name: 'Try again' })
+    retry.focus()
+    await user.click(retry)
+    await waitFor(() => expect(laterReads).toBe(3))
+    await waitFor(() => expect(caseReads).toBe(2))
+    await act(async () => fail?.(new Error('still unavailable')))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus())
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(laterReads).toBe(4))
+    await act(async () => settle?.({ total: 2, items: [target] }))
+    const heading = await screen.findByRole('heading', { name: target.title })
+    expect(
+      await screen.findByRole('button', { name: 'Choose current value: Anchored choice' }),
+    ).toBeVisible()
+    expect(caseReads).toBe(3)
+    await waitFor(() => expect(heading.closest('[data-route-focus]')).toHaveFocus())
+  })
+
   it.each(['not_found', 'pending'])(
     'calls an off-page work unavailable only once its case read fails: %s',
     async (state) => {

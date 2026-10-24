@@ -601,6 +601,9 @@ describe('owner review fixes', () => {
         await settled[first]
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
+      // Every frame counts, including one a later effect replaces at once.
+      const frames: string[] = []
+      let moveEnded: number | undefined
       const http = {
         ...owner(() => [contextTitle]),
         getLibrary: vi.fn(async () => {
@@ -613,7 +616,9 @@ describe('owner review fixes', () => {
           await after('lineage')
           return 'case-2'
         }),
-        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id, signal) => {
+          // The selected case's own query read again is where the move ends.
+          if (stale && id === 'case-1' && signal) moveEnded ??= frames.length
           if (stale && id === 'case-1') {
             if (outcome === 'predecessor unavailable') throw new ApiError(503, 'unavailable')
             if (outcome !== 'predecessor current') throw new ApiError(409, 'stale')
@@ -625,8 +630,6 @@ describe('owner review fixes', () => {
       const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
       const panel = await screen.findByRole('region', { name: 'Your value for Title' })
       await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
-      // Every frame counts, including one a later effect replaces at once.
-      const frames: string[] = []
       const observer = new MutationObserver((records) => {
         for (const record of records)
           for (const node of record.addedNodes) frames.push(node.textContent ?? '')
@@ -660,6 +663,10 @@ describe('owner review fixes', () => {
           expect.any(AbortSignal),
           'foreground',
         )
+        const unavailable = (frame: string) => frame.includes('not available in the current')
+        expect(moveEnded).toBeDefined()
+        expect(frames.slice(0, moveEnded).filter(unavailable)).toEqual([])
+        expect(frames.slice(moveEnded).some(unavailable)).toBe(true)
         return
       }
       await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
@@ -669,6 +676,44 @@ describe('owner review fixes', () => {
       expect(frames.filter((frame) => frame.includes('not available in the current'))).toEqual([])
     },
   )
+
+  it('M4 keeps an open entry and its draft through a transient failure of the move check', async () => {
+    const user = userEvent.setup()
+    let stale = false
+    const updates = createLiveStream()
+    const http = {
+      ...owner(() => [contextTitle]),
+      getLibrary: vi.fn(async () => (stale ? { ...quietLibrary, works: [] } : quietLibrary)),
+      // The move check reads the case directly and fails once; the case's own
+      // query read answers late and succeeds.
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id, signal) => {
+        if (stale && signal === undefined) throw new ApiError(503, 'unavailable')
+        if (stale) await new Promise((resolve) => setTimeout(resolve, 80))
+        return { ...detail, id, fields: [contextTitle] }
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    const panel = await screen.findByRole('region', { name: 'Your value for Title' })
+    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    const input = within(panel).getByRole('textbox', { name: 'Your value for Title' })
+    await user.type(input, 'Half typed')
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 84, subject: 'case-2', topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 200))
+    })
+    // The check failed, the case was read again, and the form the owner has
+    // open never left (#1365).
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1')
+    expect(http.getCaseDetail).toHaveBeenLastCalledWith(
+      'case-1',
+      expect.any(AbortSignal),
+      'foreground',
+    )
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveValue('Half typed')
+    expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
+  })
 
   it('M4 leaves focus on the work, not the page, when no successor is found', async () => {
     const user = userEvent.setup()

@@ -1415,11 +1415,13 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
 // store still decides, and a refusal is said here, beside the control used.
 type OwnerOutcome = 'owner_entered' | 'withdraw'
 // The open field's heading, the place focus returns to when the control that
-// was used is gone.
+// was used is gone. On a compact page the controls sit far below it, so it is
+// brought into view, clear of the sticky masthead (#1365).
 const focusFieldHeading = () => {
   const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
   heading?.setAttribute('tabindex', '-1')
   heading?.focus({ preventScroll: true })
+  heading?.scrollIntoView({ block: 'nearest' })
 }
 const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
 const quotedValue = (value: { value: unknown } | null | undefined) =>
@@ -3155,9 +3157,9 @@ export default function LibraryPage({
         // The server refuses a superseded case's read as stale; that is the
         // case no longer being current. Each successor's target is checked.
         if (!(error instanceof ApiError && error.code === 'stale')) {
-          // A move that ends nowhere leaves a predecessor its own read refused,
-          // so its retained case read is read again rather than shown as current.
-          void queryClient.resetQueries({
+          // The check itself failed, so the case is read again while what the
+          // owner has open stays; a failed read then drops it (#1365).
+          void queryClient.refetchQueries({
             queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
             exact: true,
           })
@@ -3203,6 +3205,8 @@ export default function LibraryPage({
           // still name its replacement.
         }
       }
+      // A move that ends nowhere leaves a predecessor its own read refused, so
+      // its retained case read is read again rather than shown as current.
       void queryClient.resetQueries({
         queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
         exact: true,
@@ -4357,6 +4361,8 @@ export default function LibraryPage({
                     selectedDetailRetry.current = search.preview ?? null
                     retry()
                     void attention.refetch()
+                    // The case read names the work too, so it is read again (#1365).
+                    if (detail.isError) void detail.refetch()
                   }}
                 >
                   Try again
