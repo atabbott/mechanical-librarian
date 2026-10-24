@@ -1415,13 +1415,11 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
 // store still decides, and a refusal is said here, beside the control used.
 type OwnerOutcome = 'owner_entered' | 'withdraw'
 // The open field's heading, the place focus returns to when the control that
-// was used is gone. On a compact page the controls sit far below it, so it is
-// brought into view, clear of the sticky masthead (#1365).
+// was used is gone.
 const focusFieldHeading = () => {
   const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
   heading?.setAttribute('tabindex', '-1')
   heading?.focus({ preventScroll: true })
-  heading?.scrollIntoView({ block: 'nearest' })
 }
 const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
 const quotedValue = (value: { value: unknown } | null | undefined) =>
@@ -1467,6 +1465,7 @@ function OwnerControls({
   const trigger = useRef<HTMLButtonElement>(null)
   const recorded = useRef<HTMLParagraphElement>(null)
   const notice = useRef<HTMLParagraphElement>(null)
+  const statusLine = useRef<HTMLParagraphElement>(null)
   const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
   const busy = progress?.phase === 'recording'
   const decision = field.humanDecision
@@ -1480,8 +1479,8 @@ function OwnerControls({
     refocus.current = null
   }, [mode])
   // A settled command leaves focus on something named: the recorded value,
-  // the field's heading after a withdrawal, or, when a refusal removed the
-  // control that was used, the refusal itself.
+  // the withdrawal's own outcome line where its controls were (#1365), or,
+  // when a refusal removed the control that was used, the refusal itself.
   useEffect(() => {
     const command = sent.current
     if (!command) return
@@ -1497,11 +1496,10 @@ function OwnerControls({
     }
     setMode('idle')
     requestAnimationFrame(() => {
-      if (command.outcome !== 'withdraw') {
-        ;(recorded.current ?? notice.current)?.focus({ preventScroll: true })
-        return
-      }
-      focusFieldHeading()
+      ;(command.outcome === 'withdraw'
+        ? statusLine.current
+        : (recorded.current ?? notice.current)
+      )?.focus({ preventScroll: true })
     })
   }, [progress])
   if (!control) return null
@@ -1711,7 +1709,7 @@ function OwnerControls({
         <p className="owner-note">{withdrawCopy[control.withdraw]}</p>
       ) : null}
       {mode === 'idle' ? refusalNotice : null}
-      <p className="owner-status" role="status">
+      <p ref={statusLine} tabIndex={-1} className="owner-status" role="status">
         {refusal || failed ? '' : shown}
       </p>
     </section>

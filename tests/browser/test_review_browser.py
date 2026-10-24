@@ -8286,8 +8286,7 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
             page.get_by_text(
                 "Withdrawn. This field needs a decision again.", exact=True
             )
-        ).to_be_visible()
-        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        ).to_be_focused()
         assert "genres" in _attention_destinations(page, case_id)
         page.get_by_role("link", name="History", exact=True).click()
         expect(page.get_by_text("Owner withdrew the decision.")).to_be_visible()
@@ -8529,7 +8528,11 @@ def test_withdrawing_keeps_the_work_that_leaves_its_lens_in_view():
                 )
             ).to_be_visible()
         _work_stays_in_view(page)
-        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        expect(
+            panel.get_by_text(
+                "Withdrawn. This field needs a decision again.", exact=True
+            )
+        ).to_be_focused()
 
 
 # The focused element lies inside the viewport and below the sticky masthead.
@@ -8541,9 +8544,9 @@ _FOCUS_IN_VIEW = """() => {
 
 
 @pytest.mark.parametrize("width", (390, 320))
-def test_withdrawing_at_compact_width_keeps_the_focused_heading_in_view(width):
-    """#1365: the field heading that takes focus after a withdrawal is on
-    screen, not scrolled away above the controls the owner just used."""
+def test_withdrawing_at_compact_width_focuses_its_outcome_in_place(width):
+    """#1365: after a withdrawal focus is on its outcome line, where Withdraw
+    was, inside the viewport below the masthead, and the page barely moves."""
     with _owner_page(**_SOLE_GENRES) as (page, origin, case_id):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
         panel = page.get_by_role("region", name="Your value for Genres")
@@ -8552,23 +8555,23 @@ def test_withdrawing_at_compact_width_keeps_the_focused_heading_in_view(width):
         page.goto(
             f"{origin}/library?lens=no_attention_needed&preview={case_id}&field=genres"
         )
-        panel.get_by_role("button", name="Withdraw", exact=True).click()
-        expect(
-            panel.get_by_text(
-                "Withdrawn. This field needs a decision again.", exact=True
-            )
-        ).to_be_visible()
-        heading = page.locator(".decision-canvas > header h2")
-        expect(heading).to_be_focused()
-        page.wait_for_function(_FOCUS_IN_VIEW, timeout=5_000)
-        # Still there once the confirmed case and Library reads have painted.
+        withdraw = panel.get_by_role("button", name="Withdraw", exact=True)
+        withdraw.scroll_into_view_if_needed()
+        before = page.evaluate("scrollY")
+        withdraw.click()
+        outcome = panel.get_by_text(
+            "Withdrawn. This field needs a decision again.", exact=True
+        )
+        expect(outcome).to_be_focused()
+        # Still so once the confirmed case and Library reads have painted.
         page.wait_for_timeout(1_000)
-        expect(heading).to_be_focused()
-        box = page.evaluate(
+        expect(outcome).to_be_focused()
+        moved = abs(page.evaluate("scrollY") - before)
+        assert page.evaluate(_FOCUS_IN_VIEW), page.evaluate(
             "() => [document.activeElement.getBoundingClientRect().top,"
             " document.querySelector('.masthead').getBoundingClientRect().bottom]"
         )
-        assert page.evaluate(_FOCUS_IN_VIEW), box
+        assert moved < 100, moved
 
 
 def test_a_search_that_excludes_the_selected_work_leaves_it_in_view():

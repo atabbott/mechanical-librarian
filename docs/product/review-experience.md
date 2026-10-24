@@ -624,7 +624,8 @@ alternative, Enter a value takes owner text and suggests at most four cleaned
 forms of the current value without recording any; a genre field offers Choose
 genres over the union of current and proposed genres. Recording or
 withdrawing keeps focus on the field's controls and states the outcome there
-instead of advancing to the next field. If the work changes first, the owner
+instead of advancing to the next field; withdrawing moves focus to its outcome
+line, where Withdraw was, so a compact page does not scroll (#1365). If the work changes first, the owner
 stays on it: the page moves to its current case, the field says the work
 changed and nothing was recorded, and its heading takes focus. A hold carried
 from an earlier case says that an earlier owner decision is pausing automatic

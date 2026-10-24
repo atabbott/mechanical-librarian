@@ -287,7 +287,7 @@ describe('owner-entered values', () => {
     ).toBeVisible()
   })
 
-  it('V6 withdraws, announces it and moves focus to the field heading', async () => {
+  it('V6 withdraws, announces it and moves focus to its outcome line', async () => {
     const user = userEvent.setup()
     let fields: readonly Field[] = [enteredTitle]
     const http = owner(() => fields)
@@ -295,10 +295,10 @@ describe('owner-entered values', () => {
     fields = [{ ...contextTitle, needsAttention: false }]
     await user.click(within(panel).getByRole('button', { name: 'Withdraw' }))
     expect(sent(http)[0]).toMatchObject({ outcome: 'withdraw', selectedValue: null })
-    expect(await screen.findByText('Withdrawn. This field needs a decision again.')).toBeVisible()
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { level: 2, name: 'Title' })).toHaveFocus(),
-    )
+    const outcome = await screen.findByText('Withdrawn. This field needs a decision again.')
+    expect(outcome).toBeVisible()
+    // It stands where Withdraw was, as a recorded value does (#1365).
+    await waitFor(() => expect(outcome).toHaveFocus())
   })
 
   it.each(['entered', 'withdrawn'] as const)(
@@ -333,7 +333,7 @@ describe('owner-entered values', () => {
       expect(screen.queryByText(/not available in the current Library result/u)).toBeNull()
       if (outcome === 'withdrawn')
         await waitFor(() =>
-          expect(screen.getByRole('heading', { level: 2, name: 'Title' })).toHaveFocus(),
+          expect(screen.getByText('Withdrawn. This field needs a decision again.')).toHaveFocus(),
         )
     },
   )
