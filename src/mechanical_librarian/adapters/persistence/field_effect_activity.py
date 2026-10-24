@@ -809,24 +809,26 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """What each owner-entry field held before the work's latest verified write.
 
         This is a read only: the value is offered as a suggestion, which grants
-        no authority, so a write of any origin counts. The latest write is
-        ordered by (`updated_at`, `plan_id`) through the target index. A subtitle
+        no authority, so a write of any origin counts. The latest write is the
+        one whose verified event was appended last: `updated_at` has one-second
+        resolution, and the append-only event log's rowid does not. A subtitle
         a title plan wrote as its companion is that destination's latest write
         too, and offers nothing. A pre-image the plan and its verified audit
         disagree about is a corruption signal and is never offered (ADR-0085).
         """
         try:
             rows = self._connection.execute(
-                "SELECT destination,plan_id,updated_at,document,companion FROM ("
-                "SELECT effect.destination,effect.plan_id,effect.updated_at,"
-                "effect.document,"
+                "SELECT destination,plan_id,verified,document,companion FROM ("
+                "SELECT *,row_number() OVER (PARTITION BY destination "
+                "ORDER BY verified DESC,plan_id DESC) position FROM ("
+                "SELECT effect.destination,effect.plan_id,effect.document,"
                 "json_extract(effect.document,'$.plan.subtitle_companion') IS NOT NULL companion,"
-                "row_number() OVER (PARTITION BY effect.destination "
-                "ORDER BY effect.updated_at DESC,effect.plan_id DESC) position "
+                "COALESCE((SELECT MAX(event.rowid) FROM field_effect_events event "
+                "WHERE event.plan_id=effect.plan_id AND event.kind='verified'),0) verified "
                 "FROM field_effects effect WHERE effect.connection_name=? "
                 "AND effect.library_name=? AND effect.work_id=? "
                 "AND effect.state='verified'"
-                ") WHERE position=1 ORDER BY destination LIMIT 17",
+                ")) WHERE position=1 ORDER BY destination LIMIT 17",
                 (connection, library, work_id),
             ).fetchall()
             if len(rows) > 16:

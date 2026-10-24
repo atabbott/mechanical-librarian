@@ -24,7 +24,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
-from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.application.review_web import (
+    InspectCurrentReviewCase,
+    ReviewWebError,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.human_decision import HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
@@ -670,3 +673,184 @@ def test_a_decision_on_a_recurring_case_carries_no_hold_forward(
     store.publish(later)
     assert _hold(store) is None
     assert _automatic_genres(store) == [store.case.review_case_id]
+
+
+# R11 F-A: Resume releases a hold only where the case shows it, so the API
+# cannot release a hold that holds nothing and let an older copy return.
+def _resume_service(store: OwnerStore, tmp_path: Path, completed: list[int]):
+    import os
+    from types import SimpleNamespace
+
+    from argon2 import PasswordHasher
+
+    from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from tests.support.owner_values import CAPABILITY
+    from tests.unit.review_app_fixture import create_transport_test_app
+
+    context = ("primary", "ebooks")
+    scans = []
+
+    def request_scan(connection: str, library: str):
+        scans.append((connection, library))
+        return store.repository.request_review_scan(
+            connection, library, "library-ebooks", "a" * 64, store.clock()
+        )
+
+    scheduler = ContinuousGuardedApplication(
+        store.repository,
+        {context: store.service},
+        {context: FakeCapabilityObserver(CAPABILITY)},
+        PersistedFieldEffectAuthority(store.repository),
+        (context,),
+        store.clock,
+        request_scan,
+        scan_progress=lambda *_: SimpleNamespace(
+            scan_id=store.repository._connection.execute(
+                "SELECT scan_id FROM review_preparation_scans"
+            ).fetchone()[0],
+            state="completed",
+            rescan_requested=False,
+            updated_at=completed[0],
+        ),
+    )
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+    os.chmod(password, 0o600)
+    app = create_transport_test_app(
+        store.repository,
+        ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(password),
+            session_lifetime_seconds=600,
+        ),
+        clock=store.clock,
+        field_application=scheduler,
+    )
+    return app.state.review_application, scheduler, scans
+
+
+def _hold_document(store: OwnerStore) -> tuple[int, str] | None:
+    return store.repository._connection.execute(
+        "SELECT active,document FROM field_effect_manual_holds "
+        "WHERE review_case_id=? AND destination='genres'",
+        (store.case.review_case_id,),
+    ).fetchone()
+
+
+def test_resume_is_refused_where_the_hold_holds_no_decision(
+    held: tuple[OwnerStore, str], tmp_path: Path
+) -> None:
+    from mechanical_librarian.application.field_effects import GuardedApplicationError
+
+    store, token = held
+    # Genres turns to Ask: the successor carries the hold with no automatic
+    # decision for it to hold, so no Resume control is shown.
+    _genres_policy(store, "ask", 2)
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    assert _hold(store) == token
+    assert _field(store, "genres")["manual_hold"] is False
+    application, _, scans = _resume_service(store, tmp_path, [0])
+    before = _hold_document(store)
+    with pytest.raises(GuardedApplicationError) as error:
+        application.return_to_automatic(store.case.review_case_id, "genres")
+    assert error.value.code == "manual_hold"
+    # Nothing was requested or released.
+    assert scans == []
+    assert _hold_document(store) == before
+
+
+def test_resume_shown_on_a_successor_requests_a_return_that_completes(
+    held: tuple[OwnerStore, str], tmp_path: Path
+) -> None:
+    store, token = held
+    store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+    assert _field(store, "genres")["manual_hold"] is True
+    completed = [0]
+    application, scheduler, scans = _resume_service(store, tmp_path, completed)
+    application.return_to_automatic(store.case.review_case_id, "genres")
+    assert scans == [("primary", "ebooks")]
+    row = _hold_document(store)
+    assert row is not None and row[0] == 1
+    assert "pending_return" in json.loads(row[1])
+    # The fresh checks complete, and the pending return releases the hold.
+    completed[0] = 10**9
+    scheduler.schedule()
+    assert _hold(store) is None
+    assert _automatic_genres(store) == [store.case.review_case_id]
+
+
+# R11 F-B: a contextual row (a current value, nothing retained to compare)
+# offers no controls, so the case projects no owner entry for it and the store
+# refuses one; a selectable field with no eligible alternative keeps its entry.
+def _record_entry(store: OwnerStore, destination: str, value: str, key: str):
+    from mechanical_librarian.application.review_web import RecordHumanDecision
+
+    field = _field(store, destination)
+    return RecordHumanDecision(store.repository, clock=store.clock).run(
+        store.case.review_case_id,
+        proposal_id=str(field["proposal_id"]),
+        target_fingerprint=str(field["target_fingerprint"]),
+        destination=destination,
+        actor="owner",
+        outcome="owner_entered",
+        selected_value={"kind": "text", "value": value},
+        idempotency_key=key,
+    )
+
+
+@pytest.mark.parametrize("destination", ["subtitle", "publisher"])
+def test_a_contextual_field_offers_and_takes_no_owner_value(
+    tmp_path: Path, destination: str
+) -> None:
+    store = OwnerStore(tmp_path, rewritten(genre_report(), **{destination: "As Read"}))
+    try:
+        field = _field(store, destination)
+        assert (field["inventory_role"], field["owner_control"]) == ("contextual", None)
+        assert "enter your own" not in str(field["classification_reason"])
+        before = _rows(store)
+        with pytest.raises(ReviewWebError) as error:
+            _record_entry(
+                store, destination, "Typed Value", f"contextual-{destination}"
+            )
+        assert error.value.code == "unsupported"
+        assert _rows(store) == before
+        # A1: the title, selectable with no eligible alternative, is unchanged.
+        title = _field(store, "title")
+        assert title["inventory_role"] == "primary"
+        assert cast("dict[str, object]", title["owner_control"])["entry"] is not None
+        assert str(title["classification_reason"]).endswith("You can enter your own.")
+        _record_entry(
+            store, "title", "The Silent Orchard", f"owner-entry-a1-{destination}"
+        )
+        assert _rows(store) > before
+    finally:
+        store.close()
+
+
+# R11 F-C: two writes verified within one second are ordered as they were
+# verified, so Previous value is the first write's value, never the older
+# pre-image a content-hashed plan id could pick.
+@pytest.mark.parametrize(
+    "second", ["Second Orchard", "The Second Orchard", "Orchard Again", "Last Orchard"]
+)
+def test_previous_value_follows_verification_order_within_one_second(
+    tmp_path: Path, second: str
+) -> None:
+    from unittest.mock import patch
+
+    with patch.object(OwnerStore, "clock", lambda self: 5_000):
+        store = OwnerStore(tmp_path, genre_report())
+    try:
+        first = store.write(store.decide("owner_entered", ORCHARD))
+        store.ticks += 1
+        _successor(store, title=ORCHARD["value"])
+        later = store.write(
+            store.decide("owner_entered", {"kind": "text", "value": second})
+        )
+        assert first.updated_at == later.updated_at == 5_000
+        assert store.previous()["title"] == ORCHARD["value"]
+    finally:
+        store.close()

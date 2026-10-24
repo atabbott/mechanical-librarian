@@ -915,7 +915,9 @@ class InspectCurrentReviewCase:
                 and automatic_decision is None
                 and bool(actions),
                 changeable=bool(actions) or owner_entry,
-                owner_entry=owner_entry,
+                # With no alternative to list, an unsupported field is a
+                # contextual row, which offers no controls (below).
+                owner_entry=owner_entry and bool(alternatives),
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
@@ -931,6 +933,8 @@ class InspectCurrentReviewCase:
             )
             if inventory_role == "omitted":
                 continue
+            if inventory_role == "contextual":
+                owner_control = None
             field = {
                 "current": target_fields[destination],
                 "deterministic_disposition": result["outcome"],
@@ -1487,6 +1491,18 @@ class RecordHumanDecision:
                 ready_at = None
             previous = None
             if outcome == "owner_entered":
+                # A contextual row offers no owner entry, so it takes none.
+                if any(
+                    field["destination"] == destination
+                    and field["inventory_role"] == "contextual"
+                    for field in cast(
+                        "list[dict[str, object]]",
+                        InspectCurrentReviewCase(self._repository).run(review_case_id)[
+                            "fields"
+                        ],
+                    )
+                ):
+                    raise HumanDecisionError("unsupported")
                 target = case.target
                 try:
                     previous = dict(
