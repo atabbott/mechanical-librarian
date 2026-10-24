@@ -1570,6 +1570,7 @@ describe('Activity route', () => {
     expect(screen.getByText(why)).toBeVisible()
     for (const calm of [
       'No intervention needed',
+      'No action required',
       'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
     ])
       expect(screen.queryByText(calm)).toBeNull()

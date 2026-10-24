@@ -1027,7 +1027,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       ? 'Writes enabled'
                       : data.paused
                         ? 'New work paused'
-                        : 'No action required'}
+                        : writesHeld
+                          ? 'No action required'
+                          : 'Writes are off'}
         </span>
       </header>
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
