@@ -335,7 +335,7 @@ def test_a_recording_without_a_qualification_record_has_no_automatic_lane(
         proposal = evaluate_report(report)
         repository.publish_proposal(proposal)
         admitted = json.loads(repository.admit_review_case(proposal))
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
 
         assert "audiobook" == proposal.media_kind
         assert "inactive" == repository.persist_shadow_outcome(
@@ -692,7 +692,7 @@ def _pipeline_configuration(
 
 def _maximum_reference_outcome(repository) -> ShadowOutcomeSet:
     case_id = _case(repository)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     base = ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(case_id, 2))
     citations = tuple(f"local_{index:064x}" for index in range(256))
     combinations = tuple(
@@ -1021,7 +1021,7 @@ def test_first_automatic_cover_compares_the_actual_target_after_typed_timeout(
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         case_id = _publish_case(repository, report, proposal)["review_case_id"]
@@ -1162,7 +1162,7 @@ def test_ask_retains_and_records_the_sole_cover_choice_after_timeout(
         assert len(cover_result.alternatives) == 1
 
         repository = open_repository(root / "reports.sqlite")
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         repository.publish(report, lambda: True)
         repository.publish_proposal(proposal)
         case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
@@ -1857,7 +1857,7 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
             "Publication keep", options, destinations
         )
         resolved = resolve_policy(profile, report.target.library)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
@@ -1990,7 +1990,7 @@ def test_full_date_reaches_one_durable_publication_candidate_and_read_models() -
             "Full publication date", options, destinations
         )
         resolved = resolve_policy(profile, report.target.library)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
@@ -2112,7 +2112,7 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
             "No-change policy", options, destinations
         )
         resolved = resolve_policy(profile, report.target.library)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal_set = evaluate_report(
@@ -2661,7 +2661,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                 "F20 automatic reachability", options, destinations
             )
             resolved = resolve_policy(profile, report.target.library)
-            repository.enter_shadow_preview(1)
+            repository.enter_shadow_preview(1, ())
             _activate_profile(repository, profile, resolved, report.target.library)
             repository.activate_qualified_automatic(3)
             proposal = evaluate_report(
@@ -3116,7 +3116,7 @@ def test_unbindable_isbn_does_not_starve_a_later_human_acceptance(
     )
     repository = open_repository(tmp_path / "reports.sqlite")
     try:
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         repository.create_metadata_policy_draft(profile.canonical_json)
         repository.activate_metadata_policy(
             profile.policy_id,
@@ -3350,7 +3350,7 @@ def test_uncorroborated_subtitle_under_automatic_mints_no_decision() -> None:
             "F20 uncorroborated subtitle", options, destinations
         )
         resolved = resolve_policy(profile, report.target.library)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
@@ -3390,7 +3390,7 @@ def test_outcome_accepts_packet_valid_configured_provider_citations() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         case_id = _case(repository)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         base = ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(case_id, 2))
         repository.close()
     field = base.outcomes[0]
@@ -3463,7 +3463,7 @@ def test_preview_automatic_matrix_preserves_human_policy_and_records_outcomes() 
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
             profile = _preview_automatic_profile()
-            repository.enter_shadow_preview(1)
+            repository.enter_shadow_preview(1, ())
             resolved = resolve_policy(profile, report.target.library)
             _activate_profile(repository, profile, resolved, report.target.library)
             effective = human_review_destinations(resolved)
@@ -3537,7 +3537,7 @@ def test_preview_automatic_matrix_preserves_human_policy_and_records_outcomes() 
                 for category in OPTION_CATALOGUE
             },
         )
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.publish(report, lambda: True)
@@ -3571,7 +3571,7 @@ def test_composed_projection_succeeds_replays_and_reports_stale() -> None:
             root / "provider-recovery.sqlite"
         )
         case_id = _case(repository)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         supervisor = composition.create_review_pipeline(
             _pipeline_configuration(),
             database,
@@ -3856,7 +3856,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         recovery = composition.SQLiteProviderRecoveryStore.open(
@@ -4306,7 +4306,7 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         recovery = composition.SQLiteProviderRecoveryStore.open(
@@ -4704,7 +4704,7 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
         )
         report, _qualified = _qualified_cover_report(root)
         proposal = evaluate_report(report)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         repository.publish(report, lambda: True)
         repository.publish_proposal(proposal)
         case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
@@ -4923,7 +4923,7 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
         first_proposal = evaluate_report(
             first_report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, first_report.target.library)
         repository.activate_qualified_automatic(3)
         recovery = composition.SQLiteProviderRecoveryStore.open(
@@ -5815,7 +5815,7 @@ def test_automatic_bootstrap_and_preview_replay_one_exact_set() -> None:
         assert automatic.startswith('{"authority":"none"')
         assert ((automatic, 10),) == repository.list_shadow_outcomes(50)
 
-        assert "preview" == repository.enter_shadow_preview(11)
+        assert "preview" == repository.enter_shadow_preview(11, ())
         first = repository.persist_shadow_outcome(case_id, 12)
         second = repository.persist_shadow_outcome(case_id, 13)
         assert first == second
@@ -5870,7 +5870,7 @@ def test_preview_reconciliation_failure_rolls_back_the_posture_and_automatic_row
             side_effect=MetadataReportError("reconciliation failed"),
         ):
             with pytest.raises(MetadataReportError, match="reconciliation failed"):
-                repository.enter_shadow_preview(3)
+                repository.enter_shadow_preview(3, ())
         assert "automatic" == repository.shadow_posture()
         assert (1,) == repository._connection.execute(
             "SELECT COUNT(*) FROM automatic_decisions"
@@ -5955,7 +5955,7 @@ def test_shadow_history_orders_human_and_preview_events_by_time() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         case_id = _case(repository)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         repository.persist_shadow_outcome(case_id, 5)
         # A second deterministic set is a replay, so it cannot manufacture a
         # newer chronology merely because delivery repeats.
@@ -6031,7 +6031,7 @@ def test_history_orders_same_timestamp_human_and_cross_kind_events_stably() -> N
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         case_id = _case(repository)
-        repository.enter_shadow_preview(9)
+        repository.enter_shadow_preview(9, ())
         repository.persist_shadow_outcome(case_id, 10)
         repository._record_automatic_outcomes(
             _synthetic_automatic_tuple(repository, case_id, "title_layout"), 10
@@ -6076,7 +6076,7 @@ def test_canonical_hostile_shadow_row_fails_closed_without_exposure() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         case_id = _case(repository)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         persisted = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 2)
         ).to_data()
@@ -6156,7 +6156,7 @@ def test_report_only_currentness_race_restarts_the_same_projection_row() -> None
         current_report = _report("Current title")
         repository.publish(current_report, lambda: True, old_case["report_id"])
         connection = repository._connection
-        repository.enter_shadow_preview(2)
+        repository.enter_shadow_preview(2, ())
 
         assert (old_case["report_id"], old_case_id) == connection.execute(
             "SELECT report_id,review_case_id FROM current_review_case_lineages"
@@ -6237,7 +6237,7 @@ def test_old_claim_cannot_project_same_ids_at_newer_lineage_checkpoint() -> None
             "AND library_name='ebooks' AND item_id='item-1'"
         )
         repository._connection.commit()
-        repository.enter_shadow_preview(2)
+        repository.enter_shadow_preview(2, ())
 
         # The old claim is tied to generation one.  Reconcile the active
         # policy before the package exists, so an old projection cannot
@@ -6601,7 +6601,7 @@ def test_generic_subtitle_preservation_records_only_the_title_no_op() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "reports.sqlite"
         repository = open_repository(path)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
@@ -6688,7 +6688,7 @@ def test_provider_consensus_title_persists_the_exact_qualified_automatic_tranche
 
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
@@ -6848,7 +6848,7 @@ def test_decoration_tidy_title_persists_its_own_qualified_automatic_option() -> 
 
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
@@ -7007,7 +7007,7 @@ def test_provider_consensus_contributor_display_preserves_local_provenance_and_o
 
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
@@ -7097,7 +7097,7 @@ def test_provider_consensus_contributor_display_preserve_option_stays_manual() -
 
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
@@ -7137,7 +7137,7 @@ def test_provider_consensus_title_respects_title_layout_suspension_at_admission(
 
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
@@ -7196,7 +7196,7 @@ def test_absent_series_positions_reach_effect_authority_after_persistence(
 
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
@@ -7259,7 +7259,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
     profile = _preview_automatic_profile()
 
     def admit(repository):
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         resolved = resolve_policy(profile, report.target.library)
         _activate_profile(repository, profile, resolved, report.target.library)
         proposal = evaluate_report(
@@ -7405,7 +7405,7 @@ def _assert_retained_decoration_automatic_value(component, option, keep, *, appl
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "reports.sqlite"
         repository = open_repository(path)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
@@ -8008,7 +8008,7 @@ def test_an_ebook_projection_is_byte_identical_beside_an_audiobook_record(
             case_id = json.loads(repository.admit_review_case(proposal))[
                 "review_case_id"
             ]
-            repository.enter_shadow_preview(1)
+            repository.enter_shadow_preview(1, ())
             document = repository.persist_shadow_outcome(case_id, 2)
             repository.close()
         return document
@@ -9939,7 +9939,7 @@ def retained_rich_predecessor(tmp_path, request):
     )
     repository = open_repository(tmp_path / "retained.sqlite", cross_thread=True)
     try:
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         _activate_profile(repository, profile, policy, report.target.library)
         admitted = _publish_case(repository, report, proposal)
         case, packet, _, _ = repository._persisted_shadow_sources(

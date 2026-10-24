@@ -49,7 +49,7 @@ def _automatic_decisions(
         destinations[name] = "automatic"
     profile = MetadataPolicyProfile.create("Activity automatic", options, destinations)
     resolved = resolve_policy(profile, report.target.library)
-    environment.repository.enter_shadow_preview(1)
+    environment.repository.enter_shadow_preview(1, ())
     environment.repository.create_metadata_policy_draft(profile.canonical_json)
     environment.repository.activate_metadata_policy(
         profile.policy_id,

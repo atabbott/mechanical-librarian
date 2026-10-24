@@ -8323,7 +8323,7 @@ def test_first_generation_and_refresh_publish_only_after_projection(
         _report(title="Retired successor", content_digest="5", file_identity="6"),
     ]
     repository = open_repository(application_path)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.close()
 
     def pipeline_for(
@@ -8706,7 +8706,7 @@ def test_real_shadow_projection_publishes_atomically_or_rolls_back(
     # A restarted worker replays the same immutable outcome and never
     # manufactures another decision, package checkpoint, or completion.
     restarted = open_repository(application_path)
-    restarted.enter_shadow_preview(11)
+    restarted.enter_shadow_preview(11, ())
     replay = restarted.persist_shadow_outcome(case_id, 11)
     assert replay.startswith('{"authority":"none"')
     assert (1, 1, 1) == restarted._connection.execute(
@@ -8782,7 +8782,7 @@ def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(
         return "stale" if outcome == "stale" else "complete"
 
     repository = open_repository(application_path)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.close()
     pipeline = ReviewPreparationPipeline(
         repository_factory=lambda: open_repository(application_path),
@@ -9683,7 +9683,7 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
         title="Recovered successor", content_digest="a", file_identity="b"
     )
     repository = open_repository(reports_path)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.close()
 
     proposals: list[str] = []

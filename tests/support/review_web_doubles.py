@@ -286,7 +286,7 @@ class FakeReviewRepository:
     def shadow_posture(self):
         return self.shadow_mode
 
-    def enter_shadow_preview(self, updated_at):
+    def enter_shadow_preview(self, updated_at, libraries):
         self.shadow_mode = "preview"
         return self.shadow_mode
 

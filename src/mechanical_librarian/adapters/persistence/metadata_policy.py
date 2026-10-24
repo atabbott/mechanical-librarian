@@ -120,9 +120,14 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             raise MetadataReportError("shadow posture is unavailable") from error
 
     @local_operation
-    def enter_shadow_preview(self, updated_at: int) -> str:
+    def enter_shadow_preview(self, updated_at: int, libraries: tuple[str, ...]) -> str:
         """Enter Preview and reconcile the exact-current cohort when leaving automatic."""
-        if type(updated_at) is not int or updated_at < 0:
+        if (
+            type(updated_at) is not int
+            or updated_at < 0
+            or type(libraries) is not tuple
+            or any(type(library) is not str or not library for library in libraries)
+        ):
             raise MetadataReportError("shadow posture request is invalid")
         transaction = self._transaction("enter_shadow_preview")
         try:
@@ -170,16 +175,23 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                         ).fetchall()
                     )
                     if not resolutions:
-                        profile = active_profile
-                        libraries = self._connection.execute(
-                            "SELECT DISTINCT c.library_name "
-                            + _CURRENT_REVIEW_FROM_SQL
-                            + " ORDER BY c.library_name"
-                        ).fetchall()
+                        # Every configured library is resolved, as activation
+                        # resolves it, beside any library holding current work,
+                        # so a consented library with none keeps its consent
+                        # into the next generation (#1370).
                         resolutions = tuple(
-                            (library[0], resolved.resolved_id, resolved.canonical_json)
-                            for library in libraries
-                            for resolved in (resolve_policy(profile, library[0]),)
+                            (library, resolved.resolved_id, resolved.canonical_json)
+                            for library in sorted(
+                                set(libraries)
+                                | {
+                                    row[0]
+                                    for row in self._connection.execute(
+                                        "SELECT DISTINCT c.library_name "
+                                        + _CURRENT_REVIEW_FROM_SQL
+                                    )
+                                }
+                            )
+                            for resolved in (resolve_policy(active_profile, library),)
                         )
                     self._activate_metadata_policy(
                         row[0],

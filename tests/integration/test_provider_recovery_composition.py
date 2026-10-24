@@ -412,7 +412,7 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
         composition.CoverArtifactStore(root / "artifacts", create=True)
         repository = open_repository(database)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         scan_id = "review_scan_" + "1" * 64
         repository._connection.execute(
             "INSERT INTO review_preparation_scans(scan_id,connection_name,library_name,library_id,producer_fingerprint,state,requested_at,updated_at,catalogue_generation,catalogue_fingerprint,total) VALUES(?,?,?,?,?,'completed',1,1,1,?,1)",
@@ -657,7 +657,7 @@ def test_three_work_shared_failure_then_real_f22_cutover(
         recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
         composition.CoverArtifactStore(root / "artifacts", create=True)
         repository = open_repository(database)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         scan_id = "review_scan_" + "1" * 64
         repository._connection.execute(
             "INSERT INTO review_preparation_scans(scan_id,connection_name,"
@@ -1393,7 +1393,7 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
         audio=_RETAINED_AUDIO,
     )
     repository = open_repository(database)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.publish(report, lambda: True)
     package = repository.current_review_package("primary", "audio", "item")
     assert package is not None

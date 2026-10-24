@@ -6026,7 +6026,7 @@ def test_pair_admission_boundaries(tmp_path, field, mode):
     ):
         repo = open_repository(tmp_path / "state.sqlite")
         try:
-            repo.enter_shadow_preview(1)
+            repo.enter_shadow_preview(1, ())
             repo.create_metadata_policy_draft(profile.canonical_json)
             repo.activate_metadata_policy(
                 profile.policy_id,

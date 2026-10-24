@@ -701,7 +701,7 @@ def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_pat
     password.write_text(PasswordHasher().hash("synthetic owner password"))
     password.chmod(0o600)
     repository = open_repository(tmp_path / "reports.sqlite", cross_thread=True)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(

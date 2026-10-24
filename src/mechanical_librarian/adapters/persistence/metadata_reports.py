@@ -1691,8 +1691,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def shadow_posture(self) -> str:
         return self._metadata_policy.shadow_posture()
 
-    def enter_shadow_preview(self, updated_at: int) -> str:
-        return self._metadata_policy.enter_shadow_preview(updated_at)
+    def enter_shadow_preview(self, updated_at: int, libraries: tuple[str, ...]) -> str:
+        return self._metadata_policy.enter_shadow_preview(updated_at, libraries)
 
     def activate_qualified_automatic(self, updated_at: int) -> str:
         return self._metadata_policy.activate_qualified_automatic(updated_at)

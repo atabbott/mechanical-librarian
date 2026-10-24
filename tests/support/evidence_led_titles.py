@@ -64,7 +64,7 @@ def publish_title_case(
     )
     policy = resolve_policy(profile, report.target.library)
     if successor_of is None:
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         repository.create_metadata_policy_draft(profile.canonical_json)
         repository.activate_metadata_policy(
             profile.policy_id,

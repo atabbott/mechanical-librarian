@@ -333,7 +333,7 @@ def test_wrong_work_adapter_evidence_stays_inspectable_but_cannot_reopen_authori
         preview = compile_rich_metadata_preview(resolved, report, proposal)
 
         repository = open_repository(database)
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         repository.create_metadata_policy_draft(profile.canonical_json)
         repository.activate_metadata_policy(
             profile.policy_id,

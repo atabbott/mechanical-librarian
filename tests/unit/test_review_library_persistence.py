@@ -2684,7 +2684,7 @@ def test_retained_component_ask_agrees_across_detail_library_and_attention(
     )
     resolved = resolve_policy(profile, report.target.library)
     repository = open_repository(tmp_path / "review.sqlite")
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(profile.canonical_json)
     repository.activate_metadata_policy(
         profile.policy_id,
@@ -2787,7 +2787,7 @@ def test_retained_subtitle_attention_uses_original_mixed_policy(
     )
     resolved = resolve_policy(profile, report.target.library)
     repository = open_repository(tmp_path / "mixed.sqlite")
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(profile.canonical_json)
     repository.activate_metadata_policy(
         profile.policy_id,

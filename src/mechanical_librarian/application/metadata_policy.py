@@ -378,7 +378,9 @@ class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
 
     def shadow_posture(self) -> str: ...
 
-    def enter_shadow_preview(self, updated_at: int) -> str: ...
+    def enter_shadow_preview(
+        self, updated_at: int, libraries: tuple[str, ...]
+    ) -> str: ...
     def activate_qualified_automatic(self, updated_at: int) -> str: ...
 
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]: ...
@@ -893,7 +895,10 @@ class PolicyNotebook:
         if type(updated_at) is not int or updated_at < 0:
             raise MetadataPolicyApplicationError("shadow posture is invalid")
         try:
-            if self._repository.enter_shadow_preview(updated_at) != "preview":
+            if (
+                self._repository.enter_shadow_preview(updated_at, self._libraries)
+                != "preview"
+            ):
                 raise ValueError
             return self.shadow_state()
         except MetadataPolicyApplicationError:

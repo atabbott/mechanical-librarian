@@ -75,7 +75,7 @@ def test_retained_policy_snapshot_cannot_borrow_concurrent_resolution(tmp_path) 
         "First Ask", dict(builtin.options), destinations
     )
     first_resolution = resolve_policy(first, report.target.library)
-    reader.enter_shadow_preview(1)
+    reader.enter_shadow_preview(1, ())
     reader.create_metadata_policy_draft(first.canonical_json)
     reader.activate_metadata_policy(
         first.policy_id,
