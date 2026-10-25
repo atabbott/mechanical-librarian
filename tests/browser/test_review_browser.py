@@ -10130,8 +10130,11 @@ def test_an_activation_keeps_each_library_write_permission():
     """R3(a): Activate names the library that keeps permission, and after
     activating its consent is carried and both pages read writes enabled."""
     stored: dict[str, Any] = {}
+    apps: list[Any] = []
     with _owner_page(
-        settings_document=_NAMED_LIBRARIES, write_consent=_consented((), stored)
+        settings_document=_NAMED_LIBRARIES,
+        write_consent=_consented((), stored),
+        on_app=apps.append,
     ) as (page, origin, _case_id):
         page.goto(f"{origin}/policy")
         page.get_by_role("region", name="Subtitle", exact=True).get_by_role(
@@ -10160,7 +10163,10 @@ def test_an_activation_keeps_each_library_write_permission():
             (row["basis"]["kind"], row["basis"]["transition_id"]) for row in rows
         } == {("policy_activation", transition_id)}
         # A title the owner accepts under the activated policy is scheduled on
-        # the carried consent, with no new grant.
+        # the carried consent, with no new grant. Both pages read writes enabled
+        # only while it stays scheduled, so the server's own worker, which polls
+        # every two seconds and would claim it, is drained first (#1404).
+        apps[0].state.review_application._field_application.begin_drain()
         _schedule_accepted_title(stored["repository"], Path(stored["path"]).parent)
         page.goto(f"{origin}/library")
         expect(page.locator(".cm-library-handoff")).to_contain_text(
