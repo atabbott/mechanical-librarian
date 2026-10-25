@@ -1,5 +1,15 @@
 # Pre-release compatibility policy
 
+#1383 moves incomplete first-run setup state to `setup-state-v4`, which keeps
+the digest of the deployment-held setup claim token while setup is unclaimed
+([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)).
+**Clean rebuild required** for setup state only: an incomplete `setup-state-v3`
+store is refused at open, with no adoption or migration. Restart setup on an
+empty `/data` volume. Completed owner settings, sessions, the application
+schema and every other persisted document are unchanged, and no DDL changes.
+F19a/F20/F46 records are displaced because composition and first-boot selection
+changed, with permission sets unchanged.
+
 #1282 adds an optional `provider_throttling` projection to
 `review-preparation-v2`, whose schema version is unchanged, and the owner
 command `POST /api/v1/provider-recovery/retry`, which raises the existing

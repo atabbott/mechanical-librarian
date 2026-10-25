@@ -643,29 +643,44 @@ def _qualify_first_run(
             urllib.request.HTTPSHandler(context=context),
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
         )
-        status, claim = request_json(opener, port, "/api/setup/claim")
-        if (
-            status != 200
-            or not isinstance(claim, dict)
-            or claim.get("claimed") is not False
-        ):
-            raise QualificationError("first_run_claim_failed")
         password = "synthetic qualification owner"
-        status, session = request_json(
-            opener,
-            port,
-            "/api/setup/session",
-            method="POST",
-            payload={
-                "password": password,
-                "confirmation": password,
-                "expected_revision": claim["revision"],
-            },
-            headers={
-                "Origin": f"{scheme}://review.test",
-                "X-Setup-Nonce": str(claim["nonce"]),
-            },
+
+        def claim_owner(claim_token: str | None) -> tuple[int, object]:
+            status, claim = request_json(opener, port, "/api/setup/claim")
+            if (
+                status != 200
+                or not isinstance(claim, dict)
+                or claim.get("claimed") is not False
+            ):
+                raise QualificationError("first_run_claim_failed")
+            return request_json(
+                opener,
+                port,
+                "/api/setup/session",
+                method="POST",
+                payload={
+                    "password": password,
+                    "confirmation": password,
+                    "expected_revision": claim["revision"],
+                    **({} if claim_token is None else {"claim_token": claim_token}),
+                },
+                headers={
+                    "Origin": f"{scheme}://review.test",
+                    "X-Setup-Nonce": str(claim["nonce"]),
+                },
+            )
+
+        # ADR-0086: a visitor without the deployment-held token cannot claim.
+        # The token is read from the volume only to submit it; it never enters
+        # evidence, an error code or captured container output.
+        status, refused = claim_owner(None)
+        if status != 403 or refused != {"detail": {"error": "claim_token"}}:
+            raise QualificationError("first_run_claim_token_not_required")
+        claim_token = _run(
+            ["docker", "exec", review, "cat", "/data/private/setup-claim-token"]
         )
+        status, session = claim_owner(claim_token)
+        del claim_token
         if status != 200 or not isinstance(session, dict):
             raise QualificationError("first_run_password_failed")
         csrf = str(session["csrf_token"])
@@ -843,6 +858,7 @@ def _qualify_first_run(
         return {
             "active_preparation_and_stream_sigterm": True,
             "active_shutdown_ms": active_shutdown_ms,
+            "claim_token_required": True,
             "http_plus_worker_budget_seconds": 2 * worker_seconds,
             "sigkill_ordinary_entrypoint_restart": True,
             "durable_restart": True,
@@ -1313,7 +1329,7 @@ def main() -> None:
                     "readiness": True,
                     "react_assets_validated": True,
                     "react_workspace_activated": True,
-                    "schema": "container-lifecycle-evidence-v5",
+                    "schema": "container-lifecycle-evidence-v6",
                     "snapshot_build": True,
                     "workbench_excluded": True,
                     "single_data_volume": True,

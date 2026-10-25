@@ -13,13 +13,17 @@ loaded.
 
 from __future__ import annotations
 
+import ssl
+import stat
 import sys
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock, patch
 
+import httpx
 import pytest
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
@@ -39,6 +43,7 @@ from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     SettingsView,
 )
+from mechanical_librarian.domain.setup_state import SetupClaimTokenError
 from mechanical_librarian.infrastructure.first_boot import (
     FirstBootMode,
     select_first_boot_mode,
@@ -48,6 +53,7 @@ from mechanical_librarian.interfaces.web.runtime_dispatch import (
     MutableRuntimeDispatcher,
     RuntimeGeneration,
 )
+from tests.support.setup_server import real_setup_server
 
 
 async def _runtime_app(scope: object, receive: object, send: object) -> None:
@@ -265,8 +271,13 @@ def test_candidate_failure_preserves_active_codex_lease_owner(failure: str) -> N
     assert coordinator.current(predecessor, predecessor._lease)
 
 
-def test_setup_runtime_reserves_codex_lease_until_admission() -> None:
+def test_setup_runtime_reserves_codex_lease_until_admission(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
     repository = Mock()
+    repository.setup_state_store.return_value.read.return_value = SimpleNamespace(
+        claimed=False, revision=1
+    )
     reviewer_access = Mock()
     setup_app = Mock()
     bootstrap = ReviewBootstrap(
@@ -283,14 +294,18 @@ def test_setup_runtime_reserves_codex_lease_until_admission() -> None:
     ):
         runtime, _activation = composition._compose_setup_runtime_generation(
             bootstrap,
-            Path("application.sqlite3"),
-            Path("catalogue.sqlite3"),
-            Path("artifacts"),
+            tmp_path / "application.sqlite3",
+            tmp_path / "catalogue.sqlite3",
+            tmp_path / "artifacts",
             repository,
             Mock(),
             initialize=False,
         )
 
+    # An unclaimed resume rotates the claim token before serving.
+    repository.setup_state_store.return_value.rotate_claim_token.assert_called_once()
+    token = (tmp_path / "private" / "setup-claim-token").read_text(encoding="ascii")
+    assert capfd.readouterr().out.count(token.strip()) == 1
     runtime.start_dormant()
     reviewer_access.activate_codex_lease.assert_not_called()
     runtime.admit()
@@ -591,7 +606,7 @@ def test_a_configuration_loading_seam_delegates_what_it_loaded(
 
 
 def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
-    tmp_path: Path,
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:
     database = tmp_path / "application.sqlite3"
     repository = composition.open_repository(database)
@@ -602,6 +617,8 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
         canonical_origin="https://setup.invalid",
     )
 
+    token_file = tmp_path / "private" / "setup-claim-token"
+
     def claim_before_shutdown(_server: object) -> None:
         _server.started = True
         state = repository.setup_state_store()
@@ -609,6 +626,7 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
         state.claim_owner(
             expected_revision=document.revision,
             owner_verifier="$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash",
+            claim_token=token_file.read_text(encoding="ascii").strip(),
         )
 
     with (
@@ -648,6 +666,11 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
 
     run.assert_called_once()
     assert not tuple(tmp_path.glob(".metadata-report-binding-*.sqlite"))
+    # The first start announced its token once, on standard output only.
+    announced = capfd.readouterr()
+    token = token_file.read_text(encoding="ascii").strip()
+    assert announced.out.count("\n") == 1 and announced.out.count(token) == 1
+    assert token not in announced.err
 
     def resumable_setup() -> bool:
         reopened = composition.open_repository(database, create=False)
@@ -657,6 +680,8 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
         finally:
             reopened.close()
 
+    # The claim was settled outside the setup route, so its token file is still
+    # present; first boot admits it and the claimed resume removes it.
     assert (
         select_first_boot_mode(
             tmp_path,
@@ -665,6 +690,126 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
         )
         is FirstBootMode.RESUME_SETUP
     )
+    resumed = composition.open_repository(database)
+    try:
+        with (
+            patch.object(composition, "_compose_reviewer_access", return_value=Mock()),
+            patch.object(composition, "create_setup_app", return_value=Mock()),
+        ):
+            composition._compose_setup_runtime_generation(
+                bootstrap,
+                database,
+                tmp_path / "catalogue.sqlite3",
+                tmp_path / "artifacts",
+                resumed,
+                Mock(),
+                initialize=False,
+            )
+    finally:
+        resumed.close()
+    assert not token_file.exists()
+    assert capfd.readouterr().out == ""
+
+
+def test_setup_start_rotates_the_claim_token_and_refuses_the_earlier_one(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    token_file = tmp_path / "private" / "setup-claim-token"
+    bootstrap = ReviewBootstrap(
+        schema_version="review-bootstrap-v2",
+        tls_certificate_file="/synthetic/certificate",
+        tls_private_key_file="/synthetic/private-key",
+        canonical_origin="https://setup.invalid",
+    )
+    order: list[str] = []
+    retirements: list[object] = []
+
+    def start(initialize: bool) -> str:
+        repository = composition.open_repository(database)
+        state = repository.setup_state_store()
+        commit = cast(
+            Callable[..., object],
+            state.initialize if initialize else state.rotate_claim_token,
+        )
+
+        def observed_commit(*args: object, **kwargs: object) -> object:
+            # The digest commits before any file or announcement exists.
+            order.append(f"commit:{token_file.exists()}:{capfd.readouterr().out == ''}")
+            return commit(*args, **kwargs)
+
+        try:
+            with (
+                patch.object(
+                    composition, "_compose_reviewer_access", return_value=Mock()
+                ),
+                patch.object(
+                    composition, "create_setup_app", return_value=Mock()
+                ) as setup_app,
+                patch.object(
+                    state,
+                    "initialize" if initialize else "rotate_claim_token",
+                    side_effect=observed_commit,
+                ),
+                patch.object(repository, "setup_state_store", return_value=state),
+            ):
+                if not initialize:
+                    token_file.unlink()
+                composition._compose_setup_runtime_generation(
+                    bootstrap,
+                    database,
+                    tmp_path / "catalogue.sqlite3",
+                    tmp_path / "artifacts",
+                    repository,
+                    Mock(),
+                    initialize=initialize,
+                )
+            retirements.append(setup_app.call_args.kwargs["retire_claim_token"])
+        finally:
+            repository.close()
+        information = token_file.lstat()
+        assert stat.S_ISREG(information.st_mode)
+        assert stat.S_IMODE(information.st_mode) == 0o600
+        token = token_file.read_text(encoding="ascii")
+        assert token.endswith("\n") and token.count("\n") == 1
+        token = token.strip()
+        out = capfd.readouterr().out
+        assert out.count("\n") == 1 and out.count(token) == 1
+        assert "private/setup-claim-token" in out and "restart replaces it" in out
+        return token
+
+    first = start(initialize=True)
+    second = start(initialize=False)
+
+    assert order == ["commit:False:True", "commit:False:True"]
+    assert first != second and len(first) == len(second) == 43
+    repository = composition.open_repository(database)
+    try:
+        state = repository.setup_state_store()
+        document = state.read()
+        assert document.revision == 2
+        ((encoded,),) = repository._connection.execute(
+            "SELECT document FROM owner_settings"
+        )
+        assert first not in encoded and second not in encoded
+        assert document.claim_token_digest in encoded
+        with pytest.raises(SetupClaimTokenError):
+            state.claim_owner(
+                expected_revision=document.revision,
+                owner_verifier="$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash",
+                claim_token=first,
+            )
+        claimed = state.claim_owner(
+            expected_revision=document.revision,
+            owner_verifier="$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash",
+            claim_token=second,
+        )
+        assert claimed.claim_token_digest is None
+    finally:
+        repository.close()
+    # The route's retirement removes the file once the claim has committed.
+    cast(Callable[[], None], retirements[-1])()
+    assert not token_file.exists()
 
 
 class _ConstructionFailure(RuntimeError):
@@ -754,7 +899,7 @@ def test_exact_schema_only_kill_boundary_restarts_setup_without_generic_recovery
 
     repository = composition.open_repository(database)
     try:
-        repository.setup_state_store().initialize()
+        repository.setup_state_store().initialize("0" * 64)
     finally:
         repository.close()
 
@@ -1124,3 +1269,75 @@ def test_composed_clear_uses_only_previously_admitted_cleanup_authority(
             successor.close()
         operations.close()
         repository.close()
+
+
+def test_real_setup_server_claims_only_with_the_deployment_claim_token(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """The browser suite's claim flow, over the same real server, by HTTP alone."""
+    password = "correct horse battery staple"
+    with real_setup_server(tmp_path) as (origin, token_file, certificate):
+        announced = capfd.readouterr().out
+        token = token_file.read_text(encoding="ascii").strip()
+        assert stat.S_IMODE(token_file.lstat().st_mode) == 0o600
+        assert announced.count("\n") == 1 and announced.count(token) == 1
+        exposed: list[str] = []
+        with httpx.Client(
+            base_url=origin, verify=ssl.create_default_context(cafile=certificate)
+        ) as client:
+
+            def claim(claim_token: str | None) -> httpx.Response:
+                nonce = client.get("/api/setup/claim")
+                assert nonce.status_code == 200 and nonce.json()["claimed"] is False
+                exposed.append(nonce.text)
+                response = client.post(
+                    "/api/setup/session",
+                    json={
+                        "password": password,
+                        "confirmation": password,
+                        "expected_revision": nonce.json()["revision"],
+                        **({} if claim_token is None else {"claim_token": claim_token}),
+                    },
+                    headers={"origin": origin, "x-setup-nonce": nonce.json()["nonce"]},
+                )
+                exposed.append(response.text + repr(dict(response.headers)))
+                return response
+
+            for refused in (claim(None), claim(token[::-1])):
+                assert refused.status_code == 403
+                assert refused.json() == {"detail": {"error": "claim_token"}}
+            assert token_file.exists()
+
+            claimed = claim(token)
+
+            assert claimed.status_code == 200
+            assert "ml_session" in client.cookies
+            assert not token_file.exists()
+            state = client.get("/api/setup/state")
+            exposed.append(state.text)
+            assert state.json()["next_step"] == "connect"
+            # A replayed token claims nothing: the claimed branch is ordinary
+            # sign in, so a different password is simply not the owner's.
+            client.cookies.clear()
+            replay = client.post(
+                "/api/setup/session",
+                json={
+                    "password": "attacker password",
+                    "confirmation": "attacker password",
+                    "expected_revision": 1,
+                    "claim_token": token,
+                },
+                headers={"origin": origin},
+            )
+            exposed.append(replay.text)
+            assert replay.status_code == 401
+            assert (
+                client.post(
+                    "/api/setup/session",
+                    json={"password": password},
+                    headers={"origin": origin},
+                ).status_code
+                == 200
+            )
+        assert all(token not in text for text in exposed)
+    assert token not in capfd.readouterr().out
