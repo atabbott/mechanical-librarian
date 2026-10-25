@@ -636,12 +636,13 @@ class GuardedFieldApplication:
             return self.reconcile(plan_id, affected_review_case_ids)
         if operation.state == "claimed":
             # ``claimed -> applying`` precedes the target request, so a plan
-            # found here sent nothing. Returning it to ``retryable`` sends it
-            # back through every guard and a fresh atomic claim (#1382).
-            operation = self._repository.transition_field_effect(
+            # found here sent nothing. Returning it to ``retryable`` hands it
+            # to the ordinary scheduler, which applies it only through every
+            # guard and a fresh atomic claim (#1382).
+            return self._repository.transition_field_effect(
                 plan_id, "claimed", "retryable", self._clock(), "not_applied"
             )
-        elif operation.state == "applying":
+        if operation.state == "applying":
             operation = self._repository.schedule_field_effect_reconciliation(
                 plan_id, operation.state, self._clock(), "restart_readback"
             )

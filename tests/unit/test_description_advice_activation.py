@@ -920,6 +920,10 @@ def test_profile_drift_between_guarded_boundaries_never_writes(
                 operation.plan.plan_id, "planned", "b" * 64, 14
             )
     else:
+        if boundary == "target":
+            # A stranded claim returns to retryable unsent; its next apply
+            # meets the drift at the full guards (#1382).
+            assert application.apply(operation.plan.plan_id).state == "retryable"
         assert application.apply(operation.plan.plan_id).state == "stale"
     assert target.read(operation.plan).value == snapshot.pre_value
     assert target._effects == {}

@@ -210,8 +210,22 @@ def main() -> None:
     )
     service = _service(repository, target, store, clock)
     startup = service.start()
-    if startup != (4, 1, 1):
+    if startup != (4, 0, 1):
         raise RuntimeError(f"startup recovery count disagrees: {startup!r}")
+    # A stranded claim sent nothing, so restart returns it unsent and only the
+    # ordinary guarded apply that follows may write it (#1382).
+    if any(
+        (
+            service.status(identifiers[name]).state,
+            service.status(identifiers[name]).failure,
+        )
+        != ("retryable", "not_applied")
+        for name in ("claimed", "verification")
+    ):
+        raise RuntimeError("stranded claim was not returned unsent")
+    for name in ("claimed", "verification"):
+        service.apply(identifiers[name])
+    service.recover_pending()
     expected = {
         "ready": "planned",
         "claimed": "verified",

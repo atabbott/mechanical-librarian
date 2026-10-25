@@ -3323,25 +3323,26 @@ def test_recovered_claim_sends_nothing_until_every_guard_passes_again(
     effects.target.before_apply = sent.append
     if guard == "paused":
         effects.service.set_paused(True)
+    # Recovery only hands the stranded claim back to the scheduler: it sends
+    # nothing and refuses nothing, whatever the guards now say.
+    assert effects.service.recover_startup() == (1, 0, 0)
+    held = effects.service.status(plan_id)
+    assert (held.state, held.failure) == ("retryable", "not_applied")
+    assert sent == []
+    if guard == "paused":
         with pytest.raises(GuardedApplicationError, match="paused"):
-            effects.service.recover_startup()
-        held = effects.service.status(plan_id)
-        assert (held.state, held.failure) == ("retryable", "not_applied")
+            effects.service.apply(plan_id)
+        assert effects.service.status(plan_id).state == "retryable"
         assert sent == []
-        effects.service.set_paused(False)
-        assert effects.service.apply(plan_id).state == "verified"
-        assert len(sent) == 1
         return
     if guard == "consent":
         effects.consent.revoked.add(operation.plan.consent.consent_id)
-        assert effects.service.recover_startup() == (1, 0, 0)
-        refused = effects.service.status(plan_id)
+        refused = effects.service.apply(plan_id)
         assert (refused.state, refused.failure) == ("stale", "consent")
         assert sent == []
         assert effects.target.read(operation.plan).value == operation.plan.pre_value
         return
-    assert effects.service.recover_startup() == (1, 0, 0)
-    verified = effects.service.status(plan_id)
+    verified = effects.service.apply(plan_id)
     assert (verified.state, verified.attempt) == ("verified", 2)
     assert len(sent) == 1
     events = [
@@ -3929,12 +3930,14 @@ def test_supersession_does_not_interrupt_claimed_and_cover_bytes_are_private(
     )
     assert effects.service.supersede(claimed.plan.authority.decision_id) == 0
     assert effects.service.status(claimed.plan.plan_id).state == "claimed"
-    # Recovering the claim sends it back through every guard, and the atomic
-    # claim refuses the superseded authority before anything is sent (#1382).
+    # Recovering the claim returns it to the scheduler, and the next apply's
+    # atomic claim refuses the superseded authority before anything is sent
+    # (#1382).
+    recovered = effects.service.apply(claimed.plan.plan_id)
+    assert (recovered.state, recovered.failure) == ("retryable", "not_applied")
     with pytest.raises(GuardedApplicationError, match="authority"):
         effects.service.apply(claimed.plan.plan_id)
-    recovered = effects.service.status(claimed.plan.plan_id)
-    assert (recovered.state, recovered.failure) == ("retryable", "not_applied")
+    assert effects.service.status(claimed.plan.plan_id).state == "retryable"
     assert effects.target.read(claimed.plan).value == claimed.plan.pre_value
 
     cover_value = "cover_" + "9" * 64
@@ -4045,7 +4048,9 @@ def test_startup_recovers_claimed_applying_and_reconciling_checkpoints(
     )
 
     assert effects.service.start() == (3, 0, 0)
-    assert effects.service.status(claimed.plan.plan_id).state == "verified"
+    returned = effects.service.status(claimed.plan.plan_id)
+    assert (returned.state, returned.failure) == ("retryable", "not_applied")
+    assert effects.service.apply(claimed.plan.plan_id).state == "verified"
     assert effects.service.status(applying.plan.plan_id).state == "retryable"
     assert effects.service.status(reconciling.plan.plan_id).state == "retryable"
 
@@ -4086,7 +4091,14 @@ def test_startup_contains_verification_read_failure_after_successful_apply(
 
     effects.target.fail_read_after_apply_for.add(first.plan.plan_id)
 
-    assert effects.service.start() == (2, 1, 0)
+    # Restart returns both stranded claims unsent; the ordinary guarded apply
+    # that follows writes them, and the failed read-back stays contained.
+    assert effects.service.start() == (2, 0, 0)
+    for operation in (first, sibling):
+        returned = effects.service.status(operation.plan.plan_id)
+        assert (returned.state, returned.failure) == ("retryable", "not_applied")
+        effects.service.apply(operation.plan.plan_id)
+    assert effects.service.recover_pending() == (1, 0)
     failed = effects.service.status(first.plan.plan_id)
     continued = effects.service.status(sibling.plan.plan_id)
     assert (failed.state, failed.failure) == ("retryable", "target_failure")
@@ -5779,6 +5791,8 @@ def test_audiobook_pair_competing_claim_only_one_wins(audiobook_pair):
         audiobook_pair.repo.claim_field_effect(
             op.plan.plan_id, "planned", "b" * 64, audiobook_pair.env.clock()
         )
+    assert audiobook_pair.service.apply(op.plan.plan_id).state == "retryable"
+    assert not audiobook_pair.patches()
     assert audiobook_pair.service.apply(op.plan.plan_id).state == "verified"
     assert len(audiobook_pair.patches()) == 1
 
@@ -5855,6 +5869,7 @@ def test_audiobook_pair_joint_qualification_withdrawal_after_claim_stops_pair(
     with patch.object(
         audiobook_decision_qualification, "F46_PASSING_PAIRED_OPTIONS", frozenset()
     ):
+        assert audiobook_pair.service.apply(op.plan.plan_id).state == "retryable"
         result = audiobook_pair.service.apply(op.plan.plan_id)
     assert result.state == "stale" and result.failure == "authority"
     assert not audiobook_pair.patches()
@@ -7268,6 +7283,9 @@ def test_admitted_effect_releases_database_owner_during_target_io(effects):
             raise AssertionError("claimed replacement accepted")
         except HumanDecisionError as e:
             assert e.code == "already_decided"
+        # The stranded claim goes back to retryable unsent; the worker below
+        # applies it through every guard and a fresh claim (#1382).
+        assert service.apply(plan.plan_id).state == "retryable"
         original_apply = env.target.apply
         original_read = env.target.read
 
