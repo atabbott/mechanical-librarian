@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Setup claim token successor (#1383)
+
+The current F19a, F20 and F46 records move to semantic revision 69 over base
+`5ee34acb`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows setup composition minting a deployment-held claim token and
+first-boot selection admitting its owner-only file. No metadata authority
+changes, and permitted operations are unchanged. Incomplete setup state moves
+to `setup-state-v4`, so a clean rebuild is required for setup state only;
+qualification-bound documents and outcomes are unchanged.
+
 ## Transient write recovery successor (#1382)
 
 The current F19a, F20 and F46 records move to semantic revision 68 over base

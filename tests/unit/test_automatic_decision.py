@@ -1740,6 +1740,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="transient-write-recovery-predecessor-f46",
         ),
+        pytest.param(
+            "0054b5206adbef665433672a133a9d8858a0e2afb9b1f59999d37e83c339e772",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="setup-claim-token-predecessor-f19a",
+        ),
+        pytest.param(
+            "c1b83894ecaadff2da1bec8d51a1eb34bd2e6128c620161d2b57a7a77c0fe0b9",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="setup-claim-token-predecessor-f20",
+        ),
+        pytest.param(
+            "e0970bb9233ab91c2394356c714efa65ca472b25eb0e613706353f849d03cf0f",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="setup-claim-token-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
