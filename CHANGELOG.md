@@ -4,7 +4,7 @@
 
 - A timeout or dropped connection during an Audiobookshelf write now holds
   writes only until the connection is seen healthy again, instead of
-  suspending the field until a restart. A write whose read-back failed is
+  suspending writes to that field for good. A write whose read-back failed is
   confirmed by the running worker, and a write interrupted before it was sent
   is rechecked against every safety condition before it is retried (#1382).
 
