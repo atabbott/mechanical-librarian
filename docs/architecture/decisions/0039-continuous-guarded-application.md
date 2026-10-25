@@ -95,8 +95,10 @@ library's write permission and the product then showed writes as calm.
    library, destination and action are identical, and the consent records the
    activation's transition and the consent it replaced as its basis. A replay,
    a no-op or a refused activation carries nothing. Entering Preview from
-   automatic resolves every configured library, as activation does, so a
-   consented library holding no current work keeps its consent.
+   automatic at the unbound first generation resolves every configured
+   library, as activation does, and later generations reuse the stored
+   resolutions, so a consented library holding no current work keeps its
+   consent.
 2. Consent is still never inferred from a decision, configuration, a canary or
    any other policy path, and a carry never widens it.
 3. A changed destination set or envelope schema, or a library the active policy

@@ -1584,8 +1584,9 @@ current for the outgoing resolved policy to the incoming one inside the
 activation's own transaction, for the same connection, library, destination and
 action, and records the transition and the replaced consent as its closed basis
 (#1370). It never widens consent, and a replay, no-op or refused activation
-carries nothing. Entering Preview from automatic resolves every configured
-library the same way, so it lapses no consent. A consent it cannot carry -- after a changed destination set or
+carries nothing. Entering Preview from automatic at the unbound first
+generation resolves every configured library the same way, and later
+generations reuse the stored resolutions, so it lapses no consent. A consent it cannot carry -- after a changed destination set or
 envelope schema, or for a library the active policy does not resolve -- lapses,
 and Activity and Library state the lapse with its closed reason, which grants
 nothing. Explicit receives no consent until the owner grants the newly
