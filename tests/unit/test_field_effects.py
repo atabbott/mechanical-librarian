@@ -3312,6 +3312,38 @@ def test_connection_unavailability_alone_waits_for_a_fresh_observation(
     assert suspension("subtitle") == "connection_unavailable"
 
 
+def test_same_second_connection_loss_refuses_without_staling_until_observed_later(
+    effects: _EffectEnvironment,
+) -> None:
+    def lose_connection_on_write(_: object) -> None:
+        effects.target.unavailable_scope_next = "connection"
+
+    lost = _plan(effects, suffix="1")
+    waiting = _plan(effects, destination="subtitle", suffix="2")
+    # The production clock has whole-second resolution, and the clear removes
+    # only suspensions older than the observation that disproves them.
+    frozen = effects.clock.value + 1
+    with patch.object(type(effects.clock), "__call__", lambda _self: frozen):
+        effects.target.before_apply = lose_connection_on_write
+        retryable = effects.service.apply(lost.plan.plan_id)
+        assert (retryable.state, retryable.failure) == ("retryable", "target_failure")
+        for operation, state in ((lost, "retryable"), (waiting, "planned")):
+            with pytest.raises(GuardedApplicationError, match="capability"):
+                effects.service.apply(operation.plan.plan_id)
+            assert effects.service.status(operation.plan.plan_id).state == state
+        assert (
+            effects.repository.field_effect_capability_suspension("primary", "title")
+            == "connection_unavailable"
+        )
+    effects.clock.value = frozen
+    assert effects.service.apply(lost.plan.plan_id).state == "verified"
+    assert effects.service.apply(waiting.plan.plan_id).state == "verified"
+    assert (
+        effects.repository.field_effect_capability_suspension("primary", "title")
+        is None
+    )
+
+
 @pytest.mark.parametrize("guard", ("paused", "consent", None))
 def test_recovered_claim_sends_nothing_until_every_guard_passes_again(
     effects: _EffectEnvironment, guard: str | None

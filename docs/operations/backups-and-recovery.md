@@ -76,15 +76,17 @@ directly to force recovery.
 
 Restoring the matching application database and artifact store does not itself
 change Audiobookshelf. After restart, consent, pause, authority and exact-current
-gates are reloaded; only previously claimed work may continue without a new
-claim, and ambiguous work is read back before reconciliation.
+gates are reloaded; work stranded in `claimed` sent nothing, so it returns to
+`retryable` and needs a fresh claim through every gate, and ambiguous work is
+read back before reconciliation.
 
 ## Guarded field-effect recovery
 
 Stop effect processing before copying the exact-current application database.
 Restart reads each persisted state rather than inferring completion: planned
-and retryable work crosses every gate again; already claimed work continues
-under its granted claim, while applying or ambiguous work performs its
+and retryable work crosses every gate again; work stranded in `claimed` sent
+nothing, so it returns to `retryable` and crosses every gate again under a
+fresh claim, while applying or ambiguous work performs its
 persisted targeted read and enters reconciliation; verified, stale,
 superseded, and abandoned work remains terminal while any pending cover-cleanup
 obligation is retried. Desired target state verifies, the captured
@@ -122,8 +124,9 @@ dropped connection) during a guarded read or write; a later successful
 capability observation clears it and a retried plan proceeds. A permission
 failure, incompatible field shape, or unexpected write response persists a
 destination suspension instead, leaving unrelated destinations eligible;
-`unexpected_effect_behavior` is reserved for genuine protocol violations. Both
-remain fail-closed across restart;
+`unexpected_effect_behavior` covers any other non-success response, such as a
+proxy's 5xx, and an HTTP protocol error such as an undecodable response or a
+redirect loop. Both remain fail-closed across restart;
 a denied readiness probe is durable and immediately removes that destination
 from Library and Attention. A fresh successful read-only capability observation
 may clear an older permission, field-shape, or connection-availability result it
@@ -138,8 +141,10 @@ Stop the container gracefully before copying `/data`. Readiness changes to
 draining before background claim admission stops. A current claim may finish
 only to its existing durable checkpoint; shutdown does not acknowledge an
 unfinished claim. Restart reopens the exact-current database and preserves
-ready, claimed, applying, verifying and reconciling facts through their existing
-state and action records. Pause and revoked authority still prevent new claims.
+ready, applying, verifying and reconciling facts through their existing state
+and action records; a claim stranded before its request was sent returns to
+`retryable` and needs a fresh claim. Pause and revoked authority still prevent
+new claims.
 
 Copy the complete stopped `/data` state under owner-only encrypted backup
 controls. A restorable configuration also preserves or reprovisions its mode's

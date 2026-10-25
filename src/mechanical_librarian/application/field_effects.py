@@ -956,15 +956,17 @@ class GuardedFieldApplication:
                     reason="connection_unavailable",
                     observed_at=observed_at,
                 )
-                # Re-read rather than assume: a destination-scoped suspension
-                # behind the cleared one, or one recorded after this
-                # observation began, still refuses the plan.
-                if (
-                    self._repository.field_effect_capability_suspension(
-                        member.connection, member.destination
-                    )
-                    is not None
-                ):
+                # Re-read rather than assume. The clear removes only rows older
+                # than this observation, so a lost connection recorded in the
+                # same clock second survives it: refuse without staling, as
+                # the atomic claim does, and let the next pass observe again.
+                # A destination-scoped suspension behind it still stales.
+                remaining = self._repository.field_effect_capability_suspension(
+                    member.connection, member.destination
+                )
+                if remaining == "connection_unavailable":
+                    raise GuardedApplicationError("capability")
+                if remaining is not None:
                     return self._stale(operation, "capability")
             if capability.category != "allowed":
                 scope = (

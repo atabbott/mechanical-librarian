@@ -2487,6 +2487,84 @@ def test_running_loop_resolves_a_failed_read_back_without_restart_recovery(
     assert effects.repository.pending_field_effect_action_plan_ids(100) == ()
 
 
+def test_running_loop_takes_a_third_value_and_its_reevaluation_without_failing(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    operation = _plan(effects, suffix="1")
+    plan_id = operation.plan.plan_id
+
+    def lose_read_back(_: object) -> None:
+        effects.target.fail_read_next = True
+
+    effects.target.after_apply = lose_read_back
+    assert effects.service.apply(plan_id).state == "reconciling"
+    effects.target.drift(operation.plan, "third")
+    service = ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "books"): effects.service},
+        {("primary", "books"): effects.capabilities},
+        effects.authority,
+        (("primary", "books"),),
+        effects.clock,
+        lambda *_: None,
+    )
+    service._run_until_idle()
+    stale = effects.service.status(plan_id)
+    assert (stale.state, stale.failure) == ("stale", "third_value")
+    # The re-evaluation the third value queued for the same plan is the next
+    # pass's work, not a stalled recovery.
+    service._run_until_idle()
+    assert effects.reevaluation.emitted == [plan_id]
+    assert effects.repository.pending_field_effect_action_plan_ids(100) == ()
+
+
+def test_worker_survives_a_same_second_capability_refusal_and_retries(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    def lose_connection_on_write(_: object) -> None:
+        effects.target.unavailable_scope_next = "connection"
+
+    lost = _plan(effects, suffix="1")
+    waiting = _plan(effects, destination="subtitle", suffix="2")
+    changed = threading.Event()
+    service = ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "books"): effects.service},
+        {("primary", "books"): effects.capabilities},
+        effects.authority,
+        (("primary", "books"),),
+        effects.clock,
+        lambda *_: None,
+        polling_seconds=0.1,
+    )
+    service.attach_updates(lambda *_: changed.set())
+    frozen = effects.clock.value + 1
+    try:
+        with patch.object(type(effects.clock), "__call__", lambda _self: frozen):
+            effects.target.before_apply = lose_connection_on_write
+            assert effects.service.apply(lost.plan.plan_id).state == "retryable"
+            service.start()
+            while service._last_failure != "capability":
+                assert changed.wait(5)
+                changed.clear()
+            assert service._thread is not None and service._thread.is_alive()
+            assert effects.service.status(waiting.plan.plan_id).state == "planned"
+        effects.clock.value = frozen
+        service.wake()
+        for _ in range(100):
+            if all(
+                effects.service.status(value.plan.plan_id).state == "verified"
+                for value in (lost, waiting)
+            ):
+                break
+            assert changed.wait(5)
+            changed.clear()
+        assert effects.service.status(lost.plan.plan_id).state == "verified"
+        assert effects.service.status(waiting.plan.plan_id).state == "verified"
+    finally:
+        service.begin_drain()
+
+
 def test_running_loop_reports_a_queued_read_failure_after_the_cycle() -> None:
     class _FailingReconcile(_Application):
         def reconcile(self, plan_id, _affected_review_case_ids=None):
