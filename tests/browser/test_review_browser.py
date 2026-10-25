@@ -10188,7 +10188,8 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
         expect(notice).to_contain_text(sentence)
         expect(notice).not_to_contain_text("papers")
         if lapsed == ("papers",):
-            expect(notice).to_contain_text("Writes are enabled.")
+            # Writes are enabled only for the library that kept permission.
+            expect(notice).to_contain_text("Writes are enabled for Reading Room.")
             expect(notice).to_contain_text(
                 "Review current write permissions in Activity."
             )
@@ -10198,7 +10199,7 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
         for phrase in _CALM:
             expect(main).not_to_contain_text(phrase)
         if lapsed == ("papers",):
-            page.get_by_text("Write permission lapsed", exact=True).wait_for()
+            page.get_by_text("Some writes are off", exact=True).wait_for()
             page.get_by_text("Action needed", exact=True).first.wait_for()
         else:
             page.get_by_text(

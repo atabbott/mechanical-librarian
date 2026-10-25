@@ -10869,8 +10869,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     }
     renderRoute('/library?lens=all', http)
 
+    // Writes are enabled only for the library that kept permission (#1370).
     const heading = await screen.findByRole('heading', {
-      name: '5 works are in Library. Writes are enabled.',
+      name: '5 works are in Library. Writes are enabled for fiction.',
     })
     expect(heading.closest('.cm-library-handoff')).toHaveTextContent(
       'Write permission for history lapsed because it was given under a policy that is no longer active. Review current write permissions in Activity.',

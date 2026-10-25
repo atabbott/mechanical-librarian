@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router'
 
 import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
 import { useLibraryName } from '../libraryNames'
-import { readWriteConsent } from '../writeConsent'
+import { libraryList, readWriteConsent } from '../writeConsent'
 
 /**
  * The completion handoff, stated once and compactly inside the Library flow.
@@ -56,6 +56,12 @@ export const WriteReadyNotice = () => {
     consent.state === 'complete' && consent.lapsed !== null && !connectionUnavailable
   if (!consent.actionable && !lapsedBesideHeld) return null
   const lapse = consent.lapsed ? `${consent.lapsed} ` : ''
+  // Beside a lapse, writes are enabled only for the libraries that kept
+  // permission, so the heading names them (#1370).
+  const held = data.capabilities
+    .filter((item) => item.destinations.some((entry) => entry.consented))
+    .map((item) => names.name(item.library))
+  const enabledFor = consent.lapsed && held.length ? ` for ${libraryList(held)}` : ''
   const preparing = Boolean(preparation?.active)
   const inLibrary =
     works !== undefined
@@ -70,7 +76,7 @@ export const WriteReadyNotice = () => {
         ? 'Enabling writes…'
         : consent.state === 'applying'
           ? 'Applying prepared changes.'
-          : `${inLibrary}Writes are enabled.`
+          : `${inLibrary}Writes are enabled${enabledFor}.`
   const copy =
     consent.state === 'off'
       ? `${lapse}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`

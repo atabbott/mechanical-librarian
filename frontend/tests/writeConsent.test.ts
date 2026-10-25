@@ -65,7 +65,12 @@ describe('the write consent offer', () => {
   })
 
   it('is never complete while a lapse leaves no library holding permission (#1370)', () => {
-    const scoped = (consented: boolean) => ({
+    const lapse = (library: string) => ({
+      connection: 'primary',
+      library,
+      reason: 'policy_changed' as const,
+    })
+    const scoped = (consented: boolean, lapsed = [lapse('history'), lapse('fiction')]) => ({
       configured_libraries: [
         { connection: 'primary', library: 'fiction' },
         { connection: 'primary', library: 'history' },
@@ -74,10 +79,7 @@ describe('the write consent offer', () => {
         capability('fiction', [{ destination: 'title', state: 'allowed', consented }]),
         capability('history', [{ destination: 'title', state: 'allowed' }]),
       ],
-      lapsed_consents: [
-        { connection: 'primary', library: 'history', reason: 'policy_changed' as const },
-        { connection: 'primary', library: 'fiction', reason: 'policy_changed' as const },
-      ],
+      lapsed_consents: lapsed,
     })
 
     const lapsed = readWriteConsent(view(scoped(false)))
@@ -92,13 +94,20 @@ describe('the write consent offer', () => {
     ).toBe(
       'Write permission for History Shelf and fiction lapsed because it was given under a policy that is no longer active.',
     )
-    // Permission some library still holds keeps an empty queue complete: writes
-    // are on for it, so the state says so. The lapse beside it is not dropped:
-    // it stays on the offer for Library and Activity to state (#1370).
-    const mixed = readWriteConsent(view(scoped(true)))
+    // Permission fiction still holds keeps an empty queue complete: writes are
+    // on for it, so the state says so. History's lapse beside it is not
+    // dropped: it stays on the offer for Library and Activity to state (#1370).
+    const mixed = readWriteConsent(view(scoped(true, [lapse('history')])))
     expect([mixed.state, mixed.lapsed]).toEqual([
       'complete',
-      'Write permission for history and fiction lapsed because it was given under a policy that is no longer active.',
+      'Write permission for history lapsed because it was given under a policy that is no longer active.',
+    ])
+    // A library that holds one destination while a lapse names it is held too:
+    // the state follows the permission it holds and the lapse is still stated.
+    const both = readWriteConsent(view(scoped(true, [lapse('fiction')])))
+    expect([both.state, both.lapsed]).toEqual([
+      'complete',
+      'Write permission for fiction lapsed because it was given under a policy that is no longer active.',
     ])
     expect(readWriteConsent(view({ ...scoped(false), lapsed_consents: [] })).state).toBe('complete')
   })

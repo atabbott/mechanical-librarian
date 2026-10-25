@@ -964,10 +964,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const writesHeld = enabled.length > 0 || !needsConsent
   // A lapse is stated once: by the write card while it is offering permission,
   // otherwise by the status paragraph, even beside a library that kept its
-  // permission (#1370).
+  // permission. The paragraph is not a live region, so until Settings settles
+  // it names the library by its slug rather than reading calm (#1370).
   const cardLapse =
     consentActionable && names.ready && consentState === 'off' && consent.lapsed !== null
-  const lapse = names.ready && !cardLapse ? consent.lapsed : null
+  const lapse = cardLapse ? null : consent.lapsed
   // The disclosure holds pause, removal and recovery only; reviewing write
   // permissions has one entry, outside it (#1279).
   const hasAuthority = enabled.length > 0 || suspensions.length > 0
@@ -1553,7 +1554,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       : !writesHeld
                         ? 'Writes are off'
                         : lapse
-                          ? 'Write permission lapsed'
+                          ? 'Some writes are off'
                           : 'No intervention needed'}
             </h2>
             <p>
