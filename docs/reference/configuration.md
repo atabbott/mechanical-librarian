@@ -23,6 +23,11 @@ exact-current owner-settings document and owner verifier in
 `/data/application.sqlite3`, plus an owner-only
 `/run/secrets/review-bootstrap.json`. A truly empty `/data` volume enters the
 guided setup flow; an exact bootstrap-bound incomplete setup store resumes it.
+While setup is unclaimed, each start mints a one-time setup claim token, writes
+it to the owner-only `/data/private/setup-claim-token` and prints it once in the
+container log; creating the owner password requires it
+([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)).
+It is runtime state, not a configuration field, and the bootstrap carries none.
 Every other missing, malformed, mixed, or orphaned store/bootstrap state stops
 startup without fallback, import, migration, or repair. The bootstrap is a
 closed `review-bootstrap-v2` document containing only

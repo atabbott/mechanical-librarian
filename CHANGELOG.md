@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Claiming a new instance now needs the setup claim token the container prints
+  once in its log and keeps in `/data/private/setup-claim-token`, so a network
+  visitor who reaches the port first can no longer take ownership. Each start
+  replaces the token until the instance is claimed. Clean rebuild required for
+  incomplete setup only (#1383).
+
 - A timeout or dropped connection during an Audiobookshelf write now holds
   writes only until the connection is seen healthy again, instead of
   suspending writes to that field for good. A write whose read-back failed is
