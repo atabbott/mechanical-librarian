@@ -31,7 +31,7 @@ from mechanical_librarian.domain.work_identity import closed_creator_display_pos
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "62998241496601e83300bb3bab56df49724c87a354c0eabcde8a413c14febbfa"
+    "f260849b4ac0e76b3026bcb7d696b77dfe42ef6783f6601ac5d53c0692820b67"
 )
 
 _FIELD_OPTIONS: Final = {
