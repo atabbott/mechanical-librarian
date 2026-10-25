@@ -286,7 +286,7 @@ class FakeReviewRepository:
     def shadow_posture(self):
         return self.shadow_mode
 
-    def enter_shadow_preview(self, updated_at):
+    def enter_shadow_preview(self, updated_at, libraries):
         self.shadow_mode = "preview"
         return self.shadow_mode
 
@@ -1019,6 +1019,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             ],
             "events": projected["events"],
             "example": None,
+            "lapsed_consents": [],
             "last_failure": None,
             "paused": self.paused,
             "ledger": projected["ledger"],
@@ -1060,6 +1061,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 "backup_ready",
                 "capabilities",
                 "configured_libraries",
+                "lapsed_consents",
                 "waiting",
             )
         }

@@ -71,6 +71,7 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
+    _consent_state,
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
 )
@@ -1066,6 +1067,46 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
+    def _consent_lapse_reason(self, consent: EffectConsent) -> str:
+        """Name why a resolved library's current consent no longer applies.
+
+        An envelope some policy this store resolved for the library would
+        produce under today's destination set was given for another policy.
+        Any other envelope was bound to a destination set or envelope schema
+        this build no longer has (#1370).
+        """
+        resolved_ids = {
+            row[0]
+            for row in self._connection.execute(
+                "SELECT resolved_policy_id FROM metadata_policy_resolutions "
+                "WHERE library_name=?",
+                (consent.library,),
+            )
+        }
+        # The first generation resolves from its profile and stores no row.
+        for (document,) in self._connection.execute(
+            "SELECT d.document FROM metadata_policy_transitions t "
+            "JOIN metadata_policy_drafts d ON d.policy_id=t.to_policy_id "
+            "WHERE t.generation=1"
+        ):
+            resolved_ids.add(
+                resolve_policy(
+                    MetadataPolicyProfile.from_data(json.loads(document)),
+                    consent.library,
+                ).resolved_id
+            )
+        return (
+            "policy_changed"
+            if any(
+                consent.envelope_identity
+                == self._field_effect_consent_envelope_identity(
+                    consent.library, resolved_id
+                )
+                for resolved_id in resolved_ids
+            )
+            else "destinations_changed"
+        )
+
     @local_operation
     def pending_field_effect_decision_documents(
         self,
@@ -1565,6 +1606,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "json_extract(c.document,'$.consent.destination')"
             ).fetchall()
             consented_destinations: list[tuple[str, str, str]] = []
+            lapsed: set[tuple[str, str, str]] = set()
             profile: MetadataPolicyProfile | None = None
             for (
                 consent_id,
@@ -1577,12 +1619,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ) in consent_rows:
                 raw = json.loads(document)
                 if (
-                    type(raw) is not dict
-                    or set(raw)
-                    != {"consent", "current", "schema_version", "updated_at"}
-                    or raw.get("current") is not True
-                    or raw.get("schema_version") != "field-effect-consent-state-v1"
-                    or raw.get("updated_at") != updated_at
+                    not _consent_state(raw)
+                    or raw["current"] is not True
+                    or raw["updated_at"] != updated_at
                     or canonical_effect_json(raw) != document
                 ):
                     raise FieldEffectError("persistence")
@@ -1609,6 +1648,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         profile, consent.library
                     ).resolved_id
                 else:
+                    lapsed.add(
+                        (consent.connection, consent.library, "library_unresolved")
+                    )
                     continue
                 if (
                     consent.envelope_identity
@@ -1618,6 +1660,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ):
                     consented_destinations.append(
                         (consent.connection, consent.library, consent.destination)
+                    )
+                else:
+                    lapsed.add(
+                        (
+                            consent.connection,
+                            consent.library,
+                            self._consent_lapse_reason(consent),
+                        )
                     )
             counts = {
                 state: count
@@ -1702,6 +1752,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         "destination": destination,
                     }
                     for connection, library, destination in consented_destinations
+                ],
+                "lapsed_consents": [
+                    {"connection": connection, "library": library, "reason": reason}
+                    for connection, library, reason in sorted(lapsed)
                 ],
                 "counts": counts,
                 "cleanup": {"pending": cleanup[0], "exhausted": cleanup[1]},

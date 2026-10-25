@@ -1457,6 +1457,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ],
         "counts": {"verified": 1, "applying": 1, "stale": 1, "recovered": 1},
         "example": None,
+        "lapsed_consents": [],
         "last_failure": "readback",
         "ledger": {
             "event_type": query.get("event_type", ["all"])[0],
@@ -1995,7 +1996,12 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "backup_ready": None,
             **{
                 key: value[key]
-                for key in ("capabilities", "configured_libraries", "waiting")
+                for key in (
+                    "capabilities",
+                    "configured_libraries",
+                    "lapsed_consents",
+                    "waiting",
+                )
             },
         }
     if path == "/api/v1/activity":

@@ -334,7 +334,7 @@ def _publish_audiobook_tranche_case(repository: Any) -> str:
         "F46 ASIN tranche", dict(DEFAULT_OPTIONS), destinations
     )
     resolved = resolve_policy(profile, "ebooks")
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(profile.canonical_json)
     repository.activate_metadata_policy(
         profile.policy_id,
@@ -353,6 +353,69 @@ def _publish_audiobook_tranche_case(repository: Any) -> str:
     outcome = repository.persist_shadow_outcome(case_id, 4)
     assert outcome not in {"inactive", "stale"}, outcome
     return cast("str", case_id)
+
+
+def _consent_applications(repository: Any, root: Path, libraries: tuple[str, ...]):
+    """The activity projection and guarded scheduler over fake services for
+    these libraries, so Activity, Library and Policy read the store's consent."""
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.adapters.field_effect_fakes import (
+        FakeBackupReadiness,
+        FakeCapabilityObserver,
+        FakeDependencyCurrentness,
+        FakeForwardReevaluation,
+        FakeTargetService,
+        PrivateCoverRecoveryStore,
+    )
+    from mechanical_librarian.adapters.field_effect_runtime import (
+        PersistedEffectConsent,
+    )
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+    from mechanical_librarian.application.field_effects import (
+        GuardedFieldApplication,
+    )
+
+    authority = PersistedFieldEffectAuthority(repository)
+    capability = FakeCapabilityObserver("c" * 64)
+    services = {
+        ("primary", library): GuardedFieldApplication(
+            repository,
+            FakeTargetService(),
+            FakeBackupReadiness(),
+            capability,
+            authority,
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            PrivateCoverRecoveryStore(root / "recovery", lambda _: b"old"),
+            FakeForwardReevaluation(),
+            lambda: 1_000,
+        )
+        for library in libraries
+    }
+    activity = ContinuousGuardedApplication(
+        repository,
+        {},
+        {},
+        authority,
+        tuple(services),
+        lambda: 1_000,
+        lambda *_: None,
+        activity_only=True,
+    )
+    application = ContinuousGuardedApplication(
+        repository,
+        services,
+        {key: capability for key in services},
+        authority,
+        tuple(services),
+        lambda: 1_000,
+        lambda *_: None,
+    )
+    return activity, application
 
 
 @contextmanager
@@ -425,6 +488,7 @@ def _server(
     audiobook_tranche: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
+    write_consent: Callable[[Any], tuple[str, ...]] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
     if (
@@ -1013,7 +1077,7 @@ def _server(
                 destinations,
             )
             resolved = resolve_policy(profile, report.target.library)
-            repository.enter_shadow_preview(1)
+            repository.enter_shadow_preview(1, ())
             repository.create_metadata_policy_draft(profile.canonical_json)
             repository.activate_metadata_policy(
                 profile.policy_id,
@@ -1496,8 +1560,16 @@ def _server(
                 target.seed(operation.plan)
                 assert service.apply(operation.plan.plan_id).state == "verified"
                 assert target.read(operation.plan).value == candidate.output.description
+    # Seeds the store's consents and names the libraries the guarded
+    # scheduler writes to, so consent is read as the product reads it (#1370).
+    consent_libraries = () if write_consent is None else write_consent(repository)
     language_activity = None
-    if (
+    consent_application = None
+    if consent_libraries:
+        language_activity, consent_application = _consent_applications(
+            repository, database.parent, consent_libraries
+        )
+    elif (
         isbn_fixture
         or isbn_title_fixture is not None
         or synopsis_fixture is not None
@@ -1530,12 +1602,17 @@ def _server(
         clock=lambda: 1_000,
         close_repository=True,
         policy_libraries=(
-            ((report.target.library, None),)
-            if refusal_fixture or work_review_fixture
-            else ()
+            tuple((library, None) for library in consent_libraries)
+            or (
+                ((report.target.library, None),)
+                if refusal_fixture or work_review_fixture
+                else ()
+            )
         ),
         field_application=(
-            _BrowserActivityApplication()
+            consent_application
+            if consent_libraries
+            else _BrowserActivityApplication()
             if not isbn_fixture
             and isbn_title_fixture is None
             and synopsis_fixture is None
@@ -2490,6 +2567,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 review_activation.click()
                 page.get_by_text("Activate this reviewed draft?").wait_for()
                 assert page.get_by_role("dialog").count() == 0
+                # The served consent state holds no permission, so the Activate
+                # step says activating grants none rather than nothing (#1370).
+                page.get_by_text(
+                    "No library has write permission, and activating grants none."
+                ).wait_for()
                 page.locator("html").evaluate(
                     "node => { node.style.fontSize = '200%'; }"
                 )
@@ -9934,3 +10016,192 @@ _FOCUSED = """() => {
   return active === null ? 'null'
     : `${active.tagName}${active.className ? '.' + active.className : ''}`;
 }"""
+
+
+_NAMED_LIBRARIES = OwnerSettingsDocument.model_validate(
+    {
+        "schema_version": "owner-settings-v4",
+        "revision": 1,
+        "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
+        "libraries": [
+            {
+                "name": "ebooks",
+                "connection": "primary",
+                "library_id": "library",
+                "media_kind": "ebook",
+                "display_name": "Reading Room",
+            },
+            {
+                "name": "papers",
+                "connection": "primary",
+                "library_id": "library-2",
+                "media_kind": "ebook",
+                "display_name": "Paper Shelf",
+            },
+        ],
+    }
+)
+_CALM = (
+    "No intervention needed",
+    "No action required",
+    "Guarded work continues automatically",
+)
+_DIFFERENT_FIELDS = (
+    "lapsed because this version of Mechanical Librarian can write a "
+    "different set of fields."
+)
+
+
+def _consented(lapsed: tuple[str, ...], stored: dict[str, Any] | None = None):
+    """Grant every destination for both libraries, the ones in `lapsed` by an
+    earlier build that wrote one field fewer, so their envelope no longer
+    matches what this version writes (#1370)."""
+    from mechanical_librarian.adapters.persistence import field_effect_activity
+    from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
+
+    def seed(repository: Any) -> tuple[str, ...]:
+        if stored is not None:
+            stored["repository"] = repository
+            stored["path"] = next(
+                path
+                for _, name, path in repository._connection.execute(
+                    "PRAGMA database_list"
+                )
+                if name == "main"
+            )
+        for library in ("ebooks", "papers"):
+            destinations = (
+                SUPPORTED_DESTINATIONS - {"explicit"}
+                if library in lapsed
+                else SUPPORTED_DESTINATIONS
+            )
+            with patch.object(
+                field_effect_activity, "SUPPORTED_DESTINATIONS", destinations
+            ):
+                repository.grant_field_effect_consents(
+                    "primary", (library,), tuple(sorted(destinations)), 10
+                )
+        return ("ebooks", "papers")
+
+    return seed
+
+
+def _schedule_accepted_title(repository: Any, root: Path) -> None:
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+
+    base = _report()
+    report = MetadataReport.create(
+        target=replace(base.target, item="item-2"),
+        file=FileFacts(0, "c" * 64, "d" * 64),
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+    )
+    repository.publish(report, lambda: True)
+    policy = repository.current_resolved_metadata_policy("ebooks")
+    proposal_set = evaluate_report(
+        report, policy.resolved_id, human_review_destinations(policy)
+    )
+    repository.publish_proposal(proposal_set)
+    case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(item for item in case.proposals if item["destination"] == "title")
+    repository.record_human_decision(
+        HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination="title",
+            actor="owner",
+            outcome="accept",
+            selected_value=proposal["result"]["alternatives"][0]["value"],
+            idempotency_key="browser-carried-consent-title",
+            occurred_at=1_000,
+        )
+    )
+    _, application = _consent_applications(repository, root, ("ebooks",))
+    assert application.schedule() == 1
+
+
+def test_an_activation_keeps_each_library_write_permission():
+    """R3(a): Activate names the library that keeps permission, and after
+    activating its consent is carried and both pages read writes enabled."""
+    stored: dict[str, Any] = {}
+    with _owner_page(
+        settings_document=_NAMED_LIBRARIES, write_consent=_consented((), stored)
+    ) as (page, origin, _case_id):
+        page.goto(f"{origin}/policy")
+        page.get_by_role("region", name="Subtitle", exact=True).get_by_role(
+            "button", name="Ask me"
+        ).click()
+        page.get_by_role("button", name="Validate and preview").click()
+        page.get_by_role("button", name="Review activation").click()
+        footer = page.get_by_text("Activate this reviewed draft?").locator("xpath=..")
+        expect(footer).to_contain_text(
+            "Write permission stays on for Reading Room and Paper Shelf."
+        )
+        page.get_by_role("button", name="Activate policy").click()
+        page.get_by_text("Policy activated.").first.wait_for()
+        with closing(sqlite3.connect(f"file:{stored['path']}?mode=ro", uri=True)) as db:
+            rows = [
+                json.loads(document)
+                for (document,) in db.execute(
+                    "SELECT document FROM field_effect_consents WHERE current=1"
+                )
+            ]
+            (transition_id,) = db.execute(
+                "SELECT transition_id FROM metadata_policy_transitions "
+                "ORDER BY generation DESC LIMIT 1"
+            ).fetchone()
+        assert rows and {
+            (row["basis"]["kind"], row["basis"]["transition_id"]) for row in rows
+        } == {("policy_activation", transition_id)}
+        # A title the owner accepts under the activated policy is scheduled on
+        # the carried consent, with no new grant.
+        _schedule_accepted_title(stored["repository"], Path(stored["path"]).parent)
+        page.goto(f"{origin}/library")
+        expect(page.locator(".cm-library-handoff")).to_contain_text(
+            "Writes are enabled."
+        )
+        page.get_by_role("link", name="Activity", exact=True).click()
+        page.locator(".cm-activity-calm").get_by_text("Writes enabled").wait_for()
+        for phrase in ("Writes are off", "lapsed"):
+            expect(page.locator("main")).not_to_contain_text(phrase)
+
+
+@pytest.mark.parametrize("lapsed", [("ebooks", "papers"), ("papers",)])
+def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
+    """R3(b): every lapse, and a lapse beside a library that kept its
+    permission, is stated with its reason and the library's display name,
+    and neither page reads calm."""
+    names = " and ".join(
+        {"ebooks": "Reading Room", "papers": "Paper Shelf"}[name] for name in lapsed
+    )
+    sentence = f"Write permission for {names} {_DIFFERENT_FIELDS}"
+    with _owner_page(
+        settings_document=_NAMED_LIBRARIES, write_consent=_consented(lapsed)
+    ) as (page, origin, _case_id):
+        notice = page.locator(".cm-library-handoff")
+        expect(notice).to_contain_text(sentence)
+        expect(notice).not_to_contain_text("papers")
+        if lapsed == ("papers",):
+            # Writes are enabled only for the library that kept permission.
+            expect(notice).to_contain_text("Writes are enabled for Reading Room.")
+            expect(notice).to_contain_text(
+                "Review current write permissions in Activity."
+            )
+        page.get_by_role("link", name="Activity", exact=True).click()
+        page.get_by_text(sentence).first.wait_for()
+        main = page.locator("main")
+        for phrase in _CALM:
+            expect(main).not_to_contain_text(phrase)
+        if lapsed == ("papers",):
+            page.get_by_text("Some writes are off", exact=True).wait_for()
+            page.get_by_text("Action needed", exact=True).first.wait_for()
+        else:
+            page.get_by_text(
+                "Nothing is written to your libraries until you give permission again."
+            ).wait_for()

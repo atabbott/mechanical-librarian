@@ -160,7 +160,7 @@ class OwnerStore:
         destinations[destination] = "automatic"
         profile = MetadataPolicyProfile.create("Owner hold", options, destinations)
         self.resolved = resolve_policy(profile, library)
-        self.repository.enter_shadow_preview(1)
+        self.repository.enter_shadow_preview(1, ())
         self.repository.create_metadata_policy_draft(profile.canonical_json)
         self.repository.activate_metadata_policy(
             profile.policy_id,

@@ -274,7 +274,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
     )
     connection.commit()
     repository = SQLiteMetadataReportRepository(connection)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     automatic_count = max(1, min(20, works // 4))
     human_count = _representative_human_decision_count(works)
     cover_count = max(1, min(10, works // 8))

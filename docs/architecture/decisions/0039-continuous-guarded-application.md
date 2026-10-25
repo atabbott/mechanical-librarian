@@ -4,6 +4,8 @@ Status: Accepted
 
 [ADR-0085](0085-owner-entered-values-withdrawal-and-reselection.md) amends manual holds:
 admission carries a work's active hold to its successor case.
+Issue #1370 amends consent across an owner's policy activation: see
+[Consent across policy activation](#consent-across-policy-activation).
 
 ## Context
 
@@ -23,8 +25,8 @@ only that destination; a library needs at least one eligible destination. Any ne
 destination, action kind, or authority scope requires fresh consent. Consent also binds the exact resolved
 policy semantics and qualified automatic categories, so a semantic policy
 change invalidates it before scheduling and again at claim. Consent is not
-inferred from a decision, policy activation, configuration, or an earlier
-canary. Activity discloses every included and excluded destination before the
+inferred from a decision, configuration, or an earlier canary, and a policy
+activation only carries consent the owner already gave. Activity discloses every included and excluded destination before the
 owner submits the exact subset. The command accepts only an identical fresh
 probe result, and partially consented libraries remain available for later
 incremental consent.
@@ -81,6 +83,30 @@ persisted. A successful read-only observation clears only an older permission,
 field-shape, or connection-availability suspension it can disprove; it never
 clears `unexpected_effect_behavior` and preserves a later failure even when
 serialized application work resumes after an observation.
+
+### Consent across policy activation
+
+Amended by #1370, because activating an edited policy silently withdrew every
+library's write permission and the product then showed writes as calm.
+
+1. An owner's policy activation carries each library's consent that is current
+   for the outgoing resolved policy to the incoming one, inside the
+   activation's own transaction and before its state changes. Connection,
+   library, destination and action are identical, and the consent records the
+   activation's transition and the consent it replaced as its basis. A replay,
+   a no-op or a refused activation carries nothing. Entering Preview from
+   automatic at the unbound first generation resolves every configured
+   library, as activation does, and later generations reuse the stored
+   resolutions, so a consented library holding no current work keeps its
+   consent.
+2. Consent is still never inferred from a decision, configuration, a canary or
+   any other policy path, and a carry never widens it.
+3. A changed destination set or envelope schema, or a library the active policy
+   does not resolve, still lapses consent. Activity and Library state the
+   lapse with its reason, and Activity never reads as calm while no library
+   holds consent.
+4. Plans are not rewritten. A plan made under the replaced consent goes stale
+   at its claim, and current work is planned under the carried consent.
 
 ## Consequences
 

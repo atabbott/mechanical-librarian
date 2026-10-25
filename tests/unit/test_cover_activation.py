@@ -134,7 +134,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         repository.create_metadata_policy_draft(profile.canonical_json)
         repository.activate_metadata_policy(
             profile.policy_id,

@@ -605,9 +605,24 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     assert consent.headers["cache-control"] == "no-store, private"
     assert consent.json() == {
         key: history[key]
-        for key in ("backup_ready", "capabilities", "configured_libraries", "waiting")
+        for key in (
+            "backup_ready",
+            "capabilities",
+            "configured_libraries",
+            "lapsed_consents",
+            "waiting",
+        )
     }
-    for invalid in ({"backup_ready": True}, {"events": []}):
+    for invalid in (
+        {"backup_ready": True},
+        {"events": []},
+        # A lapse names one of three closed reasons and nothing else (#1370).
+        {
+            "lapsed_consents": [
+                {"connection": "primary", "library": "fiction", "reason": "expired"}
+            ]
+        },
+    ):
         with (
             patch.object(
                 application,

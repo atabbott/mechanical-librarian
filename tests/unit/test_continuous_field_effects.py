@@ -314,6 +314,7 @@ class _PagedRepository:
 class _ActivityPagedRepository(_PagedRepository):
     def field_effect_activity_data(self, _limit):
         return {
+            "lapsed_consents": [],
             "consented_destinations": [],
             "consented_libraries": [],
             "counts": {},
@@ -1025,6 +1026,7 @@ def test_schedule_skips_prior_qualification_before_no_change_authority_or_capabi
 
         def field_effect_activity_data(self, _limit):
             return {
+                "lapsed_consents": [],
                 "consented_destinations": [],
                 "consented_libraries": [],
                 "counts": {},
@@ -1427,7 +1429,11 @@ def test_enable_grants_only_field_locally_eligible_destinations() -> None:
             self.grants = arguments
 
         def field_effect_activity_data(self, _):
-            return {"cleanup": {"pending": 0, "exhausted": 0}, "suspensions": []}
+            return {
+                "lapsed_consents": [],
+                "cleanup": {"pending": 0, "exhausted": 0},
+                "suspensions": [],
+            }
 
     repository = Repository()
     service = ContinuousGuardedApplication(
@@ -1501,6 +1507,7 @@ def test_a_readiness_storage_fault_is_neither_absorbed_nor_cached() -> None:
     class Repository(_PagedRepository):
         def field_effect_activity_data(self, _):
             return {
+                "lapsed_consents": [],
                 "consented_destinations": [],
                 "events": [],
                 "paused": False,
@@ -1545,6 +1552,7 @@ def test_activity_exposes_incremental_consent_for_a_partially_enabled_library() 
 
         def field_effect_activity_data(self, _):
             return {
+                "lapsed_consents": [],
                 "consented_destinations": [
                     {
                         "connection": "primary",
@@ -1586,6 +1594,42 @@ def test_activity_exposes_incremental_consent_for_a_partially_enabled_library() 
     assert destinations["subtitle"]["state"] == "field_unavailable"
 
 
+def test_activity_states_a_lapse_only_for_a_configured_library() -> None:
+    """A removed library's lapse has no offer beside it, so it is not stated (#1370)."""
+    decision = _decisions(1)[0]
+    lapsed = [
+        {"connection": "primary", "library": "alpha", "reason": "destinations_changed"},
+        {"connection": "primary", "library": "removed", "reason": "library_unresolved"},
+    ]
+
+    class Repository(_PagedRepository):
+        def field_effect_activity_data(self, _):
+            return {
+                "consented_destinations": [],
+                "events": [],
+                "lapsed_consents": [dict(value) for value in lapsed],
+                "paused": False,
+                "suspensions": [],
+            }
+
+    service = ContinuousGuardedApplication(
+        Repository([decision]),
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _MixedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    activity = service.activity()
+    assert activity["enabled_libraries"] == []
+    assert activity["lapsed_consents"] == lapsed[:1]
+
+
 def test_waiting_is_split_by_next_step_and_counted_per_destination() -> None:
     """`46 Waiting safely` is four different next steps, and this separates them.
 
@@ -1616,6 +1660,7 @@ def test_waiting_is_split_by_next_step_and_counted_per_destination() -> None:
 
         def field_effect_activity_data(self, _limit):
             return {
+                "lapsed_consents": [],
                 "consented_destinations": [
                     {
                         "connection": "primary",
@@ -1742,6 +1787,7 @@ def test_activity_accepts_activated_recovery_states_and_rejects_unknown_state() 
     class Repository(_PagedRepository):
         def field_effect_activity_data(self, _limit):
             return {
+                "lapsed_consents": [],
                 "consented_destinations": [],
                 "consented_libraries": [],
                 "counts": {},
@@ -1804,6 +1850,7 @@ def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup() -> None:
 
         def field_effect_activity_data(self, limit):
             return {
+                "lapsed_consents": [],
                 "cleanup": self._cleanup,
                 "consented_destinations": [],
                 "consented_libraries": [],
@@ -1861,6 +1908,7 @@ def test_activity_parses_each_distinct_private_report_once() -> None:
                 "work_id": "work",
             }
             return {
+                "lapsed_consents": [],
                 "consented_destinations": [],
                 "consented_libraries": [],
                 "counts": {},
@@ -1948,6 +1996,7 @@ def test_activity_refuses_every_stored_report_the_parser_cannot_read() -> None:
                     "work_id": "work",
                 }
                 return {
+                    "lapsed_consents": [],
                     "consented_destinations": [],
                     "consented_libraries": [],
                     "counts": {},
@@ -2706,6 +2755,7 @@ def test_activity_transient_validated_reports_require_exact_canonical_bindings(
     class Repository(_PagedRepository):
         def field_effect_activity_data(self, limit):
             return {
+                "lapsed_consents": [],
                 "consented_destinations": [],
                 "consented_libraries": [],
                 "counts": {},

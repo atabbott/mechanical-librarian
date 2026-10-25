@@ -369,7 +369,7 @@ def publish_author_case(repository, report, destination: str = "automatic"):
         destinations,
     )
     resolved = resolve_policy(profile, report.target.library)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(profile.canonical_json)
     repository.activate_metadata_policy(
         profile.policy_id,

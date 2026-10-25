@@ -504,7 +504,7 @@ def test_reused_kinds_are_deeply_immutable(tmp_path: Path) -> None:
     root.mkdir(mode=0o700)
     fixture = OwnerResponsivenessFixture(root, 8, mixed=True)
     try:
-        fixture.repository.enter_shadow_preview(1)
+        fixture.repository.enter_shadow_preview(1, ())
         for index, case in enumerate(fixture.cases):
             fixture.repository.persist_shadow_outcome(case.review_case_id, index + 2)
         connection = fixture.repository._connection
@@ -956,6 +956,7 @@ def test_the_consent_read_never_waits_for_the_history_reader(
                 "backup_ready",
                 "capabilities",
                 "configured_libraries",
+                "lapsed_consents",
                 "waiting",
             )
         }

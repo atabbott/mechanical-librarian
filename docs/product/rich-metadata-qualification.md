@@ -89,6 +89,17 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Activation consent carry successor (#1370)
+
+The current F19a, F20 and F46 records move to semantic revision 66 over base
+`f581a2f5`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows a policy activation carrying each library's write consent to
+the incoming policy and Activity reporting a lapsed consent with its reason.
+The consent state moves to `field-effect-consent-state-v2`, a clean rebuild
+under ADR-0013, and no operation gains or loses automatic authority.
+
 ## First-throttle reason successor (#1367)
 
 The current F19a, F20 and F46 records move to semantic revision 65 over base

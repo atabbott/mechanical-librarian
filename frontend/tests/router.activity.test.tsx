@@ -1529,6 +1529,149 @@ describe('Activity route', () => {
     ).toBeNull()
   })
 
+  it.each([
+    [
+      'a lapse',
+      [{ connection: 'primary', library: 'fiction', reason: 'destinations_changed' as const }],
+      'Nothing is written to your libraries until you give permission again.',
+    ],
+    [
+      'no permission at all',
+      [],
+      'No library has write permission, so nothing is written to your libraries until you give it.',
+    ],
+  ])('never reports calm while no library holds permission: %s (#1370)', async (_, lapsed, why) => {
+    const view = activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 0, human: 0, total: 0 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }],
+        },
+      ],
+      lapsed_consents: lapsed,
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => view),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+    }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Writes are off' })).toBeVisible()
+    expect(await screen.findByText(why)).toBeVisible()
+    for (const calm of [
+      'No intervention needed',
+      'No action required',
+      'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
+    ])
+      expect(screen.queryByText(calm)).toBeNull()
+    // A lapse opens the consent card, in its existing slot, with the reason;
+    // the status below says something else rather than repeating it (#1370).
+    const reason =
+      'Write permission for fiction lapsed because this version of Mechanical Librarian can write a different set of fields.'
+    if (lapsed.length) {
+      expect(
+        await screen.findByRole('region', {
+          name: 'Writes are off. Review permissions when you are ready.',
+        }),
+      ).toHaveTextContent(reason)
+      expect(screen.getAllByText(reason, { exact: false })).toHaveLength(1)
+    }
+  })
+
+  it('states a lapse beside a library that kept its permission (#1370)', async () => {
+    const view = activity({
+      configured_libraries: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+        prepared: { automatic: 0, human: 0, total: 0 },
+      })),
+      capabilities: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+        state: 'allowed',
+        destinations: [
+          { destination: 'title', state: 'allowed', consented: library === 'fiction', prepared: 0 },
+        ],
+      })),
+      consented_libraries: [{ connection: 'primary', library: 'fiction' }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => view),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+    }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Some writes are off' })).toBeVisible()
+    expect(
+      screen.getByText(
+        'Write permission for history lapsed because it was given under a policy that is no longer active.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByText('Action needed')).toBeVisible()
+    for (const calm of [
+      'No intervention needed',
+      'No action required',
+      'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
+    ])
+      expect(screen.queryByText(calm)).toBeNull()
+  })
+
+  it('never reads calm beside a lapse while Settings is still loading (#1370)', async () => {
+    const view = activity({
+      configured_libraries: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+        prepared: { automatic: 0, human: 0, total: 0 },
+      })),
+      capabilities: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+        state: 'allowed',
+        destinations: [
+          { destination: 'title', state: 'allowed', consented: library === 'fiction', prepared: 0 },
+        ],
+      })),
+      consented_libraries: [{ connection: 'primary', library: 'fiction' }],
+      enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+      lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => view),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      // The Settings read never settles, so the names are never ready.
+      getSettings: vi.fn(() => new Promise<never>(() => undefined)),
+    }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Some writes are off' })).toBeVisible()
+    await waitFor(() => expect(http.getSettings).toHaveBeenCalled())
+    // The status is not a live region, so it states the lapse by its slug.
+    expect(
+      screen.getByText(
+        'Write permission for history lapsed because it was given under a policy that is no longer active.',
+      ),
+    ).toBeVisible()
+    for (const calm of [
+      'No intervention needed',
+      'Guarded work continues automatically. Recovery controls appear only when your decision is required.',
+    ])
+      expect(screen.queryByText(calm)).toBeNull()
+  })
+
   it('keeps the protected ledger query, evidence, and owner controls bounded', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = {

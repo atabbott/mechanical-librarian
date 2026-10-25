@@ -275,6 +275,23 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
+            carry_field_effect_consents=(
+                lambda resolved, transition_id, activated_at: (
+                    self._field_effects._carry_field_effect_consents_in_transaction(
+                        tuple(
+                            (
+                                library,
+                                self._field_effect_activity._field_effect_consent_envelope_identity(
+                                    library, resolved_id
+                                ),
+                            )
+                            for library, resolved_id in resolved
+                        ),
+                        transition_id,
+                        activated_at,
+                    )
+                )
+            ),
         )
         self._owner_settings = OwnerSettingsStore(
             connection, self._setup_serialization_lock
@@ -1674,8 +1691,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def shadow_posture(self) -> str:
         return self._metadata_policy.shadow_posture()
 
-    def enter_shadow_preview(self, updated_at: int) -> str:
-        return self._metadata_policy.enter_shadow_preview(updated_at)
+    def enter_shadow_preview(self, updated_at: int, libraries: tuple[str, ...]) -> str:
+        return self._metadata_policy.enter_shadow_preview(updated_at, libraries)
 
     def activate_qualified_automatic(self, updated_at: int) -> str:
         return self._metadata_policy.activate_qualified_automatic(updated_at)

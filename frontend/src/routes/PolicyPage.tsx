@@ -30,6 +30,8 @@ import { Dropdown } from '../components/Dropdown'
 import { FinishTray } from '../components/FinishTray'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { automaticRefusalReasons, fieldLabel } from '../labels'
+import { useLibraryName } from '../libraryNames'
+import { libraryList } from '../writeConsent'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
 
@@ -823,22 +825,27 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     retry: false,
     refetchInterval: (query) => (query.state.data?.state === 'processing' ? 1_500 : false),
   })
-  // The preview names a library by its settings slug. The owner's display name
-  // comes from the Settings read this route already shares, issued only once a
-  // preview exists; while it is pending or unavailable the slug stands.
-  const settings = useQuery({
-    queryKey: ['settings'],
-    queryFn: (queryContext) => http.getSettings(queryContext.signal, queryWorkClass(queryContext)),
+  // The preview names a library by its settings slug; the display name is read
+  // only once a preview exists.
+  const libraryName = useLibraryName(http, preview !== undefined).name
+  // Activation carries each library's write permission to the new policy, so
+  // the step names the libraries that hold it now (#1370).
+  const consent = useQuery({
+    queryKey: ['activity', 'policy-activation'] as const,
+    queryFn: (queryContext) =>
+      http.getActivityConsent(queryContext.signal, queryWorkClass(queryContext)),
     retry: false,
-    enabled: preview !== undefined,
+    enabled: stage === 'activation',
   })
-  const libraryName = (name: string) =>
-    settings.data?.document.libraries.find((library) => library.name === name)?.display_name ?? name
+  const keptPermission = consent.data?.capabilities
+    .filter((item) => item.destinations.some((entry) => entry.consented))
+    .map((item) => libraryName(item.library))
   const refresh = async () => {
     await Promise.all([
       invalidateBackgroundQueries(queryClient, { queryKey: ['policy'] }),
       invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
       invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['activity'] }),
     ])
   }
   const command = useMutation({
@@ -1761,7 +1768,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <strong>Activate this reviewed draft?</strong>
                 <span>
                   The active policy changes only after this guarded command succeeds. Applied
-                  history remains untouched. No write permission is granted.
+                  history remains untouched.{' '}
+                  {keptPermission === undefined
+                    ? consent.isError
+                      ? 'Write permission is unchanged: each library keeps what it has.'
+                      : 'Checking which libraries keep write permission…'
+                    : keptPermission.length
+                      ? `Write permission stays on for ${libraryList(keptPermission)}.`
+                      : 'No library has write permission, and activating grants none.'}
                 </span>
                 <ul>
                   {changedFields.map((field) => (

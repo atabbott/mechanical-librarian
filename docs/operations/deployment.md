@@ -210,7 +210,9 @@ path is composed.
 A build that adds a write destination invalidates every existing library
 consent, because the consent envelope identity digests the whole destination
 set. Nothing is planned or claimed under a lapsed
-consent, and Activity offers re-consent before anything is scheduled.
+consent, and Activity states the lapse with its reason and offers re-consent
+before anything is scheduled. A policy activation carries each library's current
+consent rather than lapsing it (#1370).
 
 The supported Compose stop budget is 610 seconds. Uvicorn can first use the
 configured maximum 300 seconds to drain HTTP requests, then lifespan shutdown

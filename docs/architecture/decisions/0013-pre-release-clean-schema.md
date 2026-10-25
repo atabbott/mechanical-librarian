@@ -200,3 +200,11 @@ digest and the `human_decisions` outcome check. Owner
 decisions are canonical authority rather than reconstructible derived objects,
 so the adoption branch does not apply. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1370 also takes the clean-rebuild branch. The field-effect consent state
+moves to `field-effect-consent-state-v2`, whose closed `basis` records whether
+the owner granted the consent or a policy activation carried it, and from which
+consent. Consents are canonical owner authority rather than reconstructible
+derived objects, so the adoption branch does not apply. Every earlier
+application database holding a consent is rejected before mutation and needs a
+clean rebuild; no adoption is supplied.

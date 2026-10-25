@@ -197,6 +197,17 @@ def test_activity_ignores_consent_orphaned_by_policy_activation(
 
     assert activity["consented_libraries"] == []
     assert activity["consented_destinations"] == []
+    # An unresolved library is not carried: its grant stays the owner's own,
+    # and Activity names why it no longer counts (#1370).
+    assert activity["lapsed_consents"] == [
+        {"connection": "primary", "library": "removed", "reason": "library_unresolved"}
+    ]
+    assert [(1, {"kind": "owner_grant"})] == [
+        (current, json.loads(document)["basis"])
+        for current, document in effects.repository._connection.execute(
+            "SELECT current,document FROM field_effect_consents"
+        )
+    ]
     policy = effects.repository.field_effect_activity_page(
         search=None,
         event_type="policy",
@@ -212,6 +223,219 @@ def test_activity_ignores_consent_orphaned_by_policy_activation(
         "generation": "Policy generation 2",
         "policy_changes": [],
     }
+
+
+def _consent_rows(effects: _EffectEnvironment) -> dict[str, tuple[int, object]]:
+    return {
+        consent_id: (current, json.loads(document))
+        for consent_id, current, document in effects.repository._connection.execute(
+            "SELECT consent_id,current,document FROM field_effect_consents"
+        )
+    }
+
+
+def _activate_replacement(
+    effects: _EffectEnvironment,
+    libraries: tuple[str, ...],
+    activated_at: int,
+    *,
+    name: str = "Replacement",
+    generation: int = 1,
+    active: MetadataPolicyProfile | None = None,
+):
+    builtin = MetadataPolicyProfile.builtin()
+    replacement = MetadataPolicyProfile.create(
+        name, dict(builtin.options), dict(builtin.destinations)
+    )
+    effects.repository.create_metadata_policy_draft(replacement.canonical_json)
+    transition = effects.repository.activate_metadata_policy(
+        replacement.policy_id,
+        (active or builtin).policy_id,
+        tuple(
+            (library, resolved.resolved_id, resolved.canonical_json)
+            for library in libraries
+            for resolved in (resolve_policy(replacement, library),)
+        ),
+        activated_at,
+        expected_active_generation=generation,
+    )
+    assert transition is not None
+    return replacement, transition
+
+
+def test_activation_carries_each_current_consent_to_the_new_policy(
+    effects: _EffectEnvironment,
+) -> None:
+    """The owner's grant survives the policy they activate, scope unchanged (#1370)."""
+    granted = effects.repository.grant_field_effect_consents(
+        "primary", ("books",), ("authors", "title"), 1
+    )
+    _, transition = _activate_replacement(effects, ("books",), 5)
+
+    for prior in granted:
+        assert not effects.repository.field_effect_consent_is_current(prior)
+    carried = tuple(
+        effects.repository.current_field_effect_consent("primary", "books", name)
+        for name in ("authors", "title")
+    )
+    assert [
+        (value.connection, value.library, value.destination, value.action)
+        for value in carried
+    ] == [
+        (item.connection, item.library, item.destination, item.action)
+        for item in granted
+    ]
+    assert {value.envelope_identity for value in carried} == {
+        effects.repository.field_effect_consent_envelope_identity("books")
+    }
+    rows = _consent_rows(effects)
+    assert len(rows) == 4
+    for prior, value in zip(granted, carried, strict=True):
+        assert rows[prior.consent_id] == (
+            0,
+            {
+                "basis": {"kind": "owner_grant"},
+                "consent": prior.to_data(),
+                "current": False,
+                "schema_version": "field-effect-consent-state-v2",
+                "updated_at": 5,
+            },
+        )
+        assert rows[value.consent_id] == (
+            1,
+            {
+                "basis": {
+                    "carried_from": prior.consent_id,
+                    "kind": "policy_activation",
+                    "transition_id": transition.transition_id,
+                },
+                "consent": value.to_data(),
+                "current": True,
+                "schema_version": "field-effect-consent-state-v2",
+                "updated_at": 5,
+            },
+        )
+    activity = effects.repository.field_effect_activity_data(1, include_events=False)
+    assert activity["consented_destinations"] == [
+        {"connection": "primary", "library": "books", "destination": name}
+        for name in ("authors", "title")
+    ]
+    assert activity["lapsed_consents"] == []
+
+    # Replaying the activation carries nothing a second time.
+    replacement = MetadataPolicyProfile.create(
+        "Replacement",
+        dict(MetadataPolicyProfile.builtin().options),
+        dict(MetadataPolicyProfile.builtin().destinations),
+    )
+    resolved = resolve_policy(replacement, "books")
+    replay = effects.repository.activate_metadata_policy(
+        replacement.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        (("books", resolved.resolved_id, resolved.canonical_json),),
+        6,
+        expected_active_generation=1,
+    )
+    assert replay is not None and replay.transition_id == transition.transition_id
+    assert _consent_rows(effects) == rows
+
+
+def test_a_library_resolved_again_reports_its_lapse_as_a_policy_change(
+    effects: _EffectEnvironment,
+) -> None:
+    """A grant a gap left behind is named as the policy it was given for (#1370)."""
+    effects.repository.grant_field_effect_consents("primary", ("books",), ("title",), 1)
+    first, _ = _activate_replacement(effects, ("remaining",), 2)
+    assert effects.repository.field_effect_activity_data(1, include_events=False)[
+        "lapsed_consents"
+    ] == [{"connection": "primary", "library": "books", "reason": "library_unresolved"}]
+
+    _activate_replacement(
+        effects, ("books", "remaining"), 3, name="Second", generation=2, active=first
+    )
+
+    with pytest.raises(FieldEffectError, match="consent"):
+        effects.repository.current_field_effect_consent("primary", "books", "title")
+    assert effects.repository.field_effect_activity_data(1, include_events=False)[
+        "lapsed_consents"
+    ] == [{"connection": "primary", "library": "books", "reason": "policy_changed"}]
+    assert [1] == [current for current, _ in _consent_rows(effects).values()]
+
+
+@pytest.mark.parametrize(
+    "document",
+    (
+        # The exact predecessor: no basis, the v1 schema (clean rebuild).
+        lambda raw: {
+            key: value
+            for key, value in {
+                **raw,
+                "schema_version": "field-effect-consent-state-v1",
+            }.items()
+            if key != "basis"
+        },
+        lambda raw: {**raw, "basis": {"kind": "inferred"}},
+        lambda raw: {**raw, "basis": {"kind": "policy_activation"}},
+        lambda raw: {
+            **raw,
+            "basis": {
+                "carried_from": raw["consent"]["consent_id"],
+                "kind": "policy_activation",
+                "transition_id": True,
+            },
+        },
+        lambda raw: {**raw, "basis": {"kind": "owner_grant", "transition_id": None}},
+    ),
+)
+def test_a_consent_without_a_closed_basis_rejects_the_store(
+    effects: _EffectEnvironment, document: Callable[[dict[str, Any]], object]
+) -> None:
+    effects.repository.grant_field_effect_consents("primary", ("books",), ("title",), 1)
+    connection = effects.repository._connection
+    ((raw_document,),) = connection.execute(
+        "SELECT document FROM field_effect_consents"
+    ).fetchall()
+    with connection:
+        connection.execute(
+            "UPDATE field_effect_consents SET document=?",
+            (
+                json.dumps(
+                    document(json.loads(raw_document)),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            ),
+        )
+    effects.repository.close()
+
+    with pytest.raises(MetadataReportError):
+        open_repository(effects.database_path, create=False)
+
+
+def test_a_carried_consent_naming_no_recorded_activation_rejects_the_store(
+    effects: _EffectEnvironment,
+) -> None:
+    """A well-formed basis must still name an activation the store recorded."""
+    effects.repository.grant_field_effect_consents("primary", ("books",), ("title",), 1)
+    _activate_replacement(effects, ("books",), 2)
+    effects.repository.close()
+    # The carried store reopens as written; only the unrecorded activation fails.
+    reopened = open_repository(effects.database_path, create=False)
+    connection = reopened._connection
+    ((consent_id, raw_document),) = connection.execute(
+        "SELECT consent_id,document FROM field_effect_consents WHERE current=1"
+    ).fetchall()
+    raw = json.loads(raw_document)
+    raw["basis"]["transition_id"] = "policy_transition_" + "f" * 64
+    with connection:
+        connection.execute(
+            "UPDATE field_effect_consents SET document=? WHERE consent_id=?",
+            (json.dumps(raw, sort_keys=True, separators=(",", ":")), consent_id),
+        )
+    reopened.close()
+
+    with pytest.raises(MetadataReportError):
+        open_repository(effects.database_path, create=False)
 
 
 def test_a_policy_row_carries_the_exact_settings_its_own_transition_moved(
@@ -3337,6 +3561,21 @@ def test_a_new_write_destination_lapses_every_existing_library_consent(
     activity = effects.repository.field_effect_activity_data(1, include_events=False)
     assert [] == activity["consented_destinations"]
     assert [] == activity["consented_libraries"]
+    lapsed = [
+        {"connection": "primary", "library": "books", "reason": "destinations_changed"}
+    ]
+    assert lapsed == activity["lapsed_consents"]
+    # Activating a policy carries only what is current, so the lapse survives
+    # it with the same reason and no row is written (#1370).
+    rows = _consent_rows(effects)
+    _activate_replacement(effects, ("books",), 1_000)
+    assert rows == _consent_rows(effects)
+    assert (
+        lapsed
+        == effects.repository.field_effect_activity_data(1, include_events=False)[
+            "lapsed_consents"
+        ]
+    )
 
     with pytest.raises(FieldEffectError, match="consent"):
         effects.repository.current_field_effect_consent("primary", "books", added)
@@ -5813,7 +6052,7 @@ def test_pair_admission_boundaries(tmp_path, field, mode):
     ):
         repo = open_repository(tmp_path / "state.sqlite")
         try:
-            repo.enter_shadow_preview(1)
+            repo.enter_shadow_preview(1, ())
             repo.create_metadata_policy_draft(profile.canonical_json)
             repo.activate_metadata_policy(
                 profile.policy_id,

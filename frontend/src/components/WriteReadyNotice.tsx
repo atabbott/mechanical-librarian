@@ -2,7 +2,8 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { Link } from '@tanstack/react-router'
 
 import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
-import { readWriteConsent } from '../writeConsent'
+import { useLibraryName } from '../libraryNames'
+import { libraryList, readWriteConsent } from '../writeConsent'
 
 /**
  * The completion handoff, stated once and compactly inside the Library flow.
@@ -16,6 +17,8 @@ import { readWriteConsent } from '../writeConsent'
  *
  * It is deliberately not a caution: nothing here has gone wrong. Work is ready
  * and a permission is available, which is a success the owner may act on.
+ * When permission lapsed without the owner withdrawing it, the same notice
+ * says writes are off and why, rather than disappearing (#1370).
  */
 export const WriteReadyNotice = () => {
   const { http } = useReviewContext()
@@ -36,14 +39,29 @@ export const WriteReadyNotice = () => {
     refetchInterval: live ? false : 15_000,
   })
   const data = query.data
-  if (!data) return null
+  // A lapse names its libraries as Settings does, and the notice waits for that
+  // read so it is announced once, with the name (#1370).
+  const names = useLibraryName(http, Boolean(data?.lapsed_consents.length))
+  if (!data || !names.ready) return null
+  const connectionUnavailable = (preparation?.connections ?? []).some(
+    (item) => item.state !== 'recovered',
+  )
   const consent = readWriteConsent(data, {
+    libraryName: names.name,
     enabling: false,
-    connectionUnavailable: (preparation?.connections ?? []).some(
-      (item) => item.state !== 'recovered',
-    ),
+    connectionUnavailable,
   })
-  if (!consent.actionable) return null
+  // A lapse is stated even while another library keeps permission (#1370).
+  const lapsedBesideHeld =
+    consent.state === 'complete' && consent.lapsed !== null && !connectionUnavailable
+  if (!consent.actionable && !lapsedBesideHeld) return null
+  const lapse = consent.lapsed ? `${consent.lapsed} ` : ''
+  // Beside a lapse, writes are enabled only for the libraries that kept
+  // permission, so the heading names them (#1370).
+  const held = data.capabilities
+    .filter((item) => item.destinations.some((entry) => entry.consented))
+    .map((item) => names.name(item.library))
+  const enabledFor = consent.lapsed && held.length ? ` for ${libraryList(held)}` : ''
   const preparing = Boolean(preparation?.active)
   const inLibrary =
     works !== undefined
@@ -58,15 +76,17 @@ export const WriteReadyNotice = () => {
         ? 'Enabling writes…'
         : consent.state === 'applying'
           ? 'Applying prepared changes.'
-          : `${inLibrary}Writes are enabled.`
+          : `${inLibrary}Writes are enabled${enabledFor}.`
   const copy =
     consent.state === 'off'
-      ? `Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
+      ? `${lapse}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
       : consent.state === 'enabling'
         ? 'Confirming permission with the authoritative server. No change is sent twice.'
         : consent.state === 'applying'
-          ? `${String(consent.reasons.applying)} in progress; the remaining ${String(consent.reasons.scheduled)} stay ready.`
-          : `${String(consent.reasons.scheduled)} prepared ${consent.reasons.scheduled === 1 ? 'change is' : 'changes are'} ready to apply.`
+          ? `${lapse}${String(consent.reasons.applying)} in progress; the remaining ${String(consent.reasons.scheduled)} stay ready.`
+          : consent.state === 'complete'
+            ? `${lapse}Review current write permissions in Activity.`
+            : `${lapse}${String(consent.reasons.scheduled)} prepared ${consent.reasons.scheduled === 1 ? 'change is' : 'changes are'} ready to apply.`
   return (
     <section
       className={`cm-library-handoff is-${consent.state}`}
@@ -78,7 +98,7 @@ export const WriteReadyNotice = () => {
         <p>{copy}</p>
       </div>
       <div className="cm-library-handoff-action">
-        {consent.state === 'off' ? (
+        {consent.state === 'off' || consent.state === 'complete' ? (
           <Link
             className="cm-primary"
             to="/activity"

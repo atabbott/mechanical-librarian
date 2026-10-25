@@ -1632,6 +1632,7 @@ describe('ReviewApiClient', () => {
       current_waiting: null,
       consented_libraries: [],
       enabled_libraries: [],
+      lapsed_consents: [],
       counts: { verified: 1 },
       capabilities: [
         {
@@ -3324,14 +3325,19 @@ describe('deferred Activity permission contract', () => {
       scheduled: 5,
     }
     const { backup_ready, capabilities, configured_libraries } = currentActivity
-    const response = { backup_ready, capabilities, configured_libraries, waiting }
-    const history = mapActivity({ ...currentActivity, waiting })
+    const lapsed_consents = [
+      { connection: 'primary', library: 'Fiction', reason: 'destinations_changed' },
+    ]
+    const response = { backup_ready, capabilities, configured_libraries, lapsed_consents, waiting }
+    const history = mapActivity({ ...currentActivity, lapsed_consents, waiting })
     expect(mapActivityConsent(response)).toEqual({
       backup_ready: history.backup_ready,
       capabilities: history.capabilities,
       configured_libraries: history.configured_libraries,
+      lapsed_consents: history.lapsed_consents,
       waiting: history.waiting,
     })
+    expect(history.lapsed_consents).toEqual(lapsed_consents)
     for (const key of Object.keys(response))
       expect(() =>
         mapActivityConsent(Object.fromEntries(Object.entries(response).filter(([k]) => k !== key))),
@@ -3344,8 +3350,16 @@ describe('deferred Activity permission contract', () => {
       { ...response, waiting: { ...waiting, scheduled: -1 } },
       { ...response, waiting: { ...waiting, applying: undefined } },
       { ...response, waiting: null },
+      // A lapse is closed: three reasons, three keys, nothing else (#1370).
+      { ...response, lapsed_consents: null },
+      { ...response, lapsed_consents: [{ ...lapsed_consents[0], reason: 'expired' }] },
+      { ...response, lapsed_consents: [{ ...lapsed_consents[0], basis: 'owner_grant' }] },
+      { ...response, lapsed_consents: [{ connection: 'primary', library: 'Fiction' }] },
     ])
       expect(() => mapActivityConsent(invalid)).toThrow(ApiError)
+    expect(() => mapActivity({ ...currentActivity, lapsed_consents: undefined })).toThrow(
+      expect.objectContaining({ code: 'invalid_activity_lapsed_consents' }),
+    )
     // A waiting value that is not a record is refused as such by both reads.
     for (const waiting of [null, [], 'scheduled'])
       for (const read of [

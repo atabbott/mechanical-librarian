@@ -26,6 +26,7 @@ import { activityOutcome, ledgerRows } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, writeFieldLabel } from '../labels'
+import { useLibraryName } from '../libraryNames'
 import { consentBasis, destinationReason, readWriteConsent } from '../writeConsent'
 import {
   activityRoute,
@@ -936,7 +937,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const enabling = mutation.isPending && mutation.variables.path === 'activity/consent'
   // Library states the same offer compactly, from this same reading, so the two
   // routes into the decision can never disagree about it (#639).
+  // A lapse is stated by Settings name; the live card waits for that read so
+  // it is announced once (#1370).
+  const names = useLibraryName(http, data.lapsed_consents.length > 0)
   const consent = readWriteConsent(permission ? { ...data, ...permission } : data, {
+    libraryName: names.name,
     enabling,
     // A connection that needs an owner check is the one condition that makes
     // enabling writes the wrong next step. Preparation still running is not:
@@ -954,6 +959,16 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // work requires consent, and three cascades each deciding that separately is
   // how one of them came to say it directly above the count that refutes it.
   const permissionNeeded = consentState === 'off' && reasons.awaiting_permission > 0
+  // Guarded work continues automatically only while some library holds write
+  // permission; with none, the status says writes are off and why (#1370).
+  const writesHeld = enabled.length > 0 || !needsConsent
+  // A lapse is stated once: by the write card while it is offering permission,
+  // otherwise by the status paragraph, even beside a library that kept its
+  // permission. The paragraph is not a live region, so until Settings settles
+  // it names the library by its slug rather than reading calm (#1370).
+  const cardLapse =
+    consentActionable && names.ready && consentState === 'off' && consent.lapsed !== null
+  const lapse = cardLapse ? null : consent.lapsed
   // The disclosure holds pause, removal and recovery only; reviewing write
   // permissions has one entry, outside it (#1279).
   const hasAuthority = enabled.length > 0 || suspensions.length > 0
@@ -1024,7 +1039,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       ? 'Writes enabled'
                       : data.paused
                         ? 'New work paused'
-                        : 'No action required'}
+                        : !writesHeld
+                          ? 'Writes are off'
+                          : consent.lapsed
+                            ? 'Action needed'
+                            : 'No action required'}
         </span>
       </header>
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
@@ -1278,7 +1297,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </nav>
         </footer>
       </section>
-      {consentActionable ? (
+      {consentActionable && names.ready ? (
         <section
           className={`cm-write-consent is-${consentState}`}
           aria-labelledby="write-consent-title"
@@ -1288,7 +1307,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <div>
               <h2 id="write-consent-title">
                 {consentState === 'off'
-                  ? permission?.backup_ready === true
+                  ? permission?.backup_ready === true && offeredChanges > 0
                     ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. Writes are off.`
                     : 'Writes are off. Review permissions when you are ready.'
                   : consentState === 'enabling'
@@ -1299,7 +1318,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </h2>
               <p>
                 {consentState === 'off'
-                  ? 'Open permission review to check backup readiness and the destinations available for writes.'
+                  ? `${consent.lapsed ? `${consent.lapsed} ` : ''}Open permission review to check backup readiness and the destinations available for writes.`
                   : consentState === 'enabling'
                     ? 'Confirming permission with the authoritative server. No change is sent twice.'
                     : consentState === 'enabled'
@@ -1532,7 +1551,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     ? 'Recovery needs attention'
                     : data.paused
                       ? 'New work is paused'
-                      : 'No intervention needed'}
+                      : !writesHeld
+                        ? 'Writes are off'
+                        : lapse
+                          ? 'Some writes are off'
+                          : 'No intervention needed'}
             </h2>
             <p>
               {connection?.state === 'checking'
@@ -1545,7 +1568,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       ? 'Affected work remains held until its current state can be reconciled safely.'
                       : data.paused
                         ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                        : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
+                        : (lapse ??
+                          (writesHeld
+                            ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
+                            : cardLapse
+                              ? 'Nothing is written to your libraries until you give permission again.'
+                              : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
             </p>
             {statusEntry ? (
               <button

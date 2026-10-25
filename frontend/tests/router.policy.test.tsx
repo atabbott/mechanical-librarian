@@ -1929,6 +1929,70 @@ it('keeps the draft after a real stale envelope and binds explicit repreview to 
 })
 
 it.each([
+  [true, 'Write permission stays on for Ebooks & Audiobooks: Collected Editions.'],
+  [false, 'No library has write permission, and activating grants none.'],
+])(
+  'names the libraries that keep write permission at the Activate step (consented: %s, #1370)',
+  async (consented, copy) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getActivityConsent = vi.fn(async () => ({
+      backup_ready: null,
+      capabilities: [
+        {
+          connection: 'home',
+          library: 'a-very_long-library-name',
+          state: 'allowed',
+          destinations: [{ consented, destination: 'title', prepared: 0, state: 'allowed' }],
+        },
+      ],
+      configured_libraries: [{ connection: 'home', library: 'a-very_long-library-name' }],
+      lapsed_consents: [],
+      waiting: {
+        applying: 0,
+        awaiting_permission: 0,
+        held_for_recovery: 0,
+        retrying: 0,
+        scheduled: 0,
+      },
+    }))
+    http.policyCommand = async <T,>(path: string) =>
+      (path === 'preview'
+        ? {
+            schema_version: 'metadata-policy-preview-v1',
+            policy_id: 'draft',
+            active_policy_id: 'policy-1',
+            active_generation: 1,
+            libraries: [],
+          }
+        : path === 'activate'
+          ? {
+              schema_version: 'metadata-policy-activation-v1',
+              policy_id: 'draft',
+              transition: null,
+            }
+          : { policy_id: 'draft', schema_version: 'metadata-policy-profile-v3' }) as T
+    const { queryClient } = renderRoute('/policy?section=identity', http)
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+
+    const step = screen.getByLabelText('Review policy activation')
+    await waitFor(() => expect(step).toHaveTextContent(copy))
+    expect(step).not.toHaveTextContent('No write permission is granted.')
+    // Library's notice reads the carried permission at once, not on its cadence.
+    queryClient.setQueryData(['activity', 'library-handoff'], { stale: true })
+    await user.click(screen.getByRole('button', { name: 'Activate policy' }))
+    expect(await screen.findByText('Policy activated.')).toBeVisible()
+    await waitFor(() =>
+      expect(queryClient.getQueryState(['activity', 'library-handoff'])?.isInvalidated).toBe(true),
+    )
+  },
+)
+
+it.each([
   ['validate', 'Impact preview is current. The active policy is unchanged.', 2],
   ['drafts', 'Your session was refreshed. Press again.', 1],
 ])(

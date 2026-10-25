@@ -446,7 +446,7 @@ def test_a_nul_identity_keeps_the_one_unbounded_construction(
     root = effects.repository
     report = synthetic_audiobook_isbn_reason_report("conflict")
     policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
-    root.enter_shadow_preview(1)
+    root.enter_shadow_preview(1, ())
     root.publish(report, lambda: True)
     proposal = evaluate_report(
         report, policy.resolved_id, human_review_destinations(policy)

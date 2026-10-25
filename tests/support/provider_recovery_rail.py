@@ -156,7 +156,7 @@ def publish_provider_failure_case(
     options["description_fill"] = "safe_plain_text"
     profile = MetadataPolicyProfile.create("Series review", options, destinations)
     policy = resolve_policy(profile, report.target.library)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(profile.canonical_json)
     repository.activate_metadata_policy(
         profile.policy_id,

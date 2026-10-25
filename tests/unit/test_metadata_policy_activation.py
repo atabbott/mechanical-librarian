@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -45,6 +45,7 @@ from mechanical_librarian.domain.metadata_policy import (
     QUALIFIED_AUTOMATIC,
     MetadataPolicyProfile,
     ResolvedMetadataPolicy,
+    human_review_destinations,
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -232,7 +233,7 @@ def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rej
     )
     notebook = PolicyNotebook(repository, (), {})
     assert rich_automatic == notebook.validate(rich_automatic)
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(profile.canonical_json)
     resolved = resolve_policy(profile, "ebooks")
     transition = repository.activate_metadata_policy(
@@ -270,7 +271,7 @@ def test_automatic_posture_accepts_only_exact_qualified_resolutions(
     first = MetadataPolicyProfile.create(
         "First qualified automatic policy", dict(DEFAULT_OPTIONS), destinations
     )
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(first.canonical_json)
     first_resolved = resolve_policy(first, "ebooks")
     first_transition = repository.activate_metadata_policy(
@@ -491,7 +492,7 @@ def test_asin_automatic_routing_requires_the_current_audiobook_record(
     assert profile.policy_id == repository.create_metadata_policy_draft(
         profile.canonical_json
     )
-    repository.enter_shadow_preview(1)
+    repository.enter_shadow_preview(1, ())
     resolved = resolve_policy(profile, "audio")
     transition = repository.activate_metadata_policy(
         profile.policy_id,
@@ -1671,6 +1672,204 @@ def test_activation_rolls_back_when_a_cohort_package_changed(state_path: Path) -
     repository.close()
 
 
+def _consents(repository) -> tuple[tuple[Any, ...], ...]:
+    return tuple(
+        repository._connection.execute(
+            "SELECT * FROM field_effect_consents ORDER BY consent_id"
+        )
+    )
+
+
+def test_a_failed_activation_carries_no_consent(state_path: Path) -> None:
+    """The carry commits with the activation or not at all (#1370)."""
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    repository.grant_field_effect_consents(
+        report.target.connection, (report.target.library,), ("title",), 24
+    )
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    resolved = resolve_policy(draft, report.target.library)
+    # The state update is the activation's last write, after the carry.
+    repository._connection.execute(
+        "CREATE TEMP TRIGGER skip_state BEFORE UPDATE ON main.metadata_policy_state "
+        "BEGIN SELECT RAISE(IGNORE); END"
+    )
+    before = _consents(repository)
+    assert len(before) == 1
+
+    with pytest.raises(PolicyContentionError, match="stale"):
+        repository.activate_metadata_policy(
+            draft.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            30,
+            expected_active_generation=1,
+        )
+
+    assert before == _consents(repository)
+    repository._connection.execute("DROP TRIGGER temp.skip_state")
+    repository.activate_metadata_policy(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        30,
+        expected_active_generation=1,
+    )
+    assert [0, 1] == sorted(row[1] for row in _consents(repository))
+    repository.close()
+
+
+def test_replay_and_a_processing_refusal_carry_nothing(state_path: Path) -> None:
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    library = report.target.library
+    repository.grant_field_effect_consents(
+        report.target.connection, (library,), ("title",), 24
+    )
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook = PolicyNotebook(repository, (library,), {})
+    builtin = MetadataPolicyProfile.builtin().policy_id
+    transition = notebook.activate(
+        draft.policy_id, builtin, 25, expected_active_generation=1
+    ).transition
+    assert transition is not None and transition.state == "processing"
+    carried = _consents(repository)
+    assert [0, 1] == sorted(row[1] for row in carried)
+    assert (
+        repository.current_field_effect_consent(
+            report.target.connection, library, "title"
+        ).granted_at
+        == 25
+    )
+
+    replay = notebook.activate(
+        draft.policy_id, builtin, 26, expected_active_generation=1
+    ).transition
+    assert replay is not None and replay.transition_id == transition.transition_id
+    assert carried == _consents(repository)
+    follow_up = _follow_up(repository, draft)
+    with pytest.raises(MetadataPolicyApplicationError, match="processing"):
+        notebook.activate(
+            follow_up.policy_id, draft.policy_id, 27, expected_active_generation=2
+        )
+    assert carried == _consents(repository)
+    repository.close()
+
+
+def _automatic_with_consent(path: Path):
+    """Automatic at the unbound first generation with one current case, and
+    title consent for that library and for `audio`, which has no work."""
+    from tests.support.genre_reports import genre_report
+
+    repository = open_repository(path)
+    repository.enter_shadow_preview(1, ())
+    assert repository.activate_qualified_automatic(2) == "automatic"
+    report = genre_report()
+    resolved = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    repository.persist_shadow_outcome(case_id, 3)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM automatic_decisions"
+    ).fetchone() != (0,)
+    repository.grant_field_effect_consents(
+        report.target.connection, (report.target.library, "audio"), ("title",), 4
+    )
+    return repository, report
+
+
+def _preview_cohort(repository) -> tuple[object, ...]:
+    """What leaving automatic reconciles, for the libraries holding work."""
+    transition = repository.metadata_policy_transition()
+    return (
+        (transition.total, transition.completed, transition.failed),
+        tuple(
+            repository._connection.execute(
+                "SELECT library_name,resolved_policy_id,document FROM "
+                "metadata_policy_resolutions WHERE generation=2 AND library_name<>'audio' "
+                "ORDER BY library_name"
+            )
+        ),
+        tuple(
+            repository._connection.execute(
+                "SELECT item_id,stage,state FROM review_preparation_work ORDER BY item_id"
+            )
+        ),
+    )
+
+
+def test_entering_preview_keeps_consent_for_a_configured_library_without_work(
+    state_path: Path, tmp_path: Path
+) -> None:
+    """The Preview gap (#1370 acceptance 5).
+
+    Leaving automatic at the unbound first generation resolves every configured
+    library, as activation does, so a consented library holding no current
+    work keeps its consent through Preview and is carried by the activation
+    after it. The reconciled cohort of the libraries with work is unchanged.
+    """
+    repository, report = _automatic_with_consent(state_path)
+    # Each open store holds its own owner-only directory, because Linux's
+    # private binding locks a store's parent directory exclusively.
+    alone, _ = _automatic_with_consent(tmp_path / "unconfigured.sqlite")
+    library, connection = report.target.library, report.target.connection
+    libraries = tuple(sorted((library, "audio")))
+
+    # The notebook passes the configured libraries; the second store has
+    # none configured beyond the one holding work.
+    notebook = PolicyNotebook(repository, libraries, {})
+    assert notebook.enter_preview(5)["posture"] == "preview"
+    assert "preview" == alone.enter_shadow_preview(5, ())
+
+    assert _preview_cohort(repository) == _preview_cohort(alone)
+    assert repository._connection.execute(
+        "SELECT library_name FROM metadata_policy_resolutions WHERE generation=2 "
+        "ORDER BY library_name"
+    ).fetchall() == [(name,) for name in libraries]
+    kept = repository.current_field_effect_consent(connection, "audio", "title")
+    assert kept.granted_at == 4
+    assert (
+        repository.field_effect_activity_data(1, include_events=False)[
+            "lapsed_consents"
+        ]
+        == []
+    )
+    alone.close()
+
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    notebook.activate(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        6,
+        expected_active_generation=2,
+    )
+
+    carried = repository.current_field_effect_consent(connection, "audio", "title")
+    assert carried.granted_at == 6
+    assert carried.envelope_identity != kept.envelope_identity
+    (document,) = repository._connection.execute(
+        "SELECT document FROM field_effect_consents WHERE consent_id=?",
+        (carried.consent_id,),
+    ).fetchone()
+    basis = json.loads(document)["basis"]
+    assert (basis["kind"], basis["carried_from"]) == (
+        "policy_activation",
+        kept.consent_id,
+    )
+    assert (
+        repository.field_effect_activity_data(1, include_events=False)[
+            "lapsed_consents"
+        ]
+        == []
+    )
+    repository.close()
+
+
 def test_new_library_preview_can_establish_next_generation_resolution(
     state_path: Path,
 ) -> None:
@@ -2223,7 +2422,7 @@ def test_audio_only_series_options_complete_mixed_media_transition_without_ebook
         )
     reports = {report.target.item: report for report in (audio, ebook)}
     repository = open_repository(state_path)
-    assert repository.enter_shadow_preview(1) == "preview"
+    assert repository.enter_shadow_preview(1, ()) == "preview"
     for report in reports.values():
         baseline = resolve_policy(
             MetadataPolicyProfile.builtin(), report.target.library
@@ -2388,7 +2587,7 @@ def test_audio_only_series_options_complete_mixed_media_transition_without_ebook
 def test_activation_binds_captured_generation_and_exact_retry(tmp_path):
     repository = open_repository(tmp_path / "generation.sqlite")
     try:
-        repository.enter_shadow_preview(1)
+        repository.enter_shadow_preview(1, ())
         first = MetadataPolicyProfile.builtin()
         other = MetadataPolicyProfile.create(
             "Other", dict(first.options), dict(first.destinations)

@@ -119,11 +119,13 @@ export const consentOf = ({
   backup_ready,
   capabilities,
   configured_libraries,
+  lapsed_consents,
   waiting,
 }: ActivityView): ActivityConsentView => ({
   backup_ready,
   capabilities,
   configured_libraries,
+  lapsed_consents,
   waiting,
 })
 
@@ -143,6 +145,7 @@ export const activity = (
     capabilities: [],
     counts: {},
     example: null,
+    lapsed_consents: [],
     last_failure: null,
     current_waiting: null,
     waiting: {

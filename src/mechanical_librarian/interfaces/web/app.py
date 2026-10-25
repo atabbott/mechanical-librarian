@@ -1159,6 +1159,14 @@ class _ProviderRecoveryActivity(_ClosedModel):
     state: Literal["waiting", "checking", "dormant", "recovered", "fanout", "exhausted"]
 
 
+class _ActivityLapsedConsent(_ClosedModel):
+    """A library whose write permission no longer applies, and why (#1370)."""
+
+    connection: str
+    library: str
+    reason: Literal["destinations_changed", "library_unresolved", "policy_changed"]
+
+
 class _ActivityPermissionReadiness(_ClosedModel):
     backup_ready: bool | None
     capabilities: list[_ActivityCapability]
@@ -1171,6 +1179,7 @@ class _ActivityConsentState(_ClosedModel):
     backup_ready: None
     capabilities: list[_ActivityCapability]
     configured_libraries: list[_ActivityLibrary]
+    lapsed_consents: list[_ActivityLapsedConsent]
     waiting: _ActivityWaitingReasons
 
 
@@ -1183,6 +1192,7 @@ class _ActivityResponse(_ClosedModel):
     enabled_libraries: list[_ActivityLibrary]
     events: list[_ActivityEvent]
     example: None
+    lapsed_consents: list[_ActivityLapsedConsent]
     last_failure: str | None
     ledger: _ActivityLedger
     current_waiting: _ActivityWaiting | None
