@@ -63,10 +63,10 @@ replaced between the two reads leaves them unknown rather than empty. Each
 stage bar states its own numerator and denominator, and one sentence says that
 a stage counts the books that first reached it in this run, that a book which
 could not finish stops at its last stage, and that `In this run` counts them as
-they stand now. The Recent completions, each `Prepared` or `Could not finish`,
-are that first-finish history: a book prepared and failed since still reads
-`Prepared` there, and is counted as it stands in the run line. A finishing
-rate is stated only while the run is
+they stand now. The Recent completions, each `Prepared` or `Stopped before
+finishing`, are that first-finish history: a book prepared and failed since
+still reads `Prepared` there, and is counted as it stands in the run line. A
+finishing rate is stated only while the run is
 starting or running; a run that is finished, paused, dismissed or showing the
 last confirmed state after a reconnect states no rate at all, because it has
 none. Every completed book links into Works by the name the panel shows. A book

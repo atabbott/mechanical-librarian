@@ -506,7 +506,9 @@ const PreparationDetail = ({
                     Find in Works
                   </Link>
                 </span>
-                <strong>{completion.outcome === 'ready' ? 'Prepared' : 'Could not finish'}</strong>
+                <strong>
+                  {completion.outcome === 'ready' ? 'Prepared' : 'Stopped before finishing'}
+                </strong>
               </li>
             ))}
           </ul>

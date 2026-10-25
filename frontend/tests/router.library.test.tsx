@@ -1437,7 +1437,14 @@ describe('Library route', () => {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
-    expect(screen.getAllByText('Could not finish')).toHaveLength(1)
+    // A completion is first-finish history, so its label is never a phrase the
+    // run line uses for the books as they stand now (#1366).
+    const completions = [...document.querySelectorAll('.preparation-completions strong')].map(
+      (label) => label.textContent,
+    )
+    expect(completions).toContain('Stopped before finishing')
+    for (const label of completions)
+      expect(label).not.toMatch(/ready to browse|recorded, nothing to decide|could not finish/iu)
     expect(screen.getByText('Unfinished work')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
     vi.stubGlobal('matchMedia', previousMatchMedia)
