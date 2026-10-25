@@ -221,23 +221,26 @@ def test_setup_external_reviewer_observation_allows_commit_and_refuses_stale_vie
 
 class _Sessions:
     def __init__(self) -> None:
-        self.failures = 0
+        # One entry per recorded attempt, naming its client digest.
+        self.failures: list[str] = []
         self.fail_create = False
         self.records: dict[str, tuple[str, int]] = {}
 
-    def begin_login(self, _now: int, _window: int, maximum: int) -> bool:
-        if self.failures >= maximum:
+    def begin_login(
+        self, _now: int, client: str, _window: int, maximum: int, ceiling: int
+    ) -> bool:
+        if len(self.failures) >= ceiling or self.failures.count(client) >= maximum:
             return False
-        self.failures += 1
+        self.failures.append(client)
         return True
 
     def create_review_session(
-        self, token: str, csrf: str, _now: int, expires: int
+        self, token: str, csrf: str, _now: int, expires: int, client: str
     ) -> None:
         if self.fail_create:
             raise RuntimeError("synthetic session persistence failure")
         self.records[token] = (csrf, expires)
-        self.failures = 0
+        self.failures = [value for value in self.failures if value != client]
 
     def authenticate_review_session(self, token: str, now: int) -> tuple[str, str, int]:
         csrf, expires = self.records[token]
@@ -396,6 +399,9 @@ def _client(
         lambda: 1_000,
         3,
         lambda _n: "x" * 32,
+        client_digest=lambda identity: state.use_owner_verifier(
+            lambda encoded: owner_password_binding(encoded)[2](identity)
+        ),
     )
     connection = _Connection(state)
     journey = SetupJourneyOperation(
@@ -669,6 +675,80 @@ def test_maximum_setup_password_pair_reaches_owner_claim() -> None:
     assert state.document.claimed
 
 
+@pytest.mark.parametrize(
+    ("password", "status"),
+    (
+        ("a" * 11, 422),
+        ("a" * 12, 200),
+        ("\u00e9" * 11, 422),
+        ("\u00e9" * 12, 200),
+        ("\u20ac" * 342, 422),
+    ),
+    ids=(
+        "eleven-characters",
+        "twelve-characters",
+        "eleven-characters-in-twenty-two-bytes",
+        "twelve-two-byte-characters",
+        "over-the-byte-bound",
+    ),
+)
+def test_a_new_owner_password_needs_twelve_characters_within_1024_bytes(
+    password: str, status: int
+) -> None:
+    client, state, _connection = _client()
+
+    response = _claim(client, password)
+
+    assert response.status_code == status
+    if status == 200:
+        assert state.document.claimed
+        return
+    # The fixed envelope names no value, the claim is untouched and the token
+    # still claims once the owner chooses a longer password.
+    assert response.json() == {"detail": {"error": "invalid_password"}}
+    assert not state.document.claimed and state.claim_attempts == 0
+    assert _claim(client, "b" * 12).status_code == 200
+
+
+def test_an_established_short_owner_password_still_signs_in() -> None:
+    client, state, _connection = _client()
+    assert _claim(client).status_code == 200
+    # An owner whose verifier predates the length rule (#1384).
+    state.owner_verifier = PasswordHasher().hash("short")
+
+    response = client.post(
+        "/api/setup/session",
+        json={"password": "short"},
+        headers={"origin": "https://setup.invalid"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_one_client_cannot_exhaust_the_claim_nonce_pool() -> None:
+    client, _state, _connection = _client()
+    for _ in range(10):
+        assert client.get("/api/setup/claim").status_code == 200
+
+    refused = client.get("/api/setup/claim")
+
+    assert refused.status_code == 503
+    assert refused.json() == {"detail": {"error": "unavailable"}}
+    assert "127.0.0.1" not in refused.text
+    others = [
+        TestClient(
+            client.app, base_url="https://setup.invalid", client=(f"192.0.2.{host}", 1)
+        )
+        for host in range(20, 30)
+    ]
+    # Nine more clients fill the unchanged global pool of 100, after which a
+    # tenth is refused for the pool rather than for its own share.
+    for other in others[:9]:
+        for _ in range(10):
+            assert other.get("/api/setup/claim").status_code == 200
+    assert others[9].get("/api/setup/claim").status_code == 503
+
+
 def test_first_owner_claim_requires_the_deployment_claim_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -699,7 +779,7 @@ def test_first_owner_claim_requires_the_deployment_claim_token(
     assert state.document.claim_token_digest == claim_token_digest(_CLAIM_TOKEN)
     assert state.claim_attempts == 0
     assert hashed == []
-    assert state.sessions.failures == 0
+    assert state.sessions.failures == []
     assert retired == []
 
     # The refused request consumed its nonce, so the same nonce cannot carry a
@@ -847,6 +927,7 @@ def test_unexpected_setup_failure_returns_fixed_secure_response() -> None:
         lambda: 1_000,
         3,
         lambda _n: "x" * 32,
+        client_digest=owner_password_binding(verifier)[2],
     )
     client = TestClient(
         create_setup_app(sessions, _FailingState(), verifier),
@@ -931,6 +1012,7 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
         lambda: 1_000,
         3,
         lambda _n: next(login_tokens),
+        client_digest=owner_password_binding(verifier)[2],
     )
     first_client = TestClient(
         create_setup_app(
@@ -955,6 +1037,7 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
         lambda: 1_000,
         3,
         lambda _n: "r" * 32,
+        client_digest=owner_password_binding(verifier)[2],
     )
     resumed_client = TestClient(
         create_setup_app(

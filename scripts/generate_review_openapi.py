@@ -48,6 +48,7 @@ def generate() -> str:
             policy_store=repository,
             verify_password=lambda _: False,
             session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+            client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
             clock=lambda: 0,
             session_lifetime_seconds=configuration.session_lifetime_seconds,
             graceful_shutdown_seconds=configuration.graceful_shutdown_seconds,

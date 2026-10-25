@@ -116,7 +116,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
             composition.SQLiteProviderRecoveryStore, "open", return_value=Mock()
         ),
         patch.object(
-            composition, "owner_password_binding", return_value=(Mock(), Mock())
+            composition, "owner_password_binding", return_value=(Mock(), Mock(), Mock())
         ),
         patch.object(
             composition, "_compose_reviewer_access", return_value=reviewer_access
@@ -1341,3 +1341,52 @@ def test_real_setup_server_claims_only_with_the_deployment_claim_token(
             )
         assert all(token not in text for text in exposed)
     assert token not in capfd.readouterr().out
+
+
+def test_real_server_throttles_one_client_without_blocking_another(
+    tmp_path: Path,
+) -> None:
+    """#1384 over real TLS, uvicorn and the session database it opens.
+
+    The test client is the trusted proxy, so each request's appended
+    ``X-Forwarded-For`` address is the client the server throttles.
+    """
+    password = "correct horse battery staple"
+    with real_setup_server(tmp_path, ("127.0.0.1",)) as (
+        origin,
+        token_file,
+        certificate,
+    ):
+        token = token_file.read_text(encoding="ascii").strip()
+        with httpx.Client(
+            base_url=origin, verify=ssl.create_default_context(cafile=certificate)
+        ) as client:
+            nonce = client.get("/api/setup/claim").json()
+            assert (
+                client.post(
+                    "/api/setup/session",
+                    json={
+                        "password": password,
+                        "confirmation": password,
+                        "expected_revision": nonce["revision"],
+                        "claim_token": token,
+                    },
+                    headers={"origin": origin, "x-setup-nonce": nonce["nonce"]},
+                ).status_code
+                == 200
+            )
+            client.cookies.clear()
+
+            def sign_in(forwarded: str, attempt: str) -> int:
+                return client.post(
+                    "/api/setup/session",
+                    json={"password": attempt},
+                    headers={"origin": origin, "x-forwarded-for": forwarded},
+                ).status_code
+
+            assert [sign_in("192.0.2.66", "wrong") for _ in range(5)] == [401] * 5
+            assert sign_in("192.0.2.66", password) == 429
+            assert sign_in("192.0.2.7", password) == 200
+            assert sign_in("192.0.2.66", password) == 429
+        stored = (tmp_path / "data" / "private" / "review-sessions.sqlite").read_bytes()
+        assert b"192.0.2.66" not in stored and b"192.0.2.7" not in stored

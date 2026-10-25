@@ -11,6 +11,7 @@ import stat
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
 from urllib.parse import urlsplit
@@ -2791,9 +2792,14 @@ def _register_session_and_operations_routes(
             for status in (400, 401, 403, 413, 422, 429, 503)
         },
     )
-    def login(payload: _LoginRequest, response: Response) -> _SessionResponse:
+    def login(
+        payload: _LoginRequest, request: Request, response: Response
+    ) -> _SessionResponse:
         try:
-            tokens = sessions.login(payload.password)
+            tokens = sessions.login(
+                payload.password,
+                client_identity(request, configuration.trusted_proxy_ips),
+            )
         except ReviewWebError as error:
             status_code = {
                 "invalid_credentials": 401,
@@ -4289,9 +4295,12 @@ def _react_asset_recovery_response() -> HTMLResponse:
     )
 
 
-def load_owner_password_binding(
-    path: Path,
-) -> tuple[Callable[[str], bool], Callable[[str], str]]:
+OwnerPasswordBinding: TypeAlias = tuple[
+    Callable[[str], bool], Callable[[str], str], Callable[[str], str]
+]
+
+
+def load_owner_password_binding(path: Path) -> OwnerPasswordBinding:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
     if not getattr(os, "O_NOFOLLOW", 0):
         raise ReviewWebError("password_hash")
@@ -4321,9 +4330,13 @@ def owner_password_verifier(encoded: str) -> Callable[[str], bool]:
     return owner_password_binding(encoded)[0]
 
 
-def owner_password_binding(
-    encoded: str,
-) -> tuple[Callable[[str], bool], Callable[[str], str]]:
+def owner_password_binding(encoded: str) -> OwnerPasswordBinding:
+    """Bind the verifier, its session lookup and its login-client key.
+
+    Both digests are HMAC-SHA-256 keyed by the exact encoded verifier under
+    their own domain, so replacing the verifier invalidates both, and a client
+    key can never equal a session lookup.
+    """
     try:
         if not encoded.startswith("$argon2id$") or PasswordHasher().check_needs_rehash(
             encoded
@@ -4345,7 +4358,44 @@ def owner_password_binding(
             hashlib.sha256,
         ).hexdigest()
 
-    return verify, session_digest
+    def client_digest(identity: str) -> str:
+        return hmac.new(
+            encoded.encode("utf-8"),
+            b"mechanical-librarian.login-client.v1\0" + identity.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    return verify, session_digest, client_digest
+
+
+# The one key every client the server cannot resolve shares: no peer, or a
+# trusted proxy that did not append exactly one parseable address. It is
+# throttled like any client and, lacking the ``client:`` prefix, can never
+# equal a resolved client's identity (#1384).
+_UNRESOLVED_CLIENT = "unresolved"
+
+
+def client_identity(request: Request, trusted_proxy_ips: tuple[str, ...]) -> str:
+    """Resolve the sign-in client from the transport, never from its own claim.
+
+    An untrusted peer is its socket address, and any ``X-Forwarded-For`` it
+    sends is ignored. A trusted proxy is the address it appended: the
+    rightmost entry of its single ``X-Forwarded-For`` line, which must parse
+    as an IP address. The result is an identity, not a log value; callers pass
+    it straight to the keyed digest.
+    """
+    peer = None if request.client is None else request.client.host
+    if peer is None:
+        return _UNRESOLVED_CLIENT
+    if peer not in trusted_proxy_ips:
+        return f"client:{peer}"
+    forwarded = request.headers.getlist("x-forwarded-for")
+    if len(forwarded) != 1:
+        return _UNRESOLVED_CLIENT
+    try:
+        return f"client:{ip_address(forwarded[0].rsplit(',', 1)[-1].strip())}"
+    except ValueError:
+        return _UNRESOLVED_CLIENT
 
 
 def _request_matches_origin(

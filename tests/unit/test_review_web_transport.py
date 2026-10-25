@@ -1550,13 +1550,15 @@ class _FailingSessionStore:
     def __init__(self, *, failing_begin: bool) -> None:
         self._failing_begin = failing_begin
 
-    def begin_login(self, now, window_seconds, maximum_failures):
+    def begin_login(
+        self, now, client_digest, window_seconds, client_maximum, global_maximum
+    ):
         if self._failing_begin:
             raise RuntimeError("session store unavailable")
         return True
 
     def create_review_session(
-        self, session_digest, csrf_digest, created_at, expires_at
+        self, session_digest, csrf_digest, created_at, expires_at, client_digest
     ):
         raise RuntimeError("session store unavailable")
 
@@ -1575,6 +1577,7 @@ def _session_service(repository, token: str, requested: list[int]):
         lambda: 1_000,
         600,
         token_factory=token_factory,
+        client_digest=lambda identity: hashlib.sha256(identity.encode()).hexdigest(),
     )
 
 
@@ -1583,7 +1586,7 @@ def test_login_pins_the_token_and_password_bounds_it_declares(
 ) -> None:
     requested: list[int] = []
     issued = _session_service(web.repository, "a" * 32, requested).login(
-        "correct horse"
+        "correct horse", "client:192.0.2.10"
     )
     # Two tokens, each requested at exactly the declared length, and a token of
     # exactly the lower bound admitted rather than refused.
@@ -1592,19 +1595,23 @@ def test_login_pins_the_token_and_password_bounds_it_declares(
 
     for length in (31, 129):
         with pytest.raises(ReviewWebError) as refused:
-            _session_service(web.repository, "a" * length, []).login("correct horse")
+            _session_service(web.repository, "a" * length, []).login(
+                "correct horse", "client:192.0.2.10"
+            )
         assert "runtime" == refused.value.code
 
     # One byte is inside the declared password length, so it reaches the
     # verifier rather than being refused for its size.
-    admitted = _session_service(web.repository, "a" * 32, []).login("x")
+    admitted = _session_service(web.repository, "a" * 32, []).login(
+        "x", "client:192.0.2.10"
+    )
     assert 32 == len(admitted.session_token)
 
     for failing_begin in (True, False):
         with pytest.raises(ReviewWebError) as unavailable:
             _session_service(
                 _FailingSessionStore(failing_begin=failing_begin), "a" * 32, []
-            ).login("correct horse")
+            ).login("correct horse", "client:192.0.2.10")
         assert "persistence" == unavailable.value.code
 
 
@@ -1612,7 +1619,7 @@ def test_verifier_bound_session_digest_invalidates_replaced_owner_verifier(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
     old_verifier = PasswordHasher().hash("correct horse")
-    old_verify, old_digest = owner_password_binding(old_verifier)
+    old_verify, old_digest, old_client = owner_password_binding(old_verifier)
     tokens = iter(("s" * 32, "c" * 32))
     old_sessions = OwnerSessionService(
         web.repository,
@@ -1621,12 +1628,13 @@ def test_verifier_bound_session_digest_invalidates_replaced_owner_verifier(
         lambda: 1_000,
         600,
         lambda _length: next(tokens),
+        client_digest=old_client,
     )
-    issued = old_sessions.login("correct horse")
+    issued = old_sessions.login("correct horse", "client:192.0.2.10")
     assert old_sessions.authenticate(issued.session_token) == "owner"
 
     new_verifier = PasswordHasher().hash("correct horse")
-    new_verify, new_digest = owner_password_binding(new_verifier)
+    new_verify, new_digest, new_client = owner_password_binding(new_verifier)
     replaced_sessions = OwnerSessionService(
         web.repository,
         new_verify,
@@ -1634,10 +1642,14 @@ def test_verifier_bound_session_digest_invalidates_replaced_owner_verifier(
         lambda: 1_000,
         600,
         lambda _length: "n" * 32,
+        client_digest=new_client,
     )
     with pytest.raises(ReviewWebError, match="unauthorized"):
         replaced_sessions.authenticate(issued.session_token)
-    assert replaced_sessions.login("correct horse").session_token == "n" * 32
+    assert (
+        replaced_sessions.login("correct horse", "client:192.0.2.10").session_token
+        == "n" * 32
+    )
     assert issued.session_token not in web.repository.sessions
     assert old_verifier not in repr(web.repository.sessions)
 

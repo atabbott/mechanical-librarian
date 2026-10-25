@@ -2,8 +2,10 @@
 
 Owns the `review_sessions` table and the `review_login_failures` table that
 rate-limits admission to it: who is currently signed in to the review surface,
-which CSRF token that session carries, and how many failed attempts have
-happened inside the current window.
+which CSRF token that session carries, and how many failed attempts each
+client, and all clients together, have made inside the current window. A
+client is stored only as a verifier-keyed HMAC of its resolved identity, never
+as an address (#1384).
 
 The two tables move together because every method touches both -- a login
 attempt reads and prunes failures, a granted session clears them, and expiry
@@ -21,7 +23,8 @@ The restart contract mirrors the application database's posture under
 ADR-0013: an absent file is created with the exact schema, the exact current
 schema is accepted, and anything else is rejected clearly without mutation.
 Losing this file costs one owner re-login; it holds only token digests,
-expiries and throttle timestamps, never a password, token or review document.
+expiries, keyed client digests and throttle timestamps, never a password,
+token, client address or review document.
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ _REVIEW_SESSIONS_SQL = (
 _REVIEW_LOGIN_FAILURES_SQL = (
     "CREATE TABLE review_login_failures ("
     "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
+    "client_digest TEXT NOT NULL CHECK(length(client_digest)=64 AND client_digest NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
 )
 _EXPECTED_OBJECTS = (
@@ -178,7 +182,14 @@ class SQLiteReviewSessionRepository:
         with self._lock:
             self._connection.close()
 
-    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
+    def begin_login(
+        self,
+        now: int,
+        client_digest: str,
+        window_seconds: int,
+        client_maximum: int,
+        global_maximum: int,
+    ) -> bool:
         with self._lock:
             try:
                 self._connection.execute("BEGIN IMMEDIATE")
@@ -189,20 +200,24 @@ class SQLiteReviewSessionRepository:
                 self._connection.execute(
                     "DELETE FROM review_sessions WHERE expires_at<=?", (now,)
                 )
-                count = self._connection.execute(
-                    "SELECT count(*) FROM review_login_failures"
+                counts = self._connection.execute(
+                    "SELECT count(*),count(*) FILTER (WHERE client_digest=?) "
+                    "FROM review_login_failures",
+                    (client_digest,),
                 ).fetchone()
-                if count is None:
+                if counts is None:
                     raise MetadataReportError("review login is unavailable")
-                permitted: bool = count[0] < maximum_failures
+                permitted: bool = (
+                    counts[0] < global_maximum and counts[1] < client_maximum
+                )
                 if permitted:
                     identity = hashlib.sha256(
                         f"review-login-attempt-v1:{now}:{secrets.token_hex(16)}".encode()
                     ).hexdigest()
                     self._connection.execute(
-                        "INSERT INTO review_login_failures(failure_id,occurred_at) "
-                        "VALUES(?,?)",
-                        (identity, now),
+                        "INSERT INTO review_login_failures"
+                        "(failure_id,client_digest,occurred_at) VALUES(?,?,?)",
+                        (identity, client_digest, now),
                     )
                 self._connection.execute("COMMIT")
                 return permitted
@@ -219,6 +234,7 @@ class SQLiteReviewSessionRepository:
         csrf_digest: str,
         created_at: int,
         expires_at: int,
+        client_digest: str,
     ) -> None:
         with self._lock:
             try:
@@ -227,7 +243,12 @@ class SQLiteReviewSessionRepository:
                     "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,expires_at) VALUES(?,?,'owner',?,?)",
                     (session_digest, csrf_digest, created_at, expires_at),
                 )
-                self._connection.execute("DELETE FROM review_login_failures")
+                # Only the signing-in client's debt is settled, so another
+                # client's failures survive the owner's sign-in (#1384).
+                self._connection.execute(
+                    "DELETE FROM review_login_failures WHERE client_digest=?",
+                    (client_digest,),
+                )
                 self._connection.execute("COMMIT")
             except sqlite3.Error as error:
                 self._rollback()

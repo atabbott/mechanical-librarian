@@ -730,6 +730,7 @@ def _start_deterministic_installed_server(
             policy_store=web_state_owner,
             verify_password=owner_binding[0],
             session_digest=owner_binding[1],
+            client_digest=owner_binding[2],
             clock=lambda: int(time.time()),
             session_lifetime_seconds=review.session_lifetime_seconds,
             graceful_shutdown_seconds=review.graceful_shutdown_seconds,

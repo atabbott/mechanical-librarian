@@ -416,7 +416,7 @@ def test_sqlite_logout_classification_is_atomic_across_connections() -> None:
         database = Path(directory) / "review-sessions.sqlite"
         first = SQLiteReviewSessionRepository.open(database)
         second = SQLiteReviewSessionRepository.open(database)
-        first.create_review_session("a" * 64, "c" * 64, 100, 200)
+        first.create_review_session("a" * 64, "c" * 64, 100, 200, "9" * 64)
         competing_started = threading.Event()
         competing_outcomes: list[str] = []
         competing_errors: list[BaseException] = []
@@ -874,7 +874,7 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
         path = Path(directory) / "review-sessions.sqlite"
         repository = SQLiteReviewSessionRepository.open(path)
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
-        repository.create_review_session("a" * 64, "b" * 64, 100, 200)
+        repository.create_review_session("a" * 64, "b" * 64, 100, 200, "9" * 64)
         repository.close()
         reopened = SQLiteReviewSessionRepository.open(path)
         assert reopened.authenticate_review_session("a" * 64, 150) == (
@@ -896,7 +896,7 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
         )
         assert reopened.revoke_review_session("a" * 64, "c" * 64, 151) == "revoked"
         assert reopened.revoke_review_session("a" * 64, "c" * 64, 151) == "unauthorized"
-        reopened.create_review_session("e" * 64, "f" * 64, 100, 200)
+        reopened.create_review_session("e" * 64, "f" * 64, 100, 200, "9" * 64)
         assert reopened.revoke_review_session("e" * 64, "f" * 64, 200) == "unauthorized"
         with pytest.raises(MetadataReportError):
             reopened.authenticate_review_session("a" * 64, 152)
@@ -914,6 +914,43 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
         with pytest.raises(MetadataReportError):
             SQLiteReviewSessionRepository.open(foreign)
         assert foreign.read_bytes() == before
+
+
+def test_predecessor_throttle_schema_requires_a_clean_rebuild(tmp_path: Path) -> None:
+    """#1384 keys failures by client, so the unkeyed table is refused unchanged."""
+    path = tmp_path / "review-sessions.sqlite"
+    SQLiteReviewSessionRepository.open(path).close()
+    connection = sqlite3.connect(path, isolation_level=None)
+    connection.execute("DROP TABLE review_login_failures")
+    connection.execute(
+        "CREATE TABLE review_login_failures ("
+        "failure_id TEXT PRIMARY KEY NOT NULL CHECK(length(failure_id)=64 AND failure_id NOT GLOB '*[^0-9a-f]*'), "
+        "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0))"
+    )
+    connection.execute(
+        "INSERT INTO review_login_failures VALUES(?,?)", ("a" * 64, 1_000)
+    )
+    connection.close()
+    before = {value.name: value.read_bytes() for value in tmp_path.iterdir()}
+
+    with pytest.raises(MetadataReportError):
+        SQLiteReviewSessionRepository.open(path)
+
+    assert {value.name: value.read_bytes() for value in tmp_path.iterdir()} == before
+
+
+def test_login_client_key_is_its_own_verifier_bound_domain() -> None:
+    verifier = PasswordHasher().hash("correct horse")
+    _, session_digest, client_digest = owner_password_binding(verifier)
+    _, _, replaced = owner_password_binding(PasswordHasher().hash("correct horse"))
+    identity = "client:192.0.2.10"
+
+    assert len(client_digest(identity)) == 64
+    assert client_digest(identity) == client_digest(identity)
+    assert client_digest(identity) != session_digest(identity)
+    assert client_digest(identity) != client_digest("client:192.0.2.11")
+    assert client_digest(identity) != replaced(identity)
+    assert "192.0.2.10" not in client_digest(identity)
 
 
 def test_existing_empty_session_database_is_rejected_without_mutation(
@@ -995,31 +1032,46 @@ def test_verifier_bound_session_survives_reopen_without_sliding_and_rejects_repl
 ) -> None:
     path = tmp_path / "review-sessions.sqlite"
     verifier = PasswordHasher().hash("correct horse")
-    verify, digest = owner_password_binding(verifier)
+    verify, digest, client = owner_password_binding(verifier)
     tokens = iter(("s" * 32, "c" * 32))
     repository = SQLiteReviewSessionRepository.open(path)
     issued = OwnerSessionService(
-        repository, verify, digest, lambda: 100, 600, lambda _length: next(tokens)
-    ).login("correct horse")
+        repository,
+        verify,
+        digest,
+        lambda: 100,
+        600,
+        lambda _length: next(tokens),
+        client_digest=client,
+    ).login("correct horse", "client:192.0.2.10")
     repository.close()
 
     reopened = SQLiteReviewSessionRepository.open(path)
-    resumed = OwnerSessionService(reopened, verify, digest, lambda: 699, 600)
+    resumed = OwnerSessionService(
+        reopened, verify, digest, lambda: 699, 600, client_digest=client
+    )
     assert resumed.authenticate(issued.session_token) == "owner"
     assert resumed.issue_browser_csrf(issued.session_token)
     assert resumed.authenticate(issued.session_token) == "owner"
     assert reopened._connection.execute(
         "SELECT expires_at FROM review_sessions"
     ).fetchone() == (700,)
-    expired = OwnerSessionService(reopened, verify, digest, lambda: 700, 600)
+    expired = OwnerSessionService(
+        reopened, verify, digest, lambda: 700, 600, client_digest=client
+    )
     with pytest.raises(ReviewWebError, match="unauthorized"):
         expired.authenticate(issued.session_token)
 
-    _, replacement_digest = owner_password_binding(
+    _, replacement_digest, replacement_client = owner_password_binding(
         PasswordHasher().hash("correct horse")
     )
     replaced = OwnerSessionService(
-        reopened, verify, replacement_digest, lambda: 699, 600
+        reopened,
+        verify,
+        replacement_digest,
+        lambda: 699,
+        600,
+        client_digest=replacement_client,
     )
     with pytest.raises(ReviewWebError, match="unauthorized"):
         replaced.authenticate(issued.session_token)

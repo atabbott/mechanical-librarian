@@ -270,7 +270,12 @@ class ReviewAttentionSnapshot:
 
 class ReviewSessionStore(Protocol):
     def begin_login(
-        self, now: int, window_seconds: int, maximum_failures: int
+        self,
+        now: int,
+        client_digest: str,
+        window_seconds: int,
+        client_maximum: int,
+        global_maximum: int,
     ) -> bool: ...
     def create_review_session(
         self,
@@ -278,6 +283,7 @@ class ReviewSessionStore(Protocol):
         csrf_digest: str,
         created_at: int,
         expires_at: int,
+        client_digest: str,
     ) -> None: ...
     def authenticate_review_session(
         self, session_digest: str, now: int
@@ -468,6 +474,16 @@ class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
     ) -> str: ...
 
 
+# Sign-in attempts are counted per client over five minutes (#1384). The
+# global ceiling is a backstop twenty times the per-client limit: one client
+# can never reach it alone, it takes twenty distinct identities to, and it
+# still caps the Argon2 work unauthenticated callers can force at one
+# verification every three seconds.
+_LOGIN_WINDOW_SECONDS = 300
+_LOGIN_CLIENT_ATTEMPTS = 5
+_LOGIN_GLOBAL_ATTEMPTS = 100
+
+
 class OwnerSessionService:
     """Owner login, authentication, rotation, and revocation over one store.
 
@@ -489,20 +505,35 @@ class OwnerSessionService:
         clock: Callable[[], int],
         lifetime_seconds: int,
         token_factory: Callable[[int], str] = secrets.token_urlsafe,
+        *,
+        client_digest: Callable[[str], str],
     ) -> None:
         self._repository = repository
         self._verify_password = verify_password
         self._session_digest = session_digest
+        self._client_digest = client_digest
         self._clock = clock
         self._lifetime_seconds = lifetime_seconds
         self._token_factory = token_factory
 
-    def login(self, password: str) -> SessionTokens:
+    def login(self, password: str, client: str) -> SessionTokens:
+        """Sign in from ``client``, the interface's trusted-resolution identity.
+
+        The identity reaches the store only as ``client_digest``'s keyed HMAC,
+        so no address is persisted, and it never enters an error.
+        """
         if type(password) is not str or not 1 <= len(password.encode("utf-8")) <= 1024:
             raise ReviewWebError("invalid_credentials")
         now = self._clock()
         try:
-            permitted = self._repository.begin_login(now, 300, 5)
+            client_key = self._client_digest(client)
+            permitted = self._repository.begin_login(
+                now,
+                client_key,
+                _LOGIN_WINDOW_SECONDS,
+                _LOGIN_CLIENT_ATTEMPTS,
+                _LOGIN_GLOBAL_ATTEMPTS,
+            )
         except Exception as error:
             raise ReviewWebError("persistence") from error
         if permitted is not True:
@@ -529,6 +560,7 @@ class OwnerSessionService:
                 _digest(csrf_token),
                 now,
                 expires_at,
+                client_key,
             )
         except Exception as error:
             raise ReviewWebError("persistence") from error
