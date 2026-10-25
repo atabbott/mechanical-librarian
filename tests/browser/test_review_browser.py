@@ -85,7 +85,10 @@ from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.setup_state import SetupStateDocument
+from mechanical_librarian.domain.setup_state import (
+    SetupStateDocument,
+    claim_token_digest,
+)
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.support.audiobook_reports import (
@@ -99,6 +102,7 @@ from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
 from tests.support.review_proxy import review_tls_proxy
 from tests.support.review_web_doubles import FakeActivityApplication
+from tests.support.setup_server import real_setup_server
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
@@ -117,6 +121,7 @@ from tests.unit.test_cover_packets import (
 )
 
 _PASSWORD = "synthetic browser password"
+_CLAIM_TOKEN = "synthetic-browser-claim-token-0123456789"
 
 
 class _BrowserActivityApplication(FakeActivityApplication):
@@ -1914,9 +1919,10 @@ def _setup_asset_server(
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
             return SetupStateDocument(
-                schema_version="setup-state-v3",
+                schema_version="setup-state-v4",
                 revision=1,
                 bootstrap_verifier_digest="0" * 64,
+                claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
             )
 
     origin = f"https://127.0.0.1:{port.number}"
@@ -5125,9 +5131,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 class State:
                     def read(self, _verifier: str) -> SetupStateDocument:
                         return SetupStateDocument(
-                            schema_version="setup-state-v3",
+                            schema_version="setup-state-v4",
                             revision=1,
                             bootstrap_verifier_digest="0" * 64,
+                            claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
                         )
 
                 setup_client = TestClient(
@@ -5526,6 +5533,52 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
             browser.close()
 
 
+def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
+    """ADR-0086 through the shipped page, on the real setup generation.
+
+    The real composition mints the token on a temporary volume behind TLS
+    uvicorn. A visitor without it is refused in place; the owner who reads it
+    from the volume reaches the connection step.
+    """
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        real_setup_server(Path(directory)) as (origin, token_file, _certificate),
+    ):
+        token = token_file.read_text(encoding="ascii").strip()
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            with _closing_context(context):
+                page = context.new_page()
+                errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, errors))
+                page.route(
+                    "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
+                )
+                page.goto(origin)
+                expect(
+                    page.get_by_role("heading", name="Create your owner password")
+                ).to_be_visible()
+                claim_token = page.get_by_label("Setup claim token", exact=True)
+                page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
+                page.get_by_label("Confirm owner password", exact=True).fill(_PASSWORD)
+                page.get_by_role("button", name="Create owner access").click()
+                expect(page.get_by_role("alert")).to_contain_text(
+                    "That setup claim token was not accepted"
+                )
+                expect(claim_token).to_have_attribute("aria-invalid", "true")
+                assert token_file.exists()
+                claim_token.fill(token)
+                page.get_by_role("button", name="Create owner access").click()
+                expect(
+                    page.get_by_role("heading", name="Connect Audiobookshelf")
+                ).to_be_visible()
+                assert not token_file.exists()
+                assert token not in page.content()
+                assert errors == []
+            browser.close()
+
+
 def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -5538,16 +5591,31 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
             page.on("pageerror", lambda error: errors.append(str(error)))
             stage = {"value": "claim"}
             compared = {"count": 0}
+            nonces: list[str] = []
+            claims: list[tuple[str | None, object]] = []
 
             def setup_api(route) -> None:
                 path = urlparse(route.request.url).path
                 method = route.request.method
                 if path == "/api/setup/claim":
+                    nonces.append(str(len(nonces) + 1) * 32)
                     route.fulfill(
-                        json={"claimed": False, "revision": 1, "nonce": "n" * 32}
+                        json={"claimed": False, "revision": 1, "nonce": nonces[-1]}
                     )
                     return
                 if path == "/api/setup/session":
+                    body = json.loads(route.request.post_data or "{}")
+                    claims.append(
+                        (
+                            route.request.headers.get("x-setup-nonce"),
+                            body.get("claim_token"),
+                        )
+                    )
+                    if body.get("claim_token") != _CLAIM_TOKEN:
+                        route.fulfill(
+                            status=403, json={"detail": {"error": "claim_token"}}
+                        )
+                        return
                     stage["value"] = "providers"
                     route.fulfill(json={"csrf_token": "c" * 32, "expires_at": 3_601})
                     return
@@ -5905,10 +5973,28 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(alert).to_be_empty()
                 assert password.get_attribute("aria-invalid") is None
                 confirmation.fill(_PASSWORD)
+                # ADR-0086: a mistyped token is refused in place, on its own
+                # field, with a fresh nonce and every typed value kept.
+                claim_token = page.get_by_label("Setup claim token", exact=True)
+                expect(
+                    page.get_by_text("from the container log", exact=False)
+                ).to_be_visible()
+                claim_token.fill("mistyped-token")
+                page.get_by_role("button", name="Create owner access").click()
+                expect(alert).to_contain_text("That setup claim token was not accepted")
+                expect(claim_token).to_have_attribute("aria-invalid", "true")
+                expect(claim_token).to_be_focused()
+                assert password.input_value() == _PASSWORD
+                assert confirmation.input_value() == _PASSWORD
+                claim_token.fill(f"  {_CLAIM_TOKEN} ")
                 page.get_by_role("button", name="Create owner access").click()
                 expect(
                     page.get_by_role("heading", name="Choose metadata providers")
                 ).to_be_visible()
+                assert claims == [
+                    (nonces[0], "mistyped-token"),
+                    (nonces[1], _CLAIM_TOKEN),
+                ]
                 for provider in ("Open Library", "Hardcover", "Google Books"):
                     access = page.get_by_role("link", name=f"Get {provider} access")
                     expect(access).to_be_visible()
@@ -9564,7 +9650,7 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     else:
                         route.fulfill(
                             json={
-                                "schema_version": "setup-state-v3",
+                                "schema_version": "setup-state-v4",
                                 "revision": 6,
                                 "csrf_token": "synthetic-csrf",
                                 "completed_steps": [

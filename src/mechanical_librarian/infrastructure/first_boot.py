@@ -9,6 +9,10 @@ from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 
+from mechanical_librarian.infrastructure.setup_claim_token import (
+    SETUP_CLAIM_TOKEN_NAME,
+)
+
 
 class FirstBootError(ValueError):
     """The data volume is neither a supported normal store nor first boot."""
@@ -61,6 +65,18 @@ def _reviewer_setup_entries(data_path: Path) -> bool:
         return empty and set(names) <= {"auth", "jobs"}
     finally:
         os.close(descriptor)
+
+
+def _private_token_file(path: Path) -> bool:
+    try:
+        information = path.lstat()
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(information.st_mode)
+        and stat.S_IMODE(information.st_mode) == 0o600
+        and information.st_uid == os.geteuid()
+    )
 
 
 def select_first_boot_mode(
@@ -118,14 +134,20 @@ def select_first_boot_mode(
         # during setup into a boot that will not resume. Only `-journal` is
         # admitted, because this store is `journal_mode=DELETE` and no WAL is
         # adopted anywhere (ADR-0060).
+        # The setup claim token (ADR-0086) is admitted only as the owner's
+        # regular 0600 file; a link, directory or wider mode is not one.
         if private_entries <= {
             "review-sessions.sqlite",
             "review-sessions.sqlite-journal",
+            SETUP_CLAIM_TOKEN_NAME,
         } and (
             "review-sessions.sqlite-journal" not in private_entries
             or "review-sessions.sqlite" in private_entries
         ):
-            setup_entries.discard("private")
+            if SETUP_CLAIM_TOKEN_NAME not in private_entries or _private_token_file(
+                data_path / "private" / SETUP_CLAIM_TOKEN_NAME
+            ):
+                setup_entries.discard("private")
     try:
         if (
             setup_entries == {database_name}

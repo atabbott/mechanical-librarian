@@ -28,8 +28,11 @@ from mechanical_librarian.application.setup_connection import SetupConnectionErr
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.setup_state import (
+    SetupClaimTokenError,
     SetupLibraryCandidate,
     SetupStateDocument,
+    claim_token_digest,
+    claim_token_matches,
 )
 from mechanical_librarian.interfaces.web.app import (
     owner_password_binding,
@@ -262,24 +265,33 @@ class _Sessions:
         return "revoked"
 
 
+_CLAIM_TOKEN = "deployment-held-claim-token-0123456789abcdef"
+
+
 class _State:
     def __init__(self, sessions: _Sessions | None = None) -> None:
         self.sessions = sessions
         self.document = SetupStateDocument(
-            schema_version="setup-state-v3",
+            schema_version="setup-state-v4",
             revision=1,
             bootstrap_verifier_digest="0" * 64,
+            claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
         )
         self.promoted = False
         self.owner_verifier: str | None = None
+        self.claim_attempts = 0
 
     def claim_owner(
         self,
         *,
         expected_revision: int,
         owner_verifier: str,
+        claim_token: str,
     ) -> SetupStateDocument:
+        self.claim_attempts += 1
         assert owner_verifier.startswith("$argon2id$")
+        if not claim_token_matches(claim_token, self.document.claim_token_digest):
+            raise SetupClaimTokenError("setup claim token is unavailable")
         self.owner_verifier = owner_verifier
         assert expected_revision == self.document.revision
         self.document = SetupStateDocument.model_validate(
@@ -288,6 +300,7 @@ class _State:
                 "revision": expected_revision + 1,
                 "completed_steps": ["claim"],
                 "claimed": True,
+                "claim_token_digest": None,
             }
         )
         return self.document
@@ -364,6 +377,7 @@ def _client(
     reviewer_access: ReviewerAccessOperations | None = None,
     *,
     mode: str = "direct",
+    retire_claim_token: Callable[[], None] = lambda: None,
 ) -> tuple[TestClient, _State, _Connection]:
     origin = "http://setup.invalid" if mode == "http" else "https://setup.invalid"
     verifier = PasswordHasher().hash("correct horse battery staple")
@@ -407,6 +421,7 @@ def _client(
                 reviewer_access,
                 trusted_proxy_ips=("127.0.0.1",) if mode == "proxy" else (),
                 require_forwarding=mode == "proxy",
+                retire_claim_token=retire_claim_token,
             ),
             base_url="http://setup.invalid" if mode == "proxy" else origin,
             client=("127.0.0.1", 12345),
@@ -419,7 +434,11 @@ def _client(
     )
 
 
-def _claim(client: TestClient, password: str = "correct horse battery staple") -> Any:
+def _claim(
+    client: TestClient,
+    password: str = "correct horse battery staple",
+    claim_token: str | None = _CLAIM_TOKEN,
+) -> Any:
     nonce = client.get("/api/setup/claim")
     nonce_cookie = nonce.headers["set-cookie"].split(";", 1)[0]
     return client.post(
@@ -428,6 +447,7 @@ def _claim(client: TestClient, password: str = "correct horse battery staple") -
             "password": password,
             "confirmation": password,
             "expected_revision": nonce.json()["revision"],
+            **({} if claim_token is None else {"claim_token": claim_token}),
         },
         headers={
             "cookie": nonce_cookie,
@@ -609,7 +629,7 @@ def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
     _claim(client)
     oversized = client.post(
         "/api/setup/session",
-        content=b"{" + b"x" * 12_416,
+        content=b"{" + b"x" * 13_184,
         headers={"content-type": "application/json"},
     )
     assert oversized.status_code == 413
@@ -637,10 +657,163 @@ def test_maximum_setup_password_pair_reaches_owner_claim() -> None:
     client, state, _connection = _client()
     password = "\0" * 1_024
 
+    # The largest token the request model admits, escaped sixfold, still
+    # reaches the token check rather than the transport limit.
+    refused = _claim(client, password, "\0" * 128)
+    assert refused.status_code == 403
+    assert refused.json() == {"detail": {"error": "claim_token"}}
+
     response = _claim(client, password)
 
     assert response.status_code == 200
     assert state.document.claimed
+
+
+def test_first_owner_claim_requires_the_deployment_claim_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    retired: list[str] = []
+    client, state, _connection = _client(
+        retire_claim_token=lambda: retired.append("retired")
+    )
+    assert state.sessions is not None
+    before = state.document
+    hashed: list[str] = []
+    original_hash = PasswordHasher.hash
+
+    def counted_hash(self: PasswordHasher, password: str | bytes, **kwargs: Any) -> str:
+        hashed.append("argon2")
+        return original_hash(self, password, **kwargs)
+
+    monkeypatch.setattr(PasswordHasher, "hash", counted_hash)
+
+    for token in (None, "", "wrong-token", _CLAIM_TOKEN + "x", _CLAIM_TOKEN[:-1]):
+        refused = _claim(client, claim_token=token)
+        assert refused.status_code == 403
+        assert refused.json() == {"detail": {"error": "claim_token"}}
+        assert "set-cookie" not in refused.headers
+
+    # A refusal records nothing, runs no Argon2, leaves the token valid and
+    # owes the login throttle nothing.
+    assert state.document == before
+    assert state.document.claim_token_digest == claim_token_digest(_CLAIM_TOKEN)
+    assert state.claim_attempts == 0
+    assert hashed == []
+    assert state.sessions.failures == 0
+    assert retired == []
+
+    # The refused request consumed its nonce, so the same nonce cannot carry a
+    # corrected token; a fresh nonce can.
+    nonce = client.get("/api/setup/claim")
+    cookie = nonce.headers["set-cookie"].split(";", 1)[0]
+    body = {
+        "password": "correct horse battery staple",
+        "confirmation": "correct horse battery staple",
+        "expected_revision": nonce.json()["revision"],
+    }
+    headers = {
+        "cookie": cookie,
+        "origin": "https://setup.invalid",
+        "x-setup-nonce": nonce.json()["nonce"],
+    }
+    typo = client.post(
+        "/api/setup/session",
+        json={**body, "claim_token": _CLAIM_TOKEN.upper()},
+        headers=headers,
+    )
+    assert typo.json() == {"detail": {"error": "claim_token"}}
+    reused = client.post(
+        "/api/setup/session",
+        json={**body, "claim_token": _CLAIM_TOKEN},
+        headers=headers,
+    )
+    assert reused.status_code == 403
+    assert reused.json() == {"detail": {"error": "csrf"}}
+    assert not state.document.claimed
+
+    claimed = _claim(client)
+
+    assert claimed.status_code == 200
+    assert state.document.claimed
+    assert state.document.claim_token_digest is None
+    assert hashed == ["argon2"]
+    assert retired == ["retired"]
+    # A retry after the claim lands in the claimed branch and needs no token.
+    assert (
+        client.post(
+            "/api/setup/session",
+            json={"password": "correct horse battery staple"},
+            headers={"origin": "https://setup.invalid"},
+        ).status_code
+        == 200
+    )
+    assert retired == ["retired"]
+
+
+def test_concurrent_correct_claim_loser_still_receives_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, state, _connection = _client()
+    original = state.claim_owner
+
+    def lose_the_race(**kwargs: Any) -> SetupStateDocument:
+        # A competing request with the same token commits first; this request
+        # passed its pre-check against the unclaimed document it read.
+        original(**kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(state, "claim_owner", lose_the_race)
+
+    response = _claim(client)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": {"error": "claimed"}}
+    assert state.document.claimed and state.claim_attempts == 2
+
+
+def test_setup_claim_token_never_reaches_a_response_or_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, state, _connection = _client()
+    caplog.set_level("DEBUG")
+    responses = []
+
+    claim = client.get("/api/setup/claim")
+    assert set(claim.json()) == {"claimed", "revision", "nonce"}
+    responses.append(claim)
+    for body in (
+        # Each of these is refused by request validation, whose default answer
+        # would echo the submitted input back.
+        {"password": _CLAIM_TOKEN * 30, "claim_token": _CLAIM_TOKEN},
+        {"password": "x", "claim_token": _CLAIM_TOKEN * 3},
+        {"password": "x", "claim_token": [_CLAIM_TOKEN]},
+        {"password": "x", "unexpected": _CLAIM_TOKEN},
+    ):
+        refused = client.post(
+            "/api/setup/session",
+            json=body,
+            headers={"origin": "https://setup.invalid"},
+        )
+        assert refused.status_code == 422
+        assert refused.json() == {"detail": {"error": "invalid_request"}}
+        responses.append(refused)
+    responses.append(_claim(client, claim_token=_CLAIM_TOKEN[::-1]))
+    responses.append(_claim(client))
+    assert responses[-1].status_code == 200
+    responses.append(
+        client.get(
+            "/api/setup/state",
+            headers={"cookie": _session_cookie(responses[-1])},
+        )
+    )
+
+    digest = claim_token_digest(_CLAIM_TOKEN)
+    for response in responses:
+        exposed = response.text + repr(dict(response.headers))
+        assert _CLAIM_TOKEN not in exposed and _CLAIM_TOKEN[::-1] not in exposed
+        assert digest not in exposed
+    assert _CLAIM_TOKEN not in caplog.text and digest not in caplog.text
+    assert _CLAIM_TOKEN not in repr(state.document)
 
 
 @pytest.mark.parametrize(
@@ -1088,6 +1261,26 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "toggle.setAttribute('aria-pressed','false')" in SETUP_JS
     assert "control.type=reveal?'text':'password'" in SETUP_JS
     assert "secretField('Owner password',password,'the owner password')" in SETUP_JS
+    # ADR-0086: the unclaimed form asks for the deployment-held token, says
+    # where it is and that a restart replaces it, and recovers a typo in place.
+    assert (
+        "form.append(source,secretField('Setup claim token',claimToken,"
+        "'the setup claim token'))" in SETUP_JS
+    )
+    assert (
+        "Copy the setup claim token from the container log, or from "
+        "private/setup-claim-token on the data volume. A restart replaces the "
+        "token, so use the newest one." in SETUP_JS
+    )
+    assert "claim_token:claimToken.value.trim()" in SETUP_JS
+    assert (
+        "if(claimToken&&e.message==='claim_token'){try{const fresh=await "
+        "api('/api/setup/claim');" in SETUP_JS
+    )
+    assert "claim.nonce=fresh.nonce;claim.revision=fresh.revision" in SETUP_JS
+    assert "error(form,'claim_token',claimToken);return}" in SETUP_JS
+    assert "claim_token:'That setup claim token was not accepted." in SETUP_JS
+    assert "The first visitor creates the only owner password" not in SETUP_JS
     assert "toggle.setAttribute('aria-label',`Show ${subject}`)" in SETUP_JS
     assert (
         "secretField('Audiobookshelf API key',key,'the Audiobookshelf API key')"
@@ -1324,6 +1517,7 @@ def test_setup_transport_claim_cookie_deletion_and_security(mode: str) -> None:
                 "password": "correct horse battery staple",
                 "confirmation": "correct horse battery staple",
                 "expected_revision": nonce.json()["revision"],
+                "claim_token": _CLAIM_TOKEN,
             },
             headers={
                 "origin": origin,
@@ -1344,7 +1538,7 @@ def test_setup_transport_claim_cookie_deletion_and_security(mode: str) -> None:
             assert response.status_code == expected
             assert ("strict-transport-security" in response.headers) is secure
         overflow = client.post(
-            "/api/setup/session", content=iter([b"x" * (2 * 1024 * 6 + 129)])
+            "/api/setup/session", content=iter([b"x" * (2 * 1024 * 6 + 128 * 6 + 129)])
         )
         assert overflow.status_code == 413
         assert ("strict-transport-security" in overflow.headers) is secure
@@ -1429,6 +1623,7 @@ def test_claimed_setup_login_still_requires_canonical_origin(mode: str) -> None:
             "password": "correct horse battery staple",
             "confirmation": "correct horse battery staple",
             "expected_revision": nonce.json()["revision"],
+            "claim_token": _CLAIM_TOKEN,
         },
         headers={
             "origin": origin,
