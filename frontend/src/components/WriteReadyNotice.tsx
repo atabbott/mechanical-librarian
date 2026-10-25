@@ -39,17 +39,23 @@ export const WriteReadyNotice = () => {
     refetchInterval: live ? false : 15_000,
   })
   const data = query.data
-  // A lapse names its libraries as Settings does (#1370).
-  const libraryName = useLibraryName(http, Boolean(data?.lapsed_consents.length))
-  if (!data) return null
+  // A lapse names its libraries as Settings does, and the notice waits for that
+  // read so it is announced once, with the name (#1370).
+  const names = useLibraryName(http, Boolean(data?.lapsed_consents.length))
+  if (!data || !names.ready) return null
+  const connectionUnavailable = (preparation?.connections ?? []).some(
+    (item) => item.state !== 'recovered',
+  )
   const consent = readWriteConsent(data, {
-    libraryName,
+    libraryName: names.name,
     enabling: false,
-    connectionUnavailable: (preparation?.connections ?? []).some(
-      (item) => item.state !== 'recovered',
-    ),
+    connectionUnavailable,
   })
-  if (!consent.actionable) return null
+  // A lapse is stated even while another library keeps permission (#1370).
+  const lapsedBesideHeld =
+    consent.state === 'complete' && consent.lapsed !== null && !connectionUnavailable
+  if (!consent.actionable && !lapsedBesideHeld) return null
+  const lapse = consent.lapsed ? `${consent.lapsed} ` : ''
   const preparing = Boolean(preparation?.active)
   const inLibrary =
     works !== undefined
@@ -67,12 +73,14 @@ export const WriteReadyNotice = () => {
           : `${inLibrary}Writes are enabled.`
   const copy =
     consent.state === 'off'
-      ? `${consent.lapsed ? `${consent.lapsed} ` : ''}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
+      ? `${lapse}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
       : consent.state === 'enabling'
         ? 'Confirming permission with the authoritative server. No change is sent twice.'
         : consent.state === 'applying'
-          ? `${String(consent.reasons.applying)} in progress; the remaining ${String(consent.reasons.scheduled)} stay ready.`
-          : `${String(consent.reasons.scheduled)} prepared ${consent.reasons.scheduled === 1 ? 'change is' : 'changes are'} ready to apply.`
+          ? `${lapse}${String(consent.reasons.applying)} in progress; the remaining ${String(consent.reasons.scheduled)} stay ready.`
+          : consent.state === 'complete'
+            ? `${lapse}Review current write permissions in Activity.`
+            : `${lapse}${String(consent.reasons.scheduled)} prepared ${consent.reasons.scheduled === 1 ? 'change is' : 'changes are'} ready to apply.`
   return (
     <section
       className={`cm-library-handoff is-${consent.state}`}
@@ -84,7 +92,7 @@ export const WriteReadyNotice = () => {
         <p>{copy}</p>
       </div>
       <div className="cm-library-handoff-action">
-        {consent.state === 'off' ? (
+        {consent.state === 'off' || consent.state === 'complete' ? (
           <Link
             className="cm-primary"
             to="/activity"

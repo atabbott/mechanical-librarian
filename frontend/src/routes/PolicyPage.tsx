@@ -827,7 +827,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   })
   // The preview names a library by its settings slug; the display name is read
   // only once a preview exists.
-  const libraryName = useLibraryName(http, preview !== undefined)
+  const libraryName = useLibraryName(http, preview !== undefined).name
   // Activation carries each library's write permission to the new policy, so
   // the step names the libraries that hold it now (#1370).
   const consent = useQuery({

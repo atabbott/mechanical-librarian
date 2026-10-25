@@ -92,8 +92,14 @@ describe('the write consent offer', () => {
     ).toBe(
       'Write permission for History Shelf and fiction lapsed because it was given under a policy that is no longer active.',
     )
-    // Permission some library still holds keeps an empty queue complete.
-    expect(readWriteConsent(view(scoped(true))).state).toBe('complete')
+    // Permission some library still holds keeps an empty queue complete: writes
+    // are on for it, so the state says so. The lapse beside it is not dropped:
+    // it stays on the offer for Library and Activity to state (#1370).
+    const mixed = readWriteConsent(view(scoped(true)))
+    expect([mixed.state, mixed.lapsed]).toEqual([
+      'complete',
+      'Write permission for history and fiction lapsed because it was given under a policy that is no longer active.',
+    ])
     expect(readWriteConsent(view({ ...scoped(false), lapsed_consents: [] })).state).toBe('complete')
   })
 

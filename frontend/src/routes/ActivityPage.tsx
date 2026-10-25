@@ -937,9 +937,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const enabling = mutation.isPending && mutation.variables.path === 'activity/consent'
   // Library states the same offer compactly, from this same reading, so the two
   // routes into the decision can never disagree about it (#639).
-  const libraryName = useLibraryName(http, data.lapsed_consents.length > 0)
+  // A lapse is stated by Settings name; the live card waits for that read so
+  // it is announced once (#1370).
+  const names = useLibraryName(http, data.lapsed_consents.length > 0)
   const consent = readWriteConsent(permission ? { ...data, ...permission } : data, {
-    libraryName,
+    libraryName: names.name,
     enabling,
     // A connection that needs an owner check is the one condition that makes
     // enabling writes the wrong next step. Preparation still running is not:
@@ -960,6 +962,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // Guarded work continues automatically only while some library holds write
   // permission; with none, the status says writes are off and why (#1370).
   const writesHeld = enabled.length > 0 || !needsConsent
+  // A lapse is stated once: by the write card while it is offering permission,
+  // otherwise by the status paragraph, even beside a library that kept its
+  // permission (#1370).
+  const cardLapse =
+    consentActionable && names.ready && consentState === 'off' && consent.lapsed !== null
+  const lapse = names.ready && !cardLapse ? consent.lapsed : null
   // The disclosure holds pause, removal and recovery only; reviewing write
   // permissions has one entry, outside it (#1279).
   const hasAuthority = enabled.length > 0 || suspensions.length > 0
@@ -1030,9 +1038,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       ? 'Writes enabled'
                       : data.paused
                         ? 'New work paused'
-                        : writesHeld
-                          ? 'No action required'
-                          : 'Writes are off'}
+                        : !writesHeld
+                          ? 'Writes are off'
+                          : consent.lapsed
+                            ? 'Action needed'
+                            : 'No action required'}
         </span>
       </header>
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
@@ -1286,7 +1296,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </nav>
         </footer>
       </section>
-      {consentActionable ? (
+      {consentActionable && names.ready ? (
         <section
           className={`cm-write-consent is-${consentState}`}
           aria-labelledby="write-consent-title"
@@ -1540,9 +1550,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     ? 'Recovery needs attention'
                     : data.paused
                       ? 'New work is paused'
-                      : writesHeld
-                        ? 'No intervention needed'
-                        : 'Writes are off'}
+                      : !writesHeld
+                        ? 'Writes are off'
+                        : lapse
+                          ? 'Write permission lapsed'
+                          : 'No intervention needed'}
             </h2>
             <p>
               {connection?.state === 'checking'
@@ -1555,10 +1567,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       ? 'Affected work remains held until its current state can be reconciled safely.'
                       : data.paused
                         ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                        : writesHeld
-                          ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
-                          : (consent.lapsed ??
-                            'No library has write permission, so nothing is written to your libraries until you give it.')}
+                        : (lapse ??
+                          (writesHeld
+                            ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
+                            : cardLapse
+                              ? 'Nothing is written to your libraries until you give permission again.'
+                              : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
             </p>
             {statusEntry ? (
               <button

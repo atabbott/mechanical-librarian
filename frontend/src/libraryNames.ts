@@ -3,8 +3,9 @@ import { queryWorkClass, useRequiredQuery as useQuery } from './queryWork'
 
 /**
  * Name a library by its Settings display name. The Settings read is shared by
- * every route and issued only once `enabled`; while it is pending or
- * unavailable the slug stands.
+ * every route and issued only once `enabled`; while it is unavailable the slug
+ * stands. `ready` is false while an enabled read is still pending, so a live
+ * region can wait and announce one name rather than the slug and then the name.
  */
 export const useLibraryName = (http: ReviewHttp, enabled: boolean) => {
   const settings = useQuery({
@@ -13,6 +14,10 @@ export const useLibraryName = (http: ReviewHttp, enabled: boolean) => {
     retry: false,
     enabled,
   })
-  return (name: string) =>
-    settings.data?.document.libraries.find((library) => library.name === name)?.display_name ?? name
+  return {
+    ready: !(enabled && settings.isPending),
+    name: (name: string) =>
+      settings.data?.document.libraries.find((library) => library.name === name)?.display_name ??
+      name,
+  }
 }

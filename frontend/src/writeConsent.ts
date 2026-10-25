@@ -53,7 +53,8 @@ export const libraryList = (names: readonly string[]) =>
 
 const lapseReason = (reason: ActivityLapsedConsentView['reason'], libraries: number) =>
   ({
-    destinations_changed: 'this version can write a different set of fields',
+    destinations_changed:
+      'this version of Mechanical Librarian can write a different set of fields',
     library_unresolved: `the active policy does not cover ${libraries === 1 ? 'that library' : 'those libraries'}`,
     policy_changed: 'it was given under a policy that is no longer active',
   })[reason]

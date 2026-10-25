@@ -10846,6 +10846,93 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(screen.getByRole('link', { name: 'Review write permissions' })).toBeVisible()
   })
 
+  it('states a lapse beside a library that kept its permission (#1370)', async () => {
+    const view = activity({
+      configured_libraries: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+      })),
+      capabilities: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+        state: 'allowed',
+        destinations: [
+          { consented: library === 'fiction', destination: 'title', prepared: 0, state: 'allowed' },
+        ],
+      })),
+      lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getLibrary: vi.fn(async () => counted(0, 5)),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const heading = await screen.findByRole('heading', {
+      name: '5 works are in Library. Writes are enabled.',
+    })
+    expect(heading.closest('.cm-library-handoff')).toHaveTextContent(
+      'Write permission for history lapsed because it was given under a policy that is no longer active. Review current write permissions in Activity.',
+    )
+    expect(screen.getByRole('link', { name: 'Review write permissions' })).toBeVisible()
+  })
+
+  it('announces a lapse once, by its Settings name (#1370)', async () => {
+    const view = activity({
+      configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ consented: false, destination: 'title', prepared: 0, state: 'allowed' }],
+        },
+      ],
+      lapsed_consents: [{ connection: 'primary', library: 'fiction', reason: 'policy_changed' }],
+    })
+    let settle: (value: Awaited<ReturnType<ReviewHttp['getSettings']>>) => void = () => undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getLibrary: vi.fn(async () => counted(0, 5)),
+      getSettings: vi.fn(
+        () =>
+          new Promise<Awaited<ReturnType<ReviewHttp['getSettings']>>>((resolve) => {
+            settle = resolve
+          }),
+      ),
+    }
+    // Every text the polite live region ever carries, in order.
+    const said: string[] = []
+    const observer = new MutationObserver(() => {
+      const text = document.querySelector('.cm-library-handoff')?.textContent ?? ''
+      if (text.includes('lapsed') && said.at(-1) !== text) said.push(text)
+    })
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true })
+    renderRoute('/library?lens=all', http)
+
+    await waitFor(() => expect(http.getSettings).toHaveBeenCalled())
+    expect(document.querySelector('.cm-library-handoff')).toBeNull()
+    act(() =>
+      settle({
+        ...settingsView(),
+        document: {
+          ...settingsView().document,
+          libraries: settingsView().document.libraries.map((library) => ({
+            ...library,
+            name: 'fiction',
+            display_name: 'Fiction Shelf',
+          })),
+        },
+      }),
+    )
+    await screen.findByText(/Write permission for Fiction Shelf lapsed/)
+    observer.disconnect()
+    expect(said).toHaveLength(1)
+    expect(said[0]).not.toContain('for fiction lapsed')
+  })
+
   it.each([
     ['', 'Count unavailable'],
     ['&q=needle', 'Matching: 1 work needing a decision'],
