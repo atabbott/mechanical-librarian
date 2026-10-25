@@ -527,19 +527,36 @@ once. This deliberate sign-in boundary avoids a legacy lookup fallback that
 could preserve authority after a verifier replacement.
 
 ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
-The first visitor may fetch only a bounded synchronizer nonce. Creating the
-owner password requires the exact configured Origin plus the same nonce in a
-host-only cookie and request header. One application-database transaction
-claims ownership and stores the Argon2id verifier, so concurrent first-owner
-attempts have one winner. Ordinary session issuance follows that commit in the
+An unauthenticated visitor may fetch only a bounded synchronizer nonce. Creating
+the owner password requires the exact configured Origin plus the same nonce in a
+host-only cookie and request header, and, under ADR-0086, the deployment-held
+setup claim token. Every start that finds setup unclaimed mints that token with
+`secrets.token_urlsafe(32)`, commits only its domain-separated SHA-256 digest
+(which revokes any earlier token), then writes the token to the owner-only
+`/data/private/setup-claim-token` without following a link, and announces it
+once on standard output with a raw write that bypasses logging. Only someone
+who can read the container's output or its volume can therefore claim it; a
+network visitor who reaches the port first cannot. A bounded pre-check refuses a
+missing or wrong token with a fixed `403 claim_token` before Argon2, without
+state change, throttle debt or spending the token; the refused request's nonce
+is spent, so the page fetches a fresh one in place. One application-database
+transaction compares the token again in constant time, claims ownership,
+clears the digest and stores the Argon2id verifier, so concurrent first-owner
+attempts have one winner and the loser receives `409`; the token file is then
+removed, and a claimed start removes any that remains. A token replayed against
+a claimed store is refused as a claim token, never as stale. The token never
+reaches an API response, log, exception text, `repr` or evidence, and the setup
+application answers request validation with a fixed value-free `422` rather
+than echoing input. Ordinary session issuance follows that commit in the
 dedicated session database; failure returns unavailable while retaining the
 claim, and resubmitting the password retries ordinary login. Every later wizard
 read or mutation uses that ordinary session, with CSRF and Origin checks for
 mutations. Resume verifies the owner password against the store verifier.
 Startup admits only the exact seeded predecessor or
-valid current incomplete setup; older incompatible incomplete setup requires a
-clean rebuild and arbitrary nonempty, malformed, or store-mode state fails
-closed. Kickoff commits authority, permanently closes setup routes, and swaps to
+valid current incomplete setup; older incompatible incomplete setup, including
+`setup-state-v3`, requires a clean rebuild and arbitrary nonempty, malformed, or
+store-mode state fails closed. First boot admits only the owner's regular `0600`
+claim token file beside the session database in `private/`. Kickoff commits authority, permanently closes setup routes, and swaps to
 the ordinary runtime on the same listener. An unauthenticated client therefore
 cannot stage settings, complete setup, or reach a generic write route.
 

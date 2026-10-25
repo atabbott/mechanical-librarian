@@ -18,9 +18,11 @@ from mechanical_librarian.domain.owner_settings import LibrarySettings, Provider
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
     SetupStateDocument,
+    claim_token_digest,
 )
 
 _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
+_CLAIM_TOKEN = "deployment-held-claim-token-0123456789abcdef"
 _PROVIDER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
 
 
@@ -42,13 +44,12 @@ def _store() -> tuple[sqlite3.Connection, SetupStateStore]:
 
 
 def _connected(store: SetupStateStore) -> SetupStateDocument:
-    state = store.initialize(_BOOTSTRAP)
-    state = store.write(
-        state.model_copy(
-            update={"revision": 2, "completed_steps": ["claim"], "claimed": True}
-        ),
-        1,
-        _BOOTSTRAP,
+    state = store.initialize(claim_token_digest(_CLAIM_TOKEN))
+    state = store.claim_owner(
+        expected_revision=state.revision,
+        # The claimed verifier is the one later promotion retains.
+        owner_verifier=_BOOTSTRAP,
+        claim_token=_CLAIM_TOKEN,
     )
     return SetupConnectionOperation(
         SetupConnectionVerification(lambda _endpoint, _key: None), store, _BOOTSTRAP
@@ -112,6 +113,7 @@ def test_provider_keys_and_open_library_contact_are_recorded_without_exposure() 
         "SELECT field_id FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
         ("connection.primary.key",),
+        ("owner.password.verifier",),
         ("provider.hardcover.key",),
     ]
 
@@ -477,8 +479,8 @@ def test_change_removes_dependent_answers_and_only_their_secrets() -> None:
 
     assert changed.next_step() == "providers"
     assert connection.execute(
-        "SELECT field_id FROM owner_setting_secrets"
-    ).fetchall() == [("connection.primary.key",)]
+        "SELECT field_id FROM owner_setting_secrets ORDER BY field_id"
+    ).fetchall() == [("connection.primary.key",), ("owner.password.verifier",)]
 
 
 def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:

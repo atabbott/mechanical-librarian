@@ -10,6 +10,7 @@ from typing import Literal, Never, cast
 import pytest
 from pydantic import ValidationError
 
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
@@ -31,10 +32,17 @@ from mechanical_librarian.domain.reviewer_access import (
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
-from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
+from mechanical_librarian.domain.setup_state import (
+    SetupClaimTokenError,
+    SetupStateDocument,
+    SetupStateError,
+    claim_token_digest,
+)
 
 _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
 _OWNER = "$argon2id$v=19$m=65536,t=3,p=4$b3duZXI$hash"
+_CLAIM_TOKEN = "deployment-held-claim-token-0123456789abcdef"
+_CLAIM_DIGEST = claim_token_digest(_CLAIM_TOKEN)
 
 
 class _PostReleaseInterruptionLock:
@@ -98,6 +106,7 @@ def _claimed(store: SetupStateStore, state: SetupStateDocument) -> SetupStateDoc
     return store.claim_owner(
         expected_revision=state.revision,
         owner_verifier=_OWNER,
+        claim_token=_CLAIM_TOKEN,
     )
 
 
@@ -125,7 +134,7 @@ def test_setup_write_propagates_post_commit_process_control() -> None:
     fault = KeyboardInterrupt("private setup commit release")
     lock = _PostReleaseInterruptionLock(fault)
     setup = SetupStateStore(connection, cast(RLock, lock))
-    state = setup.initialize(_BOOTSTRAP)
+    state = setup.initialize(_CLAIM_DIGEST)
     successor = _next(state)
     lock.armed = True
 
@@ -155,7 +164,7 @@ def test_setup_transaction_owners_rollback_process_control(
     _create_schema(connection)
     lock = _PostReleaseInterruptionLock(SystemExit("unused"))
     store = SetupStateStore(connection, cast(RLock, lock))
-    state = store.initialize(_BOOTSTRAP) if owner != "initialize" else None
+    state = store.initialize(_CLAIM_DIGEST) if owner != "initialize" else None
     fault = fault_type(f"private {owner} body")
     before = list(connection.iterdump())
 
@@ -184,7 +193,7 @@ def test_setup_transaction_owners_rollback_process_control(
 
     def operation() -> object:
         if owner == "initialize":
-            return store.initialize(_BOOTSTRAP)
+            return store.initialize(_CLAIM_DIGEST)
         assert state is not None
         if owner == "write":
             return store.write(_next(state), state.revision, _BOOTSTRAP)
@@ -192,7 +201,9 @@ def test_setup_transaction_owners_rollback_process_control(
             return store.transition_reviewer(_next(state), state.revision, 1, "skipped")
         if owner == "claim_owner":
             return store.claim_owner(
-                expected_revision=state.revision, owner_verifier=_OWNER
+                expected_revision=state.revision,
+                owner_verifier=_OWNER,
+                claim_token=_CLAIM_TOKEN,
             )
         store.promote(_BOOTSTRAP, _OWNER, state.revision)
         return None
@@ -225,7 +236,7 @@ def test_nested_setup_secret_release_unwinds_owning_transaction(
         fault, before_effect=before_effect, fault_depth=2
     )
     store = SetupStateStore(connection, cast(RLock, lock))
-    state = store.initialize(_BOOTSTRAP)
+    state = store.initialize(_CLAIM_DIGEST)
     state = _claimed(store, state)
     before = list(connection.iterdump())
     transaction = TransactionScope(
@@ -251,7 +262,7 @@ def test_nested_setup_secret_release_unwinds_owning_transaction(
 
 
 def _connected(store: SetupStateStore) -> SetupStateDocument:
-    state = store.initialize(_BOOTSTRAP)
+    state = store.initialize(_CLAIM_DIGEST)
     state = _claimed(store, state)
     return store.write(
         _next(
@@ -477,38 +488,183 @@ def test_same_connection_ports_serialize_whole_transactions(
 
 
 def test_initialize_creates_the_only_verifier_free_resumable_setup_state() -> None:
-    _connection, store = _store()
+    connection, store = _store()
 
-    state = store.initialize(_BOOTSTRAP)
+    state = store.initialize(_CLAIM_DIGEST)
 
     assert state.next_step() == "claim"
     assert state.bootstrap_verifier_digest == "0" * 64
+    assert state.claim_token_digest == _CLAIM_DIGEST
     assert store.read() == state
     assert store.read(_OWNER) == state
+    # The row keeps only the domain-separated digest, never the token itself.
+    ((encoded,),) = connection.execute("SELECT document FROM owner_settings")
+    assert _CLAIM_DIGEST in encoded and _CLAIM_TOKEN not in encoded
+    assert hashlib.sha256(_CLAIM_TOKEN.encode()).hexdigest() not in encoded
+    assert connection.execute("SELECT * FROM owner_setting_secrets").fetchall() == []
 
 
-def test_setup_state_v2_is_rejected_and_clean_v3_restarts(tmp_path: Path) -> None:
+def test_setup_state_v3_is_rejected_and_clean_v4_restarts(tmp_path: Path) -> None:
+    v3 = {
+        "schema_version": "setup-state-v3",
+        "revision": 1,
+        "bootstrap_verifier_digest": "0" * 64,
+    }
     with pytest.raises(ValidationError):
-        SetupStateDocument.model_validate(
-            {
-                "schema_version": "setup-state-v2",
-                "revision": 1,
-                "bootstrap_verifier_digest": "0" * 64,
-            }
-        )
+        SetupStateDocument.model_validate(v3)
+    with pytest.raises(ValidationError):
+        SetupStateDocument.model_validate({**v3, "claim_token_digest": _CLAIM_DIGEST})
+
+    # An incomplete v3 store is refused at open: clean rebuild required.
+    retained = tmp_path / "retained-v3.sqlite3"
+    connection = sqlite3.connect(retained, isolation_level=None)
+    _create_schema(connection)
+    connection.execute(
+        "INSERT INTO owner_settings(singleton,revision,document) VALUES(1,1,?)",
+        (_canonical_json(v3),),
+    )
+    with pytest.raises(SetupStateError):
+        SetupStateStore(connection).read()
+    with pytest.raises(OwnerSettingsError):
+        _validate_owner_settings_content(connection)
+    connection.close()
 
     path = tmp_path / "setup-state.sqlite3"
     connection = sqlite3.connect(path)
     _create_schema(connection)
-    state = SetupStateStore(connection).initialize(_BOOTSTRAP)
-    assert state.schema_version == "setup-state-v3"
+    state = SetupStateStore(connection).initialize(_CLAIM_DIGEST)
+    assert state.schema_version == "setup-state-v4"
     connection.close()
 
     reopened = sqlite3.connect(path)
     try:
-        assert SetupStateStore(reopened).read().schema_version == "setup-state-v3"
+        assert SetupStateStore(reopened).read().schema_version == "setup-state-v4"
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize(
+    ("claimed", "digest"),
+    (
+        (False, None),
+        (False, "A" * 64),
+        (False, "0" * 63),
+        (False, _CLAIM_DIGEST + "\n"),
+        (True, _CLAIM_DIGEST),
+    ),
+)
+def test_claim_token_digest_exists_exactly_while_unclaimed(
+    claimed: bool, digest: str | None
+) -> None:
+    with pytest.raises(ValidationError):
+        SetupStateDocument.model_validate(
+            {
+                "schema_version": "setup-state-v4",
+                "revision": 2 if claimed else 1,
+                "bootstrap_verifier_digest": "0" * 64,
+                "completed_steps": ["claim"] if claimed else [],
+                "claimed": claimed,
+                "claim_token_digest": digest,
+            }
+        )
+
+
+def test_restart_rotation_revokes_the_earlier_claim_token() -> None:
+    connection, store = _store()
+    state = store.initialize(_CLAIM_DIGEST)
+    successor_token = "restarted-claim-token-fedcba9876543210"
+
+    rotated = store.rotate_claim_token(
+        expected_revision=state.revision,
+        claim_token_digest=claim_token_digest(successor_token),
+    )
+
+    assert rotated.revision == state.revision + 1
+    assert rotated.claim_token_digest == claim_token_digest(successor_token)
+    with pytest.raises(SetupStateError):
+        store.rotate_claim_token(
+            expected_revision=state.revision,
+            claim_token_digest=_CLAIM_DIGEST,
+        )
+    before = list(connection.iterdump())
+    with pytest.raises(SetupClaimTokenError):
+        store.claim_owner(
+            expected_revision=rotated.revision,
+            owner_verifier=_OWNER,
+            claim_token=_CLAIM_TOKEN,
+        )
+    assert list(connection.iterdump()) == before
+    assert store.read() == rotated
+
+    claimed = store.claim_owner(
+        expected_revision=rotated.revision,
+        owner_verifier=_OWNER,
+        claim_token=successor_token,
+    )
+
+    assert claimed.claimed
+    with pytest.raises(SetupStateError):
+        store.rotate_claim_token(
+            expected_revision=claimed.revision,
+            claim_token_digest=_CLAIM_DIGEST,
+        )
+
+
+def test_claim_clears_the_digest_and_a_replayed_token_is_not_stale() -> None:
+    connection, store = _store()
+    state = store.initialize(_CLAIM_DIGEST)
+
+    claimed = _claimed(store, state)
+
+    assert claimed.claimed and claimed.claim_token_digest is None
+    assert store.read() == claimed
+    ((encoded,),) = connection.execute("SELECT document FROM owner_settings")
+    assert '"claim_token_digest":null' in encoded
+    before = list(connection.iterdump())
+    # Replaying the same claim, at the revision it carried or the current one,
+    # is refused as a claim token: the claimed document keeps no digest. A
+    # concurrent loser therefore cannot claim, and the transport answers it
+    # with the existing 409 because its own pre-check had passed.
+    for revision in (state.revision, claimed.revision):
+        with pytest.raises(SetupClaimTokenError):
+            store.claim_owner(
+                expected_revision=revision,
+                owner_verifier=_OWNER,
+                claim_token=_CLAIM_TOKEN,
+            )
+    assert list(connection.iterdump()) == before
+
+
+@pytest.mark.parametrize(
+    "token", (None, "", "x" * 129, _CLAIM_TOKEN + "\n", "\ud800", 43, b"token")
+)
+def test_claim_owner_bounds_the_presented_token_before_hashing(
+    token: object,
+) -> None:
+    connection, store = _store()
+    state = store.initialize(_CLAIM_DIGEST)
+    before = list(connection.iterdump())
+
+    with pytest.raises(SetupClaimTokenError):
+        store.claim_owner(
+            expected_revision=state.revision,
+            owner_verifier=_OWNER,
+            claim_token=cast(str, token),
+        )
+
+    assert list(connection.iterdump()) == before
+
+
+def test_ordinary_setup_writes_cannot_change_the_claim_token_digest() -> None:
+    _connection, store = _store()
+    state = store.initialize(_CLAIM_DIGEST)
+
+    with pytest.raises(SetupStateError):
+        store.write(
+            _next(state, claim_token_digest="f" * 64), state.revision, _BOOTSTRAP
+        )
+
+    assert store.read() == state
 
 
 def test_only_the_exact_seeded_schema_is_an_initialization_predecessor() -> None:
@@ -535,7 +691,7 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
     database = tmp_path / "application.sqlite3"
     repository = open_repository(database, cross_thread=True)
     state = repository.setup_state_store()
-    state.initialize(_BOOTSTRAP)
+    state.initialize(_CLAIM_DIGEST)
     entered = threading.Event()
     release = threading.Event()
 
@@ -570,6 +726,7 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
             state.claim_owner(
                 expected_revision=document.revision,
                 owner_verifier=_OWNER,
+                claim_token=_CLAIM_TOKEN,
             )
         except Exception as error:
             write_failure.append(error)
@@ -604,7 +761,7 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
 
 def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> None:
     connection, store = _store()
-    state = store.initialize(_BOOTSTRAP)
+    state = store.initialize(_CLAIM_DIGEST)
     state = _claimed(store, state)
     state = _next(
         state,
@@ -750,7 +907,7 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
 
 def test_schema_admission_accepts_only_the_closed_incomplete_setup_document() -> None:
     connection, store = _store()
-    store.initialize(_BOOTSTRAP)
+    store.initialize(_CLAIM_DIGEST)
 
     _validate_owner_settings_content(connection)
 
@@ -764,9 +921,10 @@ def test_schema_admission_accepts_only_the_closed_incomplete_setup_document() ->
 def test_changing_a_recorded_step_removes_its_dependents() -> None:
     state = SetupStateDocument.model_validate(
         {
-            "schema_version": "setup-state-v3",
+            "schema_version": "setup-state-v4",
             "revision": 1,
             "bootstrap_verifier_digest": "0" * 64,
+            "claim_token_digest": _CLAIM_DIGEST,
         }
     )
     changed = state.invalidate_after("claim")

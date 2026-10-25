@@ -91,14 +91,38 @@ qualification is unchanged.
 
 ## Preparation counts binding successor (#1366)
 
-The current F19a, F20 and F46 records move to semantic revision 68 over base
-`eb27145c`, whose record bytes the archive index keeps. Their runtime digests
+The current F19a, F20 and F46 records move to semantic revision 70 over base
+`0a920587`, whose record bytes the archive index keeps. Their runtime digests
 join the prior-manifest histories with their frozen permission sets, so
 decisions minted under them stay readable without current authority. The
 revision follows the preparation status read naming the run it read and the
 scans that run enrolled, and the application summing the run's current counts
 from those rows. Preparation counts never write, and no operation gains or
 loses automatic authority.
+
+## Setup claim token successor (#1383)
+
+The current F19a, F20 and F46 records move to semantic revision 69 over base
+`5ee34acb`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows setup composition minting a deployment-held claim token and
+first-boot selection admitting its owner-only file. No metadata authority
+changes, and permitted operations are unchanged. Incomplete setup state moves
+to `setup-state-v4`, so a clean rebuild is required for setup state only;
+qualification-bound documents and outcomes are unchanged.
+
+## Transient write recovery successor (#1382)
+
+The current F19a, F20 and F46 records move to semantic revision 68 over base
+`eb27145c`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows a lost Audiobookshelf connection recording a clearable
+connection suspension, the running worker resolving queued read-backs, and a
+stranded claim returning to the guarded scheduler unsent. No schema or
+persisted document changes, so no clean rebuild is required, and no operation
+gains or loses automatic authority.
 
 ## Ebook ISBN keep binding successor (#1368)
 

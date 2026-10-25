@@ -1728,15 +1728,45 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
         pytest.param(
             "d9f5e77c870d51f3274fc64b524b9b62f7e96925e766927c882c426760f908e7",
             automatic_decision._HISTORICAL_PERMISSIONS_2,
-            id="preparation-counts-predecessor-f19a",
+            id="transient-write-recovery-predecessor-f19a",
         ),
         pytest.param(
             "62283c176d95a47b0ecafbe0014c1847fe2724728a0dbc921c54a1ab441ee120",
             automatic_decision._HISTORICAL_PERMISSIONS_7,
-            id="preparation-counts-predecessor-f20",
+            id="transient-write-recovery-predecessor-f20",
         ),
         pytest.param(
             "611e3b8a173169c920b5055e40f75097ffac7a74d07d6a0978e1c3abc6f7e937",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="transient-write-recovery-predecessor-f46",
+        ),
+        pytest.param(
+            "0054b5206adbef665433672a133a9d8858a0e2afb9b1f59999d37e83c339e772",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="setup-claim-token-predecessor-f19a",
+        ),
+        pytest.param(
+            "c1b83894ecaadff2da1bec8d51a1eb34bd2e6128c620161d2b57a7a77c0fe0b9",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="setup-claim-token-predecessor-f20",
+        ),
+        pytest.param(
+            "e0970bb9233ab91c2394356c714efa65ca472b25eb0e613706353f849d03cf0f",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="setup-claim-token-predecessor-f46",
+        ),
+        pytest.param(
+            "0334857a3cc9c2facc72d3cf0fcadc4b05d4c0d986c19801944bee1e3098df2a",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="preparation-counts-predecessor-f19a",
+        ),
+        pytest.param(
+            "a8b33ee806b70850b15aac2f77d5326bf81a620be3a5b4a1f19b7414aa7f840d",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="preparation-counts-predecessor-f20",
+        ),
+        pytest.param(
+            "c62d8dbec8608667d7119152f7ff2250ac05eeb2af7c0f5772148e8e30e42a63",
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="preparation-counts-predecessor-f46",
         ),

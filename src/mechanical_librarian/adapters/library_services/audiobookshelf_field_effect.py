@@ -195,7 +195,14 @@ class AudiobookshelfFieldEffectTarget:
                         f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/media",
                         json=media_payload,
                     )
-        except (httpx.HTTPError, OSError, ValueError):
+        except (httpx.TransportError, OSError):
+            # A timeout or dropped connection says nothing about the field: the
+            # suspension it records is connection-wide and a later successful
+            # observation clears it (#1382). The write outcome stays unknown.
+            return TargetEffectResult(
+                "ambiguous", "connection", "connection_unavailable"
+            )
+        except (httpx.HTTPError, ValueError):
             return TargetEffectResult(
                 "ambiguous", "destination", "unexpected_effect_behavior"
             )
@@ -234,7 +241,11 @@ class AudiobookshelfFieldEffectTarget:
             raise TargetServiceUnavailable(
                 "destination", "unexpected_effect_behavior"
             ) from error
-        except (httpx.HTTPError, OSError) as error:
+        except (httpx.TransportError, OSError) as error:
+            raise TargetServiceUnavailable(
+                "connection", "connection_unavailable"
+            ) from error
+        except httpx.HTTPError as error:
             raise TargetServiceUnavailable(
                 "destination", "unexpected_effect_behavior"
             ) from error
@@ -250,7 +261,11 @@ class AudiobookshelfFieldEffectTarget:
         if plan.destination == "cover":
             try:
                 status, headers, body = _bytes_response(client, f"{self._endpoint}/api/items/{quote(plan.work_id, safe='')}/cover", {"raw": "1"}, 8 * 1024 * 1024)
-            except (httpx.HTTPError, OSError) as error:
+            except (httpx.TransportError, OSError) as error:
+                raise TargetServiceUnavailable(
+                    "connection", "connection_unavailable"
+                ) from error
+            except httpx.HTTPError as error:
                 raise TargetServiceUnavailable(
                     "destination", "unexpected_effect_behavior"
                 ) from error

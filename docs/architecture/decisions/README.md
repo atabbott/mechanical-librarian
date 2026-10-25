@@ -110,3 +110,4 @@ an accepted ADR to make history match current preference; supersede it.
 | [0083](0083-validated-browse-document-reuse.md) | accepted | Reuse validated browse documents across requests by their exact bytes |
 | [0084](0084-persisted-attention-facts.md) | accepted | Persist which fields ask for the owner, and keep live cover authority per request |
 | [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted | Admit owner-entered values, withdrawal and reselection of an earlier value, and let holds follow the work |
+| [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |

@@ -8,6 +8,24 @@
   current run is marked as not in it, and first-finish history reads Prepared
   (#1366).
 
+- Retrying a failed Attention queue now returns focus to the Attention rail
+  instead of leaving it on the page (#1399).
+
+- Moving to another field after a first-run setup refusal now keeps focus
+  there, instead of a late frame pulling it back to the refused field (#1406).
+
+- Claiming a new instance now needs the setup claim token the container prints
+  once in its log and keeps in `/data/private/setup-claim-token`, so a network
+  visitor who reaches the port first can no longer take ownership. Each start
+  replaces the token until the instance is claimed. Clean rebuild required for
+  incomplete setup only (#1383).
+
+- A timeout or dropped connection during an Audiobookshelf write now holds
+  writes only until the connection is seen healthy again, instead of
+  suspending writes to that field for good. A write whose read-back failed is
+  confirmed by the running worker, and a write interrupted before it was sent
+  is rechecked against every safety condition before it is retried (#1382).
+
 - An automatic decision to keep an ebook's filled ISBN is now recorded as a
   kept field and joins its preparation's "Checked N fields, no changes" row,
   instead of reading "Details unavailable" when no source proposed a matching

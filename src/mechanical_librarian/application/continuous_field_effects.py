@@ -1709,8 +1709,24 @@ class ContinuousGuardedApplication:
             else self._operation_admission.classify("background")
         ):
             next(iter(self._applications.values())).run_pending_cleanups(limit=100)
+            # A read-back that failed mid-run leaves a queued targeted read that
+            # no cycle selects; resolve one page of them per pass rather than
+            # wait for a restart (#1382). One page, not the restart drain: a
+            # third value queues a re-evaluation for the same plan, which the
+            # next pass takes. A failure is reported after the cycle runs.
+            failures: list[Exception] = []
+            if not self._stop.is_set():
+                for plan_id in self._repository.pending_field_effect_action_plan_ids(
+                    100
+                ):
+                    try:
+                        self.reconcile(plan_id)
+                    except Exception as error:
+                        failures.append(error)
             while not self._stop.is_set() and self.run_cycle():
                 pass
+            if failures:
+                raise GuardedApplicationError("recovery") from failures[0]
 
     def _release_completed_manual_returns(self) -> None:
         if self._scan_progress is None:

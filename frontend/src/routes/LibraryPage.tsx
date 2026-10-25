@@ -9,6 +9,7 @@ import {
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
+import { CountPhrases } from '../components/CountPhrases'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
@@ -183,7 +184,11 @@ const preparationStateLine = (presentation: PreparationPresentation) => {
       return 'Paused until the reported connection issue is resolved'
     case 'completed_clean':
     case 'completed_with_failures':
-      return ['Finished', ...runOutcomes(presentation)].join(' · ')
+      return (
+        <>
+          Finished · <CountPhrases phrases={runOutcomes(presentation)} />
+        </>
+      )
     case 'dismissed':
       return 'Preparation dismissed'
   }
@@ -232,13 +237,16 @@ const boundedSearchName = (name: string) => {
   return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
 }
 
-// Each number stays with its first word, and a separator never starts a line
-// (#1013); the words themselves wrap, so enlarged text never splits one.
-const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) =>
-  [
-    ...runOutcomes(presentation),
-    `${presentation.now ? String(presentation.now.in_progress) : '…'}\u00a0${recoveryRequired ? 'retained' : 'in progress'}`,
-  ].join('\u00a0· ')
+// A separator never starts a line (#1013).
+const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) => (
+  <CountPhrases
+    phrases={[
+      ...runOutcomes(presentation),
+      `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'retained' : 'in progress'}`,
+    ]}
+    separator={'\u00a0· '}
+  />
+)
 const preparationPassage = [
   ['read', 'Read from library'],
   ['searches_finished', 'Searches finished'],
@@ -265,38 +273,38 @@ const PreparationSummary = ({
   onSelect: () => void
 }) => {
   const active = presentation.active_books.length + presentation.active_overflow
-  const outcomes = runOutcomes(presentation).join(' · ')
   let title: string
-  let copy: string
+  // What follows the run's outcomes on the summary line.
+  let rest: string
   switch (presentation.state) {
     case 'starting':
       title = 'Preparation is starting'
-      copy = `${outcomes} · ${String(active)} active`
+      rest = ` · ${String(active)} active`
       break
     case 'running':
       title = 'Preparing your library'
-      copy = `${outcomes} · ${String(active)} active`
+      rest = ` · ${String(active)} active`
       break
     case 'blocked':
       title = 'Preparation needs attention'
-      copy = `${outcomes} · ${String(active)} active`
+      rest = ` · ${String(active)} active`
       break
     case 'completed_clean':
       title = 'Preparation complete'
-      copy = outcomes
+      rest = ''
       break
     case 'completed_with_failures':
       title = 'Preparation completed with failures'
-      copy = outcomes
+      rest = ''
       break
     case 'dismissed':
       title = 'Preparation dismissed'
-      copy = outcomes
+      rest = ''
       break
   }
   if (recoveryRequired) {
     title = 'Preparation stopped'
-    copy = `${outcomes} · Service restart required`
+    rest = ' · Service restart required'
   }
   return (
     <button
@@ -309,9 +317,14 @@ const PreparationSummary = ({
       <span>
         <strong>{title}</strong>
         <small>
-          {reconnecting && !recoveryRequired
-            ? 'Reconnecting · last confirmed progress shown'
-            : `This run: ${copy}`}
+          {reconnecting && !recoveryRequired ? (
+            'Reconnecting · last confirmed progress shown'
+          ) : (
+            <>
+              This run: <CountPhrases phrases={runOutcomes(presentation)} />
+              {rest}
+            </>
+          )}
         </small>
       </span>
     </button>
@@ -5220,7 +5233,23 @@ export default function LibraryPage({
                 {attention.isError ? (
                   <>
                     Attention could not be loaded.{' '}
-                    <button type="button" onClick={() => void attention.refetch()}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void attention.refetch().then((result) => {
+                          // A successful retry removes this button, so the
+                          // rail takes focus back from it (#1399).
+                          const active = document.activeElement
+                          if (
+                            result.isSuccess &&
+                            (!active ||
+                              active === document.body ||
+                              attentionRail.current?.contains(active))
+                          )
+                            attentionRail.current?.focus({ preventScroll: true })
+                        })
+                      }
+                    >
                       Try again
                     </button>
                   </>

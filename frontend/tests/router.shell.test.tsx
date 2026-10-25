@@ -10,7 +10,7 @@ import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import { createApplicationRouter, preparationQuery } from '../src/router'
-import { createHttp, createLiveStream, library, renderRoute } from './fixtures'
+import { createHttp, createLiveStream, library, renderRoute, wholeText } from './fixtures'
 
 const reducedMotion = () => ({
   matches: true,
@@ -166,7 +166,7 @@ describe('Application shell', () => {
 
     const summary = await screen.findByRole('button', { name: /Preparing your library/u })
     expect(summary).toBeVisible()
-    expect(screen.getByText('This run: 1 ready to browse · 1 active')).toBeVisible()
+    expect(screen.getByText(wholeText('This run: 1 ready to browse · 1 active'))).toBeVisible()
     fireEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
     expect(screen.getByText('Preparation continues')).toBeVisible()
@@ -345,17 +345,21 @@ describe('Application shell', () => {
       name: /Preparation completed with failures/u,
     })
     const runLine = '1 ready to browse · 2 could not finish'
-    expect(within(summary).getByText(`This run: ${runLine}`)).toBeVisible()
-    // Each number stays with its first word, and an empty count other than
-    // ready is left out rather than stated as zero (#1013, #641). The words
-    // keep ordinary spaces, so enlarged text wraps between words, never
-    // inside one.
-    const summaryText = within(summary).getByText(/^This run:/u).textContent
-    expect(summaryText).toBe('This run: 1\u00a0ready to browse · 2\u00a0could not finish')
-    expect(summaryText).not.toMatch(/\D\u00a0/u)
+    expect(within(summary).getByText(wholeText(`This run: ${runLine}`))).toBeVisible()
+    // An empty count other than ready is left out rather than stated as zero
+    // (#641), and each number and its first word are one inline unit with an
+    // ordinary space, so they move to the next line together and break only
+    // when wider than a line (#1013, #1366).
+    const summaryText = within(summary).getByText(wholeText(`This run: ${runLine}`))
+    expect(
+      [...summaryText.querySelectorAll(':scope > .count-pair')].map((node) => node.textContent),
+    ).toEqual(['1 ready', '2 could'])
+    expect(summaryText.textContent).toBe(`This run: ${runLine}`)
     fireEvent.click(summary)
     expect(
-      await screen.findByText(`Finished · ${runLine}`, { selector: '.preparation-run-state' }),
+      await screen.findByText(wholeText(`Finished · ${runLine}`), {
+        selector: '.preparation-run-state',
+      }),
     ).toBeVisible()
     // The latched first finishes survive only as Prepared history.
     expect(screen.queryByRole('progressbar', { name: /^Prepared/u })).toBeNull()
@@ -393,7 +397,9 @@ describe('Application shell', () => {
     })
     expect(
       await within(summary).findByText(
-        'This run: … ready to browse · … recorded, nothing to decide · … could not finish',
+        wholeText(
+          'This run: … ready to browse · … recorded, nothing to decide · … could not finish',
+        ),
       ),
     ).toBeVisible()
     expect(within(audiobooks).getByText('Complete')).toBeVisible()
@@ -526,7 +532,7 @@ describe('Application shell', () => {
     // A state the label table does not name still reads as a label, never as
     // the store's identifier.
     expect(screen.getByText('Scanning')).toBeVisible()
-    expect(screen.getByText('1 of 2 checked · 0 ready to browse')).toBeVisible()
+    expect(screen.getByText(wholeText('1 of 2 checked · 0 ready to browse'))).toBeVisible()
     expect(
       screen.getByText(
         'Scan now \u2014 and Retry after a run with failures \u2014 start a new preparation cycle for this library; books that could not finish are prepared again; provider lookups that hit limits recover automatically on the documented schedule; a failure before a report has no automatic retry.',

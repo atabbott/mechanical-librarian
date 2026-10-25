@@ -33,6 +33,7 @@ import {
   library,
   recordedAcknowledgement,
   renderRoute,
+  wholeText,
 } from './fixtures'
 import { view as settingsView } from './settingsFixtures'
 
@@ -302,7 +303,7 @@ describe('Library route', () => {
 
     await act(async () => release(confirmed))
     expect(
-      await screen.findByText('Finished · 1 ready to browse · 1 could not finish', {
+      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -565,7 +566,9 @@ describe('Library route', () => {
     const { queryClient } = renderRoute('/library?lens=all', http)
 
     let summary = await screen.findByRole('button', { name: /Preparing your library/u })
-    expect(within(summary).getByText('This run: 1 ready to browse · 1 active')).toBeVisible()
+    expect(
+      within(summary).getByText(wholeText('This run: 1 ready to browse · 1 active')),
+    ).toBeVisible()
     expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
 
     act(() => {
@@ -582,7 +585,9 @@ describe('Library route', () => {
       })
     })
     summary = await screen.findByRole('button', { name: /Preparation is starting/u })
-    expect(within(summary).getByText('This run: 0 ready to browse · 0 active')).toBeVisible()
+    expect(
+      within(summary).getByText(wholeText('This run: 0 ready to browse · 0 active')),
+    ).toBeVisible()
     expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
 
     act(() => {
@@ -593,7 +598,9 @@ describe('Library route', () => {
       })
     })
     summary = await screen.findByRole('button', { name: /Preparation needs attention/u })
-    expect(within(summary).getByText('This run: 1 ready to browse · 1 active')).toBeVisible()
+    expect(
+      within(summary).getByText(wholeText('This run: 1 ready to browse · 1 active')),
+    ).toBeVisible()
     expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
 
     act(() => {
@@ -612,7 +619,7 @@ describe('Library route', () => {
       })
     })
     summary = await screen.findByRole('button', { name: /Preparation complete/u })
-    expect(within(summary).getByText('This run: 1 ready to browse')).toBeVisible()
+    expect(within(summary).getByText(wholeText('This run: 1 ready to browse'))).toBeVisible()
     expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
 
     act(() => {
@@ -620,7 +627,7 @@ describe('Library route', () => {
     })
     summary = await screen.findByRole('button', { name: /Preparation completed with failures/u })
     expect(
-      within(summary).getByText('This run: 1 ready to browse · 1 could not finish'),
+      within(summary).getByText(wholeText('This run: 1 ready to browse · 1 could not finish')),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: /^A Book\./u })).toBeEnabled()
   })
@@ -693,7 +700,9 @@ describe('Library route', () => {
 
       const detailHeading = await screen.findByRole('heading', { name: heading })
       expect(screen.getByText(introduction)).toBeVisible()
-      expect(screen.getByText(runState, { selector: '.preparation-run-state' })).toBeVisible()
+      expect(
+        screen.getByText(wholeText(runState), { selector: '.preparation-run-state' }),
+      ).toBeVisible()
       await waitFor(() => expect(detailHeading).toHaveFocus())
     },
   )
@@ -731,12 +740,15 @@ describe('Library route', () => {
     expect(screen.queryByText(/Preparation unavailable/u)).toBeNull()
     // The reconciliation reads once, in the outcomes row; the header keeps the
     // short count it always carried rather than repeating it.
-    expect(screen.getByText('1 ready to browse · 2 in progress')).toBeVisible()
-    // Each number keeps its first word and no line starts with a separator
-    // (#1013); the words wrap, so enlarged text never splits one.
-    const scope = document.querySelector('.preparation-outcomes strong')?.textContent
-    expect(scope).toBe('1\u00a0ready to browse\u00a0· 2\u00a0in progress')
-    expect(scope?.replaceAll('\u00a0·', '')).not.toMatch(/\D\u00a0/u)
+    expect(screen.getByText(wholeText('1 ready to browse · 2 in progress'))).toBeVisible()
+    // Each number and its first word are one inline unit with an ordinary
+    // space, so they move to the next line together and break only when wider
+    // than a line; no line starts with a separator (#1013, #1366).
+    const scope = document.querySelector('.preparation-outcomes strong')
+    expect(
+      [...(scope?.querySelectorAll(':scope > .count-pair') ?? [])].map((node) => node.textContent),
+    ).toEqual(['1 ready', '2 in'])
+    expect(scope?.textContent).toBe('1 ready to browse\u00a0· 2 in progress')
     expect(document.querySelector('.preparation-detail > header > strong')?.textContent).toBe(
       '1 ready to browse in this run',
     )
@@ -768,7 +780,9 @@ describe('Library route', () => {
     ).toBeVisible()
     expect(screen.getByText('Active title')).toBeVisible()
     expect(screen.getByText('Unrelated unfinished title')).toBeVisible()
-    expect(screen.getByText('1 ready to browse · 1 could not finish · 1 in progress')).toBeVisible()
+    expect(
+      screen.getByText(wholeText('1 ready to browse · 1 could not finish · 1 in progress')),
+    ).toBeVisible()
 
     act(() => {
       queryClient.setQueryData(['review-preparation'], {
@@ -801,7 +815,9 @@ describe('Library route', () => {
       '/library?lens=all&q=Ready+title',
       '/library?lens=all&q=Unfinished+title',
     ])
-    expect(screen.getByText('1 ready to browse · 1 could not finish · 1 in progress')).toBeVisible()
+    expect(
+      screen.getByText(wholeText('1 ready to browse · 1 could not finish · 1 in progress')),
+    ).toBeVisible()
 
     act(() => {
       queryClient.setQueryData(['review-preparation'], {
@@ -893,7 +909,7 @@ describe('Library route', () => {
         },
       })
     })
-    await screen.findByText('Finished · 1 ready to browse · 1 could not finish', {
+    await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
       selector: '.preparation-run-state',
     })
     expect(screen.queryByText(/books\/min/u)).toBeNull()
@@ -1031,7 +1047,7 @@ describe('Library route', () => {
       })
       await user.click(screen.getByRole('button', { name: /Preparation completed with failures/u }))
       expect(
-        await screen.findByText('Finished · 1 ready to browse · 1 could not finish', {
+        await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
           selector: '.preparation-run-state',
         }),
       ).toBeVisible()
@@ -1105,7 +1121,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText('Finished · 1 ready to browse · 1 could not finish', {
+      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1151,7 +1167,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText('Finished · 1 ready to browse · 1 could not finish', {
+      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1263,7 +1279,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText('Finished · 1 ready to browse · 1 could not finish', {
+      await screen.findByText(wholeText('Finished · 1 ready to browse · 1 could not finish'), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -1433,7 +1449,7 @@ describe('Library route', () => {
     expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
     fireEvent.click(summary)
     expect(
-      await screen.findByText('Finished · 0 ready to browse · 1 could not finish', {
+      await screen.findByText(wholeText('Finished · 0 ready to browse · 1 could not finish'), {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -6371,48 +6387,74 @@ describe('Library route', () => {
     },
   )
 
-  it('recovers and paginates the contextual attention queue', async () => {
-    const user = userEvent.setup()
-    let calls = 0
-    const item = {
-      id: 'case-1',
-      destination: 'title',
-      title: 'A Book',
-      authors: [],
-      library: 'Books',
-      mediaKind: 'ebook',
-      classificationReason: 'Canonical library attention reason',
-      notices: ['internal-library-notice'],
-      provenance: [],
-      workAttentionCount: 1,
-    }
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getAttention: vi.fn(async (search: AttentionSearch) => {
-        calls += 1
-        if (calls === 1) throw new Error('temporary attention failure')
-        return search.cursor
-          ? { total: 2, items: [{ ...item, id: 'case-2', title: 'Second queued work' }] }
-          : { total: 2, nextCursor: 'next', items: [item] }
-      }),
-    }
-    renderRoute('/library?lens=all', http)
+  it.each(['before', 'after'] as const)(
+    'recovers and paginates the contextual attention queue with the open-focus frames %s the retry',
+    async (frames) => {
+      const user = userEvent.setup()
+      let calls = 0
+      const item = {
+        id: 'case-1',
+        destination: 'title',
+        title: 'A Book',
+        authors: [],
+        library: 'Books',
+        mediaKind: 'ebook',
+        classificationReason: 'Canonical library attention reason',
+        notices: ['internal-library-notice'],
+        provenance: [],
+        workAttentionCount: 1,
+      }
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getAttention: vi.fn(async (search: AttentionSearch) => {
+          calls += 1
+          if (calls === 1) throw new Error('temporary attention failure')
+          return search.cursor
+            ? { total: 2, items: [{ ...item, id: 'case-2', title: 'Second queued work' }] }
+            : { total: 2, nextCursor: 'next', items: [item] }
+        }),
+      }
+      renderRoute('/library?lens=all', http)
 
-    await user.click(await screen.findByRole('button', { name: /Attention/ }))
-    await user.click(await screen.findByRole('button', { name: 'Try again' }))
-    const rail = screen.getByLabelText('Attention queue')
-    await waitFor(() => expect(rail).toHaveFocus())
-    expect(within(rail).getByText('A Book')).toBeVisible()
-    expect(within(rail).getByText(/Canonical library attention reason/u)).toBeVisible()
-    expect(within(rail).queryByText('internal-library-notice')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Load more attention' }))
-    expect(await screen.findByText('Second queued work')).toBeVisible()
-    expect(http.getAttention).toHaveBeenLastCalledWith(
-      { cursor: 'next' },
-      expect.any(AbortSignal),
-      'foreground',
-    )
-  })
+      const open = await screen.findByRole('button', { name: /Attention/ })
+      // The rail takes focus two frames after opening; hold those frames so
+      // the retry lands on a chosen side of them (#1399).
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
+      const runFrames = async () =>
+        await act(async () => {
+          for (const callback of queued.values()) callback(0)
+          queued.clear()
+        })
+      await user.click(open)
+      const retry = await screen.findByRole('button', { name: 'Try again' })
+      const rail = screen.getByLabelText('Attention queue')
+      if (frames === 'before') {
+        await runFrames()
+        expect(rail).toHaveFocus()
+      }
+      await user.click(retry)
+      expect(await within(rail).findByText('A Book')).toBeVisible()
+      if (frames === 'after') await runFrames()
+      await waitFor(() => expect(rail).toHaveFocus())
+      expect(within(rail).getByText(/Canonical library attention reason/u)).toBeVisible()
+      expect(within(rail).queryByText('internal-library-notice')).toBeNull()
+      await user.click(screen.getByRole('button', { name: 'Load more attention' }))
+      expect(await screen.findByText('Second queued work')).toBeVisible()
+      expect(http.getAttention).toHaveBeenLastCalledWith(
+        { cursor: 'next' },
+        expect.any(AbortSignal),
+        'foreground',
+      )
+    },
+  )
 
   it('uses the review-case identity for workspace selection and advances through the frozen attention cohort', async () => {
     const user = userEvent.setup()

@@ -773,8 +773,11 @@ reopened_store = PrivateCoverRecoveryStore(
 restarted = service(reopened_store)
 if restarted.start() != (3, 0, 1):
     raise RuntimeError("startup recovery count")
-if restarted.status(claimed.plan_id).state != "verified":
+returned = restarted.status(claimed.plan_id)
+if (returned.state, returned.failure) != ("retryable", "not_applied"):
     raise RuntimeError("claimed recovery")
+if restarted.apply(claimed.plan_id).state != "verified":
+    raise RuntimeError("claimed reapplication")
 if restarted.status(applying.plan_id).state != "retryable":
     raise RuntimeError("applying recovery")
 if restarted.status(reconciling.plan_id).state != "retryable":

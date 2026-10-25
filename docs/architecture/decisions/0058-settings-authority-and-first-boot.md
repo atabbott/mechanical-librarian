@@ -1,7 +1,10 @@
 # ADR-0058: Make settings-store authority explicit after first boot
 
-Transport provisions are superseded by [ADR-0072](0072-explicit-local-transport.md);
-all other provisions remain in force.
+Transport provisions are superseded by [ADR-0072](0072-explicit-local-transport.md).
+The provision that the first visitor receives a nonce and creates the owner
+password is superseded by [ADR-0086](0086-deployment-held-setup-claim-token.md):
+the first owner must also present the deployment-held claim token. All other
+provisions remain in force.
 
 
 - Status: accepted

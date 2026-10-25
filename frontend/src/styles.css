@@ -1117,6 +1117,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .preparation-outcomes { display:flex; flex-wrap:wrap; gap:.4rem .75rem; padding-top:.2rem; }
 .preparation-outcomes dd { flex:1 1 10rem; text-align:right; }
 .preparation-outcomes dd strong { overflow-wrap:anywhere; }
+/* A number and its first word move to the next line together when they fit there, and break at their space only when wider than a line (#1366). */
+.count-pair { display:inline-block; }
 .preparation-completions li { display:flex; justify-content:space-between; gap:1rem; padding:.55rem 0; border-bottom:1px solid var(--line); }
 .preparation-completions li span { overflow-wrap:anywhere; }
 .preparation-completions li strong { color:var(--soft); font-size:.64rem; white-space:nowrap; }

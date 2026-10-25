@@ -41,6 +41,7 @@ import type {
   ShadowPostureView,
 } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
+import { CountPhrases } from './components/CountPhrases'
 import { LiveStreamNotice } from './components/LiveStreamNotice'
 import {
   preparationInvalidationDebtKey,
@@ -918,16 +919,19 @@ export const PreparationActivity = () => {
                  * A finished scan's buckets below already state its split in
                  * these words, so only the checked count stands here.
                  */}
-                {[
-                  `${String(item.checked)} of ${String(item.total)} checked`,
-                  ...(item.state.startsWith('completed')
-                    ? []
-                    : preparationOutcomes({
+                {`${String(item.checked)} of ${String(item.total)} checked`}
+                {!item.state.startsWith('completed') && (
+                  <>
+                    {' · '}
+                    <CountPhrases
+                      phrases={preparationOutcomes({
                         ready: item.ready,
                         recorded: item.recorded,
                         failed: item.blocked,
-                      })),
-                ].join(' · ')}
+                      })}
+                    />
+                  </>
+                )}
               </span>
               <dl className="preparation-stages">
                 {/*

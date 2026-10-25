@@ -33,6 +33,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectPlan,
 )
+from mechanical_librarian.domain.setup_state import claim_token_digest
 from mechanical_librarian.infrastructure.first_boot import FirstBootMode
 
 
@@ -92,7 +93,7 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
         def interrupt_before_kickoff(*_args: object, **_kwargs: object) -> None:
             repository = container.open_repository(root / "application.sqlite3")
             try:
-                repository.setup_state_store().initialize()
+                repository.setup_state_store().initialize(claim_token_digest("t" * 43))
             finally:
                 repository.close()
 
@@ -711,7 +712,7 @@ def test_container_entrypoint_preserves_retained_reviewer_authority(
 ) -> None:
     repository = container.open_repository(tmp_path / "application.sqlite3")
     if resumable:
-        repository.setup_state_store().initialize()
+        repository.setup_state_store().initialize(claim_token_digest("t" * 43))
     repository.close()
     auth = tmp_path / "reviewer" / "auth"
     auth.parent.mkdir(mode=0o700)

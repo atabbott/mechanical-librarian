@@ -635,7 +635,13 @@ class GuardedFieldApplication:
         if operation.state == "reconciling":
             return self.reconcile(plan_id, affected_review_case_ids)
         if operation.state == "claimed":
-            return self._execute_claimed(operation, affected_review_case_ids)
+            # ``claimed -> applying`` precedes the target request, so a plan
+            # found here sent nothing. Returning it to ``retryable`` hands it
+            # to the ordinary scheduler, which applies it only through every
+            # guard and a fresh atomic claim (#1382).
+            return self._repository.transition_field_effect(
+                plan_id, "claimed", "retryable", self._clock(), "not_applied"
+            )
         if operation.state == "applying":
             operation = self._repository.schedule_field_effect_reconciliation(
                 plan_id, operation.state, self._clock(), "restart_readback"
@@ -932,14 +938,36 @@ class GuardedFieldApplication:
         for member in (plan, plan.subtitle_plan()):
             if member is None:
                 continue
-            if (
-                self._repository.field_effect_capability_suspension(
+            suspension = self._repository.field_effect_capability_suspension(
+                member.connection, member.destination
+            )
+            # A lost connection is the one suspension time can resolve, so it
+            # alone waits for the fresh observation below instead of staling
+            # the plan; every other reason still refuses here.
+            if suspension is not None and suspension != "connection_unavailable":
+                return self._stale(operation, "capability")
+            observed_at = None if suspension is None else self._clock()
+            capability = self._capabilities.observe(member)
+            if capability.category == "allowed" and observed_at is not None:
+                self._repository.clear_field_effect_capability_suspension(
+                    scope="connection",
+                    connection=member.connection,
+                    destination="",
+                    reason="connection_unavailable",
+                    observed_at=observed_at,
+                )
+                # Re-read rather than assume. The clear removes only rows older
+                # than this observation, so a lost connection recorded in the
+                # same clock second survives it: refuse without staling, as
+                # the atomic claim does, and let the next pass observe again.
+                # A destination-scoped suspension behind it still stales.
+                remaining = self._repository.field_effect_capability_suspension(
                     member.connection, member.destination
                 )
-                is not None
-            ):
-                return self._stale(operation, "capability")
-            capability = self._capabilities.observe(member)
+                if remaining == "connection_unavailable":
+                    raise GuardedApplicationError("capability")
+                if remaining is not None:
+                    return self._stale(operation, "capability")
             if capability.category != "allowed":
                 scope = (
                     "connection"
