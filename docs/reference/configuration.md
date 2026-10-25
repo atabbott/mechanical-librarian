@@ -366,7 +366,10 @@ does not extend it. The global
 configured libraries reconcile; concurrency, provider pacing, and retry bounds
 remain maintainer-owned. Proxy forwarding is disabled unless the
 direct peer is one of at most 16 explicitly listed `trusted_proxy_ips`;
-forwarded Host or scheme headers from any other peer fail closed. No password,
+forwarded Host or scheme headers from any other peer fail closed. A trusted
+proxy must also append the client address to one `X-Forwarded-For` line: sign-in
+is throttled per client, and a proxy that omits it shares one throttled key
+among all its clients (#1384). No password,
 private-key contents, raw session token, or CSRF token is stored in
 configuration or the application database.
 

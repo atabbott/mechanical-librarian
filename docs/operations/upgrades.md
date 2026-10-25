@@ -306,7 +306,9 @@ Current-schema restart, crash recovery, and replay remain supported. Never pair
 a current database with an older or unrelated artifact directory: current
 recovery may remove unreferenced digest-named artifacts. The independently
 owned session database accepts only absent or exact-current state; deleting it
-is its clean rebuild and signs the owner out.
+is its clean rebuild and signs the owner out. #1384 keys the login throttle by
+client, so a session database from before it is refused at startup: **clean
+rebuild required** for that file only.
 
 A build that adds a write destination lapses every existing library consent,
 because the consent envelope identity digests the whole destination set. An

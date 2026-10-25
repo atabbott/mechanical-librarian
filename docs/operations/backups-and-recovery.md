@@ -32,7 +32,8 @@ The separate catalogue database and immutable batch manifests are regenerable
 from current configuration and source-only contributor operations; preserve
 them only when an operator needs their historical state. The dedicated
 session database `/data/private/review-sessions.sqlite` (ADR-0060) holds only
-session token digests and login-throttle timestamps: omitting or losing it
+session token digests, login-throttle timestamps and verifier-keyed client
+digests, never client addresses: omitting or losing it
 costs one owner re-login, and a complete `/data` backup that includes it is
 bearer-adjacent only through those digests, never through review state. In file-managed mode,
 runtime configuration and target/provider authentication remain private files

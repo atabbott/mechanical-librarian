@@ -513,21 +513,47 @@ verified against either one owner-only regular no-follow Argon2id hash file or
 the exact owner verifier inside the settings store. The dedicated owner-only
 `private/review-sessions.sqlite` stores only a domain-separated HMAC-SHA-256
 session lookup keyed by that exact encoded verifier, SHA-256 CSRF digests,
-expiry/revocation facts, and bounded throttle timestamps. It has its own
+expiry/revocation facts, and bounded throttle rows. It has its own
 connection and lock, so session writes never borrow application-database write
 authority. Replacing the verifier therefore rejects earlier sessions before
-authorization. Expired session rows are removed during login, logout records
-revocation, and failed logins use a durable five-attempt per five-minute global
-throttle without retaining client addresses. The store admits only absence or
-its exact schema and integrity; incompatible or corrupt state fails closed
-without repair. Its clean rebuild deletes only session authority and throttle
-history, requiring every browser to sign in again.
+authorization. Expired session rows are removed during login, and logout
+records revocation.
+
+Sign-in attempts are throttled durably per client (#1384): five per client in
+any five minutes, under a global backstop of 100 across all clients, so one
+client cannot reach the ceiling alone and the Argon2 work unauthenticated
+callers can force stays near one verification every three seconds. A granted
+session clears only its own client's attempts, so another client's debt
+survives the owner's sign-in, and a refusal is `throttled` (429), distinct from
+an unavailable store. Each throttle row keeps the client only as a second
+HMAC-SHA-256, keyed by the same exact encoded verifier under its own
+`login-client` domain, never as an address; no address reaches a log,
+exception, API response or evidence. The client is resolved from the
+transport, never from a header the client chooses: an untrusted peer is its
+socket address and any `X-Forwarded-For` it sends is ignored; a peer listed in
+`trusted_proxy_ips` is the rightmost entry of its single `X-Forwarded-For`
+line, which must parse as an IP address. No peer, or a trusted proxy that sends
+no `X-Forwarded-For`, several lines or an unparsable last entry, maps to one
+shared unresolved key that is throttled like any client and never borrows a
+resolved one. A trusted proxy that omits `X-Forwarded-For` therefore collapses
+all its clients into that one shared key, where one client's failures throttle
+every other client behind the same proxy. The store admits only absence or
+its exact schema and integrity; incompatible or corrupt state, including the
+pre-#1384 throttle table without client keys, fails closed without repair.
+Its clean rebuild deletes only session authority and throttle history,
+requiring every browser to sign in again.
 Pre-0.23 sessions used an unbound digest, so upgrading to 0.23.0 rejects them
 once. This deliberate sign-in boundary avoids a legacy lookup fallback that
 could preserve authority after a verifier replacement.
 
 ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
-An unauthenticated visitor may fetch only a bounded synchronizer nonce. Creating
+An unauthenticated visitor may fetch only a bounded synchronizer nonce: at most
+100 are outstanding for 600 seconds, and at most 10 per client under the same
+resolution rule, held only in process memory, so one client cannot exhaust the
+pool (#1384). A new owner password must be at least 12 characters, counted as
+code points rather than bytes, and at most 1,024 UTF-8 bytes; a shorter one is
+refused with the fixed `422 invalid_password` before Argon2 or any claim. Sign
+in still accepts any established verifier. Creating
 the owner password requires the exact configured Origin plus the same nonce in a
 host-only cookie and request header, and, under ADR-0086, the deployment-held
 setup claim token. Every start that finds setup unclaimed mints that token with

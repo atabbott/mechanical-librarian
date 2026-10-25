@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Wrong passwords from one client now slow only that client, so a stranger can
+  no longer keep the owner from signing in elsewhere; a backstop still limits
+  all clients together. A new owner password needs at least 12 characters;
+  existing passwords keep working. Clean rebuild required for the session
+  database only, which signs every browser out once (#1384).
+
 - The masthead and the Library run summary now count preparation in the same
   words: ready to browse, recorded with nothing to decide, and could not
   finish, as the run's books stand now, so the two agree. A library outside the

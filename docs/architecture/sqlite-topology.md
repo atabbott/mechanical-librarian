@@ -261,7 +261,7 @@ nearest KiB.
 | Operational/recovery | `field_effect_actions` | 0 R / 4 KiB | reconciliation scheduler/claim; effect runner | Bounded action queue is distinct from plan state for restartable execution. |
 | Operational/recovery | `field_effect_cleanups` | 0 R / 4 KiB | effect cleanup; activity reader | Cleanup completion is a separate durable recovery boundary. |
 | Security/session | `review_sessions` | 4 R / 4 KiB | session create/authenticate/revoke; web authentication | Only token digests and expiry/revocation are retained; session state has no review identity role. Moved to the dedicated session database by #912. |
-| Security/session | `review_login_failures` | 0 R / 4 KiB | failed-login throttle; authentication reader | Bounded global throttle history must not be conflated with sessions. Moved to the dedicated session database by #912. |
+| Security/session | `review_login_failures` | 0 R / 4 KiB | failed-login throttle; authentication reader | Bounded per-client throttle history, keyed only by a verifier-bound client HMAC, must not be conflated with sessions. Moved to the dedicated session database by #912; client-keyed by #1384. |
 | Control/configuration | `metadata_policy_state` | 1 R / 4 KiB | policy activation/posture; all policy/currentness readers | Singleton selects active immutable policy and generation. |
 | Control/configuration | `review_preparation_control` | 1 R / 4 KiB | pipeline pause/fair-claim/circuit state; claim readers | Singleton controls fair preparation scheduling, not policy authority. |
 | Control/configuration | `automatic_safety_state` | 1 R / 4 KiB | safety pause/suspension; decision and Attention readers | Singleton safety gate is deliberately independent of policy selection. |
