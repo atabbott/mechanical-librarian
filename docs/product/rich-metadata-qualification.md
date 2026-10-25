@@ -89,6 +89,16 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Ebook ISBN keep binding successor (#1368)
+
+The current F19a, F20 and F46 records move to semantic revision 67 over base
+`580285b1`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows authority binding accepting an automatic ebook ISBN keep
+exactly as the preview preserves it, so its no-change fact is recorded. A keep
+never writes, and no operation gains or loses automatic authority.
+
 ## Activation consent carry successor (#1370)
 
 The current F19a, F20 and F46 records move to semantic revision 66 over base

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import sqlite3
@@ -2079,6 +2080,9 @@ def test_full_date_reaches_one_durable_publication_candidate_and_read_models() -
         "exact_authors",
         "canonical_authors",
         "formatted_isbn",
+        "formatted_isbn13",
+        "unmatched_isbn",
+        "unproposed_isbn",
         "series_source_order",
         "series_all_qualified",
         "series_primary_narrative",
@@ -2258,6 +2262,12 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
             assert outcome.combination_ids == ()
             assert len(outcome.citation_ids) == 2
             assert repository.automatic_safety_state().category_suspensions == ()
+        elif scenario == "unproposed_isbn":
+            # Only the proposed title asks the owner; the kept ISBN does not.
+            assert {
+                row[2]
+                for row in repository.list_current_attention_documents(None, 50, 0)
+            } == {"title"}
         elif category in {"title_layout", "contributor_names", "isbn_form"}:
             assert expected_attention == 0
 
@@ -2789,6 +2799,210 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             repository.close()
 
 
+def _forged(value: Any, **changes: object) -> Any:
+    """Copy one frozen aggregate with fields no constructor would accept."""
+    copied = copy.copy(value)
+    for name, changed in changes.items():
+        object.__setattr__(copied, name, changed)
+    return copied
+
+
+def test_ebook_isbn_keep_binds_exactly_the_preview_preservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The preview keeps every filled ebook ISBN; binding admits that alone (#1368)."""
+    report, category, option, _ = _automatic_no_change_inputs("unproposed_isbn")
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        (decision,) = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(decision.review_case_id))["case"]
+        )
+        proposal_set = ProposalSet.from_json(
+            repository.get_proposal(decision.proposal_set_id)
+        )
+        persisted = ShadowOutcomeSet.from_json(repository.list_shadow_outcomes(1)[0][0])
+    finally:
+        repository.close()
+    assert not any(
+        result.alternatives
+        for result in proposal_set.results
+        if result.destination is TargetDestination.ISBN
+    )
+    assert decision.outcome == "keep_current"
+    assert (
+        _automatic_decision_value(decision, case, report, proposal_set, persisted)
+        is None
+    )
+
+    def refused(**changes: Any) -> None:
+        values = {
+            "decision": decision,
+            "report": report,
+            "proposal_set": proposal_set,
+            "outcome": persisted,
+            **changes,
+        }
+        with pytest.raises(FieldEffectError, match="^authority_binding$"):
+            _automatic_decision_value(
+                values["decision"],
+                case,
+                values["report"],
+                values["proposal_set"],
+                values["outcome"],
+            )
+
+    # Each forgery differs from the accepted keep by the one fact it names.
+    for proof in (
+        {"citation_ids": ("provider_" + "a" * 64,)},
+        {"combination_ids": ("combination_" + "b" * 64,)},
+        {"reason_code": "no_eligible_action"},
+        {"candidate_id": "alternative_" + "c" * 64},
+    ):
+        refused(
+            decision=_forged(decision, candidate_id=proof.get("candidate_id")),
+            outcome=_forged(
+                persisted,
+                outcomes=tuple(
+                    _forged(value, **proof)
+                    if value.outcome_id == decision.source_outcome_id
+                    else value
+                    for value in persisted.outcomes
+                ),
+            ),
+        )
+    refused(decision=_forged(decision, bundle_id="automatic_bundle_" + "d" * 64))
+    # A target's fingerprint is derived from its fields, so an empty ISBN can
+    # reach the rule only from a store that kept the bound fingerprint.
+    refused(
+        report=_forged(
+            report,
+            target=SimpleNamespace(
+                connection=report.target.connection,
+                library=report.target.library,
+                item=report.target.item,
+                fingerprint=report.target.fingerprint,
+                fields=tuple(
+                    TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
+                    if field.destination is TargetDestination.ISBN
+                    else field
+                    for field in report.target.fields
+                ),
+            ),
+        )
+    )
+    refused(proposal_set=_forged(proposal_set, media_kind="audiobook"))
+    monkeypatch.setattr(
+        "mechanical_librarian.adapters.persistence.field_effect_validation."
+        "F20_PASSING_AUTOMATIC_OPTIONS",
+        frozenset(),
+    )
+    refused()
+
+
+def test_audiobook_isbn_keep_still_reprojects_its_identifier(tmp_path: Path) -> None:
+    """Without its preserving alternative a recording's ISBN keep stays refused."""
+    from tests.support.audiobook_reports import (
+        publish_audiobook_preview,
+        synthetic_audiobook_product_lookup_report,
+    )
+
+    base = synthetic_audiobook_product_lookup_report(
+        (
+            {
+                "runtimeLengthMin": 970,
+                "asin": "B000000001",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+                "narrators": [{"name": "Narrator 0"}],
+                "isbn": "9781250077004",
+            },
+        ),
+        recording_runtime="58200.000",
+    )
+    report = MetadataReport.create(
+        target=TargetFacts(
+            base.target.connection,
+            base.target.library,
+            base.target.item,
+            tuple(
+                TargetField(field.destination, TargetFieldState.VALUE, "9781250077004")
+                if field.destination is TargetDestination.ISBN
+                else field
+                for field in base.target.fields
+            ),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+    )
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+        persisted = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        (decision,) = (
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case_id)
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposal_set = ProposalSet.from_json(
+            repository.get_proposal(decision.proposal_set_id)
+        )
+    finally:
+        repository.close()
+    assert (decision.destination, decision.outcome) == ("isbn", "keep_current")
+    assert (
+        _automatic_decision_value(decision, case, report, proposal_set, persisted)
+        is None
+    )
+    # The shape an ebook keep now binds: no ISBN alternative at all.
+    unproposed = _forged(
+        proposal_set,
+        results=tuple(
+            _forged(result, alternatives=())
+            if result.destination is TargetDestination.ISBN
+            else result
+            for result in proposal_set.results
+        ),
+    )
+    with pytest.raises(FieldEffectError, match="^authority_binding$"):
+        _automatic_decision_value(decision, case, report, unproposed, persisted)
+    # Nor does a recording whose set and option were forged to an ebook's.
+    with pytest.raises(FieldEffectError, match="^authority_binding$"):
+        _automatic_decision_value(
+            _forged(decision, policy_option="preserve_exact"),
+            case,
+            report,
+            _forged(unproposed, media_kind="ebook"),
+            _forged(
+                persisted,
+                outcomes=tuple(
+                    _forged(value, policy_option="preserve_exact")
+                    if value.outcome_id == decision.source_outcome_id
+                    else value
+                    for value in persisted.outcomes
+                ),
+            ),
+        )
+
+
 @pytest.mark.parametrize(
     "consumer", ("repository", "scheduler", "run_cycle", "background_recovery")
 )
@@ -3069,6 +3283,39 @@ def test_persistence_rejects_fresh_populated_series_from_faulty_preview(
         repository.close()
 
 
+def _faulty_isbn_keep() -> Any:
+    """Mint the ISBN keep from a faulty preview citing proof it never elected.
+
+    The preview's own ebook ISBN keep binds (#1368); this one must not.
+    """
+
+    def faulty(policy, report, proposal):
+        preview = compile_rich_metadata_preview(policy, report, proposal)
+        cited = (
+            next(
+                result
+                for result in proposal.results
+                if result.destination is TargetDestination.ISBN
+            )
+            .alternatives[0]
+            .evidence_references
+        )
+        return replace(
+            preview,
+            fields=tuple(
+                replace(field, source_evidence_references=cited)
+                if field.field == "isbn_form"
+                else field
+                for field in preview.fields
+            ),
+        )
+
+    return patch(
+        "mechanical_librarian.domain.shadow_outcome.compile_rich_metadata_preview",
+        side_effect=faulty,
+    )
+
+
 @pytest.mark.parametrize(
     "consumer", ("schedule", "run_cycle", "background", "owner_boundary")
 )
@@ -3139,13 +3386,12 @@ def test_unbindable_isbn_does_not_starve_a_later_human_acceptance(
             cases.append(
                 json.loads(repository.admit_review_case(proposal))["review_case_id"]
             )
-        repository.persist_shadow_outcome(cases[0], 4)
+        with _faulty_isbn_keep():
+            repository.persist_shadow_outcome(cases[0], 4)
         decision = AutomaticDecision.from_json(
             repository.get_review_case_decisions(cases[0])[0]
         )
         assert decision.outcome == "keep_current"
-        # ISBN still has to prove its exact representation: a populated target
-        # alone cannot admit this no-op, unlike the canonical rich categories.
         with pytest.raises(FieldEffectError, match="authority_binding"):
             repository.record_current_field_effect_no_change(decision, 5)
         human = _human_title_decision(repository, cases[1], 6)
@@ -3257,13 +3503,14 @@ def test_lone_unbindable_decision_reaches_the_activity_stream(
     channel = LiveUpdateChannel()
     subscription = channel.subscribe(channel.sequence)
     try:
-        (decision,) = _automatic_decisions(
-            SimpleNamespace(repository=repository),
-            report,
-            category,
-            option,
-            qualified=True,
-        )
+        with _faulty_isbn_keep():
+            (decision,) = _automatic_decisions(
+                SimpleNamespace(repository=repository),
+                report,
+                category,
+                option,
+                qualified=True,
+            )
         scheduler = ContinuousGuardedApplication(
             repository,
             {
