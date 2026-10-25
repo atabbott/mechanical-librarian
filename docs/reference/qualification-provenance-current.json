@@ -680,7 +680,7 @@
     "tests/unit/test_live_update_surface.py": "5d4c11b21777460b50efe27d3844bde6469c403070254edd82fef111bb85f6f7",
     "tests/unit/test_live_updates.py": "20b5a0a08f67971562ee6610f12447fde185673350a2b893ce1334584a2cda63",
     "tests/unit/test_metadata_policy.py": "61b9d2021e6fc458ae3e9c2116af6640f4ff2f0afc325b8e6e8a29ef17f17f47",
-    "tests/unit/test_metadata_policy_activation.py": "d3fafc090de6abcd18e2aaecb8fa7dda8d45112e3963be24b4d7999155de0723",
+    "tests/unit/test_metadata_policy_activation.py": "d0059c38013612045864bb14232d8b43a96e164ea2a182efb499f39a229eb1a4",
     "tests/unit/test_metadata_report_comparison.py": "7a8881bcccc9f8c1f929e5cbdaef1afa7ed7888bf79e757e8c71f6a4bf061605",
     "tests/unit/test_metadata_report_discovery.py": "e5f2105892743d374d57878563699fa44811e8dd6a5e7c7a7aac5fbbafaee795",
     "tests/unit/test_metadata_report_evidence.py": "eefe36eda4eb81056c9856704c6d998d107c2dfef4cd8e63cabbee276e9174ec",

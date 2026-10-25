@@ -1803,7 +1803,7 @@ def _preview_cohort(repository) -> tuple[object, ...]:
 
 
 def test_entering_preview_keeps_consent_for_a_configured_library_without_work(
-    state_path: Path,
+    state_path: Path, tmp_path: Path
 ) -> None:
     """The Preview gap (#1370 acceptance 5).
 
@@ -1813,7 +1813,9 @@ def test_entering_preview_keeps_consent_for_a_configured_library_without_work(
     after it. The reconciled cohort of the libraries with work is unchanged.
     """
     repository, report = _automatic_with_consent(state_path)
-    alone, _ = _automatic_with_consent(state_path.with_name("unconfigured.sqlite"))
+    # Each open store holds its own owner-only directory, because Linux's
+    # private binding locks a store's parent directory exclusively.
+    alone, _ = _automatic_with_consent(tmp_path / "unconfigured.sqlite")
     library, connection = report.target.library, report.target.connection
     libraries = tuple(sorted((library, "audio")))
 
