@@ -2379,16 +2379,12 @@ const preparationPresentation = (value: unknown) => {
   // The run's works as they stand now; absent or null means not yet known.
   const now = value.now
   if (now === undefined || now === null) return
-  if (
-    !record(now) ||
-    !exactKeys(now, ['ready', 'recorded', 'failed', 'in_progress', 'scan_ids']) ||
-    !Array.isArray(now.scan_ids) ||
-    now.scan_ids.length > 128
-  )
+  if (!record(now) || !exactKeys(now, ['ready', 'recorded', 'failed', 'in_progress', 'scan_ids']))
     throw new ApiError(502, 'invalid_preparation_now')
   for (const field of ['ready', 'recorded', 'failed', 'in_progress'])
     integerValue(now[field], `preparation_now_${field}`)
-  for (const scanId of now.scan_ids) stringValue(scanId, 'preparation_now_scan_id')
+  if (stringArray(now.scan_ids, 'preparation_now_scan_ids').length > 128)
+    throw new ApiError(502, 'invalid_preparation_now_scan_ids')
 }
 const throttleAdapters = Object.keys(settingsVocabulary.provider_labels)
 const throttleReasons = [

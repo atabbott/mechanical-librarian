@@ -245,7 +245,6 @@ const preparationPassage = [
   ['searches_finished', 'Searches finished'],
   ['compared', 'Candidates compared'],
   ['checked', 'Metadata checked'],
-  ['ready', 'Prepared'],
 ] as const
 
 // The compact layout, where the selected work replaces the list.
@@ -345,7 +344,7 @@ const PreparationDetail = ({
       break
     case 'running':
       heading = 'Preparing your library'
-      introduction = 'Preparation continues here while ready works remain selectable.'
+      introduction = 'Preparation continues here while prepared works remain selectable.'
       break
     case 'blocked':
       heading = 'Preparation needs attention'
@@ -358,7 +357,7 @@ const PreparationDetail = ({
     case 'completed_with_failures':
       heading = 'Preparation completed with failures'
       introduction =
-        'This run finished with reported failures; ready books remain available and the failed outcomes stay visible.'
+        'This run finished with reported failures; prepared books remain available and the failed outcomes stay visible.'
       break
     case 'dismissed':
       heading = 'Preparation dismissed'
@@ -368,7 +367,7 @@ const PreparationDetail = ({
   if (recoveryRequired) {
     heading = 'Preparation stopped'
     introduction =
-      'Restart the Mechanical Librarian service to resume preparation. Refreshing this page or scanning again cannot recover it. Ready books remain available.'
+      'Restart the Mechanical Librarian service to resume preparation. Refreshing this page or scanning again cannot recover it. Prepared books remain available.'
   }
   return (
     <div className="preparation-detail">
@@ -442,8 +441,8 @@ const PreparationDetail = ({
           <div>
             <h3 id="preparation-progress-title">Preparation progress</h3>
             <p>
-              Each stage counts books that first reached it in this run; a book that could not
-              finish stops at its last stage.
+              Each stage counts the books that first reached it in this run, and a book that could
+              not finish stops at its last stage; In this run counts them as they stand now.
             </p>
           </div>
           {/*

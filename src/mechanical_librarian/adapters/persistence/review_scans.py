@@ -481,17 +481,19 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "s.rescan_requested,s.updated_at",
                 tuple(value for library in libraries for value in library),
             ).fetchall()
-            # Which of those scans the visible run enrolled, in the same read,
-            # so the run's figures are a sum of exactly these rows (#1366).
-            enrolled = dict(
-                self._connection.execute(
-                    "SELECT enrollment.scan_id,enrollment.run_id "
-                    "FROM review_preparation_presentation AS run "
-                    "JOIN review_preparation_presentation AS enrollment "
-                    "ON enrollment.run_id=run.run_id AND enrollment.row_kind='enrollment' "
-                    "WHERE run.row_id='run'"
-                ).fetchall()
-            )
+            # The visible run and the scans it enrolled, in the same read, so
+            # the run's figures are a sum of exactly these rows (#1366).
+            run = self._connection.execute(
+                "SELECT run_id FROM review_preparation_presentation WHERE row_id='run'"
+            ).fetchone()
+            enrolled = {
+                scan_id
+                for (scan_id,) in self._connection.execute(
+                    "SELECT scan_id FROM review_preparation_presentation "
+                    "WHERE run_id=? AND row_kind='enrollment'",
+                    (None if run is None else run[0],),
+                )
+            }
             transaction.commit()
             progress = {
                 (row[1], row[2]): PipelineProgress(
@@ -507,7 +509,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     bool(row[5]),
                     row[6],
                     _stages(row, 11),
-                    enrolled.get(row[0]),
+                    None if run is None else run[0],
+                    row[0] in enrolled,
                 )
                 for row in rows
             }

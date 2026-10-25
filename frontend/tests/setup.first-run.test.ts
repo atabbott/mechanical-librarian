@@ -1431,6 +1431,8 @@ describe('shipped first-run setup script', () => {
                     ready: 1,
                     failed: 0,
                   },
+                  // The prepared book has since failed: current, not latched.
+                  now: { ready: 0, recorded: 0, failed: 1, in_progress: 0, scan_ids: [] },
                   active_books: [],
                   active_overflow: 0,
                   recent_completions: [],
@@ -1466,7 +1468,8 @@ describe('shipped first-run setup script', () => {
     if (!retry) throw new Error('preparation retry missing')
     await retry()
     expect(await screen.findByRole('heading', { name: 'Preparation is complete' })).toBeVisible()
-    // The first-finish count is Prepared here too; "ready" names one set (#1366).
+    // The first-finish count is Prepared here too, and Could not finish is the
+    // current count Library shows, so one phrase names one set (#1366).
     expect(
       [...document.querySelectorAll('.setup-passage div')].map((row) => [
         row.querySelector('dt')?.textContent,
@@ -1478,7 +1481,7 @@ describe('shipped first-run setup script', () => {
       ['Candidates compared', '1'],
       ['Metadata checked', '1'],
       ['Prepared', '1'],
-      ['Could not finish', '0'],
+      ['Could not finish', '1'],
     ])
     expect(timers).toHaveLength(0)
     expect(maximumInFlight).toBe(1)

@@ -895,7 +895,7 @@ export const PreparationActivity = () => {
           {data.recovery_required ? (
             <p role="status">
               Restart the Mechanical Librarian service to resume preparation. Refreshing this page
-              or scanning again cannot recover it. Ready books remain available.
+              or scanning again cannot recover it. Prepared books remain available.
             </p>
           ) : null}
           {data.libraries.map((item) => (
@@ -909,16 +909,24 @@ export const PreparationActivity = () => {
                  * The run line sums only the libraries its run enrolled, so a
                  * library outside it is the one way the two totals differ.
                  */}
-                {runScans && !runScans.includes(item.scan_id ?? '') ? ' · not in this run' : ''}
+                {runScans && item.scan_id && !runScans.includes(item.scan_id)
+                  ? ' · not in this run'
+                  : ''}
               </span>
               <span>
+                {/*
+                 * A finished scan's buckets below already state its split in
+                 * these words, so only the checked count stands here.
+                 */}
                 {[
                   `${String(item.checked)} of ${String(item.total)} checked`,
-                  ...preparationOutcomes({
-                    ready: item.ready,
-                    recorded: item.recorded,
-                    failed: item.blocked,
-                  }),
+                  ...(item.state.startsWith('completed')
+                    ? []
+                    : preparationOutcomes({
+                        ready: item.ready,
+                        recorded: item.recorded,
+                        failed: item.blocked,
+                      })),
                 ].join(' · ')}
               </span>
               <dl className="preparation-stages">

@@ -6057,7 +6057,9 @@ def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
     L1 holds a case (A), a recorded work (B) and a failure (C); L2 finished in
     an earlier run and is outside this one. After the run finishes, B is reset
     in the same scan and fails: the latched passage keeps its first finish, and
-    the run line and the masthead both move with it (#1366).
+    the run line and the masthead both move with it. A run replaced between the
+    presentation read and the counts leaves the run line unknown, never empty
+    (#1366).
     """
     from mechanical_librarian.adapters.persistence.review_sessions import (
         SQLiteReviewSessionRepository,
@@ -6152,6 +6154,7 @@ def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
     repository._connection.commit()
 
     libraries = (("primary", "fiction", "lib-1"), ("primary", "history", "lib-2"))
+    race: list[int] = []
 
     class Preparation:
         recovery_required = False
@@ -6164,6 +6167,17 @@ def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
             return None
 
         def status(self):
+            if race:
+                # A new run replaces the presented one after it was read.
+                race.pop()
+                repository.request_review_scan(
+                    "primary",
+                    "history",
+                    "lib-2",
+                    _PRODUCER,
+                    22,
+                    trigger=PreparationTrigger.MANUAL_SCAN,
+                )
             return repository.review_pipeline_status(
                 tuple((connection, library) for connection, library, _ in libraries)
             )
@@ -6222,9 +6236,19 @@ def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
         )
         repository._connection.commit()
         changed = read()
+        race.append(1)
+        raced = read()
+        replacement = read()
     finally:
         sessions.close()
         repository.close()
+
+    raced_presentation = cast("dict[str, Any]", raced["presentation"])
+    assert raced_presentation["run_id"] == changed["presentation"]["run_id"]
+    assert raced_presentation["now"] is None
+    replacement_presentation = cast("dict[str, Any]", replacement["presentation"])
+    assert replacement_presentation["run_id"] != raced_presentation["run_id"]
+    assert replacement_presentation["now"] is not None
 
     presentation = cast("dict[str, Any]", changed["presentation"])
     assert presentation["passage"]["ready"] == 2

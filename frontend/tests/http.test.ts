@@ -2427,14 +2427,15 @@ describe('ReviewApiClient', () => {
     for (const malformed of [
       { ...now, extra: 0 },
       { ready: 1, recorded: 2, failed: 0, in_progress: 1 },
-      { ...now, scan_ids: 'scan-1' },
-      { ...now, scan_ids: Array.from({ length: 129 }, () => 'scan') },
       [],
     ])
       expect(() => view(malformed)).toThrow('502: invalid_preparation_now)')
     expect(() => view({ ...now, failed: -1 })).toThrow('502: invalid_preparation_now_failed)')
     expect(() => view({ ...now, ready: true })).toThrow('502: invalid_preparation_now_ready)')
-    expect(() => view({ ...now, scan_ids: [1] })).toThrow('502: invalid_preparation_now_scan_id)')
+    for (const scanIds of ['scan-1', [1], Array.from({ length: 129 }, () => 'scan')])
+      expect(() => view({ ...now, scan_ids: scanIds })).toThrow(
+        '502: invalid_preparation_now_scan_ids)',
+      )
   })
 
   it('accepts only ordered and bounded preparation presentation content', () => {

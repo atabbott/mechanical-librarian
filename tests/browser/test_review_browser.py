@@ -5314,7 +5314,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     "aria-live", "polite"
                 )
                 passage = page.get_by_role("progressbar")
-                expect(passage).to_have_count(5)
+                expect(passage).to_have_count(4)
                 passage_facts = passage.evaluate_all(
                     "elements => elements.map(element => ({label:element.getAttribute('aria-label'),value:element.value,max:element.max,position:element.position,style:element.getAttribute('style'),appearance:getComputedStyle(element).appearance,width:element.getBoundingClientRect().width}))"
                 )
@@ -5354,15 +5354,6 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "style": None,
                         "appearance": "none",
                         "width": passage_facts[3]["width"],
-                    },
-                    {
-                        "label": "Prepared: 0 of 4",
-                        "value": 0,
-                        "max": 4,
-                        "position": 0,
-                        "style": None,
-                        "appearance": "none",
-                        "width": passage_facts[4]["width"],
                     },
                 ]
                 assert all(fact["width"] > 0 for fact in passage_facts)
@@ -5432,20 +5423,17 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     (
                         "blocked",
                         "Preparation needs attention",
-                        "0 ready to browse · 0 recorded, nothing to decide · "
-                        "0 could not finish · 1 active",
+                        "0 ready to browse · 1 active",
                     ),
                     (
                         "completed_clean",
                         "Preparation complete",
-                        "4 ready to browse · 0 recorded, nothing to decide · "
-                        "0 could not finish",
+                        "4 ready to browse",
                     ),
                     (
                         "completed_with_failures",
                         "Preparation completed with failures",
-                        "3 ready to browse · 0 recorded, nothing to decide · "
-                        "1 could not finish",
+                        "3 ready to browse · 1 could not finish",
                     ),
                 )
                 for state, title, copy in summary_cases:
@@ -7888,10 +7876,9 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 )
                 trigger.click()
                 popover = page.get_by_role("region", name="Background activity")
-                expect(popover).to_contain_text(
-                    "7 of 9 checked · 4 ready to browse · "
-                    "2 recorded, nothing to decide · 1 could not finish"
-                )
+                # A finished scan states only its checked count; its split is
+                # its buckets.
+                expect(popover).to_contain_text("Last saved progress7 of 9 checked")
                 for label in ("Scan now", "Retry", "Pause"):
                     expect(
                         popover.get_by_role("button", name=label, exact=True)
@@ -10031,7 +10018,8 @@ def test_masthead_and_run_line_agree_on_the_real_server(
 
     books-1 finished in an earlier run, so it is outside the current one, which
     covers books-0. A prepared books-0 work then fails after its cycle completed:
-    both figures move together, and the Prepared history does not (#1366).
+    the run line and the finished library's buckets move together, and the
+    first-finish history does not (#1366).
     """
     from mechanical_librarian.interfaces.web import app as web_app
     from tests.support.owner_responsiveness import running_owner_fixture
@@ -10076,10 +10064,30 @@ def test_masthead_and_run_line_agree_on_the_real_server(
         assert books["ready"] + books["recorded"] > 0
 
         def split(ready: int, recorded: int, failed: int) -> str:
-            return (
-                f"{ready} ready to browse · {recorded} recorded, nothing to decide"
-                f" · {failed} could not finish"
+            # Only the ready count stands at zero, and each count keeps its
+            # words on one line.
+            return " · ".join(
+                f"{count} {words}".replace(" ", "\u00a0")
+                for index, (count, words) in enumerate(
+                    (
+                        (ready, "ready to browse"),
+                        (recorded, "recorded, nothing to decide"),
+                        (failed, "could not finish"),
+                    )
+                )
+                if index == 0 or count
             )
+
+        def buckets(ready: int, recorded: int, failed: int) -> dict[str, str]:
+            return {
+                words: str(count)
+                for words, count in (
+                    ("Ready to browse", ready),
+                    ("Recorded, nothing to decide", recorded),
+                    ("Could not finish", failed),
+                )
+                if count
+            }
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -10092,7 +10100,7 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     page.get_by_role("heading", name="Works", exact=True)
                 ).to_be_visible()
 
-                def observe() -> tuple[str, str, str, str]:
+                def observe() -> tuple[str, str, dict[str, str], str, str]:
                     summary = page.locator(".preparation-summary small")
                     expect(summary).to_contain_text("This run: ")
                     page.locator(".preparation-activity > button").click()
@@ -10107,27 +10115,37 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     }
                     expect(rows["books-1"]).to_contain_text("not in this run")
                     expect(rows["books-0"]).not_to_contain_text("not in this run")
+                    stages = rows["books-0"].locator(".preparation-stages > div")
                     facts = (
                         cast(str, summary.text_content()),
                         cast(
                             str, rows["books-0"].locator("span").nth(1).text_content()
                         ),
+                        {
+                            cast(str, stage.locator("dt").text_content()): cast(
+                                str, stage.locator("dd").text_content()
+                            )
+                            for stage in stages.all()
+                        },
                         cast(
                             str, rows["books-1"].locator("span").nth(0).text_content()
                         ),
                     )
                     page.keyboard.press("Escape")
                     summary.click()
-                    prepared = page.get_by_role(
-                        "progressbar", name=re.compile(r"^Prepared: ")
+                    # The latched first finishes, which a later failure keeps.
+                    outcomes = page.locator(
+                        ".preparation-section-heading:has(#recent-completions-title) > span"
                     )
-                    return (*facts, cast(str, prepared.get_attribute("aria-label")))
+                    return (*facts, cast(str, outcomes.text_content()))
 
                 page.goto(origin + "/library?lens=all")
-                run_line, books_row, other_state, prepared = observe()
-                expected = split(books["ready"], books["recorded"], books["blocked"])
-                assert run_line == f"This run: {expected}"
-                assert books_row.endswith(f"checked · {expected}")
+                run_line, books_row, books_stages, other_state, prepared = observe()
+                counts = (books["ready"], books["recorded"], books["blocked"])
+                assert run_line == f"This run: {split(*counts)}"
+                # A finished row's split is its buckets, in the same words.
+                assert books_row == f"{books['checked']} of {books['total']} checked"
+                assert books_stages == buckets(*counts)
                 assert other_state.endswith(" · not in this run")
 
                 # A prepared work fails after its cycle completed, as a policy
@@ -10149,10 +10167,12 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     books["ready"] + books["recorded"] - 1
                 )
                 page.goto(origin + "/library?lens=all")
-                run_line, books_row, other_state, prepared_after = observe()
-                expected = split(now["ready"], now["recorded"], now["failed"])
-                assert run_line == f"This run: {expected}"
-                assert books_row.endswith(f"checked · {expected}")
+                run_line, books_row, books_stages, other_state, prepared_after = (
+                    observe()
+                )
+                counts = (now["ready"], now["recorded"], now["failed"])
+                assert run_line == f"This run: {split(*counts)}"
+                assert books_stages == buckets(*counts)
                 assert other_state.endswith(" · not in this run")
                 assert prepared_after == prepared
             finally:

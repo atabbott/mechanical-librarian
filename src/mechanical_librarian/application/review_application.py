@@ -1452,25 +1452,32 @@ class ReviewApplication:
         )
         recovery_required = self._preparation.recovery_required
         # The run's figures are the current state of its works, summed from the
-        # rows above that name it: one read, so the run line and those rows
+        # rows above that it enrolled: one read, so the run line and those rows
         # agree exactly, and a library outside the run is the only way their
-        # totals differ (#1366).
+        # totals differ. A read that saw another run than the presentation
+        # leaves the figures unknown rather than summing none (#1366).
         in_run = tuple(
             progress
             for progress in progress_values
-            if progress is not None
-            and presentation is not None
-            and progress.run_id == presentation.run_id
+            if progress is not None and progress.in_run
         )
-        now = {
-            "ready": sum(progress.ready for progress in in_run),
-            "recorded": sum(progress.recorded for progress in in_run),
-            "failed": sum(progress.blocked for progress in in_run),
-            "in_progress": sum(
-                max(progress.total - progress.checked, 0) for progress in in_run
-            ),
-            "scan_ids": [progress.scan_id for progress in in_run],
-        }
+        replaced = presentation is not None and any(
+            progress is not None and progress.run_id != presentation.run_id
+            for progress in progress_values
+        )
+        now = (
+            None
+            if replaced
+            else {
+                "ready": sum(progress.ready for progress in in_run),
+                "recorded": sum(progress.recorded for progress in in_run),
+                "failed": sum(progress.blocked for progress in in_run),
+                "in_progress": sum(
+                    max(progress.total - progress.checked, 0) for progress in in_run
+                ),
+                "scan_ids": [progress.scan_id for progress in in_run],
+            }
+        )
         return PreparationView(
             libraries,
             paused,

@@ -54,15 +54,19 @@ Library and counts every unique checked work, including terminal failures.
 The preparation panel states one run's outcome in the counts an owner is
 waiting on, in the one vocabulary every preparation count uses: how many of the
 run's books are ready to browse (a case to decide), recorded with nothing to
-decide, could not finish, or are still in progress. Those figures are the
-run's works as they stand now, read with the masthead's own rows in one
-transaction, so they equal the sum of the masthead rows for the libraries in
-the run. Each stage bar states its own numerator and denominator, and one
-sentence says that a stage counts the books that first reached it in this run
-and that a book which could not finish stops at its last stage. The last bar,
-`Prepared`, and the Recent completions are that first-finish history: a book
-prepared and failed since still counts there, and is counted as it stands in
-the run line. A finishing rate is stated only while the run is
+decide, could not finish, or are still in progress. Ready to browse is always
+stated; the other counts are left out at zero rather than shown as a wall of
+zeros, and each count keeps its words on one line. Those figures are the run's
+works as they stand now, read with the masthead's own rows in one transaction,
+so they equal the sum of the masthead rows for the libraries in the run; a run
+replaced between the two reads leaves them unknown rather than empty. Each
+stage bar states its own numerator and denominator, and one sentence says that
+a stage counts the books that first reached it in this run, that a book which
+could not finish stops at its last stage, and that `In this run` counts them as
+they stand now. The Recent completions, each `Prepared` or `Could not finish`,
+are that first-finish history: a book prepared and failed since still reads
+`Prepared` there, and is counted as it stands in the run line. A finishing
+rate is stated only while the run is
 starting or running; a run that is finished, paused, dismissed or showing the
 last confirmed state after a reconnect states no rate at all, because it has
 none. Every completed book links into Works by the name the panel shows. A book
@@ -87,8 +91,10 @@ before a report has no automatic retry
 ([provider recovery](../operations/provider-recovery.md)). That control also
 names each library's scan state in words, states checked, ready to browse,
 recorded with nothing to decide and could-not-finish for that library as it
-stands now, marks a library outside the current run `not in this run`, and once
-a scan is finished lists only the buckets books actually reached. `Escape` closes it and returns focus to the
+stands now, and marks a scanned library outside the current run `not in this
+run`. Once a scan is finished it states only the checked count and lists only
+the buckets books actually reached, which carry its split in the same words.
+`Escape` closes it and returns focus to the
 control that opened it. The control stays in the masthead whenever a library is
 configured: at idle it reads `Preparation idle` and still offers Scan now and
 Pause, and it states that Pause stops new library scans while deferred provider

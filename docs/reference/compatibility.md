@@ -4,8 +4,9 @@
 presentation, whose schema version is unchanged: the run's works as they stand
 now (`ready`, `recorded`, `failed`, `in_progress`) and the `scan_ids` of the
 masthead rows it sums. Nothing persisted changes, so no clean rebuild is
-required. F19a/F20/F46 records are displaced because the web interface and
-application they bind changed, with permission sets unchanged.
+required. F19a/F20/F46 records are displaced because the web interface,
+application and persistence adapter (`review_scans.py`) they bind changed,
+with permission sets unchanged.
 
 #1282 adds an optional `provider_throttling` projection to
 `review-preparation-v2`, whose schema version is unchanged, and the owner

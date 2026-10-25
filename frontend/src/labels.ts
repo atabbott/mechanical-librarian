@@ -86,14 +86,19 @@ export const writeFieldLabel = (destination: string) =>
 // (`Choose a media kind value`) rather than standing on its own.
 export const labelWords = (value: string) => value.replaceAll('_', ' ')
 // One vocabulary for every preparation count, in the masthead and the run line
-// alike (#1366); a count not yet known reads as an ellipsis, never 0.
+// alike (#1366); a count not yet known reads as an ellipsis, never 0. Only the
+// ready count stands at zero, so a quiet run is not a wall of zeros (#641), and
+// each count keeps its words on one line (#1013).
 export const preparationOutcomes = (
   counts: { readonly ready: number; readonly recorded: number; readonly failed: number } | null,
-) => [
-  `${counts ? String(counts.ready) : '…'} ready to browse`,
-  `${counts ? String(counts.recorded) : '…'} recorded, nothing to decide`,
-  `${counts ? String(counts.failed) : '…'} could not finish`,
-]
+) =>
+  [
+    [counts?.ready, 'ready\u00a0to\u00a0browse'] as const,
+    [counts?.recorded, 'recorded,\u00a0nothing\u00a0to\u00a0decide'] as const,
+    [counts?.failed, 'could\u00a0not\u00a0finish'] as const,
+  ]
+    .filter(([count], index) => index === 0 || count !== 0)
+    .map(([count, words]) => `${count === undefined ? '…' : String(count)}\u00a0${words}`)
 // Server identifiers with no meaning for a reader; never shown as a label.
 export const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
 
