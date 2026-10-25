@@ -83,6 +83,9 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+)
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowFieldOutcome,
     ShadowOutcomeSet,
@@ -121,8 +124,9 @@ _consent_state = closed_document(
 
 # F20 categories whose preview can preserve a filled target without electing an
 # alternative, so the outcome it produces cites no evidence and no combination.
-# `isbn_form` is deliberately absent: it proves preservation by reprojecting the
-# exact identifier representation, and that stricter rule stands on its own.
+# `isbn_form` is deliberately absent: its preview preserves that way only for an
+# ebook, and a recording still proves preservation by reprojecting its exact
+# identifier representation.
 _RICH_PRESERVATION_CATEGORIES = frozenset(
     {"description_fill", "genres", "series", "subtitle", "tags"}
 )
@@ -415,6 +419,20 @@ def _automatic_decision_value(
             and not source.combination_ids
             and canonical_target.state is TargetFieldState.VALUE
         )
+        # The preview preserves every filled ebook ISBN under either qualified
+        # representation, whatever is proposed (`rich_metadata_preview._project`
+        # returns `_preserved` for `isbn_form` on a value target unless the set
+        # is an audiobook's), so its outcome elects and cites nothing (#1368).
+        ebook_isbn_preservation = (
+            report.audio is None
+            and proposal_set.media_kind == "ebook"
+            and decision.policy_category == "isbn_form"
+            and f"isbn_form:{decision.policy_option}" in F20_PASSING_AUTOMATIC_OPTIONS
+            and decision.bundle_id is None
+            and not source.citation_ids
+            and not source.combination_ids
+            and canonical_target.state is TargetFieldState.VALUE
+        )
         # Explicit is positive-only: preserving an absent flag grants no
         # false/clearing value and must still consume its exact no-op outcome.
         explicit_preservation = (
@@ -441,6 +459,7 @@ def _automatic_decision_value(
             or (
                 not typed_preservation_matches
                 and not identifier_preservation
+                and not ebook_isbn_preservation
                 and not rich_preservation
                 and not explicit_preservation
             )

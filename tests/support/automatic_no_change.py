@@ -285,7 +285,26 @@ def _automatic_no_change_inputs(
             "preserve",
             "authors",
         )
-    if scenario in {"formatted_isbn", "unmatched_isbn"}:
+    if scenario == "unproposed_isbn":
+        # A filled ebook ISBN no source proposes, beside a filled genre list;
+        # the proposed title is what makes the work a case.
+        return (
+            _proposal_report(
+                fields=_fields(
+                    isbn=TargetField(
+                        TargetDestination.ISBN, TargetFieldState.VALUE, "9780140328721"
+                    ),
+                    genres=TargetField(
+                        TargetDestination.GENRES, TargetFieldState.VALUE, ("Existing",)
+                    ),
+                ),
+                providers=(_source("catalogue", "edition-1", titles=("Other title",)),),
+            ),
+            "isbn_form",
+            "preserve_exact",
+            "isbn",
+        )
+    if scenario in {"formatted_isbn", "formatted_isbn13", "unmatched_isbn"}:
         isbn10 = LocalClaim.create(
             kind=ClaimKind.ISBN,
             observed="0-306-40615-2",
@@ -302,9 +321,9 @@ def _automatic_no_change_inputs(
                     isbn=TargetField(
                         TargetDestination.ISBN,
                         TargetFieldState.VALUE,
-                        "0-306-40615-2"
-                        if scenario == "formatted_isbn"
-                        else "9780140328721",
+                        "9780140328721"
+                        if scenario == "unmatched_isbn"
+                        else "0-306-40615-2",
                     )
                 ),
                 local_claims=(isbn10,),
@@ -326,7 +345,7 @@ def _automatic_no_change_inputs(
                 ),
             ),
             "isbn_form",
-            "preserve_exact",
+            "prefer_isbn13" if scenario == "formatted_isbn13" else "preserve_exact",
             "isbn",
         )
     raise AssertionError(f"unknown automatic no-change scenario: {scenario}")

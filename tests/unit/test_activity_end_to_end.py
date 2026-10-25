@@ -480,6 +480,51 @@ def test_one_preparation_gathers_only_its_automatic_checks(
         _ActivityEvent.model_validate({**gathered, "check_group": "report_x"})
 
 
+def test_a_kept_ebook_isbn_joins_its_preparation_checks(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    """A filled ISBN nothing proposes is a check, never a degraded row (#1368)."""
+    report, category, option, _ = _automatic_no_change_inputs("unproposed_isbn")
+    decisions = _automatic_decisions(
+        effects,
+        report,
+        category,
+        option,
+        qualified=True,
+        also=(("genres", "fill_empty"),),
+    )
+    assert {(value.destination, value.outcome) for value in decisions} == {
+        ("isbn", "keep_current"),
+        ("genres", "keep_current"),
+    }
+    ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+        {("primary", "ebooks"): SimpleNamespace()},
+        PersistedFieldEffectAuthority(effects.repository),
+        (("primary", "ebooks"),),
+        lambda: 10,
+        lambda *_: None,
+    ).schedule()
+
+    events = [event for event in _ledger(effects) if event["event_type"] != "policy"]
+    assert {
+        (event["state"], event["destination"]): event.get("check_group")
+        for event in events
+    } == {
+        ("recorded", "isbn"): report.report_id,
+        ("no_change_required", "isbn"): report.report_id,
+        ("recorded", "genres"): report.report_id,
+        ("no_change_required", "genres"): report.report_id,
+    }
+    assert len(events) == 4
+    assert all(event.get("diagnostic") is None for event in events)
+    assert "Details unavailable" not in {event["change"] for event in events}
+    assert {_facts(event).get("Disclosure") for event in events} == {None}
+    for event in events:
+        _ActivityEvent.model_validate(event)
+
+
 def test_a_real_write_reaches_the_owner_as_one_exact_sentence(
     effects: _EffectEnvironment,  # noqa: F811
 ) -> None:

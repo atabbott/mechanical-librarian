@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- An automatic decision to keep an ebook's filled ISBN is now recorded as a
+  kept field and joins its preparation's "Checked N fields, no changes" row,
+  instead of reading "Details unavailable" when no source proposed a matching
+  ISBN (#1368).
+
 - When an ebook's source first throttles or fails lookups, Library and Settings
   now say why and, for a Google Books throttle without a key, offer the key
   link, without waiting for a retry. Both stay until the source recovers or
