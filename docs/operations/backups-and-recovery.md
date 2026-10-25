@@ -117,9 +117,13 @@ same-field update can be overwritten between those reads and the service
 accepting the request. Never retry an ambiguous write manually from the same
 plan: use the persisted field-local reconciliation/audit outcome instead.
 Expired credentials, inactive accounts, or loss of basic library/item access
-persist a connection suspension. A permission failure, incompatible field
-shape, or unexpected write response persists a destination suspension instead,
-leaving unrelated destinations eligible. Both remain fail-closed across restart;
+persist a connection suspension, and so does a transport failure (a timeout or
+dropped connection) during a guarded read or write; a later successful
+capability observation clears it and a retried plan proceeds. A permission
+failure, incompatible field shape, or unexpected write response persists a
+destination suspension instead, leaving unrelated destinations eligible;
+`unexpected_effect_behavior` is reserved for genuine protocol violations. Both
+remain fail-closed across restart;
 a denied readiness probe is durable and immediately removes that destination
 from Library and Attention. A fresh successful read-only capability observation
 may clear an older permission, field-shape, or connection-availability result it

@@ -611,10 +611,68 @@ def test_target_read_failures_preserve_connection_permission_and_unexpected_scop
     )
     with pytest.raises(TargetServiceUnavailable) as raised:
         transport.read(plan)
+    # A lost connection is clearable connection unavailability, not a protocol
+    # violation that would hold the destination until an owner repairs it.
     assert (raised.value.scope, raised.value.reason) == (
-        "destination",
-        "unexpected_effect_behavior",
+        "connection",
+        "connection_unavailable",
     )
+
+
+@pytest.mark.parametrize(
+    ("failure", "disposition"),
+    (
+        (httpx.WriteTimeout, ("connection", "connection_unavailable")),
+        (httpx.ConnectError, ("connection", "connection_unavailable")),
+        (httpx.DecodingError, ("destination", "unexpected_effect_behavior")),
+        (httpx.TooManyRedirects, ("destination", "unexpected_effect_behavior")),
+    ),
+)
+def test_only_transport_loss_is_connection_unavailability_on_every_target_request(
+    case: _Case,
+    failure: type[httpx.RequestError],
+    disposition: tuple[str, str],
+) -> None:
+    """Each request a guarded write makes maps a lost connection alike (#1382)."""
+    detail = {
+        "id": "item-1",
+        "libraryId": "library-1",
+        "mediaType": "book",
+        "updatedAt": 7,
+        "media": {"metadata": {"title": "Before"}, "tags": []},
+    }
+    failing: set[tuple[str, str]] = set()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if (request.method, request.url.path) in failing:
+            raise failure("synthetic failure", request=request)
+        if request.url.path.endswith("/cover"):
+            return httpx.Response(404)
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=detail
+        )
+
+    target = AudiobookshelfFieldEffectTarget(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+        endpoint="https://abs.example.invalid",
+        library_id="library-1",
+        artifacts=case.artifacts,
+    )
+    failing.add(("PATCH", "/api/items/item-1/media"))
+    written = target.apply(_plan("title", "Before", "After"))
+    assert (written.outcome, written.suspension_scope, written.suspension_reason) == (
+        "ambiguous",
+        *disposition,
+    )
+    for request, plan in (
+        (("GET", "/api/items/item-1"), _plan("title", "Before", "After")),
+        (("GET", "/api/items/item-1/cover"), _plan("cover", None, case.cover)),
+    ):
+        failing.clear()
+        failing.add(request)
+        with pytest.raises(TargetServiceUnavailable) as raised:
+            target.read(plan)
+        assert (raised.value.scope, raised.value.reason) == disposition
 
 
 @pytest.mark.parametrize("phase", ("preclaim", "verification"))
@@ -744,7 +802,7 @@ def test_post_dispatch_status_and_transport_loss_reconcile_through_application(
     assert requests.count("GET") >= 4
     assert repository.field_effect_capability_suspension(plan.connection, "title") == (
         "connection_unavailable"
-        if outcome == 401
+        if outcome in {401, "transport_loss"}
         else "insufficient_permission"
         if outcome == 403
         else "unexpected_effect_behavior"

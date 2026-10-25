@@ -3199,7 +3199,13 @@ def test_capability_failures_persist_the_smallest_scope_and_close_claim_races(
     genres = _plan(
         effects, destination="genres", pre=["old"], desired=["new"], suffix="4"
     )
-    assert effects.service.apply(genres.plan.plan_id).failure == "capability"
+    # A lost connection is the one suspension a fresh allowed observation
+    # clears, so the next plan proceeds instead of inheriting it (#1382).
+    assert effects.service.apply(genres.plan.plan_id).state == "verified"
+    assert (
+        effects.repository.field_effect_capability_suspension("primary", "genres")
+        is None
+    )
 
 
 def test_atomic_claim_and_unexpected_effect_behavior_honor_durable_suspension(
@@ -3240,6 +3246,116 @@ def test_final_target_read_persists_typed_connection_unavailability(
         effects.repository.field_effect_capability_suspension("primary", "title")
         == "connection_unavailable"
     )
+
+
+def test_connection_unavailability_alone_waits_for_a_fresh_observation(
+    effects: _EffectEnvironment,
+) -> None:
+    def lose_connection_on_write(_: object) -> None:
+        effects.target.unavailable_scope_next = "connection"
+
+    def suspension(destination: str) -> str | None:
+        return effects.repository.field_effect_capability_suspension(
+            "primary", destination
+        )
+
+    lost = _plan(effects, suffix="1")
+    effects.target.before_apply = lose_connection_on_write
+    retryable = effects.service.apply(lost.plan.plan_id)
+    assert (retryable.state, retryable.failure) == ("retryable", "target_failure")
+    assert suspension("title") == "connection_unavailable"
+    assert effects.service.apply(lost.plan.plan_id).state == "verified"
+    assert suspension("title") is None
+
+    held = _plan(effects, destination="publisher", suffix="2")
+    effects.repository.suspend_field_effect_capability(
+        scope="destination",
+        connection="primary",
+        destination="publisher",
+        reason="field_unavailable",
+        changed_at=effects.clock(),
+    )
+    with patch.object(
+        effects.capabilities, "observe", side_effect=AssertionError("observed")
+    ):
+        result = effects.service.apply(held.plan.plan_id)
+    assert (result.state, result.failure) == ("stale", "capability")
+
+    behind = _plan(
+        effects, destination="authors", pre=["old"], desired=["new"], suffix="3"
+    )
+    effects.repository.suspend_field_effect_capability(
+        scope="destination",
+        connection="primary",
+        destination="authors",
+        reason="insufficient_permission",
+        changed_at=effects.clock(),
+    )
+    effects.repository.suspend_field_effect_capability(
+        scope="connection",
+        connection="primary",
+        destination="authors",
+        reason="connection_unavailable",
+        changed_at=effects.clock(),
+    )
+    result = effects.service.apply(behind.plan.plan_id)
+    assert (result.state, result.failure) == ("stale", "capability")
+    assert suspension("authors") == "insufficient_permission"
+    assert suspension("title") is None
+
+    unobserved = _plan(effects, destination="subtitle", suffix="4")
+    effects.target.before_apply = lose_connection_on_write
+    assert effects.service.apply(unobserved.plan.plan_id).state == "retryable"
+    effects.capabilities.category = "connection_unavailable"
+    result = effects.service.apply(unobserved.plan.plan_id)
+    assert (result.state, result.failure) == ("stale", "capability")
+    assert suspension("subtitle") == "connection_unavailable"
+
+
+@pytest.mark.parametrize("guard", ("paused", "consent", None))
+def test_recovered_claim_sends_nothing_until_every_guard_passes_again(
+    effects: _EffectEnvironment, guard: str | None
+) -> None:
+    operation = _plan(effects, suffix="1")
+    plan_id = operation.plan.plan_id
+    effects.repository.claim_field_effect(plan_id, "planned", "1" * 64, effects.clock())
+    sent: list[object] = []
+    effects.target.before_apply = sent.append
+    if guard == "paused":
+        effects.service.set_paused(True)
+        with pytest.raises(GuardedApplicationError, match="paused"):
+            effects.service.recover_startup()
+        held = effects.service.status(plan_id)
+        assert (held.state, held.failure) == ("retryable", "not_applied")
+        assert sent == []
+        effects.service.set_paused(False)
+        assert effects.service.apply(plan_id).state == "verified"
+        assert len(sent) == 1
+        return
+    if guard == "consent":
+        effects.consent.revoked.add(operation.plan.consent.consent_id)
+        assert effects.service.recover_startup() == (1, 0, 0)
+        refused = effects.service.status(plan_id)
+        assert (refused.state, refused.failure) == ("stale", "consent")
+        assert sent == []
+        assert effects.target.read(operation.plan).value == operation.plan.pre_value
+        return
+    assert effects.service.recover_startup() == (1, 0, 0)
+    verified = effects.service.status(plan_id)
+    assert (verified.state, verified.attempt) == ("verified", 2)
+    assert len(sent) == 1
+    events = [
+        json.loads(document)["kind"]
+        for document in effects.repository.field_effect_event_documents(plan_id)
+    ]
+    assert events == [
+        "planned",
+        "claimed",
+        "retryable",
+        "claimed",
+        "applying",
+        "verified",
+    ]
 
 
 def test_verification_and_reconciliation_persist_typed_unexpected_behavior(
@@ -3813,7 +3929,13 @@ def test_supersession_does_not_interrupt_claimed_and_cover_bytes_are_private(
     )
     assert effects.service.supersede(claimed.plan.authority.decision_id) == 0
     assert effects.service.status(claimed.plan.plan_id).state == "claimed"
-    assert effects.service.apply(claimed.plan.plan_id).state == "verified"
+    # Recovering the claim sends it back through every guard, and the atomic
+    # claim refuses the superseded authority before anything is sent (#1382).
+    with pytest.raises(GuardedApplicationError, match="authority"):
+        effects.service.apply(claimed.plan.plan_id)
+    recovered = effects.service.status(claimed.plan.plan_id)
+    assert (recovered.state, recovered.failure) == ("retryable", "not_applied")
+    assert effects.target.read(claimed.plan).value == claimed.plan.pre_value
 
     cover_value = "cover_" + "9" * 64
     cover = _plan(effects, "cover", None, cover_value, "9")

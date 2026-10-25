@@ -38,6 +38,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
+from tests.support.field_effects import _EffectEnvironment, _plan, effects  # noqa: F401
 from tests.support.metadata_report_schemas import synthetic_report
 
 if TYPE_CHECKING:
@@ -2456,6 +2457,69 @@ def test_restart_recovery_that_advances_no_plan_still_fails_the_guard() -> None:
     assert raised.value.code == "recovery"
     assert len(repository.plans) == 151
     assert service._thread is None
+
+
+def test_running_loop_resolves_a_failed_read_back_without_restart_recovery(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    operation = _plan(effects, suffix="1")
+    plan_id = operation.plan.plan_id
+
+    def lose_read_back(_: object) -> None:
+        effects.target.fail_read_next = True
+
+    effects.target.after_apply = lose_read_back
+    assert effects.service.apply(plan_id).state == "reconciling"
+    service = ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "books"): effects.service},
+        {("primary", "books"): effects.capabilities},
+        effects.authority,
+        (("primary", "books"),),
+        effects.clock,
+        lambda *_: None,
+    )
+    with patch.object(
+        effects.service, "recover_startup", side_effect=AssertionError("restart")
+    ):
+        service._run_until_idle()
+    assert effects.service.status(plan_id).state == "verified"
+    assert effects.repository.pending_field_effect_action_plan_ids(100) == ()
+
+
+def test_running_loop_reports_a_queued_read_failure_after_the_cycle() -> None:
+    class _FailingReconcile(_Application):
+        def reconcile(self, plan_id, _affected_review_case_ids=None):
+            raise FieldEffectError("persistence")
+
+    class _QueuedRepository(_Repository):
+        def pending_field_effect_action_plan_ids(self, limit):
+            return ("plan-a1",)
+
+    repository = _QueuedRepository()
+    repository.ready = [("plan-a1", "alpha"), ("plan-a2", "alpha")]
+    shared = {
+        "active": 0,
+        "maximum": 0,
+        "guard": threading.Lock(),
+        "release": threading.Event(),
+        "started": threading.Event(),
+        "repository": repository,
+        "drained": threading.Event(),
+    }
+    shared["release"].set()
+    application = _FailingReconcile(shared)
+    service = _recovery_service(repository, application)
+    with pytest.raises(GuardedApplicationError) as raised:
+        service._run_until_idle()
+    assert raised.value.code == "recovery"
+    assert getattr(raised.value.__cause__, "code", None) == "persistence"
+    # The failed read did not stop the cycle behind it.
+    assert application.applied == ["plan-a1", "plan-a2"]
+    service._stop.set()
+    application.applied.clear()
+    service._run_until_idle()
+    assert application.applied == []
 
 
 def test_fair_selection_and_instance_wide_mutation_slot() -> None:

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A timeout or dropped connection during an Audiobookshelf write now holds
+  writes only until the connection is seen healthy again, instead of
+  suspending the field until a restart. A write whose read-back failed is
+  confirmed by the running worker, and a write interrupted before it was sent
+  is rechecked against every safety condition before it is retried (#1382).
+
 - An automatic decision to keep an ebook's filled ISBN is now recorded as a
   kept field and joins its preparation's "Checked N fields, no changes" row,
   instead of reading "Details unavailable" when no source proposed a matching
