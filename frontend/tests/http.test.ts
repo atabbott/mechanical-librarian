@@ -2386,6 +2386,57 @@ describe('ReviewApiClient', () => {
     expect(new Headers(init?.headers).get('x-csrf-token')).toBe(renewedToken)
   })
 
+  it("accepts only a closed count of the run's works as they stand now", () => {
+    const now = { ready: 1, recorded: 2, failed: 0, in_progress: 1, scan_ids: ['scan-1'] }
+    const presentation = {
+      run_id: `preparation_run_${'a'.repeat(64)}`,
+      state: 'running',
+      triggers: [
+        {
+          trigger: 'manual_scan',
+          accepted_count: 1,
+          first_accepted_at: 100,
+          last_accepted_at: 100,
+        },
+      ],
+      passage: { read: 4, searches_finished: 3, compared: 2, checked: 2, ready: 1, failed: 1 },
+      active_books: [],
+      active_overflow: 0,
+      recent_completions: [],
+      throughput_per_minute: 0,
+      started_at: 100,
+      updated_at: 101,
+      completed_at: null,
+      total: 4,
+      dismissible: false,
+      now,
+    }
+    const view = (value: unknown) =>
+      mapPreparation({
+        schema_version: 'review-preparation-v2',
+        recovery_required: false,
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+        connections: [],
+        presentation: { ...presentation, now: value },
+      })
+    expect(view(now).presentation?.now).toEqual(now)
+    expect(view(null).presentation?.now).toBeNull()
+    for (const malformed of [
+      { ...now, extra: 0 },
+      { ready: 1, recorded: 2, failed: 0, in_progress: 1 },
+      { ...now, scan_ids: 'scan-1' },
+      { ...now, scan_ids: Array.from({ length: 129 }, () => 'scan') },
+      [],
+    ])
+      expect(() => view(malformed)).toThrow('502: invalid_preparation_now)')
+    expect(() => view({ ...now, failed: -1 })).toThrow('502: invalid_preparation_now_failed)')
+    expect(() => view({ ...now, ready: true })).toThrow('502: invalid_preparation_now_ready)')
+    expect(() => view({ ...now, scan_ids: [1] })).toThrow('502: invalid_preparation_now_scan_id)')
+  })
+
   it('accepts only ordered and bounded preparation presentation content', () => {
     const presentation = {
       run_id: `preparation_run_${'a'.repeat(64)}`,

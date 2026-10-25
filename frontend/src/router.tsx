@@ -48,7 +48,7 @@ import {
   useLiveStreamState,
 } from './liveInvalidation'
 import type { LiveUpdateStream } from './liveUpdates'
-import { fieldLabel } from './labels'
+import { fieldLabel, preparationOutcomes } from './labels'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
@@ -824,6 +824,10 @@ export const PreparationActivity = () => {
   })
   // Idle is a state the owner can act on: Scan now and Pause stay reachable.
   const unavailable = !data || data.libraries.length === 0
+  const runScans =
+    data?.presentation && data.presentation.state !== 'dismissed'
+      ? data.presentation.now?.scan_ids
+      : undefined
   // Each command is aria-disabled rather than disabled, so focus stays on it;
   // the guard drops a press while one is pending or the command is refused.
   const command = (path: string, refused: boolean) => () => {
@@ -901,10 +905,21 @@ export const PreparationActivity = () => {
                 {data.recovery_required
                   ? 'Last saved progress'
                   : (scanStateLabels[item.state] ?? fieldLabel(item.state))}
+                {/*
+                 * The run line sums only the libraries its run enrolled, so a
+                 * library outside it is the one way the two totals differ.
+                 */}
+                {runScans && !runScans.includes(item.scan_id ?? '') ? ' · not in this run' : ''}
               </span>
               <span>
-                {String(item.checked)} of {String(item.total)} checked · {String(item.ready)} ready
-                {item.blocked > 0 ? ` · ${String(item.blocked)} could not finish` : ''}
+                {[
+                  `${String(item.checked)} of ${String(item.total)} checked`,
+                  ...preparationOutcomes({
+                    ready: item.ready,
+                    recorded: item.recorded,
+                    failed: item.blocked,
+                  }),
+                ].join(' · ')}
               </span>
               <dl className="preparation-stages">
                 {/*

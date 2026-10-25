@@ -53,6 +53,7 @@ import {
   fieldLabel,
   labelWords,
   opaqueSource,
+  preparationOutcomes,
 } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
@@ -165,6 +166,10 @@ const initials = (title: string) =>
     .map((word) => word[0]?.toUpperCase())
     .join('') || 'ML'
 type PreparationPresentation = NonNullable<PreparationView['presentation']>
+// The run's works as they stand now, in the masthead's words (#1366). The
+// latched passage is first-finish history and is labelled Prepared instead.
+const runOutcomes = (presentation: PreparationPresentation) =>
+  preparationOutcomes(presentation.now ?? null)
 // What the run is doing now, said in the counts the owner is waiting on rather
 // than in the store's state name. A terminal run states its own outcome here
 // because that is the line a reader looks at first.
@@ -177,9 +182,8 @@ const preparationStateLine = (presentation: PreparationPresentation) => {
     case 'blocked':
       return 'Paused until the reported connection issue is resolved'
     case 'completed_clean':
-      return 'Finished · no failures'
     case 'completed_with_failures':
-      return `Finished · ${String(presentation.passage.failed)} could not finish · ${String(presentation.passage.ready)} ready`
+      return ['Finished', ...runOutcomes(presentation)].join(' · ')
     case 'dismissed':
       return 'Preparation dismissed'
   }
@@ -231,9 +235,8 @@ const boundedSearchName = (name: string) => {
 // Each count stays with its label; lines break only after a separator (#1013).
 const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) =>
   [
-    `${String(presentation.passage.ready)} ready`,
-    `${String(presentation.passage.failed)} could not finish`,
-    `${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} ${recoveryRequired ? 'retained' : 'in progress'}`,
+    ...runOutcomes(presentation),
+    `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'retained' : 'in progress'}`,
   ]
     .map((pair) => pair.replaceAll(' ', '\u00a0'))
     .join('\u00a0· ')
@@ -242,6 +245,7 @@ const preparationPassage = [
   ['searches_finished', 'Searches finished'],
   ['compared', 'Candidates compared'],
   ['checked', 'Metadata checked'],
+  ['ready', 'Prepared'],
 ] as const
 
 // The compact layout, where the selected work replaces the list.
@@ -263,7 +267,7 @@ const PreparationSummary = ({
   onSelect: () => void
 }) => {
   const active = presentation.active_books.length + presentation.active_overflow
-  const outcomes = `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish`
+  const outcomes = runOutcomes(presentation).join(' · ')
   let title: string
   let copy: string
   switch (presentation.state) {
@@ -281,7 +285,7 @@ const PreparationSummary = ({
       break
     case 'completed_clean':
       title = 'Preparation complete'
-      copy = `${String(presentation.passage.ready)} ready · No failures`
+      copy = outcomes
       break
     case 'completed_with_failures':
       title = 'Preparation completed with failures'
@@ -375,7 +379,9 @@ const PreparationDetail = ({
           </h2>
           <p>{introduction}</p>
         </div>
-        <strong>{String(presentation.passage.ready)} ready in this run</strong>
+        <strong>
+          {presentation.now ? String(presentation.now.ready) : '…'} ready to browse in this run
+        </strong>
       </header>
       <p
         className={`preparation-run-state state-${presentation.state}${animateChange ? ' reported-change' : ''}`}
@@ -426,7 +432,9 @@ const PreparationDetail = ({
           </p>
         ) : null}
         {presentation.active_books.length ? (
-          <small className="activity-backup-note">A book appears in Works once it is ready.</small>
+          <small className="activity-backup-note">
+            A book appears in Works once it is prepared.
+          </small>
         ) : null}
       </section>
       <section aria-labelledby="preparation-progress-title">
@@ -434,8 +442,8 @@ const PreparationDetail = ({
           <div>
             <h3 id="preparation-progress-title">Preparation progress</h3>
             <p>
-              Each stage counts books that reached it; a book that could not finish stops at its
-              last stage.
+              Each stage counts books that first reached it in this run; a book that could not
+              finish stops at its last stage.
             </p>
           </div>
           {/*
@@ -500,7 +508,7 @@ const PreparationDetail = ({
                     Find in Works
                   </Link>
                 </span>
-                <strong>{completion.outcome === 'ready' ? 'Ready' : 'Could not finish'}</strong>
+                <strong>{completion.outcome === 'ready' ? 'Prepared' : 'Could not finish'}</strong>
               </li>
             ))}
           </ul>
@@ -2521,6 +2529,7 @@ export default function LibraryPage({
         })),
         total: presentation.total,
         dismissible: presentation.dismissible,
+        now: presentation.now,
       })
     : null
   const adoptedPresentationVersion = useRef<string | null>(null)

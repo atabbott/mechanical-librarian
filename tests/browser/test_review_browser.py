@@ -5269,6 +5269,13 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                 "completed_at": 101 if terminal else None,
                                 "total": 4,
                                 "dismissible": terminal,
+                                "now": {
+                                    "ready": 4 - failed if terminal else 0,
+                                    "recorded": 0,
+                                    "failed": failed,
+                                    "in_progress": 0 if terminal else 4,
+                                    "scan_ids": [],
+                                },
                             },
                         }
                     )
@@ -5307,7 +5314,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     "aria-live", "polite"
                 )
                 passage = page.get_by_role("progressbar")
-                expect(passage).to_have_count(4)
+                expect(passage).to_have_count(5)
                 passage_facts = passage.evaluate_all(
                     "elements => elements.map(element => ({label:element.getAttribute('aria-label'),value:element.value,max:element.max,position:element.position,style:element.getAttribute('style'),appearance:getComputedStyle(element).appearance,width:element.getBoundingClientRect().width}))"
                 )
@@ -5347,6 +5354,15 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "style": None,
                         "appearance": "none",
                         "width": passage_facts[3]["width"],
+                    },
+                    {
+                        "label": "Prepared: 0 of 4",
+                        "value": 0,
+                        "max": 4,
+                        "position": 0,
+                        "style": None,
+                        "appearance": "none",
+                        "width": passage_facts[4]["width"],
                     },
                 ]
                 assert all(fact["width"] > 0 for fact in passage_facts)
@@ -5416,17 +5432,20 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     (
                         "blocked",
                         "Preparation needs attention",
-                        "0 ready · 0 could not finish · 1 active",
+                        "0 ready to browse · 0 recorded, nothing to decide · "
+                        "0 could not finish · 1 active",
                     ),
                     (
                         "completed_clean",
                         "Preparation complete",
-                        "4 ready · No failures",
+                        "4 ready to browse · 0 recorded, nothing to decide · "
+                        "0 could not finish",
                     ),
                     (
                         "completed_with_failures",
                         "Preparation completed with failures",
-                        "3 ready · 1 could not finish",
+                        "3 ready to browse · 0 recorded, nothing to decide · "
+                        "1 could not finish",
                     ),
                 )
                 for state, title, copy in summary_cases:
@@ -6183,7 +6202,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="How many books made it this far?")
                 ).to_be_visible()
                 expect(page.get_by_text("1.2 books/min")).to_be_visible()
-                expect(page.get_by_text("Recently ready · Ready")).to_be_visible()
+                expect(page.get_by_text("Recently ready · Prepared")).to_be_visible()
                 for width, height in ((1440, 900), (390, 844)):
                     page.set_viewport_size({"width": width, "height": height})
                     assert page.evaluate(
@@ -7869,7 +7888,10 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 )
                 trigger.click()
                 popover = page.get_by_role("region", name="Background activity")
-                expect(popover).to_contain_text("7 of 9 checked · 4 ready")
+                expect(popover).to_contain_text(
+                    "7 of 9 checked · 4 ready to browse · "
+                    "2 recorded, nothing to decide · 1 could not finish"
+                )
                 for label in ("Scan now", "Retry", "Pause"):
                     expect(
                         popover.get_by_role("button", name=label, exact=True)
@@ -9997,6 +10019,142 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 assert {focused for _, focused in arrivals} == {
                     "SECTION.settings-route"
                 }, arrivals
+            finally:
+                browser.close()
+
+
+def test_masthead_and_run_line_agree_on_the_real_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run line is the masthead rows of its run, before and after a change.
+
+    books-1 finished in an earlier run, so it is outside the current one, which
+    covers books-0. A prepared books-0 work then fails after its cycle completed:
+    both figures move together, and the Prepared history does not (#1366).
+    """
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 10, prepare=True) as (fixture, origin):
+
+        def finished(library: str) -> dict[str, Any]:
+            deadline = time.monotonic() + 30
+            while True:
+                view = fixture.application.preparation().to_data()
+                row = next(
+                    item
+                    for item in cast(list[dict[str, Any]], view["libraries"])
+                    if item["library"] == library
+                )
+                presentation = cast(dict[str, Any] | None, view["presentation"])
+                if (
+                    row["state"] in {"completed", "completed_with_failures"}
+                    and presentation is not None
+                    and presentation["state"]
+                    in {"completed_clean", "completed_with_failures"}
+                ):
+                    return view
+                assert time.monotonic() < deadline, view
+                time.sleep(0.05)
+
+        fixture.application.request_review_scan("primary", "books-1")
+        earlier = finished("books-1")
+        fixture.application.request_review_scan("primary", "books-0")
+        current = finished("books-0")
+        presentation = cast(dict[str, Any], current["presentation"])
+        assert presentation["run_id"] != cast(dict, earlier["presentation"])["run_id"]
+        books = next(
+            item for item in current["libraries"] if item["library"] == "books-0"
+        )
+        assert presentation["now"]["scan_ids"] == [books["scan_id"]]
+        assert books["ready"] + books["recorded"] > 0
+
+        def split(ready: int, recorded: int, failed: int) -> str:
+            return (
+                f"{ready} ready to browse · {recorded} recorded, nothing to decide"
+                f" · {failed} could not finish"
+            )
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+
+                def observe() -> tuple[str, str, str, str]:
+                    summary = page.locator(".preparation-summary small")
+                    expect(summary).to_contain_text("This run: ")
+                    page.locator(".preparation-activity > button").click()
+                    popover = page.get_by_role("region", name="Background activity")
+                    rows = {
+                        library: popover.locator("article").filter(
+                            has=page.locator(
+                                "strong", has_text=re.compile(f"^{library}$")
+                            )
+                        )
+                        for library in ("books-0", "books-1")
+                    }
+                    expect(rows["books-1"]).to_contain_text("not in this run")
+                    expect(rows["books-0"]).not_to_contain_text("not in this run")
+                    facts = (
+                        cast(str, summary.text_content()),
+                        cast(
+                            str, rows["books-0"].locator("span").nth(1).text_content()
+                        ),
+                        cast(
+                            str, rows["books-1"].locator("span").nth(0).text_content()
+                        ),
+                    )
+                    page.keyboard.press("Escape")
+                    summary.click()
+                    prepared = page.get_by_role(
+                        "progressbar", name=re.compile(r"^Prepared: ")
+                    )
+                    return (*facts, cast(str, prepared.get_attribute("aria-label")))
+
+                page.goto(origin + "/library?lens=all")
+                run_line, books_row, other_state, prepared = observe()
+                expected = split(books["ready"], books["recorded"], books["blocked"])
+                assert run_line == f"This run: {expected}"
+                assert books_row.endswith(f"checked · {expected}")
+                assert other_state.endswith(" · not in this run")
+
+                # A prepared work fails after its cycle completed, as a policy
+                # restart that ends in failure would leave it.
+                with closing(sqlite3.connect(fixture.database)) as connection:
+                    changed = connection.execute(
+                        "UPDATE review_preparation_work SET stage='proposal',"
+                        "state='failed',outcome=NULL,failure_code='failed' "
+                        "WHERE work_id=(SELECT work_id FROM review_preparation_work "
+                        "WHERE scan_id=? AND state='complete' ORDER BY work_id LIMIT 1)",
+                        (books["scan_id"],),
+                    ).rowcount
+                    connection.commit()
+                assert changed == 1
+                after = fixture.application.preparation().to_data()
+                now = cast(dict[str, Any], after["presentation"])["now"]
+                assert now["failed"] == books["blocked"] + 1
+                assert now["ready"] + now["recorded"] == (
+                    books["ready"] + books["recorded"] - 1
+                )
+                page.goto(origin + "/library?lens=all")
+                run_line, books_row, other_state, prepared_after = observe()
+                expected = split(now["ready"], now["recorded"], now["failed"])
+                assert run_line == f"This run: {expected}"
+                assert books_row.endswith(f"checked · {expected}")
+                assert other_state.endswith(" · not in this run")
+                assert prepared_after == prepared
             finally:
                 browser.close()
 

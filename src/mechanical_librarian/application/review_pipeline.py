@@ -339,6 +339,13 @@ class PipelineProgress:
     persisted pipeline's own; the owner-facing wording is chosen at the surface,
     because the two vocabularies change for different reasons.
     """
+    run_id: str | None = None
+    """The visible preparation run this scan is enrolled in, if it is.
+
+    Read in the same transaction as the counts, so a run's current figures
+    summed from the progress that names it agree exactly with those rows
+    (#1366). A single-library read leaves it unset.
+    """
 
 
 @dataclass(frozen=True, slots=True)

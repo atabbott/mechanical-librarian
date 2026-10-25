@@ -14,7 +14,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import call, patch
 
 import httpx
@@ -6047,6 +6047,205 @@ def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(
     with pytest.raises(MetadataReportError):
         repository.review_pipeline_status((("x" * 65, "fiction"),))
     repository.close()
+
+
+def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
+    application_path: Path,
+) -> None:
+    """The run line sums the rows that name the run, in the read that made them.
+
+    L1 holds a case (A), a recorded work (B) and a failure (C); L2 finished in
+    an earlier run and is outside this one. After the run finishes, B is reset
+    in the same scan and fails: the latched passage keeps its first finish, and
+    the run line and the masthead both move with it (#1366).
+    """
+    from mechanical_librarian.adapters.persistence.review_sessions import (
+        SQLiteReviewSessionRepository,
+    )
+    from mechanical_librarian.application.review_application import (
+        compose_review_application,
+    )
+    from mechanical_librarian.interfaces.web.app import _PreparationResponse
+
+    repository = open_repository(application_path)
+    other = repository.request_review_scan(
+        "primary",
+        "history",
+        "lib-2",
+        _PRODUCER,
+        5,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(6)
+    assert discovery is not None and discovery.library == "history"
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (replace(_entry("other", "4" * 64), library="history", library_id="lib-2"),),
+        6,
+    )
+    (other_work,) = repository._connection.execute(
+        "SELECT work_id FROM review_preparation_work WHERE scan_id=?",
+        (other.scan_id,),
+    ).fetchone()
+    record_terminal_work(repository._connection, other_work, 7)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed',updated_at=7 WHERE scan_id=?",
+        (other.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 7)
+    repository._connection.commit()
+    earlier = repository.preparation_presentation(7)
+    assert earlier is not None and earlier.dismissible
+
+    scan = repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None and discovery.library == "fiction"
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "b" * 64,
+        tuple(
+            _entry(item, digit * 64)
+            for item, digit in (("a", "1"), ("b", "2"), ("c", "3"))
+        ),
+        12,
+    )
+    work_a, work_b, work_c = (
+        row[0]
+        for row in repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work WHERE scan_id=? ORDER BY item_id",
+            (scan.scan_id,),
+        )
+    )
+    report = _report()
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='complete',state='complete',"
+        "review_case_id=?,outcome='case',updated_at=13 WHERE work_id=?",
+        (case_id, work_a),
+    )
+    record_terminal_work(repository._connection, work_b, 13)
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET stage='proposal',state='failed',"
+        "failure_code='failed',updated_at=13 WHERE work_id=?",
+        (work_c,),
+    )
+    refresh_preparation_presentation(repository._connection, 13)
+    repository._connection.execute(
+        "UPDATE review_preparation_scans SET state='completed_with_failures',updated_at=14 "
+        "WHERE scan_id=?",
+        (scan.scan_id,),
+    )
+    refresh_preparation_presentation(repository._connection, 14)
+    repository._connection.commit()
+
+    libraries = (("primary", "fiction", "lib-1"), ("primary", "history", "lib-2"))
+
+    class Preparation:
+        recovery_required = False
+        recovery_incidents = ()
+
+        def __init__(self) -> None:
+            self.libraries = libraries
+
+        def attach_updates(self, announce: object) -> None:
+            return None
+
+        def status(self):
+            return repository.review_pipeline_status(
+                tuple((connection, library) for connection, library, _ in libraries)
+            )
+
+        def connection_conditions(self):
+            return ()
+
+    sessions = SQLiteReviewSessionRepository.open_ephemeral()
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=sessions,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        session_digest=lambda token: "a" * 64,
+        clock=lambda: 20,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", Preparation()),
+    )
+
+    def read() -> dict[str, Any]:
+        data = application.preparation().to_data()
+        # The response model is closed, so the new figures are its contract.
+        return _PreparationResponse.model_validate(data).model_dump()
+
+    def masthead(data: dict[str, Any]) -> dict[str, tuple[int, int, int]]:
+        return {
+            item["library"]: (item["ready"], item["recorded"], item["blocked"])
+            for item in cast("list[dict[str, Any]]", data["libraries"])
+        }
+
+    try:
+        finished = read()
+        presentation = cast("dict[str, Any]", finished["presentation"])
+        assert presentation["state"] == "completed_with_failures"
+        assert presentation["passage"]["ready"] == 2
+        assert presentation["passage"]["failed"] == 1
+        assert presentation["now"] == {
+            "ready": 1,
+            "recorded": 1,
+            "failed": 1,
+            "in_progress": 0,
+            "scan_ids": [scan.scan_id],
+        }
+        assert masthead(finished) == {"fiction": (1, 1, 1), "history": (0, 1, 0)}
+
+        # A policy restart resets B in the same scan, and it fails this time.
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='proposal',state='failed',"
+            "outcome=NULL,report_id=NULL,failure_code='failed',updated_at=21 "
+            "WHERE work_id=?",
+            (work_b,),
+        )
+        repository._connection.commit()
+        changed = read()
+    finally:
+        sessions.close()
+        repository.close()
+
+    presentation = cast("dict[str, Any]", changed["presentation"])
+    assert presentation["passage"]["ready"] == 2
+    assert presentation["passage"]["failed"] == 1
+    assert presentation["now"] == {
+        "ready": 1,
+        "recorded": 0,
+        "failed": 2,
+        "in_progress": 0,
+        "scan_ids": [scan.scan_id],
+    }
+    assert masthead(changed) == {"fiction": (1, 0, 2), "history": (0, 1, 0)}
+    in_run = [
+        item
+        for item in cast("list[dict[str, Any]]", changed["libraries"])
+        if item["scan_id"] in presentation["now"]["scan_ids"]
+    ]
+    assert [item["library"] for item in in_run] == ["fiction"]
+    assert presentation["now"]["ready"] == sum(item["ready"] for item in in_run)
+    assert presentation["now"]["recorded"] == sum(item["recorded"] for item in in_run)
+    assert presentation["now"]["failed"] == sum(item["blocked"] for item in in_run)
 
 
 def test_actual_provider_credential_failure_projects_once_at_provider_scope(

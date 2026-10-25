@@ -143,6 +143,7 @@ describe('Application shell', () => {
           completed_at: null,
           total: 7,
           dismissible: false,
+          now: { ready: 1, recorded: 0, failed: 0, in_progress: 6, scan_ids: ['scan-1'] },
         },
         libraries: [
           {
@@ -165,7 +166,11 @@ describe('Application shell', () => {
 
     const summary = await screen.findByRole('button', { name: /Preparing your library/u })
     expect(summary).toBeVisible()
-    expect(screen.getByText('This run: 1 ready · 0 could not finish · 1 active')).toBeVisible()
+    expect(
+      screen.getByText(
+        'This run: 1 ready to browse · 0 recorded, nothing to decide · 0 could not finish · 1 active',
+      ),
+    ).toBeVisible()
     fireEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
     expect(screen.getByText('Preparation continues')).toBeVisible()
@@ -213,6 +218,7 @@ describe('Application shell', () => {
           completed_at: 101,
           total: 7,
           dismissible: true,
+          now: { ready: 5, recorded: 0, failed: 2, in_progress: 0, scan_ids: ['scan-1'] },
         },
         libraries: [
           {
@@ -249,7 +255,11 @@ describe('Application shell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Preparation needs attention' }))
     expect(await screen.findByText('Complete · some books could not finish')).toBeVisible()
-    expect(screen.getByText('7 of 7 checked · 5 ready · 2 could not finish')).toBeVisible()
+    expect(
+      screen.getByText(
+        '7 of 7 checked · 5 ready to browse · 0 recorded, nothing to decide · 2 could not finish',
+      ),
+    ).toBeVisible()
     // A finished scan lists the buckets books actually reached, not a wall of
     // zeros for the ones nothing did.
     expect(
@@ -257,6 +267,115 @@ describe('Application shell', () => {
     ).toEqual(['Ready to browse', 'Could not finish'])
     expect(screen.queryByText('Not started')).toBeNull()
     expect(screen.queryByText('Reading your files')).toBeNull()
+  })
+
+  it('states the run line and each library in one vocabulary and marks a library outside the run', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(reducedMotion))
+    HTMLElement.prototype.scrollIntoView = vi.fn()
+    const library = (
+      name: string,
+      scanId: string,
+      state: string,
+      [ready, recorded, blocked]: readonly [number, number, number],
+    ) => ({
+      blocked,
+      recorded,
+      checked: ready + recorded + blocked,
+      connection: 'primary',
+      library: name,
+      library_id: name.toLowerCase(),
+      ready,
+      rescan_requested: false,
+      scan_id: scanId,
+      state,
+      total: ready + recorded + blocked,
+    })
+    const view = (
+      presentation: NonNullable<PreparationView['presentation']> | null,
+    ): PreparationView => ({
+      schema_version: 'review-preparation-v2',
+      recovery_required: false,
+      active: false,
+      actionable: true,
+      paused: false,
+      presentation,
+      libraries: [
+        library('Books', 'scan-books', 'completed_with_failures', [1, 0, 2]),
+        library('Audiobooks', 'scan-audio', 'completed', [0, 1, 0]),
+      ],
+    })
+    // Each work first finished as prepared or failed (2 and 1); one prepared
+    // work failed since, so the run now holds 1 ready and 2 failures (#1366).
+    const presentation = {
+      run_id: `preparation_run_${'c'.repeat(64)}`,
+      state: 'completed_with_failures' as const,
+      triggers: [
+        {
+          trigger: 'manual_scan' as const,
+          accepted_count: 1,
+          first_accepted_at: 100,
+          last_accepted_at: 100,
+        },
+      ],
+      passage: { read: 3, searches_finished: 3, compared: 3, checked: 3, ready: 2, failed: 1 },
+      active_books: [],
+      active_overflow: 0,
+      recent_completions: [{ name: 'First finish', outcome: 'ready' as const, completed_at: 101 }],
+      throughput_per_minute: 0,
+      started_at: 100,
+      updated_at: 101,
+      completed_at: 101,
+      total: 3,
+      dismissible: true,
+      now: { ready: 1, recorded: 0, failed: 2, in_progress: 0, scan_ids: ['scan-books'] },
+    }
+    let current: PreparationView = view(presentation)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+
+    const summary = await screen.findByRole('button', {
+      name: /Preparation completed with failures/u,
+    })
+    const runLine = '1 ready to browse · 0 recorded, nothing to decide · 2 could not finish'
+    expect(within(summary).getByText(`This run: ${runLine}`)).toBeVisible()
+    fireEvent.click(summary)
+    expect(
+      await screen.findByText(`Finished · ${runLine}`, { selector: '.preparation-run-state' }),
+    ).toBeVisible()
+    // The latched first finishes survive only as Prepared history.
+    expect(screen.getByRole('progressbar', { name: 'Prepared: 2 of 3' })).toBeVisible()
+    expect(
+      screen.getByText('Prepared', { selector: '.preparation-completions strong' }),
+    ).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preparation needs attention' }))
+    const books = (await screen.findByText('Books', { selector: 'strong' })).closest('article')
+    const audiobooks = screen.getByText('Audiobooks', { selector: 'strong' }).closest('article')
+    if (!books || !audiobooks) throw new Error('each library has its own row')
+    expect(within(books).getByText('Complete · some books could not finish')).toBeVisible()
+    expect(within(books).getByText(`3 of 3 checked · ${runLine}`)).toBeVisible()
+    expect(within(audiobooks).getByText('Complete · not in this run')).toBeVisible()
+    expect(
+      within(audiobooks).getByText(
+        '1 of 1 checked · 0 ready to browse · 1 recorded, nothing to decide · 0 could not finish',
+      ),
+    ).toBeVisible()
+
+    // Figures not yet known read as an ellipsis, and nothing is marked.
+    current = view({ ...presentation, now: null })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+    })
+    expect(
+      await within(summary).findByText(
+        'This run: … ready to browse · … recorded, nothing to decide · … could not finish',
+      ),
+    ).toBeVisible()
+    expect(within(audiobooks).getByText('Complete')).toBeVisible()
+    expect(screen.queryByText(/not in this run/u)).toBeNull()
   })
 
   it('refreshes active projections when passive preparation progress changes', async () => {
@@ -337,7 +456,11 @@ describe('Application shell', () => {
     await user.click(trigger)
     expect(screen.getByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
     expect(screen.getByText(/Restart the Mechanical Librarian service/)).toBeVisible()
-    expect(screen.getByText('2 of 4 checked · 1 ready · 1 could not finish')).toBeVisible()
+    expect(
+      screen.getByText(
+        '2 of 4 checked · 1 ready to browse · 0 recorded, nothing to decide · 1 could not finish',
+      ),
+    ).toBeVisible()
     for (const name of ['Scan now', 'Retry', 'Pause']) {
       const control = screen.getByRole('button', { name })
       expect(control).toHaveAttribute('aria-disabled', 'true')
@@ -385,7 +508,11 @@ describe('Application shell', () => {
     // A state the label table does not name still reads as a label, never as
     // the store's identifier.
     expect(screen.getByText('Scanning')).toBeVisible()
-    expect(screen.getByText('1 of 2 checked · 0 ready')).toBeVisible()
+    expect(
+      screen.getByText(
+        '1 of 2 checked · 0 ready to browse · 0 recorded, nothing to decide · 0 could not finish',
+      ),
+    ).toBeVisible()
     expect(
       screen.getByText(
         'Scan now \u2014 and Retry after a run with failures \u2014 start a new preparation cycle for this library; books that could not finish are prepared again; provider lookups that hit limits recover automatically on the documented schedule; a failure before a report has no automatic retry.',

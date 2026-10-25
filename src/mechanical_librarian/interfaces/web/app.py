@@ -1271,6 +1271,16 @@ class _PreparationCompletion(_ClosedModel):
     completed_at: int = Field(ge=0)
 
 
+class _PreparationNow(_ClosedModel):
+    """The run's works as they stand now, from the masthead's own rows (#1366)."""
+
+    ready: int = Field(ge=0)
+    recorded: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    in_progress: int = Field(ge=0)
+    scan_ids: list[StrictStr] = Field(max_length=128)
+
+
 class _PreparationPresentation(_ClosedModel):
     run_id: StrictStr = Field(pattern=r"^preparation_run_[0-9a-f]{64}$")
     state: Literal[
@@ -1292,6 +1302,7 @@ class _PreparationPresentation(_ClosedModel):
     completed_at: int | None = Field(default=None, ge=0)
     total: int = Field(ge=0)
     dismissible: bool
+    now: _PreparationNow | None = None
 
 
 class _PreparationDismissRequest(_ClosedModel):

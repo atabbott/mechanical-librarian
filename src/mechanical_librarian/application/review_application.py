@@ -1451,6 +1451,26 @@ class ReviewApplication:
             )
         )
         recovery_required = self._preparation.recovery_required
+        # The run's figures are the current state of its works, summed from the
+        # rows above that name it: one read, so the run line and those rows
+        # agree exactly, and a library outside the run is the only way their
+        # totals differ (#1366).
+        in_run = tuple(
+            progress
+            for progress in progress_values
+            if progress is not None
+            and presentation is not None
+            and progress.run_id == presentation.run_id
+        )
+        now = {
+            "ready": sum(progress.ready for progress in in_run),
+            "recorded": sum(progress.recorded for progress in in_run),
+            "failed": sum(progress.blocked for progress in in_run),
+            "in_progress": sum(
+                max(progress.total - progress.checked, 0) for progress in in_run
+            ),
+            "scan_ids": [progress.scan_id for progress in in_run],
+        }
         return PreparationView(
             libraries,
             paused,
@@ -1467,7 +1487,7 @@ class ReviewApplication:
             sum(cast("int", item["total"]) for item in libraries)
             if first_boot_complete
             else None,
-            None if presentation is None else presentation.to_data(),
+            None if presentation is None else {**presentation.to_data(), "now": now},
             recovery_required=recovery_required,
             provider_throttling=throttling,
         )

@@ -1466,6 +1466,20 @@ describe('shipped first-run setup script', () => {
     if (!retry) throw new Error('preparation retry missing')
     await retry()
     expect(await screen.findByRole('heading', { name: 'Preparation is complete' })).toBeVisible()
+    // The first-finish count is Prepared here too; "ready" names one set (#1366).
+    expect(
+      [...document.querySelectorAll('.setup-passage div')].map((row) => [
+        row.querySelector('dt')?.textContent,
+        row.querySelector('dd')?.textContent,
+      ]),
+    ).toEqual([
+      ['Read from library', '1'],
+      ['Searches finished', '1'],
+      ['Candidates compared', '1'],
+      ['Metadata checked', '1'],
+      ['Prepared', '1'],
+      ['Could not finish', '0'],
+    ])
     expect(timers).toHaveLength(0)
     expect(maximumInFlight).toBe(1)
   })

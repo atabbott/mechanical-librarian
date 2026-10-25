@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The masthead and the Library run summary now count preparation in the same
+  words: ready to browse, recorded with nothing to decide, and could not
+  finish, as the run's books stand now, so the two agree. A library outside the
+  current run is marked as not in it, and first-finish history reads Prepared
+  (#1366).
+
 - An automatic decision to keep an ebook's filled ISBN is now recorded as a
   kept field and joins its preparation's "Checked N fields, no changes" row,
   instead of reading "Details unavailable" when no source proposed a matching
