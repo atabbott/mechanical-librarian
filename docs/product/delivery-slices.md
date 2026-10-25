@@ -331,6 +331,7 @@ applicable`.
 | 2 | #1018, #1279, #1280, #1281, #1282, #1284, in any order | CSRF resend for every unsafe request; a write-permission review that survives refocus; a policy preview that evaluates every field it reports; a ledger that leads with changes rather than no-op records; library-level provider throttling, retry, scan and pause; and counts, search and Attention that agree across surfaces. |
 | 3 | #1283 | Degraded candidates are no longer presented as improvements, after the investigation records their cause. |
 | 4 | #1285 | F59: owner-entered values, changeable decisions and genre subsets. |
+| 5 | #1365, #1366, #1367 with #1377, #1368, #1369, #1370, in any order | The exit demonstration's remediation: the selected work stays in view after a decision, a withdrawal or a search; the masthead and the run summary count preparation in one vocabulary and agree; a source's first throttle states its reason and key link, with #1377 accepting a retried fixture request in the contained-reviewer image check; an automatic ebook ISBN keep reads as a kept field; policy preview and activation keep working after an activation completes with failures; and write permission carries across a policy activation, with any other lapse shown. |
 
 No release, tag, deployment, production-library operation, new provider or
 credential, change to consent semantics, or cover-question suppression is
