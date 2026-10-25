@@ -388,6 +388,10 @@ from mechanical_librarian.infrastructure.settings_authority import (
     load_review_bootstrap,
     store_runtime_configuration,
 )
+from mechanical_librarian.infrastructure.setup_claim_token import (
+    mint_setup_claim_token,
+    retire_setup_claim_token,
+)
 from mechanical_librarian.interfaces.web import (
     create_review_app,
     load_owner_password_binding,
@@ -3653,8 +3657,22 @@ def _compose_setup_runtime_generation(
     """Build the bounded first-owner target for the ordinary application."""
     verifier = ""
     state = repository.setup_state_store()
+    private_root = _private_root(database_path)
     if initialize:
-        state.initialize()
+        mint_setup_claim_token(private_root, state.initialize)
+    else:
+        resumed = state.read()
+        if resumed.claimed:
+            retire_setup_claim_token(private_root)
+        else:
+            # Each unclaimed start revokes the earlier token before it mints
+            # and announces its own (ADR-0086).
+            mint_setup_claim_token(
+                private_root,
+                lambda digest: state.rotate_claim_token(
+                    expected_revision=resumed.revision, claim_token_digest=digest
+                ),
+            )
 
     def verify_established_owner(password: str) -> bool:
         return cast(
@@ -3751,6 +3769,7 @@ def _compose_setup_runtime_generation(
         require_forwarding=bootstrap.canonical_origin.startswith("https://")
         and bootstrap.tls_certificate_file is None,
         activate=activate_setup,
+        retire_claim_token=lambda: retire_setup_claim_token(private_root),
     )
     return (
         RuntimeGeneration(

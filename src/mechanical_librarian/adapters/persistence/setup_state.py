@@ -26,7 +26,12 @@ from mechanical_librarian.adapters.persistence.schema import (
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError, SettingsView
 from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
-from mechanical_librarian.domain.setup_state import SetupStateDocument, SetupStateError
+from mechanical_librarian.domain.setup_state import (
+    SetupClaimTokenError,
+    SetupStateDocument,
+    SetupStateError,
+    claim_token_matches,
+)
 from mechanical_librarian.domain.validation import credential
 
 _T = TypeVar("_T")
@@ -56,14 +61,16 @@ class SetupStateStore(ConnectionScoped):
     ) -> None:
         super().__init__(connection, serialization_lock=serialization_lock)
 
-    def initialize(self, bootstrap_verifier: str | None = None) -> SetupStateDocument:
+    def initialize(self, claim_token_digest: str) -> SetupStateDocument:
         """Create the verifier-free exact-current setup predecessor."""
         document = SetupStateDocument(
-            schema_version="setup-state-v3",
+            schema_version="setup-state-v4",
             revision=1,
             # This closed member has no verifier, claim-code, or authentication
-            # meaning; it binds only the exact empty-volume predecessor.
+            # meaning; it binds only the exact empty-volume predecessor. The
+            # deployment-held claim token is bound separately (ADR-0086).
             bootstrap_verifier_digest=_UNCLAIMED_VERIFIER_DIGEST,
+            claim_token_digest=claim_token_digest,
         )
         transaction = self._transaction("initialize_setup_state")
         try:
@@ -164,7 +171,10 @@ class SetupStateStore(ConnectionScoped):
             current = self.read()
             if current.revision != expected_revision:
                 raise SetupStateError("setup state is stale")
-            if document.bootstrap_verifier_digest != current.bootstrap_verifier_digest:
+            if (
+                document.bootstrap_verifier_digest != current.bootstrap_verifier_digest
+                or document.claim_token_digest != current.claim_token_digest
+            ):
                 raise SetupStateError("setup state is unavailable")
             values = dict(
                 self._connection.execute(
@@ -253,6 +263,7 @@ class SetupStateStore(ConnectionScoped):
                 current.revision != expected_revision
                 or document.bootstrap_verifier_digest
                 != current.bootstrap_verifier_digest
+                or document.claim_token_digest != current.claim_token_digest
             ):
                 raise SetupStateError("setup state is stale")
             row = self._connection.execute(
@@ -318,11 +329,53 @@ class SetupStateStore(ConnectionScoped):
             transaction.rollback()
             raise error from None
 
+    def rotate_claim_token(
+        self, *, expected_revision: int, claim_token_digest: str
+    ) -> SetupStateDocument:
+        """Replace an unclaimed instance's token digest, revoking the earlier token."""
+        if type(expected_revision) is not int:
+            raise SetupStateError("setup state is unavailable")
+        transaction = self._transaction("rotate_setup_claim_token")
+        try:
+            transaction.begin()
+            current = self._read()
+            if current.revision != expected_revision or current.claimed:
+                raise SetupStateError("setup state is stale")
+            rotated = SetupStateDocument.model_validate(
+                {
+                    **current.model_dump(),
+                    "revision": expected_revision + 1,
+                    "claim_token_digest": claim_token_digest,
+                }
+            )
+            if (
+                self._connection.execute(
+                    "UPDATE owner_settings SET revision=?,document=? "
+                    "WHERE singleton=1 AND revision=?",
+                    (
+                        rotated.revision,
+                        _canonical_json(rotated.model_dump()),
+                        expected_revision,
+                    ),
+                ).rowcount
+                != 1
+            ):
+                raise SetupStateError("setup state is stale")
+            transaction.commit()
+            return rotated
+        except (SetupStateError, ValueError, sqlite3.Error) as error:
+            transaction.rollback()
+            raise SetupStateError("setup state is unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
+
     def claim_owner(
         self,
         *,
         expected_revision: int,
         owner_verifier: str,
+        claim_token: str,
     ) -> SetupStateDocument:
         """Atomically establish the first owner's claim and verifier.
 
@@ -331,6 +384,10 @@ class SetupStateStore(ConnectionScoped):
         ordinary login path after this commit. If that later step fails, the
         claim stands and resubmitting the same form reaches the
         already-claimed login branch.
+
+        The claim token is compared before staleness, so a token replayed after
+        the claim is refused as a claim token and never reads as stale: the
+        claimed document keeps no digest for any token to match (ADR-0086).
         """
         _verifier_digest(owner_verifier)
         if type(expected_revision) is not int:
@@ -339,6 +396,8 @@ class SetupStateStore(ConnectionScoped):
         try:
             transaction.begin()
             current = self._read()
+            if not claim_token_matches(claim_token, current.claim_token_digest):
+                raise SetupClaimTokenError("setup claim token is unavailable")
             if (
                 current.revision != expected_revision
                 or current.next_step() != "claim"
@@ -351,6 +410,7 @@ class SetupStateStore(ConnectionScoped):
                     "revision": expected_revision + 1,
                     "completed_steps": ["claim"],
                     "claimed": True,
+                    "claim_token_digest": None,
                 }
             )
             if (

@@ -12,8 +12,9 @@ file is absent, store mode instead requires the exact-current owner settings and
 verifier in `/data/application.sqlite3` and an owner-only, read-only
 `/run/secrets/review-bootstrap.json` containing optional deploy-side TLS, canonical
 origin, trusted proxies, read-only mount mappings, and any contained-reviewer
-profile path. It supplies no owner credential; the first visitor creates the
-owner password inside the bounded guided first run.
+profile path. It supplies no owner credential; the owner creates the password
+inside the bounded guided first run, proving access to the deployment with its
+setup claim token.
 Add ebook media mounts as read-only Compose overrides; never grant
 a writable media mount or Docker socket.
 
@@ -150,7 +151,18 @@ On a truly empty data volume the entrypoint captures that empty state before
 creating an exact incomplete setup store and serves only health, setup login,
 setup assets, and the minimal authenticated setup API. The seven steps are
 claim, Audiobookshelf connection, optional providers, libraries, read-only
-mount comparison, optional cover reviewer, and kickoff. Kickoff prepares a
+mount comparison, optional cover reviewer, and kickoff.
+
+The claim step asks for the setup claim token (ADR-0086). Every start that finds
+setup unclaimed mints a fresh one, revokes the previous one, writes it to the
+owner-only `/data/private/setup-claim-token`, and prints it once in the
+container log as `Mechanical Librarian setup claim token: ...`. Read it with
+`docker compose logs mechanical-librarian` or `docker compose exec
+mechanical-librarian cat /data/private/setup-claim-token`; a network visitor
+who reaches the port first cannot claim the instance without it. If the
+token is lost, restart the container and use the new one. Claiming removes the
+file, and resuming setup afterwards needs only the owner password. Treat the
+container log like the volume while setup is unclaimed. Kickoff prepares a
 dormant runtime generation, atomically replaces incomplete state with complete
 owner settings, publishes
 the successor on the existing listener, closes setup routes, and starts

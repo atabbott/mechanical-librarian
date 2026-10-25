@@ -10,6 +10,7 @@ from typing import Literal, Protocol
 
 from argon2 import PasswordHasher
 from fastapi import Cookie, FastAPI, Header, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -38,7 +39,10 @@ from mechanical_librarian.application.setup_journey import (
 )
 from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
 from mechanical_librarian.domain.reviewer_access import OpenRouterModelId
-from mechanical_librarian.domain.setup_state import SetupStateDocument
+from mechanical_librarian.domain.setup_state import (
+    SetupStateDocument,
+    claim_token_matches,
+)
 from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
 from mechanical_librarian.interfaces.web.app import (
     BodyLimitMiddleware,
@@ -54,10 +58,11 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
-_SETUP_SESSION_BODY_LIMIT = 2 * 1_024 * 6 + 128
+_SETUP_SESSION_BODY_LIMIT = 2 * 1_024 * 6 + 128 * 6 + 128
 _SETUP_BODY_LIMITS = {
-    # Two maximum passwords may each expand sixfold under JSON escaping. The
-    # remaining fixed envelope covers property names and the bounded revision.
+    # Two maximum passwords and the bounded claim token may each expand
+    # sixfold under JSON escaping. The remaining fixed envelope covers property
+    # names and the bounded revision.
     "/api/setup/session": _SETUP_SESSION_BODY_LIMIT,
     "/api/setup/claim": 2_048,
     "/api/setup/connect": 16_384,
@@ -90,6 +95,7 @@ class SetupStateStore(Protocol):
         *,
         expected_revision: int,
         owner_verifier: str,
+        claim_token: str,
     ) -> SetupStateDocument: ...
 
 
@@ -104,6 +110,12 @@ class _LoginRequest(BaseModel):
     password: StrictStr = Field(min_length=1, max_length=1024)
     confirmation: StrictStr | None = Field(default=None, max_length=1024)
     expected_revision: StrictInt | None = Field(default=None, ge=1)
+    claim_token: StrictStr | None = Field(
+        default=None,
+        max_length=128,
+        repr=False,
+        json_schema_extra={"writeOnly": True},
+    )
 
 
 class _ConnectRequest(BaseModel):
@@ -281,6 +293,7 @@ def create_setup_app(
     *,
     trusted_proxy_ips: tuple[str, ...] = (),
     require_forwarding: bool = False,
+    retire_claim_token: Callable[[], None] = lambda: None,
 ) -> FastAPI:
     """Compose no normal route, worker, target client, or write authority."""
 
@@ -328,6 +341,12 @@ def create_setup_app(
         return _secure_setup_response(
             response, hsts=canonical_origin.startswith("https://")
         )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, _error: RequestValidationError) -> Response:
+        # FastAPI's default answer echoes the refused input, which here can be
+        # a password, a service key or the setup claim token (ADR-0086).
+        return JSONResponse({"detail": {"error": "invalid_request"}}, status_code=422)
 
     @app.get("/health/ready", response_class=PlainTextResponse)
     def ready() -> str:
@@ -407,6 +426,13 @@ def create_setup_app(
                 or nonces.pop(x_setup_nonce, 0) <= now
             ):
                 raise HTTPException(403, {"error": "csrf"})
+            claim_token = request.claim_token
+            if claim_token is None or not claim_token_matches(
+                claim_token, current.claim_token_digest
+            ):
+                # Refused before Argon2 and outside the login throttle. Nothing
+                # is recorded and the token stays valid for a later claim.
+                raise HTTPException(403, {"error": "claim_token"})
             if (
                 request.expected_revision is None
                 or request.confirmation is None
@@ -419,9 +445,13 @@ def create_setup_app(
                 state.claim_owner(
                     expected_revision=request.expected_revision,
                     owner_verifier=owner_verifier,
+                    claim_token=claim_token,
                 )
             except Exception as error:
+                # The token matched above, so a refusal here means another
+                # claim settled first: the transaction compares it again.
                 raise HTTPException(409, {"error": "claimed"}) from error
+            retire_claim_token()
             response.delete_cookie(
                 "ml_setup_nonce",
                 path="/api/setup/session",

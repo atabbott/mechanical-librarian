@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 from typing import Annotated, Literal
 
@@ -33,10 +35,18 @@ _RECORDED_STEPS: tuple[SetupStep, ...] = (
     "reviewer",
 )
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
+# The minted token is `secrets.token_urlsafe(32)`; the bound admits only the
+# URL-safe alphabet, so a presented value is checked before it is hashed.
+_CLAIM_TOKEN = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_CLAIM_TOKEN_DOMAIN = b"mechanical-librarian/setup-claim-token/v1\0"
 
 
 class SetupStateError(ValueError):
     """Fixed, value-free refusal for the closed first-run state."""
+
+
+class SetupClaimTokenError(SetupStateError):
+    """The presented first-owner claim token is not the current one."""
 
 
 class _Closed(BaseModel):
@@ -65,9 +75,12 @@ class SetupLibraryCandidate(_Closed):
 class SetupStateDocument(_Closed):
     """The only incomplete authority admitted before the owner is established."""
 
-    schema_version: Literal["setup-state-v3"]
+    schema_version: Literal["setup-state-v4"]
     revision: Annotated[StrictInt, Field(ge=1)]
     bootstrap_verifier_digest: StrictStr
+    # Only the digest of the deployment-held token is kept, and only while the
+    # instance is unclaimed (ADR-0086).
+    claim_token_digest: StrictStr | None = None
     completed_steps: list[SetupStep] = Field(default_factory=list, max_length=6)
     claimed: StrictBool = False
     connection: SetupConnection | None = None
@@ -84,6 +97,14 @@ class SetupStateDocument(_Closed):
         if self.completed_steps != expected:
             raise SetupStateError("setup state is unavailable")
         if self.claimed != ("claim" in self.completed_steps):
+            raise SetupStateError("setup state is unavailable")
+        if self.claimed:
+            if self.claim_token_digest is not None:
+                raise SetupStateError("setup state is unavailable")
+        elif (
+            self.claim_token_digest is None
+            or _DIGEST.fullmatch(self.claim_token_digest) is None
+        ):
             raise SetupStateError("setup state is unavailable")
         if (self.connection is not None) != ("connect" in self.completed_steps):
             raise SetupStateError("setup state is unavailable")
@@ -171,11 +192,32 @@ class SetupStateDocument(_Closed):
         )
 
 
+def claim_token_digest(token: str) -> str:
+    """Return the domain-separated digest that setup state keeps for a token."""
+    if type(token) is not str or _CLAIM_TOKEN.fullmatch(token) is None:
+        raise SetupStateError("setup claim token is unavailable")
+    return hashlib.sha256(_CLAIM_TOKEN_DOMAIN + token.encode("ascii")).hexdigest()
+
+
+def claim_token_matches(token: object, digest: str | None) -> bool:
+    """Compare a presented token after its type and bounds, in constant time."""
+    if (
+        type(token) is not str
+        or _CLAIM_TOKEN.fullmatch(token) is None
+        or type(digest) is not str
+    ):
+        return False
+    return hmac.compare_digest(claim_token_digest(token), digest)
+
+
 __all__ = [
+    "SetupClaimTokenError",
     "SetupConnection",
     "SetupLibraryCandidate",
     "SetupMountResult",
     "SetupStateDocument",
     "SetupStateError",
     "SetupStep",
+    "claim_token_digest",
+    "claim_token_matches",
 ]

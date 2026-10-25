@@ -21,6 +21,7 @@ CASES = (
     "tests/unit/test_runtime_dispatch.py::test_transition_orders_dormant_start_commit_publish_admit_and_drain",
     "tests/unit/test_review_web_transport.py::test_first_boot_acknowledgement_is_authenticated_csrf_bound_and_durable",
     "tests/browser/test_review_browser.py::test_first_run_installed_semantics_responsiveness_and_handoff",
+    "tests/browser/test_review_browser.py::test_first_owner_claim_requires_the_deployment_claim_token",
 )
 
 
@@ -62,6 +63,7 @@ def main() -> None:
                 "source_sha": head,
                 "status": "passed",
                 "properties": [
+                    "deployment-held-claim-token",
                     "exact-empty-selection",
                     "ordinary-owner-session-continuity",
                     "one-listener-promotion",

@@ -38,7 +38,7 @@ const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) =
   next_step: nextStep,
   providers: [],
   revision: 3,
-  schema_version: 'setup-state-v3',
+  schema_version: 'setup-state-v4',
   ...overrides,
 })
 
@@ -133,6 +133,7 @@ describe('shipped first-run setup script', () => {
       if (url === '/api/setup/session' && init?.method === 'POST') {
         expect(init.headers).toEqual(expect.objectContaining({ 'x-setup-nonce': 'n'.repeat(32) }))
         expect(jsonBody(init.body)).toEqual({
+          claim_token: 'deployment-held-claim-token',
           confirmation: 'correct horse battery staple',
           expected_revision: 1,
           password: 'correct horse battery staple',
@@ -146,6 +147,11 @@ describe('shipped first-run setup script', () => {
     runSetup()
 
     expect(await screen.findByRole('heading', { name: 'Create your owner password' })).toBeVisible()
+    // The token is copied from a log line or a file, so stray whitespace from
+    // the copy never reaches the claim.
+    fireEvent.input(screen.getByLabelText('Setup claim token'), {
+      target: { value: '  deployment-held-claim-token\n' },
+    })
     fireEvent.input(screen.getByLabelText('Owner password'), {
       target: { value: 'correct horse battery staple' },
     })
@@ -155,6 +161,105 @@ describe('shipped first-run setup script', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
 
     expect(await screen.findByRole('heading', { name: 'Choose metadata providers' })).toBeVisible()
+  })
+
+  it('names where the claim token is and recovers a refused token in place', async () => {
+    let claimReads = 0
+    const submitted: { nonce: unknown; token: unknown }[] = []
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/state' && submitted.length < 2)
+        return response({ error: 'unauthorized' }, 401)
+      if (url === '/api/setup/claim') {
+        claimReads += 1
+        return response({ claimed: false, nonce: String(claimReads).repeat(32), revision: 1 })
+      }
+      if (url === '/api/setup/session' && init?.method === 'POST') {
+        const body = jsonBody(init.body) as { claim_token: unknown }
+        submitted.push({
+          nonce: (init.headers as Record<string, string>)['x-setup-nonce'],
+          token: body.claim_token,
+        })
+        if (submitted.length === 1) return response({ detail: { error: 'claim_token' } }, 403)
+        return response({ csrf_token: 'csrf-token' })
+      }
+      return response(setupState('providers'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    const token = await screen.findByLabelText('Setup claim token')
+    expect(token).toHaveAttribute('type', 'password')
+    expect(token).toHaveAttribute('maxlength', '128')
+    expect(screen.getByRole('button', { name: 'Show the setup claim token' })).toBeVisible()
+    expect(
+      screen.getByText(
+        'Copy the setup claim token from the container log, or from private/setup-claim-token on the data volume. A restart replaces the token, so use the newest one.',
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText(/first visitor/u)).not.toBeInTheDocument()
+    const password = screen.getByLabelText('Owner password')
+    const confirmation = screen.getByLabelText('Confirm owner password')
+    fireEvent.input(token, { target: { value: 'mistyped-token' } })
+    fireEvent.input(password, { target: { value: 'correct horse battery staple' } })
+    fireEvent.input(confirmation, { target: { value: 'correct horse battery staple' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('That setup claim token was not accepted.')
+    expect(alert).toHaveTextContent('container log')
+    expect(alert).toHaveTextContent('a restart replaces it')
+    await waitFor(() => expect(token).toHaveAttribute('aria-invalid', 'true'))
+    expect(token).toHaveAttribute('aria-describedby', alert.id)
+    await waitFor(() => expect(token).toHaveFocus())
+    // The refused request spent its nonce; a fresh one is fetched in place and
+    // every typed field stays where it was.
+    expect(claimReads).toBe(2)
+    expect(screen.getByLabelText('Setup claim token')).toBe(token)
+    expect(token).toHaveValue('mistyped-token')
+    expect(password).toHaveValue('correct horse battery staple')
+    expect(confirmation).toHaveValue('correct horse battery staple')
+
+    fireEvent.input(token, { target: { value: 'deployment-held-claim-token' } })
+    expect(token).not.toHaveAttribute('aria-invalid')
+    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+
+    expect(await screen.findByRole('heading', { name: 'Choose metadata providers' })).toBeVisible()
+    expect(submitted).toEqual([
+      { nonce: '1'.repeat(32), token: 'mistyped-token' },
+      { nonce: '2'.repeat(32), token: 'deployment-held-claim-token' },
+    ])
+  })
+
+  it('returns to sign in when a refused claim token finds the workspace claimed', async () => {
+    let claimReads = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/state') return response({ error: 'unauthorized' }, 401)
+      if (url === '/api/setup/claim') {
+        claimReads += 1
+        return response({ claimed: claimReads > 1, nonce: 'n'.repeat(32), revision: claimReads })
+      }
+      if (url === '/api/setup/session' && init?.method === 'POST')
+        return response({ detail: { error: 'claim_token' } }, 403)
+      throw new Error('unexpected setup request')
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    fireEvent.input(await screen.findByLabelText('Setup claim token'), {
+      target: { value: 'stale-token' },
+    })
+    fireEvent.input(screen.getByLabelText('Owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.input(screen.getByLabelText('Confirm owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+
+    expect(await screen.findByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
+    expect(screen.queryByLabelText('Setup claim token')).not.toBeInTheDocument()
   })
 
   it('recovers a first-owner race by returning to established-owner sign in', async () => {

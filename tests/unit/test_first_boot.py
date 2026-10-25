@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,57 @@ def test_session_write_ahead_sidecars_still_fail_closed(tmp_path: Path) -> None:
     private.mkdir(mode=0o700)
     (private / "review-sessions.sqlite").touch()
     (private / "review-sessions.sqlite-wal").touch()
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
+
+
+def test_owner_only_setup_claim_token_does_not_block_setup_resume(
+    tmp_path: Path,
+) -> None:
+    """Every unclaimed start leaves its claim token in private/ (ADR-0086)."""
+    (tmp_path / "application.sqlite3").touch()
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    (private / "review-sessions.sqlite").touch()
+    token = private / "setup-claim-token"
+    token.write_text("token\n", encoding="ascii")
+    token.chmod(0o600)
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+    (private / "review-sessions.sqlite").unlink()
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+
+
+@pytest.mark.parametrize("unsafe", ("0644", "0400", "symlink", "directory", "fifo"))
+def test_setup_claim_token_other_than_an_owner_file_fails_closed(
+    tmp_path: Path, unsafe: str
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    token = private / "setup-claim-token"
+    if unsafe == "symlink":
+        target = tmp_path / "elsewhere"
+        target.write_text("token\n", encoding="ascii")
+        target.chmod(0o600)
+        token.symlink_to(target)
+    elif unsafe == "directory":
+        token.mkdir(mode=0o700)
+    elif unsafe == "fifo":
+        os.mkfifo(token, 0o600)
+    else:
+        token.write_text("token\n", encoding="ascii")
+        token.chmod(int(unsafe, 8))
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
+
+
+def test_other_setup_claim_names_fail_closed(tmp_path: Path) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    token = private / "setup-claim-token.tmp"
+    token.write_text("token\n", encoding="ascii")
+    token.chmod(0o600)
     with pytest.raises(FirstBootError):
         _select(tmp_path, resume=True)
 
