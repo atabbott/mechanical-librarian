@@ -1065,7 +1065,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             authorities[decision_id] = (authority, bool(current), updated_at)
 
         consents: dict[str, tuple[EffectConsent, bool, int]] = {}
-        carried: list[tuple[EffectConsent, str]] = []
+        carried: list[tuple[EffectConsent, str, str]] = []
         for consent_id, current, updated_at, document in connection.execute(
             "SELECT consent_id,current,updated_at,document FROM field_effect_consents"
         ):
@@ -1081,13 +1081,20 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 raise FieldEffectError("invalid_consent")
             consents[consent_id] = (consent, bool(current), updated_at)
             if raw["basis"]["kind"] == "policy_activation":
-                carried.append((consent, raw["basis"]["carried_from"]))
-        # A carried consent names a retired predecessor of exactly its scope,
-        # so no activation can have widened what the owner granted.
-        for consent, carried_from in carried:
+                basis = raw["basis"]
+                carried.append((consent, basis["carried_from"], basis["transition_id"]))
+        # A carried consent names a recorded activation and a retired
+        # predecessor of exactly its scope, so no activation can have widened
+        # what the owner granted.
+        for consent, carried_from, transition_id in carried:
             predecessor = consents.get(carried_from)
             if (
                 predecessor is None
+                or connection.execute(
+                    "SELECT 1 FROM metadata_policy_transitions WHERE transition_id=?",
+                    (transition_id,),
+                ).fetchone()
+                is None
                 or predecessor[1]
                 or (
                     predecessor[0].connection,

@@ -412,6 +412,32 @@ def test_a_consent_without_a_closed_basis_rejects_the_store(
         open_repository(effects.database_path, create=False)
 
 
+def test_a_carried_consent_naming_no_recorded_activation_rejects_the_store(
+    effects: _EffectEnvironment,
+) -> None:
+    """A well-formed basis must still name an activation the store recorded."""
+    effects.repository.grant_field_effect_consents("primary", ("books",), ("title",), 1)
+    _activate_replacement(effects, ("books",), 2)
+    effects.repository.close()
+    # The carried store reopens as written; only the unrecorded activation fails.
+    reopened = open_repository(effects.database_path, create=False)
+    connection = reopened._connection
+    ((consent_id, raw_document),) = connection.execute(
+        "SELECT consent_id,document FROM field_effect_consents WHERE current=1"
+    ).fetchall()
+    raw = json.loads(raw_document)
+    raw["basis"]["transition_id"] = "policy_transition_" + "f" * 64
+    with connection:
+        connection.execute(
+            "UPDATE field_effect_consents SET document=? WHERE consent_id=?",
+            (json.dumps(raw, sort_keys=True, separators=(",", ":")), consent_id),
+        )
+    reopened.close()
+
+    with pytest.raises(MetadataReportError):
+        open_repository(effects.database_path, create=False)
+
+
 def test_a_policy_row_carries_the_exact_settings_its_own_transition_moved(
     effects: _EffectEnvironment,
 ) -> None:

@@ -1187,7 +1187,7 @@ class ContinuousGuardedApplication:
             "lapsed_consents": [
                 value
                 for value in cast(
-                    "list[dict[str, object]]", data.pop("lapsed_consents", [])
+                    "list[dict[str, object]]", data.pop("lapsed_consents")
                 )
                 if (value["connection"], value["library"]) in self._libraries
             ],
