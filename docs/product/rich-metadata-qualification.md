@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Transient write recovery successor (#1382)
+
+The current F19a, F20 and F46 records move to semantic revision 68 over base
+`eb27145c`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows a lost Audiobookshelf connection recording a clearable
+connection suspension, the running worker resolving queued read-backs, and a
+stranded claim returning to the guarded scheduler unsent. No schema or
+persisted document changes, so no clean rebuild is required, and no operation
+gains or loses automatic authority.
+
 ## Ebook ISBN keep binding successor (#1368)
 
 The current F19a, F20 and F46 records move to semantic revision 67 over base

@@ -630,10 +630,12 @@ def test_seeded_activity_details_retain_real_transitions(
             == 200
         )
         events = client.get("/api/v1/activity").json()["events"]
+        # The seeded refusal stops at the pre-write read. A later title no
+        # longer inherits its lost connection and stale with it (#1382).
         event = next(
             item
             for item in events
-            if item["state"] == "stale" and item["destination"] == "title"
+            if item["state"] == "stale" and item["destination"] == "genres"
         )
         path = f"/api/v1/activity/{event['transition_id']}/transitions"
         response = client.get(path)
