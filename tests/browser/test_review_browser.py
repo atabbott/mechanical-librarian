@@ -10054,7 +10054,22 @@ def test_masthead_and_run_line_agree_on_the_real_server(
         fixture.application.request_review_scan("primary", "books-1")
         earlier = finished("books-1")
         fixture.application.request_review_scan("primary", "books-0")
-        current = finished("books-0")
+        finished("books-0")
+        # One prepared case is re-projected as recorded with nothing to decide,
+        # so the run line carries all three counts, including its longest word.
+        with closing(sqlite3.connect(fixture.database)) as connection:
+            assert (
+                connection.execute(
+                    "UPDATE review_preparation_work SET outcome='evidence_only',"
+                    "proposal_set_id=NULL,review_case_id=NULL WHERE work_id=("
+                    "SELECT work_id FROM review_preparation_work WHERE library_name="
+                    "'books-0' AND state='complete' AND outcome='case' "
+                    "ORDER BY work_id DESC LIMIT 1)"
+                ).rowcount
+                == 1
+            )
+            connection.commit()
+        current = fixture.application.preparation().to_data()
         presentation = cast(dict[str, Any], current["presentation"])
         assert presentation["run_id"] != cast(dict, earlier["presentation"])["run_id"]
         books = next(
@@ -10064,10 +10079,10 @@ def test_masthead_and_run_line_agree_on_the_real_server(
         assert books["ready"] + books["recorded"] > 0
 
         def split(ready: int, recorded: int, failed: int) -> str:
-            # Only the ready count stands at zero, and each count keeps its
-            # words on one line.
+            # Only the ready count stands at zero, and each number stays with
+            # its first word; the words keep ordinary spaces.
             return " · ".join(
-                f"{count} {words}".replace(" ", "\u00a0")
+                f"{count}\u00a0{words}"
                 for index, (count, words) in enumerate(
                     (
                         (ready, "ready to browse"),
@@ -10147,6 +10162,17 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                 assert books_row == f"{books['checked']} of {books['total']} checked"
                 assert books_stages == buckets(*counts)
                 assert other_state.endswith(" · not in this run")
+                # Enlarged on a narrow screen, the counts wrap between words and
+                # never split one (#1013, #1366).
+                page.set_viewport_size({"width": 320, "height": 900})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                for selector in (
+                    ".preparation-run-state",
+                    ".preparation-outcomes strong",
+                ):
+                    assert page.locator(selector).evaluate(_SPLIT_WORDS) == [], selector
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 1440, "height": 1000})
 
                 # A prepared work fails after its cycle completed, as a policy
                 # restart that ends in failure would leave it.
@@ -10179,6 +10205,21 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                 browser.close()
 
 
+# Every word in the element whose glyphs land on more than one line.
+_SPLIT_WORDS = """element => {
+  const split = [];
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (const match of node.data.matchAll(/[^\\s\\u00a0·]+/g)) {
+      const range = document.createRange();
+      range.setStart(node, match.index);
+      range.setEnd(node, match.index + match[0].length);
+      const tops = new Set([...range.getClientRects()].map(rect => Math.round(rect.top)));
+      if (tops.size > 1) split.push(match[0]);
+    }
+  }
+  return split;
+}"""
 _THROTTLE_FILE_SEPARATION = """() => {
   const notice = document.querySelector('.provider-throttle-notice');
   const list = notice.querySelector('ul');

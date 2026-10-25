@@ -88,14 +88,16 @@ export const labelWords = (value: string) => value.replaceAll('_', ' ')
 // One vocabulary for every preparation count, in the masthead and the run line
 // alike (#1366); a count not yet known reads as an ellipsis, never 0. Only the
 // ready count stands at zero, so a quiet run is not a wall of zeros (#641), and
-// each count keeps its words on one line (#1013).
+// each number stays with its first word (#1013). The phrase keeps ordinary
+// spaces: a fully unbreakable phrase is split mid-word by the page's
+// `overflow-wrap: anywhere` once text is enlarged.
 export const preparationOutcomes = (
   counts: { readonly ready: number; readonly recorded: number; readonly failed: number } | null,
 ) =>
   [
-    [counts?.ready, 'ready\u00a0to\u00a0browse'] as const,
-    [counts?.recorded, 'recorded,\u00a0nothing\u00a0to\u00a0decide'] as const,
-    [counts?.failed, 'could\u00a0not\u00a0finish'] as const,
+    [counts?.ready, 'ready to browse'] as const,
+    [counts?.recorded, 'recorded, nothing to decide'] as const,
+    [counts?.failed, 'could not finish'] as const,
   ]
     .filter(([count], index) => index === 0 || count !== 0)
     .map(([count, words]) => `${count === undefined ? '…' : String(count)}\u00a0${words}`)

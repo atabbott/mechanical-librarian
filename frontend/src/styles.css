@@ -1112,8 +1112,10 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .preparation-passage progress::-webkit-progress-value { background:var(--accent); }
 .preparation-passage progress::-moz-progress-bar { background:var(--accent); }
 .preparation-passage dd strong { min-width:4ch; color:var(--ink); font:700 .75rem/1 Georgia,'Times New Roman',serif; text-align:right; }
-.preparation-outcomes { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:.4rem .75rem; padding-top:.2rem; }
-.preparation-outcomes dd { display:block; text-align:right; }
+/* The counts take their own line once enlarged text leaves them less than 10rem
+   beside the label, rather than splitting a word in a narrow column (#1366). */
+.preparation-outcomes { display:flex; flex-wrap:wrap; gap:.4rem .75rem; padding-top:.2rem; }
+.preparation-outcomes dd { flex:1 1 10rem; text-align:right; }
 .preparation-outcomes dd strong { overflow-wrap:anywhere; }
 .preparation-completions li { display:flex; justify-content:space-between; gap:1rem; padding:.55rem 0; border-bottom:1px solid var(--line); }
 .preparation-completions li span { overflow-wrap:anywhere; }

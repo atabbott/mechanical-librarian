@@ -732,10 +732,11 @@ describe('Library route', () => {
     // The reconciliation reads once, in the outcomes row; the header keeps the
     // short count it always carried rather than repeating it.
     expect(screen.getByText('1 ready to browse · 2 in progress')).toBeVisible()
-    // Each count keeps its label on narrow screens; only separators break (#1013).
-    expect(document.querySelector('.preparation-outcomes strong')?.textContent).toBe(
-      '1\u00a0ready\u00a0to\u00a0browse\u00a0· 2\u00a0in\u00a0progress',
-    )
+    // Each number keeps its first word and no line starts with a separator
+    // (#1013); the words wrap, so enlarged text never splits one.
+    const scope = document.querySelector('.preparation-outcomes strong')?.textContent
+    expect(scope).toBe('1\u00a0ready to browse\u00a0· 2\u00a0in progress')
+    expect(scope?.replaceAll('\u00a0·', '')).not.toMatch(/\D\u00a0/u)
     expect(document.querySelector('.preparation-detail > header > strong')?.textContent).toBe(
       '1 ready to browse in this run',
     )

@@ -346,11 +346,13 @@ describe('Application shell', () => {
     })
     const runLine = '1 ready to browse · 2 could not finish'
     expect(within(summary).getByText(`This run: ${runLine}`)).toBeVisible()
-    // Each count keeps its words; only a separator breaks, and an empty count
-    // other than ready is left out rather than stated as zero (#1013, #641).
-    expect(within(summary).getByText(/^This run:/u).textContent).toBe(
-      'This run: 1\u00a0ready\u00a0to\u00a0browse · 2\u00a0could\u00a0not\u00a0finish',
-    )
+    // Each number stays with its first word, and an empty count other than
+    // ready is left out rather than stated as zero (#1013, #641). The words
+    // keep ordinary spaces, so enlarged text wraps between words, never
+    // inside one.
+    const summaryText = within(summary).getByText(/^This run:/u).textContent
+    expect(summaryText).toBe('This run: 1\u00a0ready to browse · 2\u00a0could not finish')
+    expect(summaryText).not.toMatch(/\D\u00a0/u)
     fireEvent.click(summary)
     expect(
       await screen.findByText(`Finished · ${runLine}`, { selector: '.preparation-run-state' }),

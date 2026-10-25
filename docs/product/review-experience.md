@@ -56,7 +56,7 @@ waiting on, in the one vocabulary every preparation count uses: how many of the
 run's books are ready to browse (a case to decide), recorded with nothing to
 decide, could not finish, or are still in progress. Ready to browse is always
 stated; the other counts are left out at zero rather than shown as a wall of
-zeros, and each count keeps its words on one line. Those figures are the run's
+zeros, and each number stays with its first word. Those figures are the run's
 works as they stand now, read with the masthead's own rows in one transaction,
 so they equal the sum of the masthead rows for the libraries in the run; a run
 replaced between the two reads leaves them unknown rather than empty. Each

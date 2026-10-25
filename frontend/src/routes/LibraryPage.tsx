@@ -232,14 +232,13 @@ const boundedSearchName = (name: string) => {
   return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
 }
 
-// Each count stays with its label; lines break only after a separator (#1013).
+// Each number stays with its first word, and a separator never starts a line
+// (#1013); the words themselves wrap, so enlarged text never splits one.
 const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) =>
   [
     ...runOutcomes(presentation),
-    `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'retained' : 'in progress'}`,
-  ]
-    .map((pair) => pair.replaceAll(' ', '\u00a0'))
-    .join('\u00a0· ')
+    `${presentation.now ? String(presentation.now.in_progress) : '…'}\u00a0${recoveryRequired ? 'retained' : 'in progress'}`,
+  ].join('\u00a0· ')
 const preparationPassage = [
   ['read', 'Read from library'],
   ['searches_finished', 'Searches finished'],
