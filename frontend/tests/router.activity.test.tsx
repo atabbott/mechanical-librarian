@@ -661,6 +661,22 @@ describe('Activity route', () => {
       'Stale',
     ],
     [
+      'connection-waiting',
+      {
+        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        events: [{ work_label: 'Unreached work', state: 'stale', failure: 'connection' }],
+      },
+      'Waiting safely',
+    ],
+    [
+      'connection-exhausted',
+      {
+        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        events: [{ work_label: 'Exhausted work', state: 'stale', failure: 'connection_exhausted' }],
+      },
+      'Stale',
+    ],
+    [
       'stopped',
       {
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
@@ -1305,6 +1321,47 @@ describe('Activity route', () => {
     expect(lines[0]).toMatch(/^[^·\s].*\u00a0· .*\u00a0· Cover advice failed safely$/u)
     expect(lines[1]).toMatch(/^[^·\s].*\u00a0· .*\u00a0· Cover advice completed$/u)
     for (const line of lines) expect(line).not.toMatch(/(?:^|[ \n])·/u)
+  })
+
+  it.each([
+    ['connection', 'Waiting safely'],
+    ['connection_exhausted', 'Stale'],
+  ])('reads each connection stale in a %s lifecycle as waiting', async (failure, latest) => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [
+            {
+              event_id: 'connection-wait',
+              state: 'stale',
+              failure,
+              transition_id: 'effect_plan_' + 'd'.repeat(64),
+            },
+          ],
+        }),
+      ),
+      getActivityTransitions: vi.fn(async () => ({
+        events: ['planned', 'stale', 'planned', 'stale'].map((state, index) => ({
+          event_id: `transition-${String(index)}`,
+          occurred_at: 1786000000 + index,
+          sequence: index + 1,
+          state,
+        })),
+        has_more: false,
+      })),
+    }
+    renderRoute('/activity', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    const lines = [...lifecycle.querySelectorAll('li')].map((item) =>
+      item.textContent.split('\u00a0· ').at(-1),
+    )
+    // Only a lost connection is ever followed by another preparation, so the
+    // earlier stale waited; the latest reads as the row's own result (#1402).
+    expect(lines).toEqual(['Planned', 'Waiting safely', 'Planned', latest])
   })
 
   it('keeps an open lifecycle disclosure through a refreshed latest event', async () => {

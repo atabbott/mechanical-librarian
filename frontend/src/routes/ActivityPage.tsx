@@ -48,7 +48,10 @@ const capabilityLabel = (state: string) =>
     field_unavailable: 'A field is unavailable',
     not_ready: 'Not ready yet',
   })[state] ?? 'Not ready yet'
-const stateLabel = (state: string, advice?: 'description' | 'cover') =>
+// A change stopped only by a lost connection is still waiting to be prepared
+// again, so it reads as waiting rather than as a stopped stale (#1402).
+const stateLabel = (state: string, advice?: 'description' | 'cover', failure?: string | null) =>
+  (state === 'stale' && failure === 'connection' ? 'Waiting safely' : undefined) ??
   (advice === 'description'
     ? {
         completed: 'Description advice completed',
@@ -210,9 +213,12 @@ function PageJump({
 function ActivityTransitions({
   eventId,
   advice,
+  failure,
 }: {
   eventId: string
   advice: 'description' | 'cover' | undefined
+  /** The failure of the change's latest transition, which its row shows. */
+  failure: string | null
 }) {
   const { http } = useReviewContext()
   const [extraPages, setExtraPages] = useState<ActivityTransitionView[][]>([])
@@ -250,13 +256,20 @@ function ActivityTransitions({
   if (!events.length) return null
   return (
     <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
-      {events.map((transition) => (
+      {events.map((transition, index) => (
         // One flow; the no-break space keeps each separator off a line start.
         <li key={transition.event_id}>
           <time>
             {dateParts(transition.occurred_at).day}&nbsp;· {dateParts(transition.occurred_at).time}
           </time>
-          &nbsp;· {stateLabel(transition.state, advice)}
+          &nbsp;·{' '}
+          {stateLabel(
+            transition.state,
+            advice,
+            // Only a connection stale is ever followed by another transition,
+            // so any earlier stale waited; the latest has the row's failure.
+            index < events.length - 1 || moreAvailable ? 'connection' : failure,
+          )}
         </li>
       ))}
       {moreAvailable ? (
@@ -331,7 +344,7 @@ function ActivityEventRow({
       <div className="cm-activity-change" aria-label={event.change_detail}>
         <span aria-hidden="true">{event.change}</span>
       </div>
-      <b>{stateLabel(event.state, advice)}</b>
+      <b>{stateLabel(event.state, advice, event.failure)}</b>
       <button
         data-activity-focus={`details-${changeId}`}
         aria-expanded={expanded}
@@ -384,7 +397,12 @@ function ActivityEventRow({
             ))}
           </dl>
           {event.transition_id ? (
-            <ActivityTransitions key={changeId} eventId={event.transition_id} advice={advice} />
+            <ActivityTransitions
+              key={changeId}
+              eventId={event.transition_id}
+              advice={advice}
+              failure={event.failure}
+            />
           ) : null}
         </div>
       ) : null}

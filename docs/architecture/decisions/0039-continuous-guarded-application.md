@@ -67,10 +67,12 @@ connection-scoped capability observation or by a lost pre-read, is stale with
 `connection` and releases its decision. While it waits, one of the library's
 waiting plans is observed each pass. The connection counts as reached only
 when `GET /api/me` succeeded for an active account that can reach the library
-and `GET /api/items/{id}` returned any HTTP response, a 404 included. A
-transport failure or timeout on either request, a rejected key, or an inactive
-or unselected account keeps the plan waiting with its bound untouched, since the
-owner fixes those without losing the decision. Once reached, the lost
+and `GET /api/items/{id}` returned a readable item or a definite refusal: a
+`4xx` other than `408` or `429`, a 404 included. A transport failure or timeout
+on either request, a rejected key, an inactive or unselected account, a `5xx`,
+`408` or `429`, or an unreadable or oversized body keeps the plan waiting with
+its bound untouched, since none of those answered for this book and the owner or
+the service recovers them without losing the decision. Once reached, the lost
 connection is cleared and the decision is planned again into the same plan, restored
 to the state the stale interrupted with its attempt, claim token, and whole
 history, and every guard runs again in order. A withdrawn permission or field

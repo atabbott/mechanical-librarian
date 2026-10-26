@@ -140,6 +140,19 @@ def test_each_durable_state_has_one_closed_owner_visible_result(
 
 
 @pytest.mark.parametrize(
+    ("failure", "result"),
+    (
+        ("connection", "Waiting safely"),
+        ("connection_exhausted", "Stale"),
+        ("capability", "Stale"),
+    ),
+)
+def test_only_a_connection_stale_reads_as_waiting(failure: str, result: str) -> None:
+    """A change waiting for its connection is not a stopped one (#1402)."""
+    assert activity_result_label("stale", failure) == result
+
+
+@pytest.mark.parametrize(
     ("destination", "value", "expected"),
     (
         ("title", "A Wizard of Earthsea", "A Wizard of Earthsea"),
@@ -466,7 +479,11 @@ def test_a_stopped_write_says_why_and_never_claims_a_new_value(
     assert event["change"] == compact
     facts = _facts(event)
     assert facts["Prepared value"] == "The Lathe of Heaven (1971)"
-    assert facts["Why it stopped"] == reason
+    # A paused retry has not stopped, so it says what happened (#1402).
+    assert facts["What happened" if state == "retryable" else "Why it stopped"] == (
+        reason
+    )
+    assert ("Why it stopped" in facts) is (state != "retryable")
     assert "New value" not in facts
     assert (
         facts.get("What happens next")
@@ -495,16 +512,16 @@ def test_a_stopped_write_says_why_and_never_claims_a_new_value(
             "stale",
             "connection",
             "Prepared change waiting",
-            "Audiobookshelf could not be reached",
+            "Audiobookshelf could not be reached for this book",
             "Mechanical Librarian prepares it again once Audiobookshelf can be "
-            "reached. Prepared again 2 of 3 times",
+            "reached. Prepared again 2 of 3 times.",
         ),
         (
             "stale",
             "connection_exhausted",
             "Prepared change closed",
-            "Audiobookshelf could not be reached, and this change stopped after "
-            "it was prepared again 3 times",
+            "Audiobookshelf could not be reached for this book, and this change "
+            "stopped after it was prepared again 3 times",
             None,
         ),
     ),
@@ -529,9 +546,9 @@ def test_an_unsent_or_unreachable_write_says_what_happened_and_what_follows(
     assert event["change"] == compact
     facts = _facts(event)
     # A change that has not stopped never says why it stopped.
-    label = "What happened" if failure == "connection" else "Why it stopped"
-    assert facts[label] == reason
-    assert ("Why it stopped" in facts) is (failure != "connection")
+    stopped = state == "stale" and failure != "connection"
+    assert facts["Why it stopped" if stopped else "What happened"] == reason
+    assert ("Why it stopped" in facts) is stopped
     assert facts.get("What happens next") == next_step
     assert ("Confirmed in Audiobookshelf" in facts) is (
         failure == "connection_exhausted"

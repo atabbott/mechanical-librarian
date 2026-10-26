@@ -2495,6 +2495,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             source_sequence,
                         ),
                     ).fetchone()[0]
+                if raw["kind"] == "superseded":
+                    # A withdrawn plan sent nothing when no attempt of it ever
+                    # reached the applying step before this event (#1402).
+                    durable["unsent"] = (
+                        self._connection.execute(
+                            "SELECT 1 FROM field_effect_events WHERE plan_id=? "
+                            "AND kind='applying' AND sequence<? LIMIT 1",
+                            (source_parent_id, source_sequence),
+                        ).fetchone()
+                        is None
+                    )
             elif source_kind == "human_decision":
                 if type(decision) is not HumanDecision:
                     raise FieldEffectError("persistence")

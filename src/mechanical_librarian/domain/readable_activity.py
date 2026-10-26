@@ -103,8 +103,9 @@ _FAILURE_REASONS = {
     "backup": "A safety copy of the current value was unavailable",
     "capability": "Audiobookshelf did not offer this field",
     "circuit_open": "Writing paused after repeated failures",
-    "connection": "Audiobookshelf could not be reached",
-    "connection_exhausted": "Audiobookshelf could not be reached, and this change "
+    "connection": "Audiobookshelf could not be reached for this book",
+    "connection_exhausted": "Audiobookshelf could not be reached for this book, "
+    "and this change "
     f"stopped after it was prepared again {CONNECTION_REPLAN_LIMIT} times",
     "consent": "Write permission was not in place",
     "consent_revoked": "Write permission was withdrawn",

@@ -67,15 +67,18 @@ class AudiobookshelfFieldEffectCapabilities:
             selected = (type(permissions) is dict and permissions.get("accessAllLibraries") is True) or (type(accessible) is list and all(type(value) is str for value in accessible) and self._library_id in accessible)
             active = type(user) is dict and user.get("isActive") is True
             # The connection is reached only when a usable account's identity
-            # check and the item request were both answered: a lost transport,
-            # a rejected key, or an unusable account waits for the owner (#1402).
+            # check was answered and the item request returned a valid body or
+            # a definite refusal: a lost transport, a rejected key, an unusable
+            # account, a server error, a throttle, a timeout answer or a body
+            # that cannot be read waits for the service to recover (#1402).
             usable = active and selected
             try:
                 detail = _json_response(client, "GET", self._endpoint + "/api/items/" + quote(plan.work_id, safe=""), {"expanded": "1"}, self._maximum_response_bytes)
-            except (httpx.TransportError, OSError):
+            except _ResponseStatusError as error:
+                refused = 400 <= error.status < 500 and error.status not in {408, 429}
+                return self._result(plan.destination, "connection_unavailable", False, False, reached=usable and refused)
+            except (httpx.HTTPError, OSError, ValueError):
                 return self._result(plan.destination, "connection_unavailable", False, False)
-            except (httpx.HTTPError, ValueError):
-                return self._result(plan.destination, "connection_unavailable", False, False, reached=usable)
         item_matches = type(detail) is dict and detail.get("id") == plan.work_id and detail.get("libraryId") == self._library_id and detail.get("mediaType") == "book"
         update = type(permissions) is dict and permissions.get("update") is True
         upload = type(permissions) is dict and permissions.get("upload") is True

@@ -893,7 +893,13 @@ def test_qualification_pre_plan_reads_reach_the_real_target(case: _Case) -> None
         ("item_transport", "connection_unavailable", False),
         ("inactive", "connection_unavailable", False),
         ("unselected", "connection_unavailable", False),
+        ("item_500", "connection_unavailable", False),
+        ("item_503", "connection_unavailable", False),
+        ("item_429", "connection_unavailable", False),
+        ("item_408", "connection_unavailable", False),
+        ("item_malformed", "connection_unavailable", False),
         ("item_gone", "connection_unavailable", True),
+        ("item_403", "connection_unavailable", True),
         ("allowed", "allowed", True),
     ),
 )
@@ -901,7 +907,8 @@ def test_only_an_answered_identity_check_reaches_the_connection(
     case: _Case, answer: str, category: str, reached: bool
 ) -> None:
     """A refused item is an answer; a lost transport on either request, a
-    refused key, or an account that cannot write this library is not.
+    refused key, an account that cannot write this library, a server error,
+    a throttle, a timeout answer, or an unreadable body is not.
 
     Category and digest stay what they were: the fact rides beside the
     capability evidence and never changes it (#1402).
@@ -929,6 +936,12 @@ def test_only_an_answered_identity_check_reaches_the_connection(
             )
         if answer == "item_gone":
             return httpx.Response(404)
+        if answer.removeprefix("item_").isdigit():
+            return httpx.Response(int(answer.removeprefix("item_")))
+        if answer == "item_malformed":
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, content=b"{"
+            )
         return httpx.Response(
             200, headers={"content-type": "application/json"}, json=case.detail
         )

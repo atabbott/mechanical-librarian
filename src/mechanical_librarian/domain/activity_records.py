@@ -187,8 +187,14 @@ def project_readable_activity_event(
     readable_activity_event(event, report)
 
 
-def activity_result_label(state: str) -> ActivityResult:
-    """Return the closed owner-visible result word for one durable state."""
+def activity_result_label(state: str, failure: object = None) -> ActivityResult:
+    """Return the closed owner-visible result word for one durable state.
+
+    A change stopped only by a lost connection is still waiting to be prepared
+    again, so it reads as waiting rather than as a stopped stale (#1402).
+    """
+    if (state, failure) == ("stale", "connection"):
+        return ActivityResult.WAITING_SAFELY
     return _RESULT_LABELS.get(state, ActivityResult.RECORDED)
 
 
@@ -283,9 +289,10 @@ def _write_facts(
         facts = [
             {"label": "Prepared value", "value": value_text(destination, desired)},
             {
-                # A lost connection has not stopped the change (#1402).
+                # A lost connection or a paused retry has not stopped the
+                # change (#1402).
                 "label": "What happened"
-                if failure == "connection"
+                if failure == "connection" or state == "retryable"
                 else "Why it stopped",
                 "value": failure_reason(failure),
             },
@@ -309,8 +316,13 @@ def _write_facts(
                 {
                     "label": "What happens next",
                     "value": "Mechanical Librarian prepares it again once "
-                    f"Audiobookshelf can be reached. Prepared again {prepared} "
-                    f"of {CONNECTION_REPLAN_LIMIT} times",
+                    "Audiobookshelf can be reached. "
+                    + (
+                        f"Prepared again {prepared} of {CONNECTION_REPLAN_LIMIT} times."
+                        if prepared
+                        else "Not prepared again yet; up to "
+                        f"{CONNECTION_REPLAN_LIMIT} times."
+                    ),
                 }
             )
             return ReadableChange(
@@ -319,7 +331,11 @@ def _write_facts(
         facts.append(
             {
                 "label": "Confirmed in Audiobookshelf",
-                "value": "The selected change was not confirmed",
+                # A withdrawn change whose request never left is not an
+                # unconfirmed one (#1402).
+                "value": "Nothing was sent to Audiobookshelf"
+                if record.get("unsent") is True
+                else "The selected change was not confirmed",
             }
         )
         return ReadableChange("Prepared change closed", "Prepared change closed"), facts
@@ -655,7 +671,7 @@ def activity_search_text(
             values.append(value)
     state = projected.get("state")
     if type(state) is str:
-        values.append(activity_result_label(state).value)
+        values.append(activity_result_label(state, projected.get("failure")).value)
     if report is not None:
         values.append(report.target.current_title or "Untitled")
     evidence = projected.get("evidence")

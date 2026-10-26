@@ -14,16 +14,21 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 
+import httpx
 import pytest
 
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
+    AudiobookshelfFieldEffectCapabilities,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import (
+    CapabilityObservation,
     GuardedApplicationError,
     GuardedFieldApplication,
 )
@@ -379,9 +384,9 @@ def test_a_superseded_stranded_claim_sends_nothing_in_production(
     assert owner.patches == []
 
 
-def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
+def _description_and_tags_lane(
     effects: _EffectEnvironment,
-) -> None:
+) -> tuple[list[AutomaticDecision], ContinuousGuardedApplication]:
     report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
     decisions = [
         value
@@ -411,7 +416,6 @@ def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
         effects.target._values[key] = snapshot.pre_value
         effects.target._versions[key] = snapshot.target_version
     service = effects.persisted_service(effects.repository, effects.target, authority)
-    sent = _sent(effects)
     lane = ContinuousGuardedApplication(
         effects.repository,
         {("primary", "ebooks"): service},
@@ -422,6 +426,14 @@ def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
         lambda *_: None,
     )
     assert lane.schedule() == 2
+    return decisions, lane
+
+
+def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
+    effects: _EffectEnvironment,
+) -> None:
+    _, lane = _description_and_tags_lane(effects)
+    sent = _sent(effects)
     plan_ids = [
         row[0]
         for row in effects.repository._connection.execute(
@@ -458,6 +470,64 @@ def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
     lane._run_until_idle()
     assert sorted(sent) == plan_ids
     assert effects.repository.pending_field_effect_decision_documents(100) == ()
+
+
+@pytest.mark.parametrize("status", (500, 503))
+def test_a_server_failing_every_item_keeps_each_waiting_decision_waiting(
+    effects: _EffectEnvironment, status: int
+) -> None:
+    """A server that answers its identity check but fails every item request
+    has answered for no book, so no waiting decision spends its bound (#1402)."""
+    decisions, lane = _description_and_tags_lane(effects)
+    sent = _sent(effects)
+    effects.capabilities.category = "connection_unavailable"
+    lane._run_until_idle()
+    user = {
+        "isActive": True,
+        "permissions": {"update": True, "upload": True, "accessAllLibraries": True},
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/me":
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, json=user
+            )
+        return httpx.Response(status)
+
+    service_side = AudiobookshelfFieldEffectCapabilities(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+        endpoint="https://abs.example.invalid",
+        library_id="library-1",
+    )
+
+    def observe(plan: FieldEffectPlan) -> CapabilityObservation:
+        # The real adapter decides whether the connection was reached; the
+        # fake keeps the digest these plans were made against.
+        answered = service_side.result(plan)
+        return CapabilityObservation(
+            answered.category, effects.capabilities.digest, answered.connection_reached
+        )
+
+    effects.capabilities.observe = observe  # type: ignore[method-assign]  # reason: the observer is the failing service under test.
+    for _ in range(8):
+        lane._run_until_idle()
+    assert sorted(
+        (operation.plan.destination, operation.state, operation.failure)
+        for operation in map(
+            effects.repository.get_field_effect,
+            (
+                row[0]
+                for row in effects.repository._connection.execute(
+                    "SELECT plan_id FROM field_effects"
+                )
+            ),
+        )
+    ) == [("description", "stale", "connection"), ("tags", "stale", "connection")]
+    assert [
+        effects.repository.field_effect_connection_stales(decision.decision_id)
+        for decision in decisions
+    ] == [1, 1]
+    assert sent == []
 
 
 def _automatic_tags_lane(
@@ -548,6 +618,13 @@ def test_superseding_a_retry_sends_nothing_and_never_revives_a_sent_request(
     assert (closed.state, closed.failure) == (
         "superseded",
         "authority_superseded" if withdrawn == "authority" else "consent_revoked",
+    )
+    row = next(event for event in _ledger(effects) if event["state"] == "superseded")
+    # Only a request that left can be unconfirmed; one that never did says so.
+    assert _facts(row)["Confirmed in Audiobookshelf"] == (
+        "The selected change was not confirmed"
+        if history == "sent"
+        else "Nothing was sent to Audiobookshelf"
     )
     if withdrawn == "authority":
         _restore_authority(effects, decision.decision_id)
@@ -702,7 +779,9 @@ def test_a_lone_waiting_plan_ends_once_the_service_answers(
     assert sent == []
     if answer == "key_rejected":
         row = next(event for event in _ledger(effects) if event["state"] == "stale")
-        assert _facts(row)["What happens next"].endswith("Prepared again 0 of 3 times")
+        assert _facts(row)["What happens next"].endswith(
+            "Not prepared again yet; up to 3 times."
+        )
 
 
 @pytest.mark.parametrize(

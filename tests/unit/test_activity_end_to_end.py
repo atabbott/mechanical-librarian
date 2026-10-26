@@ -1878,10 +1878,17 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
         row = next(event for event in _ledger(effects) if event["state"] == "stale")
         assert row["change"] == "Prepared change waiting"
         assert "Why it stopped" not in _facts(row)
-        assert _facts(row)["What happened"] == "Audiobookshelf could not be reached"
+        assert _facts(row)["What happened"] == (
+            "Audiobookshelf could not be reached for this book"
+        )
         assert _facts(row)["What happens next"] == (
             "Mechanical Librarian prepares it again once Audiobookshelf can be "
-            f"reached. Prepared again {prepared} of 3 times"
+            "reached. "
+            + (
+                f"Prepared again {prepared} of 3 times."
+                if prepared
+                else "Not prepared again yet; up to 3 times."
+            )
         )
         revived = _replan(effects, **arguments)
         assert revived is not None and revived.state == "planned"
@@ -1893,8 +1900,8 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
     row = next(event for event in _ledger(effects) if event["state"] == "stale")
     assert row["change"] == "Prepared change closed"
     assert _facts(row)["Why it stopped"] == (
-        "Audiobookshelf could not be reached, and this change stopped after it "
-        "was prepared again 3 times"
+        "Audiobookshelf could not be reached for this book, and this change "
+        "stopped after it was prepared again 3 times"
     )
     assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
 
@@ -1940,7 +1947,8 @@ def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
     assert latest["state"] == "superseded"
     assert latest["change"] == "Prepared change closed"
     assert _facts(latest)["Why it stopped"] == reason
+    # The waiting change never reached Audiobookshelf (#1402).
     assert _facts(latest)["Confirmed in Audiobookshelf"] == (
-        "The selected change was not confirmed"
+        "Nothing was sent to Audiobookshelf"
     )
     assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
