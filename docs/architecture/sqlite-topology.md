@@ -288,8 +288,9 @@ owner-visible read path; a dash means the relation has no direct owner-visible
 surface and is used only to protect a later operation. `I/A` is the historical
 column label: `I` names current open-time integrity
 (`schema._validate_schema_contents`, including exact object, foreign-key and
-`integrity_check` validation), while `A` entries describe deleted qualification
-code and grant no current adoption path. Current canonical documents and the
+`integrity_check` validation, and the CHECK re-evaluation a read-only open adds
+because that check skips CHECKs there, #1401), while `A` entries describe
+deleted qualification code and grant no current adoption path. Current canonical documents and the
 five derived fact relations are checked by the executable open-time validators.
 This matrix was cross-checked against the persistence code graph and the named
 source symbols at the time of the audit.
