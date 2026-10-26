@@ -31,6 +31,7 @@ import type {
   AttentionSearch,
   AutomaticSafetyView,
   DetailSearch,
+  LibraryLens,
   LibrarySearch,
   PolicySearch,
   PolicyStateView,
@@ -74,9 +75,12 @@ export interface RouterContext {
 }
 const bounded = (value: unknown) =>
   typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : undefined
+const libraryLens = (value: unknown): LibraryLens =>
+  value === 'needs_attention' || value === 'no_attention_needed' || value === 'not_matched'
+    ? value
+    : 'all'
 export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => {
-  const lens =
-    search.lens === 'needs_attention' || search.lens === 'no_attention_needed' ? search.lens : 'all'
+  const lens = libraryLens(search.lens)
   const q = bounded(search.q)
   const cursor = bounded(search.cursor)
   const attentionCursor = bounded(search.attentionCursor)
@@ -105,8 +109,7 @@ export const normalizeAttentionSearch = (search: Record<string, unknown>): Atten
 }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => {
   const field = bounded(search.field)
-  const lens =
-    search.lens === 'needs_attention' || search.lens === 'no_attention_needed' ? search.lens : 'all'
+  const lens = libraryLens(search.lens)
   const subview = search.subview === 'history' ? 'history' : 'evidence'
   const q = bounded(search.q)
   const cursor = bounded(search.cursor)
@@ -770,7 +773,7 @@ export const ProviderThrottleNotice = () => {
 }
 
 /**
- * The nine buckets a work moves through, in the order an owner reads them.
+ * The ten buckets a work moves through, in the order an owner reads them.
  *
  * The stage names the store uses are engineering words; these are what the
  * owner is actually waiting for. Naming every bucket -- including the empty
@@ -787,6 +790,7 @@ const stageLabels: Readonly<Record<string, string>> = {
   projection: 'Preparing the review',
   ready: 'Ready to browse',
   recorded: 'Recorded, nothing to decide',
+  not_matched: 'Not matched',
   failed: 'Could not finish',
 }
 
@@ -927,6 +931,7 @@ export const PreparationActivity = () => {
                       phrases={preparationOutcomes({
                         ready: item.ready,
                         recorded: item.recorded,
+                        not_matched: item.not_matched,
                         failed: item.blocked,
                       })}
                     />

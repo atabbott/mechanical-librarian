@@ -143,12 +143,20 @@ describe('Application shell', () => {
           completed_at: null,
           total: 7,
           dismissible: false,
-          now: { ready: 1, recorded: 0, failed: 0, in_progress: 6, scan_ids: ['scan-1'] },
+          now: {
+            ready: 1,
+            recorded: 0,
+            not_matched: 0,
+            failed: 0,
+            in_progress: 6,
+            scan_ids: ['scan-1'],
+          },
         },
         libraries: [
           {
             blocked: 0,
             recorded: 0,
+            not_matched: 0,
             checked: 1,
             connection: 'primary',
             library: 'Books',
@@ -214,12 +222,20 @@ describe('Application shell', () => {
           completed_at: 101,
           total: 7,
           dismissible: true,
-          now: { ready: 5, recorded: 0, failed: 2, in_progress: 0, scan_ids: ['scan-1'] },
+          now: {
+            ready: 5,
+            recorded: 0,
+            not_matched: 0,
+            failed: 2,
+            in_progress: 0,
+            scan_ids: ['scan-1'],
+          },
         },
         libraries: [
           {
             blocked: 2,
             recorded: 0,
+            not_matched: 0,
             checked: 7,
             connection: 'primary',
             library: 'Books',
@@ -273,11 +289,12 @@ describe('Application shell', () => {
       name: string,
       scanId: string | null,
       state: string,
-      [ready, recorded, blocked]: readonly [number, number, number],
+      [ready, recorded, blocked, notMatched = 0]: readonly [number, number, number, number?],
     ) => ({
       blocked,
       recorded,
-      checked: ready + recorded + blocked,
+      not_matched: notMatched,
+      checked: ready + recorded + notMatched + blocked,
       connection: 'primary',
       library: name,
       library_id: name.toLowerCase(),
@@ -285,11 +302,12 @@ describe('Application shell', () => {
       rescan_requested: false,
       scan_id: scanId,
       state,
-      total: ready + recorded + blocked,
+      total: ready + recorded + notMatched + blocked,
       // The buckets partition the scan by the same predicates as its counts.
       stages: [
         { stage: 'ready' as const, count: ready },
         { stage: 'recorded' as const, count: recorded },
+        { stage: 'not_matched' as const, count: notMatched },
         { stage: 'failed' as const, count: blocked },
       ],
     })
@@ -303,7 +321,7 @@ describe('Application shell', () => {
       paused: false,
       presentation,
       libraries: [
-        library('Books', 'scan-books', 'completed_with_failures', [1, 0, 2]),
+        library('Books', 'scan-books', 'completed_with_failures', [1, 0, 2, 1]),
         library('Audiobooks', 'scan-audio', 'completed', [0, 1, 0]),
         // Never scanned: no figures to differ, so nothing to mark.
         library('Magazines', null, 'idle', [0, 0, 0]),
@@ -332,7 +350,14 @@ describe('Application shell', () => {
       completed_at: 101,
       total: 3,
       dismissible: true,
-      now: { ready: 1, recorded: 0, failed: 2, in_progress: 0, scan_ids: ['scan-books'] },
+      now: {
+        ready: 1,
+        recorded: 0,
+        not_matched: 1,
+        failed: 2,
+        in_progress: 0,
+        scan_ids: ['scan-books'],
+      },
     }
     let current: PreparationView = view(presentation)
     const http: ReviewHttp = {
@@ -344,7 +369,9 @@ describe('Application shell', () => {
     const summary = await screen.findByRole('button', {
       name: /Preparation completed with failures/u,
     })
-    const runLine = '1 ready to browse · 2 could not finish'
+    // A work no provider matched is its own count, beside the recorded one
+    // and omitted the same way at zero (#1407).
+    const runLine = '1 ready to browse · 1 not matched · 2 could not finish'
     expect(within(summary).getByText(wholeText(`This run: ${runLine}`))).toBeVisible()
     // An empty count other than ready is left out rather than stated as zero
     // (#641), and each number and its first word are one inline unit with an
@@ -353,7 +380,7 @@ describe('Application shell', () => {
     const summaryText = within(summary).getByText(wholeText(`This run: ${runLine}`))
     expect(
       [...summaryText.querySelectorAll(':scope > .count-pair')].map((node) => node.textContent),
-    ).toEqual(['1 ready', '2 could'])
+    ).toEqual(['1 ready', '1 not', '2 could'])
     expect(summaryText.textContent).toBe(`This run: ${runLine}`)
     fireEvent.click(summary)
     expect(
@@ -380,9 +407,10 @@ describe('Application shell', () => {
         bucket.querySelector('dd')?.textContent,
       ])
     expect(within(books).getByText('Complete · some books could not finish')).toBeVisible()
-    expect(within(books).getByText('3 of 3 checked')).toBeVisible()
+    expect(within(books).getByText('4 of 4 checked')).toBeVisible()
     expect(buckets(books)).toEqual([
       ['Ready to browse', '1'],
+      ['Not matched', '1'],
       ['Could not finish', '2'],
     ])
     expect(within(audiobooks).getByText('Complete · not in this run')).toBeVisible()
@@ -398,7 +426,7 @@ describe('Application shell', () => {
     expect(
       await within(summary).findByText(
         wholeText(
-          'This run: … ready to browse · … recorded, nothing to decide · … could not finish',
+          'This run: … ready to browse · … recorded, nothing to decide · … not matched · … could not finish',
         ),
       ),
     ).toBeVisible()
@@ -422,6 +450,7 @@ describe('Application shell', () => {
             {
               blocked: 0,
               recorded: 0,
+              not_matched: 0,
               checked: checked++,
               connection: 'primary',
               library: 'Books',
@@ -466,6 +495,7 @@ describe('Application shell', () => {
           {
             blocked: 1,
             recorded: 0,
+            not_matched: 0,
             checked: 2,
             connection: 'primary',
             library: 'Books',
@@ -512,6 +542,7 @@ describe('Application shell', () => {
           {
             blocked: 0,
             recorded: 0,
+            not_matched: 0,
             checked: 1,
             connection: 'primary',
             library: 'Books',
@@ -571,6 +602,7 @@ describe('Application shell', () => {
           {
             blocked: 0,
             recorded: 0,
+            not_matched: 0,
             checked: 1,
             connection: 'primary',
             library: 'Books',
@@ -627,6 +659,7 @@ describe('Application shell', () => {
           {
             blocked: 1,
             recorded: 0,
+            not_matched: 0,
             checked: 2,
             connection: 'primary',
             library: 'Books',
@@ -1204,6 +1237,7 @@ describe('Application shell', () => {
         {
           blocked: 0,
           recorded: 0,
+          not_matched: 0,
           checked: 1,
           connection: 'primary',
           library: 'Books',
@@ -1243,6 +1277,7 @@ describe('Application shell', () => {
     const library = (state: string) => ({
       blocked: 0,
       recorded: 0,
+      not_matched: 0,
       checked: 3,
       connection: 'primary',
       library: 'Books',

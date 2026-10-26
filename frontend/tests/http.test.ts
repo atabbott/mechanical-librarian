@@ -1438,13 +1438,13 @@ describe('ReviewApiClient', () => {
   it('maps exact library DTOs into presentation-safe view models', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       Response.json({
-        schema_version: 'review-library-v2',
+        schema_version: 'review-library-v3',
         lens: 'all',
         query: null,
         next_cursor: null,
         previous_cursor: 'page-1',
         page: 2,
-        counts: { needs_attention: 1, all: 2, no_attention_needed: 1 },
+        counts: { needs_attention: 1, all: 2, no_attention_needed: 1, not_matched: 0 },
         items: [
           {
             review_case_id: 'case-1',
@@ -2252,6 +2252,7 @@ describe('ReviewApiClient', () => {
           ready: 0,
           blocked: 0,
           recorded: 0,
+          not_matched: 0,
           rescan_requested: false,
         }),
       )
@@ -2387,7 +2388,14 @@ describe('ReviewApiClient', () => {
   })
 
   it("accepts only a closed count of the run's works as they stand now", () => {
-    const now = { ready: 1, recorded: 2, failed: 0, in_progress: 1, scan_ids: ['scan-1'] }
+    const now = {
+      ready: 1,
+      recorded: 2,
+      not_matched: 0,
+      failed: 0,
+      in_progress: 1,
+      scan_ids: ['scan-1'],
+    }
     const presentation = {
       run_id: `preparation_run_${'a'.repeat(64)}`,
       state: 'running',
@@ -2426,7 +2434,7 @@ describe('ReviewApiClient', () => {
     expect(view(null).presentation?.now).toBeNull()
     for (const malformed of [
       { ...now, extra: 0 },
-      { ready: 1, recorded: 2, failed: 0, in_progress: 1 },
+      { ready: 1, recorded: 2, not_matched: 0, failed: 0, in_progress: 1 },
       [],
     ])
       expect(() => view(malformed)).toThrow('502: invalid_preparation_now)')
@@ -2615,7 +2623,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v2', error: { code: 'busy' } },
+          { schema_version: 'review-library-v3', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -2625,7 +2633,7 @@ describe('ReviewApiClient', () => {
       code: 'busy',
     })
     expect(() =>
-      mapLibrary({ items: [], counts: {}, lens: '__proto__', schema_version: 'review-library-v2' }),
+      mapLibrary({ items: [], counts: {}, lens: '__proto__', schema_version: 'review-library-v3' }),
     ).toThrow(ApiError)
     const work = {
       review_case_id: null,
@@ -2646,10 +2654,10 @@ describe('ReviewApiClient', () => {
     }
     const page = {
       items: [work],
-      counts: { needs_attention: 0, all: 1, no_attention_needed: 1 },
+      counts: { needs_attention: 0, all: 1, no_attention_needed: 1, not_matched: 0 },
       lens: 'all',
       page: 1,
-      schema_version: 'review-library-v2',
+      schema_version: 'review-library-v3',
     }
     expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_detail_kind'))
   })
@@ -2661,13 +2669,56 @@ describe('ReviewApiClient', () => {
     // moved the token to prevent.
     const page = {
       items: [],
-      counts: { needs_attention: 0, all: 0, no_attention_needed: 0 },
+      counts: { needs_attention: 0, all: 0, no_attention_needed: 0, not_matched: 0 },
       lens: 'all',
       page: 1,
       schema_version: 'review-library-v1',
     }
     expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_library_response'))
-    expect(() => mapLibrary({ ...page, schema_version: 'review-library-v2' })).not.toThrow()
+    // v3 added the Not matched count and lens (#1407); a v2 document lacks both.
+    expect(() => mapLibrary({ ...page, schema_version: 'review-library-v2' })).toThrow(
+      new ApiError(502, 'invalid_library_response'),
+    )
+    expect(() => mapLibrary({ ...page, schema_version: 'review-library-v3' })).not.toThrow()
+  })
+
+  it('reads the Not matched lens, its count and a closed reason state (#1407)', () => {
+    const work = (state: string) => ({
+      review_case_id: null,
+      title: 'Unmatched work',
+      authors: [],
+      library: 'Books',
+      media_kind: 'epub',
+      item: 'item-1',
+      attention_count: 0,
+      attention_state: 'not_matched',
+      detail_url: '/api/v1/library/report?connection=primary&library=Books&item=item-1',
+      detail_kind: 'report',
+      dispositions: [],
+      work_id: 'library_work_1',
+      preparation: null,
+      preparation_outcomes: [],
+      summary: { fields: [], reason: 'No review decision is recorded.', state },
+    })
+    const page = (state: string) => ({
+      items: [work(state)],
+      counts: { needs_attention: 0, all: 3, no_attention_needed: 1, not_matched: 2 },
+      lens: 'not_matched',
+      page: 1,
+      schema_version: 'review-library-v3',
+    })
+    const mapped = mapLibrary(page('not_matched_unavailable_scheduled'))
+    expect(mapped.lens).toBe('not_matched')
+    expect(mapped.counts).toEqual({ attention: 0, all: 3, clear: 1, notMatched: 2 })
+    expect(mapped.works[0]?.summary?.state).toBe('not_matched_unavailable_scheduled')
+    expect(() => mapLibrary(page('not_matched_somehow'))).toThrow(
+      new ApiError(502, 'invalid_summary_state'),
+    )
+    const counts: Record<string, number> = { ...page('not_matched_refused').counts }
+    delete counts.not_matched
+    expect(() => mapLibrary({ ...page('not_matched_refused'), counts })).toThrow(
+      new ApiError(502, 'invalid_not_matched_count'),
+    )
   })
 })
 
@@ -3241,6 +3292,7 @@ describe('preparation scan identity', () => {
     ready: 0,
     blocked: 0,
     recorded: 0,
+    not_matched: 0,
     rescan_requested: false,
     stages: [],
   }
