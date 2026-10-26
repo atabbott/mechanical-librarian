@@ -4715,7 +4715,9 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
                 row = page.get_by_role("button", name=re.compile("^Recorded audiobook"))
                 expect(row).to_be_visible()
                 # Not a failure card: the report is the outcome, not the fault.
-                expect(row).to_contain_text("Recorded evidence available")
+                # Its work identity was not admitted, so it is Not matched and
+                # says why (#1407).
+                expect(row).to_contain_text("Found, but not this work")
                 assert page.locator(".library-work-row.is-terminal").count() == 0
 
                 row.click()
@@ -5280,6 +5282,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                 "now": {
                                     "ready": 4 - failed if terminal else 0,
                                     "recorded": 0,
+                                    "not_matched": 0,
                                     "failed": failed,
                                     "in_progress": 0 if terminal else 4,
                                     "scan_ids": [],
@@ -8038,6 +8041,7 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                         "ready": 4,
                         "blocked": 1,
                         "recorded": 2,
+                        "not_matched": 0,
                         "rescan_requested": False,
                         "stages": [{"stage": "extraction", "count": 2}],
                     }
@@ -10717,3 +10721,72 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
             page.get_by_text(
                 "Nothing is written to your libraries until you give permission again."
             ).wait_for()
+
+
+def test_works_no_provider_matched_have_their_own_lens_and_reasons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: over the real composed app, SQL projection and recovery store,
+    the Not matched lens counts and lists only caseless unmatched works, each
+    with one reason, and promises a retry only where a job is scheduled."""
+    from mechanical_librarian.domain.metadata_report import ProviderStatus
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+    from tests.unit.test_not_matched_lens import (
+        _ebook,
+        _for,
+        _publish,
+        _recovery_job,
+        _refused,
+    )
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    rows = (
+        "Project Hail Mary. Andy Weir. Found, but not this work",
+        "Work no-match. Author details unavailable. No provider matched",
+        "Work rechecked. Author details unavailable. "
+        "Providers unavailable; will be checked again",
+        "Work unavailable. Author details unavailable. Providers unavailable",
+    )
+    with running_owner_fixture(tmp_path, 1) as (fixture, origin):
+        rechecked = _ebook("rechecked", ProviderStatus.UNAVAILABLE)
+        for report in (
+            _ebook("no-match", ProviderStatus.NO_MATCH),
+            _ebook("unavailable", ProviderStatus.NO_MATCH, ProviderStatus.UNAVAILABLE),
+            rechecked,
+            _for(_refused("refused"), "ebooks", "refused"),
+        ):
+            _publish(fixture.repository, report)
+        fixture.recovery.enqueue_jobs(
+            (_recovery_job("rechecked", rechecked.report_id),), enqueued_at=3
+        )
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                page.get_by_role("heading", name="Works", exact=True).wait_for()
+                page.goto(origin + "/library?lens=all")
+                lens = page.get_by_role("link", name="Not matched · 4 works")
+                expect(lens).to_be_visible()
+                with page.expect_response(_lens_read("not_matched")):
+                    lens.click()
+                expect(page).to_have_url(re.compile(r"lens=not_matched"))
+                expect(lens).to_have_attribute("aria-current", "page")
+                works = page.get_by_label("Works", exact=True)
+                # A work's row is the button that carries its title.
+                listed = works.get_by_role("button").filter(has=page.locator("strong"))
+                expect(listed).to_have_count(len(rows))
+                for name in rows:
+                    expect(
+                        works.get_by_role("button", name=name, exact=True)
+                    ).to_be_visible()
+                expect(works).not_to_contain_text("Prepared synthetic work 0000")
+            finally:
+                browser.close()
