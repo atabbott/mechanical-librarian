@@ -3543,7 +3543,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         badge = page.locator(".attention-toggle strong")
         rail = page.get_by_role("complementary", name="Attention queue")
         handoff = page.locator(".cm-library-handoff h2")
-        expect(status).to_have_text("3 works")
+        expect(status).to_have_text("3 works · 1 not matched")
         expect(badge).to_have_text("1 work")
         expect(rail.locator("header p")).to_have_text("1 work needs a decision")
         # One work with two open fields is one group with two rows.
@@ -3569,7 +3569,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(badge).to_have_text("1 work")
         search.fill("")
         expect(page).not_to_have_url(re.compile(r"q="))
-        expect(status).to_have_text("3 works")
+        expect(status).to_have_text("3 works · 1 not matched")
         expect(rail.locator("header p")).to_have_text("1 work needs a decision")
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
@@ -4715,7 +4715,9 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
                 row = page.get_by_role("button", name=re.compile("^Recorded audiobook"))
                 expect(row).to_be_visible()
                 # Not a failure card: the report is the outcome, not the fault.
-                expect(row).to_contain_text("Recorded evidence available")
+                # Its work identity was not admitted, so it is Not matched and
+                # says why (#1407).
+                expect(row).to_contain_text("Found, but not this work")
                 assert page.locator(".library-work-row.is-terminal").count() == 0
 
                 row.click()
@@ -5280,6 +5282,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                 "now": {
                                     "ready": 4 - failed if terminal else 0,
                                     "recorded": 0,
+                                    "not_matched": 0,
                                     "failed": failed,
                                     "in_progress": 0 if terminal else 4,
                                     "scan_ids": [],
@@ -8038,6 +8041,7 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                         "ready": 4,
                         "blocked": 1,
                         "recorded": 2,
+                        "not_matched": 0,
                         "rescan_requested": False,
                         "stages": [{"stage": "extraction", "count": 2}],
                     }
@@ -10257,9 +10261,17 @@ def test_masthead_and_run_line_agree_on_the_real_server(
         finished("books-0")
         # One prepared case is re-projected as recorded with nothing to decide,
         # so the run line carries all three counts, including its longest word.
-        with closing(sqlite3.connect(fixture.database)) as connection:
+        # Each state change goes through the fixture repository's own scope:
+        # a raw connection to the configured path leaves its rollback journal
+        # beside the database, which the Linux binding refuses as recovery
+        # state, so a pipeline lane opening a repository in that window would
+        # stop for recovery (#1422). The scope writes through the private
+        # binding, serialized with the pipeline.
+        scope = fixture.repository._transaction("reproject_recorded_work")
+        scope.begin()
+        try:
             assert (
-                connection.execute(
+                fixture.repository._connection.execute(
                     "UPDATE review_preparation_work SET outcome='evidence_only',"
                     "proposal_set_id=NULL,review_case_id=NULL WHERE work_id=("
                     "SELECT work_id FROM review_preparation_work WHERE library_name="
@@ -10268,7 +10280,8 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                 ).rowcount
                 == 1
             )
-            connection.commit()
+        finally:
+            scope.commit()
         current = fixture.application.preparation().to_data()
         presentation = cast(dict[str, Any], current["presentation"])
         assert presentation["run_id"] != cast(dict, earlier["presentation"])["run_id"]
@@ -10375,15 +10388,18 @@ def test_masthead_and_run_line_agree_on_the_real_server(
 
                 # A prepared work fails after its cycle completed, as a policy
                 # restart that ends in failure would leave it.
-                with closing(sqlite3.connect(fixture.database)) as connection:
-                    changed = connection.execute(
+                scope = fixture.repository._transaction("fail_completed_work")
+                scope.begin()
+                try:
+                    changed = fixture.repository._connection.execute(
                         "UPDATE review_preparation_work SET stage='proposal',"
                         "state='failed',outcome=NULL,failure_code='failed' "
                         "WHERE work_id=(SELECT work_id FROM review_preparation_work "
                         "WHERE scan_id=? AND state='complete' ORDER BY work_id LIMIT 1)",
                         (books["scan_id"],),
                     ).rowcount
-                    connection.commit()
+                finally:
+                    scope.commit()
                 assert changed == 1
                 after = fixture.application.preparation().to_data()
                 now = cast(dict[str, Any], after["presentation"])["now"]
@@ -10717,3 +10733,76 @@ def test_a_lapsed_write_permission_is_stated_by_its_settings_name(lapsed):
             page.get_by_text(
                 "Nothing is written to your libraries until you give permission again."
             ).wait_for()
+
+
+def test_works_no_provider_matched_have_their_own_lens_and_reasons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1407: over the real composed app, SQL projection and recovery store,
+    the Not matched lens counts and lists only caseless unmatched works, each
+    with one reason, and promises a retry only where a job is scheduled."""
+    from mechanical_librarian.domain.metadata_report import ProviderStatus
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+    from tests.unit.test_not_matched_lens import (
+        _ebook,
+        _for,
+        _publish,
+        _recovery_job,
+        _refused,
+    )
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    rows = (
+        "Project Hail Mary. Andy Weir. Found, but not this work",
+        "Work no-match. Author details unavailable. No provider matched",
+        "Work rechecked. Author details unavailable. "
+        "Providers unavailable; will be checked again",
+        "Work unavailable. Author details unavailable. Providers unavailable",
+    )
+    with running_owner_fixture(tmp_path, 1) as (fixture, origin):
+        rechecked = _ebook("rechecked", ProviderStatus.UNAVAILABLE)
+        for report in (
+            _ebook("no-match", ProviderStatus.NO_MATCH),
+            _ebook("unavailable", ProviderStatus.NO_MATCH, ProviderStatus.UNAVAILABLE),
+            rechecked,
+            _for(_refused("refused"), "ebooks", "refused"),
+        ):
+            _publish(fixture.repository, report)
+        fixture.recovery.enqueue_jobs(
+            (_recovery_job("rechecked", rechecked.report_id),), enqueued_at=3
+        )
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                page.get_by_role("heading", name="Works", exact=True).wait_for()
+                page.goto(origin + "/library?lens=all")
+                lens = page.get_by_role("link", name="Not matched", exact=True)
+                expect(lens).to_be_visible()
+                # Counted beside the Works count, in the All count's words.
+                expect(
+                    page.get_by_role("status").filter(has_text="not matched")
+                ).to_have_text("5 works · 4 not matched")
+                with page.expect_response(_lens_read("not_matched")):
+                    lens.click()
+                expect(page).to_have_url(re.compile(r"lens=not_matched"))
+                expect(lens).to_have_attribute("aria-current", "page")
+                works = page.get_by_label("Works", exact=True)
+                # A work's row is the button that carries its title.
+                listed = works.get_by_role("button").filter(has=page.locator("strong"))
+                expect(listed).to_have_count(len(rows))
+                for name in rows:
+                    expect(
+                        works.get_by_role("button", name=name, exact=True)
+                    ).to_be_visible()
+                expect(works).not_to_contain_text("Prepared synthetic work 0000")
+            finally:
+                browser.close()

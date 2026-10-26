@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -22,7 +23,7 @@ from mechanical_librarian.domain.provider_recovery import (
     ProviderRecoveryJob,
     RecoveryAttemptEvidence,
 )
-from mechanical_librarian.domain.validation import bounded_integer
+from mechanical_librarian.domain.validation import bounded_integer, nonempty_text
 
 
 class ProviderRecoveryStoreError(RuntimeError):
@@ -1466,6 +1467,58 @@ class SQLiteProviderRecoveryStore:
                     (target_connection, library, item, source_report_id),
                 ).fetchone()
             return row is not None
+        except sqlite3.Error as error:
+            raise ProviderRecoveryStoreError(
+                "provider recovery persistence is unavailable"
+            ) from error
+
+    def scheduled_recoveries(
+        self, reports: frozenset[tuple[str, str, str, str]]
+    ) -> frozenset[tuple[str, str, str, str]]:
+        """Return the visible reports a scheduled recovery job will look up again.
+
+        Each identity is a package's (connection, library, item, report). Its
+        job is scheduled while it waits, or runs, under a current-generation
+        scope that is waiting, checking or fanning out; a dormant scope waits
+        for the owner and an exhausted one for nothing, so neither is a promise
+        that the work will be checked again (#1407).
+
+        Enrollment keys a job's member by its package report, so the read seeks
+        each live scope's primary key by report id rather than scanning every
+        job; the four identity fields are still compared exactly.
+        """
+        if (
+            type(reports) is not frozenset
+            or len(reports) > 256
+            or any(
+                type(report) is not tuple
+                or len(report) != 4
+                or not all(nonempty_text(value) for value in report)
+                for report in reports
+            )
+        ):
+            raise ProviderRecoveryStoreError("provider recovery query is invalid")
+        if not reports:
+            return frozenset()
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT DISTINCT j.target_connection,j.library,j.item,"
+                    "j.package_report_id FROM provider_recovery_health h "
+                    "CROSS JOIN json_each(?) wanted "
+                    "CROSS JOIN provider_recovery_jobs j "
+                    "ON j.connection=h.connection AND j.adapter=h.adapter "
+                    "AND j.scope=h.scope AND j.generation=h.generation "
+                    "AND j.member_id=json_extract(wanted.value,'$[3]') "
+                    "WHERE h.state IN ('waiting','checking','fanout') "
+                    "AND j.state IN ('queued','running') "
+                    "AND j.target_connection=json_extract(wanted.value,'$[0]') "
+                    "AND j.library=json_extract(wanted.value,'$[1]') "
+                    "AND j.item=json_extract(wanted.value,'$[2]') "
+                    "AND j.package_report_id=json_extract(wanted.value,'$[3]')",
+                    (json.dumps(sorted(reports)),),
+                ).fetchall()
+            return frozenset(rows) & reports
         except sqlite3.Error as error:
             raise ProviderRecoveryStoreError(
                 "provider recovery persistence is unavailable"

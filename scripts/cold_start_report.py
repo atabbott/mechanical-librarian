@@ -3,7 +3,7 @@
 A workbench instrument, deliberately not part of the installed product: run it
 from a checkout against the configuration file and COPIES of (or read-only
 access to) the application and catalogue databases. It writes nothing and
-prints one ``cold-start-report-v4`` JSON document to stdout.
+prints one ``cold-start-report-v5`` JSON document to stdout.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
@@ -26,7 +26,9 @@ work-only case and evidence only by its runtime reason, ``audiobook_cover_reads`
 counts their Audiobookshelf cover-read states, ``dispatches`` counts every
 current item's initial, retry and replayed provider dispatches with a row for
 every configured provider, and ``automatic_decisions`` counts the decisions on
-current cases. An optional stage-timing file adds the retained tail's per-stage
+current cases. ``not_matched`` counts the works Library's Not matched lens
+holds by reason, every one of which No attention needed counted before #1407.
+An optional stage-timing file adds the retained tail's per-stage
 percentiles, and an optional provider recovery database adds its job counts and
 its global job-attempt and health-outcome counts.
 
@@ -63,11 +65,15 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_COVER_ATTENTION_AUTHORITY_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _NOT_MATCHED_REASON_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_CLEAR_SQL,
     _REVIEW_FIELD_ATTENTION_REASON_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _STORED_COVER_ATTENTION_AUTHORITY_SQL,
+)
+from mechanical_librarian.adapters.persistence.schema import (
+    _report_provider_match_state_sql,
 )
 from mechanical_librarian.application.configuration import (
     AUDIOBOOK_DISPATCH_ADAPTERS,
@@ -97,7 +103,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
-COLD_START_REPORT_SCHEMA = "cold-start-report-v4"
+COLD_START_REPORT_SCHEMA = "cold-start-report-v5"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
@@ -214,6 +220,21 @@ _UNMATCHED_WORKS_SQL = (
     "AND NOT EXISTS (SELECT 1 FROM json_each(mr.document,'$.providers') provider "
     "WHERE json_extract(provider.value,'$.status')='candidates') "
     "GROUP BY 1,2"
+)
+# #1407: the works Library's Not matched lens holds, by reason, under the
+# lens's own predicate. The match state is derived from each current report
+# rather than read from its stored browse fact, so a snapshot that predates the
+# fact still answers.
+_NOT_MATCHED_WORKS_SQL = (
+    "SELECT connection_name,library_name,reason,count(*) FROM ("
+    "SELECT ml.connection_name,ml.library_name,"
+    + _NOT_MATCHED_REASON_SQL
+    + " AS reason FROM current_review_packages ml "
+    "JOIN (SELECT report_id,"
+    + _report_provider_match_state_sql("document")
+    + " AS provider_match_state FROM metadata_reports) facts "
+    "ON facts.report_id=ml.report_id WHERE ml.outcome<>'tombstoned') "
+    "WHERE reason IS NOT NULL GROUP BY 1,2,3"
 )
 _SCAN_ROWS_SQL = (
     "SELECT scan_id,connection_name,library_name,state,total,requested_at,"
@@ -700,6 +721,7 @@ def cold_start_snapshot(connection: sqlite3.Connection) -> dict[str, object]:
             ),
             "provider_lanes": _provider_lane_rows(connection),
             "unmatched_works": _rows(connection, _UNMATCHED_WORKS_SQL),
+            "not_matched_works": _rows(connection, _NOT_MATCHED_WORKS_SQL),
             "scans": _rows(connection, _SCAN_ROWS_SQL),
             "work_states": _rows(connection, _WORK_STATE_COUNTS_SQL),
             "absences": _rows(connection, _ABSENCE_COUNTS_SQL),
@@ -789,6 +811,23 @@ def _cause_class(reasons: tuple[str, ...]) -> str:
     if any(reason in _ABSENCE_REASONS for reason in reasons):
         return "absence"
     return "other"
+
+
+def _not_matched(reasons: Counter[str]) -> dict[str, object]:
+    """The Not matched lens's census for one library (#1407).
+
+    Before #1407 every one of these works was counted under No attention
+    needed, so the whole lens is what moved out of it.
+    """
+    total = sum(reasons.values())
+    return {
+        "total": total,
+        "by_reason": {
+            reason: reasons.get(reason, 0)
+            for reason in ("refused", "unavailable", "no_match")
+        },
+        "moved_from_no_attention_needed": total,
+    }
 
 
 def _bucket(count: int) -> str:
@@ -1170,7 +1209,7 @@ def assemble_cold_start_report(
     stage_timings: tuple[StageTiming, ...] | None = None,
     recovery: dict[str, list[tuple[object, ...]]] | None = None,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v4`` document from persisted aggregates.
+    """Build the ``cold-start-report-v5`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
@@ -1219,6 +1258,11 @@ def assemble_cold_start_report(
         (row[0], row[1]): int(cast("int", row[2]))
         for row in cast("list[tuple[object, ...]]", snapshot["unmatched_works"])
     }
+    not_matched: dict[tuple[object, object], Counter[str]] = {}
+    for row in cast("list[tuple[object, ...]]", snapshot["not_matched_works"]):
+        not_matched.setdefault((row[0], row[1]), Counter())[cast("str", row[2])] += int(
+            cast("int", row[3])
+        )
 
     attention_by_library = _attention_counts(
         cast("list[tuple[object, ...]]", snapshot["attention_fields"])
@@ -1406,6 +1450,7 @@ def assemble_cold_start_report(
                 },
                 "providers": provider_rows,
                 "works_without_provider_candidates": unmatched.get(key, 0),
+                "not_matched": _not_matched(not_matched.get(key, Counter())),
                 "timing": timing,
                 "scan_fidelity": {
                     "mount": mount_name,

@@ -308,7 +308,7 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         "report facts insert",
         (("metadata_report_browse_facts", "insert"),),
         lambda: run(
-            "INSERT INTO metadata_report_browse_facts VALUES(?,?,?,?,?)",
+            "INSERT INTO metadata_report_browse_facts VALUES(?,?,?,?,?,?)",
             saved["report"],
         ),
     )

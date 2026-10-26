@@ -34,6 +34,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetDestination,
     TargetFacts,
+    _provider_lane_dispatch_from_data,
     _request_accounting,
     report_content_address,
 )
@@ -179,6 +180,9 @@ class ProviderLaneFacts:
     logical_requests: int
     kind: str
     status: str
+    # How an audiobook lane's dispatch ended, None where none was recorded, so
+    # a lane work-identity admission refused can say so (#1407).
+    dispatch: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,11 +215,12 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
             provider.request_accounting.logical_requests,
             kind.value,
             status.value,
+            None if dispatch is None else dispatch.outcome.value,
         )
         for provider in report.providers
-        for kind, status in (
-            tuple((lane.kind, lane.status) for lane in provider.lanes)
-            or ((provider.query_kind, provider.status),)
+        for kind, status, dispatch in (
+            tuple((lane.kind, lane.status, lane.dispatch) for lane in provider.lanes)
+            or ((provider.query_kind, provider.status, None),)
         )
     )
 
@@ -226,9 +231,9 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
     The report must carry its own content address, so every value read here is
     the one the canonical writer validated. The target and file are then
     reconstructed by their own canonical readers, and each provider lane's
-    authority, kinds, statuses and request count are checked against the enums
-    and bounds the canonical provider reader applies to them; its candidates,
-    evidence and diagnostics are not rendered and not read.
+    authority, kinds, statuses, dispatch outcome and request count are checked
+    against the enums and bounds the canonical provider reader applies to them;
+    its candidates, evidence and diagnostics are not rendered and not read.
     """
     try:
         identity = {key: value for key, value in report.items() if key != "report_id"}
@@ -256,16 +261,28 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
             ):
                 raise ValueError
             pairs = [
-                (ProviderQueryKind(lane["kind"]), ProviderStatus(lane["status"]))
+                (
+                    ProviderQueryKind(lane["kind"]),
+                    ProviderStatus(lane["status"]),
+                    None
+                    if lane["dispatch"] is None
+                    else _provider_lane_dispatch_from_data(
+                        lane["dispatch"]
+                    ).outcome.value,
+                )
                 for lane in provider["lanes"]
             ]
-            if any(lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _ in pairs):
+            if any(lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _, _ in pairs):
                 raise ValueError
             lanes.extend(
                 ProviderLaneFacts(
-                    authority, requests.logical_requests, value.value, state.value
+                    authority,
+                    requests.logical_requests,
+                    value.value,
+                    state.value,
+                    dispatch,
                 )
-                for value, state in pairs or [(kind, status)]
+                for value, state, dispatch in pairs or [(kind, status, None)]
             )
         return LibraryReportFacts(report["report_id"], target, file, tuple(lanes))
     except (KeyError, TypeError, ValueError) as error:

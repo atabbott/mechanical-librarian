@@ -1623,7 +1623,14 @@ describe('shipped first-run setup script', () => {
                   },
                   // One prepared book has since failed: Library's current set,
                   // which this history list must not show.
-                  now: { ready: 1, recorded: 0, failed: 2, in_progress: 0, scan_ids: [] },
+                  now: {
+                    ready: 1,
+                    recorded: 0,
+                    not_matched: 0,
+                    failed: 2,
+                    in_progress: 0,
+                    scan_ids: [],
+                  },
                   active_books: [],
                   active_overflow: 0,
                   recent_completions: [
@@ -1683,7 +1690,7 @@ describe('shipped first-run setup script', () => {
       (item) => item.textContent,
     )
     expect(completions).toEqual(['Shelf one · Stopped before finishing', 'Shelf two · Prepared'])
-    const current = /ready to browse|recorded, nothing to decide|could not finish/iu
+    const current = /ready to browse|recorded, nothing to decide|not matched|could not finish/iu
     for (const label of [...passage.map(([term]) => term), ...completions])
       expect(label).not.toMatch(current)
     expect(timers).toHaveLength(0)

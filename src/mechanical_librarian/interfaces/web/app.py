@@ -799,6 +799,7 @@ class _ReviewCounts(_ClosedModel):
     all: int
     needs_attention: int
     no_attention_needed: int
+    not_matched: int
 
 
 class _MediaHealthObservation(_ClosedModel):
@@ -864,13 +865,21 @@ class _ProviderOutcome(_ClosedModel):
 class _LibraryWorkSummary(_ClosedModel):
     fields: list[_TargetField]
     reason: str
-    state: str
+    # Closed: a work no provider matched says which of four reasons (#1407).
+    state: Literal[
+        "no_decision_recorded",
+        "preparation_failed",
+        "not_matched_refused",
+        "not_matched_unavailable_scheduled",
+        "not_matched_unavailable",
+        "not_matched_no_match",
+    ]
 
 
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
-    attention_state: str
+    attention_state: Literal["needs_attention", "no_attention_needed", "not_matched"]
     detail_url: str | None
     # `case` opens a review case, `report` opens the recorded evidence of a
     # work that has none, and `None` means there is nothing to open. Closed
@@ -977,7 +986,7 @@ class _LibraryResponse(_ClosedModel):
     # how `review-library-v1` gained a required `media_health` member and stayed
     # v1; the literal makes the declared version and the served shape the same
     # statement, and publishes it in the OpenAPI a client is built from.
-    schema_version: Literal["review-library-v2"]
+    schema_version: Literal["review-library-v3"]
 
 
 class _AttentionItem(_ClosedModel):
@@ -1218,6 +1227,7 @@ class _PreparationStage(_ClosedModel):
         "projection",
         "ready",
         "recorded",
+        "not_matched",
         "failed",
     ]
     count: int = Field(ge=0)
@@ -1234,8 +1244,9 @@ class _PreparationProgress(_ClosedModel):
     ready: int
     blocked: int
     recorded: int
+    not_matched: int
     rescan_requested: bool
-    stages: list[_PreparationStage] = Field(default_factory=list, max_length=9)
+    stages: list[_PreparationStage] = Field(default_factory=list, max_length=10)
 
 
 class _PreparationConnection(_ClosedModel):
@@ -1278,6 +1289,7 @@ class _PreparationNow(_ClosedModel):
 
     ready: int = Field(ge=0)
     recorded: int = Field(ge=0)
+    not_matched: int = Field(ge=0)
     failed: int = Field(ge=0)
     in_progress: int = Field(ge=0)
     scan_ids: list[StrictStr] = Field(max_length=128)

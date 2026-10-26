@@ -295,6 +295,7 @@ class OwnerResponsivenessFixture:
                 provider_throttling=composition._provider_throttling_reader(
                     self.recovery, configuration, {}, "managed_by_file"
                 ),
+                provider_recovery=self.recovery,
                 settings=OwnerSettingsOperations(
                     FileOwnerSettingsRepository(
                         settings.document.model_copy(

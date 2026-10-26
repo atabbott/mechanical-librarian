@@ -47,7 +47,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _browse_scalar_sql,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_web import CoverReadObservation
+from mechanical_librarian.application.review_web import (
+    CoverReadObservation,
+    LibraryLensFilter,
+)
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
@@ -129,6 +132,12 @@ _PRE_1202_ATTENTION_SQL = (
 
 _LABELS = (("primary", "books-1", "Owner room books-1"),)
 _SEARCHES = (None, "work-000", "books-2", "deliberately", "absent")
+_LENSES: tuple[LibraryLensFilter | None, ...] = (
+    None,
+    "needs_attention",
+    "no_attention_needed",
+    "not_matched",
+)
 _PAGES = ((50, 0), (7, 7), (5, 28))
 
 
@@ -198,11 +207,19 @@ def _library(
     for search in _SEARCHES:
         values.append(repository.count_current_review_cases(search, _LABELS))
         for limit, offset in _PAGES:
-            for lens in (None, True, False):
+            for lens in _LENSES:
                 page = repository.read_current_library_page(
                     search, limit, offset, lens, _LABELS
                 )
-                values.append((page.rows, page.total, page.attention_total))
+                values.append(
+                    (
+                        page.rows,
+                        page.total,
+                        page.attention_total,
+                        page.not_matched_total,
+                        page.match_reasons,
+                    )
+                )
     return tuple(values)
 
 
@@ -585,9 +602,9 @@ def test_package_and_case_reports_are_read_as_before_when_they_differ(
             connection.execute("SELECT review_case_id,document FROM review_cases")
         )
 
-        def page(search: str | None, lens: bool | None) -> object:
+        def page(search: str | None, lens: LibraryLensFilter | None) -> object:
             read = repository.read_current_library_page(search, 50, 0, lens, _LABELS)
-            return read.rows, read.total, read.attention_total
+            return read.rows, read.total, read.attention_total, read.not_matched_total
 
         def library() -> list[object]:
             values = []
@@ -597,7 +614,7 @@ def test_package_and_case_reports_are_read_as_before_when_they_differ(
                         partial(repository.count_current_review_cases, search, _LABELS)
                     )
                 )
-                for lens in (None, True, False):
+                for lens in _LENSES:
                     values.append(_outcome(partial(page, search, lens)))
             return values
 

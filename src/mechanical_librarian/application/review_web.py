@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
 import secrets
 import threading
@@ -15,7 +16,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
-from typing import Generic, Protocol, TypeVar, cast
+from typing import Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
@@ -253,6 +254,10 @@ class ReviewLibrarySnapshot:
     ]
     total: int
     attention_total: int
+    # #1407: the works no provider matched, and each row's reason -- `refused`,
+    # `unavailable` or `no_match` -- or None for any other row.
+    not_matched_total: int
+    match_reasons: tuple[str | None, ...]
     # The scope each row's human decisions were validated in, when the store
     # projected one, so the row projection need not project the case again.
     decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
@@ -308,6 +313,16 @@ class CurrentReviewCaseStore(Protocol):
 
 # One active-settings snapshot: connection, stable library name, display label.
 LibraryLabels = tuple[tuple[str, str, str], ...]
+# The Library lenses a store filters by; None reads every work, the `all` lens.
+# A work no provider matched is neither needing attention nor needing none, so
+# it has a lens of its own (#1407).
+LibraryLensFilter = Literal["needs_attention", "no_attention_needed", "not_matched"]
+_LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
+    "all": None,
+    "needs_attention": "needs_attention",
+    "no_attention_needed": "no_attention_needed",
+    "not_matched": "not_matched",
+}
 
 _Validated = TypeVar("_Validated")
 
@@ -432,7 +447,7 @@ class ReviewLibraryStore(Protocol):
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot: ...
@@ -1605,14 +1620,27 @@ class RecordHumanDecision:
             raise ReviewWebError("unavailable") from error
 
 
+class ProviderRecoverySchedule(Protocol):
+    """Which visible works the provider-recovery store will look up again."""
+
+    def scheduled_recoveries(
+        self, reports: frozenset[tuple[str, str, str, str]]
+    ) -> frozenset[tuple[str, str, str, str]]:
+        """Return those (connection, library, item, report) with a scheduled job."""
+        ...
+
+
 class BrowseReviewLibrary:
     def __init__(
         self,
         repository: ReviewLibraryStore,
         validated: ValidatedDocumentCache | None = None,
+        recovery: ProviderRecoverySchedule | None = None,
     ) -> None:
         self._repository = repository
         self._validated = validated
+        # Absent, nothing is scheduled, so no row promises a retry (#1407).
+        self._recovery = recovery
 
     def library(
         self,
@@ -1624,25 +1652,61 @@ class BrowseReviewLibrary:
         library_labels: LibraryLabels = (),
     ) -> dict[str, object]:
         normalized = _review_search(search)
-        if lens not in {"all", "needs_attention", "no_attention_needed"}:
+        if type(lens) is not str or lens not in _LIBRARY_LENSES:
             raise ReviewWebError("request")
         bounded_limit = _review_limit(limit)
         offset = _decode_cursor(cursor, "library", lens, normalized)
-        attention = None if lens == "all" else lens == "needs_attention"
         try:
             snapshot = self._repository.read_review_library(
                 normalized,
                 bounded_limit + 1,
                 offset,
-                attention,
+                _LIBRARY_LENSES[lens],
                 library_labels,
                 self._validated,
             )
             items = []
             scopes = snapshot.decision_scopes or (None,) * len(snapshot.rows)
-            for row, scope in tuple(zip(snapshot.rows, scopes, strict=True))[
-                :bounded_limit
-            ]:
+            visible = tuple(
+                zip(snapshot.rows, scopes, snapshot.match_reasons, strict=True)
+            )[:bounded_limit]
+            # A row promises another lookup only where the recovery store holds
+            # a scheduled job for exactly its report, read once for this page
+            # and never for the count (#1407).
+            unavailable = {
+                index: _report_facts(row[1])
+                for index, (row, _scope, reason) in enumerate(visible)
+                if reason == "unavailable"
+            }
+            identities = {
+                index: (
+                    facts.target.connection,
+                    facts.target.library,
+                    facts.target.item,
+                    facts.report_id,
+                )
+                for index, facts in unavailable.items()
+            }
+            scheduled: frozenset[tuple[str, str, str, str]] = frozenset()
+            if self._recovery is not None and identities:
+                try:
+                    scheduled = self._recovery.scheduled_recoveries(
+                        frozenset(identities.values())
+                    )
+                except Exception as error:
+                    # The promise is display-only: a recovery store that cannot
+                    # answer withdraws it and never fails the page (#1407). The
+                    # log carries a closed code and the exception type only.
+                    logging.getLogger(__name__).warning(
+                        "provider recovery schedule unavailable (%s)",
+                        type(error).__name__,
+                        extra={
+                            "event": "provider_recovery_schedule",
+                            "code": "unavailable",
+                            "error": type(error).__name__,
+                        },
+                    )
+            for index, (row, scope, match_reason) in enumerate(visible):
                 (
                     case_document,
                     report_document,
@@ -1665,6 +1729,12 @@ class BrowseReviewLibrary:
                         attention_count,
                         decision_scope=scope,
                         validated=self._validated,
+                        match_state=(
+                            "unavailable_scheduled"
+                            if identities.get(index) in scheduled
+                            else match_reason
+                        ),
+                        report_facts=unavailable.get(index),
                     )
                 )
         except Exception as error:
@@ -1677,7 +1747,10 @@ class BrowseReviewLibrary:
             "counts": {
                 "all": snapshot.total,
                 "needs_attention": snapshot.attention_total,
-                "no_attention_needed": snapshot.total - snapshot.attention_total,
+                "no_attention_needed": snapshot.total
+                - snapshot.attention_total
+                - snapshot.not_matched_total,
+                "not_matched": snapshot.not_matched_total,
             },
             "items": items,
             "lens": lens,
@@ -1699,7 +1772,7 @@ class BrowseReviewLibrary:
             ),
             "page": offset // bounded_limit + 1,
             "query": normalized,
-            "schema_version": "review-library-v2",
+            "schema_version": "review-library-v3",
         }
 
     def attention(
@@ -2856,6 +2929,9 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "candidate_limit_exceeded": "Returned too many candidates to compare safely.",
     "query_limit_exceeded": "Reached the bounded query allowance for this work.",
 }
+# A lane whose candidates work-identity admission refused persists as no match,
+# so its dispatch says what happened, in the row's own words (#1407).
+_REFUSED_PROVIDER_REASON = "Found candidates, but none was this work."
 
 
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
@@ -2870,7 +2946,9 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             "provider_requests": lane.logical_requests,
             "lane_kind": lane.kind,
             "provider": _provider_label(lane.authority),
-            "reason": _PROVIDER_OUTCOME_REASONS.get(
+            "reason": _REFUSED_PROVIDER_REASON
+            if lane.dispatch == "refused"
+            else _PROVIDER_OUTCOME_REASONS.get(
                 lane.status, "Ended in a bounded state this build cannot name."
             ),
             "status": lane.status,
@@ -3026,6 +3104,13 @@ def _terminal_media_health(status: str, root: str | None) -> list[dict[str, obje
     return [media_unreadable_observation(ordinal).to_data()]
 
 
+# Why a work no provider matched, by the owner's precedence (#1407). A retry is
+# named only where the recovery store holds a job for it.
+_NOT_MATCHED_STATES = frozenset(
+    {"refused", "unavailable_scheduled", "unavailable", "no_match"}
+)
+
+
 def _library_item(
     case_document: str | None,
     report_document: str,
@@ -3038,6 +3123,8 @@ def _library_item(
     *,
     decision_scope: DecisionScope | None = None,
     validated: ValidatedDocumentCache | None = None,
+    match_state: str | None = None,
+    report_facts: LibraryReportFacts | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         try:
@@ -3129,8 +3216,15 @@ def _library_item(
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewWebError("unavailable") from error
     case: CaseBrowseFacts | None
+    if match_state is not None and (
+        case_document is not None or match_state not in _NOT_MATCHED_STATES
+    ):
+        raise ReviewWebError("unavailable")
     if case_document is None:
-        report, case = _report_facts(report_document), None
+        report, case = (
+            (_report_facts(report_document) if report_facts is None else report_facts),
+            None,
+        )
     else:
         case, report = _reused_or_parsed(
             validated,
@@ -3246,7 +3340,11 @@ def _library_item(
         "authors": _report_authors(report.target),
         "attention_count": current_attention_count,
         "attention_state": (
-            "needs_attention" if current_attention_count else "no_attention_needed"
+            "needs_attention"
+            if current_attention_count
+            else "not_matched"
+            if match_state is not None
+            else "no_attention_needed"
         ),
         "detail_url": f"/review/{case.review_case_id}"
         if case is not None
@@ -3281,7 +3379,11 @@ def _library_item(
                 "No review decision is recorded for this work. Its current values "
                 "are shown exactly as Mechanical Librarian last read them."
             ),
-            "state": "no_decision_recorded",
+            # A work no provider matched names why, in a closed state the row
+            # words; any other work has nothing more to say (#1407).
+            "state": "no_decision_recorded"
+            if match_state is None
+            else "not_matched_" + match_state,
         },
     }
     return value

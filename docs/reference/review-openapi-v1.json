@@ -6249,7 +6249,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v2",
+            "const": "review-library-v3",
             "title": "Schema Version",
             "type": "string"
           }
@@ -6275,6 +6275,11 @@
             "type": "integer"
           },
           "attention_state": {
+            "enum": [
+              "needs_attention",
+              "no_attention_needed",
+              "not_matched"
+            ],
             "title": "Attention State",
             "type": "string"
           },
@@ -6422,6 +6427,14 @@
             "type": "string"
           },
           "state": {
+            "enum": [
+              "no_decision_recorded",
+              "preparation_failed",
+              "not_matched_refused",
+              "not_matched_unavailable_scheduled",
+              "not_matched_unavailable",
+              "not_matched_no_match"
+            ],
             "title": "State",
             "type": "string"
           }
@@ -7712,6 +7725,11 @@
             "title": "In Progress",
             "type": "integer"
           },
+          "not_matched": {
+            "minimum": 0.0,
+            "title": "Not Matched",
+            "type": "integer"
+          },
           "ready": {
             "minimum": 0.0,
             "title": "Ready",
@@ -7734,6 +7752,7 @@
         "required": [
           "ready",
           "recorded",
+          "not_matched",
           "failed",
           "in_progress",
           "scan_ids"
@@ -7926,6 +7945,10 @@
             "title": "Library Id",
             "type": "string"
           },
+          "not_matched": {
+            "title": "Not Matched",
+            "type": "integer"
+          },
           "ready": {
             "title": "Ready",
             "type": "integer"
@@ -7953,7 +7976,7 @@
             "items": {
               "$ref": "#/components/schemas/_PreparationStage"
             },
-            "maxItems": 9,
+            "maxItems": 10,
             "title": "Stages",
             "type": "array"
           },
@@ -7977,6 +8000,7 @@
           "ready",
           "blocked",
           "recorded",
+          "not_matched",
           "rescan_requested"
         ],
         "title": "_PreparationProgress",
@@ -8092,6 +8116,7 @@
               "projection",
               "ready",
               "recorded",
+              "not_matched",
               "failed"
             ],
             "title": "Stage",
@@ -8860,12 +8885,17 @@
           "no_attention_needed": {
             "title": "No Attention Needed",
             "type": "integer"
+          },
+          "not_matched": {
+            "title": "Not Matched",
+            "type": "integer"
           }
         },
         "required": [
           "all",
           "needs_attention",
-          "no_attention_needed"
+          "no_attention_needed",
+          "not_matched"
         ],
         "title": "_ReviewCounts",
         "type": "object"

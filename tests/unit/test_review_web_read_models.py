@@ -790,6 +790,7 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
         "connection": "primary",
         "library": "fiction",
         "library_id": "lib-1",
+        "not_matched": 0,
         "ready": 1,
         "recorded": 0,
         "rescan_requested": False,
@@ -805,6 +806,7 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
             {"stage": "projection", "count": 0},
             {"stage": "ready", "count": 1},
             {"stage": "recorded", "count": 0},
+            {"stage": "not_matched", "count": 0},
             {"stage": "failed", "count": 1},
         ],
         "state": "processing",
@@ -1886,6 +1888,7 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(
         "all": 2,
         "needs_attention": 1,
         "no_attention_needed": 1,
+        "not_matched": 0,
     }
     assert len(body["items"]) == 1
     assert body["items"][0]["attention_state"] == "needs_attention"
@@ -1931,10 +1934,12 @@ def test_complete_library_includes_current_report_without_review_lineage(
     response = web.client.get("/api/v1/library?lens=all&q=In-progress")
 
     assert response.status_code == 200, response.text
+    # A local-only report carries no provider evidence, so it is not matched.
     assert response.json()["counts"] == {
         "all": 1,
         "needs_attention": 0,
-        "no_attention_needed": 1,
+        "no_attention_needed": 0,
+        "not_matched": 1,
     }
     item = response.json()["items"][0]
     assert item["review_case_id"] is None
@@ -1947,7 +1952,8 @@ def test_complete_library_includes_current_report_without_review_lineage(
     )
     assert item["detail_kind"] == "report"
     assert item["work_id"].startswith("library_work_")
-    assert item["attention_state"] == "no_attention_needed"
+    assert item["attention_state"] == "not_matched"
+    assert item["summary"]["state"] == "not_matched_no_match"
     assert item["dispositions"] == []
 
 

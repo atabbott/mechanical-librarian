@@ -216,7 +216,7 @@ const terminalPreparation = (
     completed_at: 101,
     total: 1,
     dismissible: true,
-    now: { ready: 1, recorded: 0, failed: 1, in_progress: 0, scan_ids: [] },
+    now: { ready: 1, recorded: 0, not_matched: 0, failed: 1, in_progress: 0, scan_ids: [] },
   },
 })
 
@@ -553,7 +553,7 @@ describe('Library route', () => {
       active_books: [{ name: 'Active title', stage: 'Checking metadata' }],
       completed_at: null,
       dismissible: false,
-      now: { ready: 1, recorded: 0, failed: 0, in_progress: 0, scan_ids: [] },
+      now: { ready: 1, recorded: 0, not_matched: 0, failed: 0, in_progress: 0, scan_ids: [] },
     }
     const current: PreparationView = {
       ...running,
@@ -580,7 +580,7 @@ describe('Library route', () => {
           passage: { read: 0, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
           active_books: [],
           updated_at: 101,
-          now: { ready: 0, recorded: 0, failed: 0, in_progress: 0, scan_ids: [] },
+          now: { ready: 0, recorded: 0, not_matched: 0, failed: 0, in_progress: 0, scan_ids: [] },
         },
       })
     })
@@ -679,6 +679,7 @@ describe('Library route', () => {
         now: {
           ready: 1,
           recorded: 0,
+          not_matched: 0,
           failed: state === 'completed_with_failures' ? 1 : 0,
           in_progress: 0,
           scan_ids: [],
@@ -719,7 +720,7 @@ describe('Library route', () => {
       total: 3,
       completed_at: null,
       dismissible: false,
-      now: { ready: 1, recorded: 0, failed: 0, in_progress: 2, scan_ids: [] },
+      now: { ready: 1, recorded: 0, not_matched: 0, failed: 0, in_progress: 2, scan_ids: [] },
     }
     const running: PreparationView = {
       ...base,
@@ -1423,12 +1424,13 @@ describe('Library route', () => {
           completed_at: 101,
           total: 1,
           dismissible: true,
-          now: { ready: 0, recorded: 0, failed: 1, in_progress: 0, scan_ids: [] },
+          now: { ready: 0, recorded: 0, not_matched: 0, failed: 1, in_progress: 0, scan_ids: [] },
         },
         libraries: [
           {
             blocked: 1,
             recorded: 0,
+            not_matched: 0,
             checked: 1,
             connection: 'primary',
             library: 'books',
@@ -1460,7 +1462,9 @@ describe('Library route', () => {
     )
     expect(completions).toContain('Stopped before finishing')
     for (const label of completions)
-      expect(label).not.toMatch(/ready to browse|recorded, nothing to decide|could not finish/iu)
+      expect(label).not.toMatch(
+        /ready to browse|recorded, nothing to decide|not matched|could not finish/iu,
+      )
     expect(screen.getByText('Unfinished work')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
     vi.stubGlobal('matchMedia', previousMatchMedia)
@@ -1587,7 +1591,7 @@ describe('Library route', () => {
       id: 'failed-work',
       title: 'Preparation unavailable',
       attentionCount: 0,
-      attention: 'no_attention_needed',
+      attention: 'no_attention_needed' as const,
       // Neither a case nor a report: there is nothing here to open.
       detailUrl: null,
       detailKind: null,
@@ -1612,7 +1616,7 @@ describe('Library route', () => {
         },
       ],
       summary: {
-        state: 'preparation_failed',
+        state: 'preparation_failed' as const,
         reason: 'Provider credentials need owner attention.',
         fields: [],
       },
@@ -1622,7 +1626,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
         works: [failed],
       })),
     }
@@ -1662,11 +1666,11 @@ describe('Library route', () => {
         title: 'Recorded work',
         mediaKind: 'm4b',
         attentionCount: 0,
-        attention: 'no_attention_needed',
+        attention: 'no_attention_needed' as const,
         detailUrl,
         detailKind: 'report' as const,
         summary: {
-          state: 'no_decision_recorded',
+          state: 'no_decision_recorded' as const,
           reason: 'No review decision is recorded.',
           fields: [],
         },
@@ -1759,7 +1763,7 @@ describe('Library route', () => {
         getLibrary: vi.fn(async () => ({
           lens: 'all' as const,
           page: 1,
-          counts: { attention: 0, all: 1, clear: 1 },
+          counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
           works: [...library.works, recorded],
         })),
       }
@@ -1856,7 +1860,7 @@ describe('Library route', () => {
       workId: 'library_work_masked',
       title: 'Retained work',
       attentionCount: 0,
-      attention: 'no_attention_needed',
+      attention: 'no_attention_needed' as const,
       // Its earlier report is still browsable, but the latest attempt failed
       // for a real reason the owner has to act on.
       detailUrl: '/api/v1/library/report?connection=primary&library=ebooks&item=item-7',
@@ -1872,13 +1876,19 @@ describe('Library route', () => {
         stage: 'provider',
         status: 'authentication',
       },
+      // The retained report matched nothing, which the failure still outranks.
+      summary: {
+        fields: [],
+        reason: 'No review decision is recorded for this work.',
+        state: 'not_matched_no_match' as const,
+      },
     }
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
         works: [masked],
       })),
     }
@@ -1888,9 +1898,145 @@ describe('Library route', () => {
     // Openable, because the evidence is real -- but not reported as a success.
     expect(row).toHaveTextContent('Preparation failed safely')
     expect(row).not.toHaveTextContent('Recorded evidence available')
+    expect(row).not.toHaveTextContent('No provider matched')
+    expect(row).toHaveAccessibleName(/Preparation failed safely/u)
+    expect(row).not.toHaveAccessibleName(/No provider matched/u)
     expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.needs-attention')).not.toBeNull()
+  })
+
+  it('lists works no provider matched under their own lens, each with one reason (#1407)', async () => {
+    const user = userEvent.setup()
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const unmatched = (
+      key: string,
+      state:
+        | 'not_matched_refused'
+        | 'not_matched_unavailable_scheduled'
+        | 'not_matched_unavailable'
+        | 'not_matched_no_match',
+    ) => ({
+      ...baseWork,
+      id: `library_work_${key}`,
+      workId: `library_work_${key}`,
+      title: `Unmatched ${key}`,
+      attentionCount: 0,
+      attention: 'not_matched' as const,
+      detailUrl: `/api/v1/library/report?connection=primary&library=ebooks&item=${key}`,
+      detailKind: 'report' as const,
+      preparation: null,
+      preparationOutcomes: [],
+      summary: { fields: [], reason: 'No review decision is recorded for this work.', state },
+    })
+    const works = [
+      unmatched('refused', 'not_matched_refused'),
+      unmatched('scheduled', 'not_matched_unavailable_scheduled'),
+      unmatched('unavailable', 'not_matched_unavailable'),
+      unmatched('nothing', 'not_matched_no_match'),
+    ]
+    const getLibrary = vi.fn(async (search: LibrarySearch) => ({
+      lens: search.lens,
+      page: 1,
+      counts: { attention: 0, all: 4, clear: 0, notMatched: 4 },
+      works,
+    }))
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+
+    const lens = await screen.findByRole('link', { name: 'Not matched' })
+    // The count sits beside the Works count, in the same words.
+    expect(await screen.findByText('4 works · 4 not matched')).toBeVisible()
+    expect(
+      within(screen.getByRole('navigation', { name: 'Library lenses' })).getAllByRole('link'),
+    ).toHaveLength(4)
+    expect(screen.getByRole('heading', { name: 'Not matched' })).toBeVisible()
+    for (const [key, reason] of [
+      ['refused', 'Found, but not this work'],
+      ['scheduled', 'Providers unavailable; will be checked again'],
+      ['unavailable', 'Providers unavailable'],
+      ['nothing', 'No provider matched'],
+    ] as const) {
+      const row = screen.getByRole('button', { name: new RegExp(`^Unmatched ${key}\\.`, 'u') })
+      const status = row.querySelector('.library-work-status > span')
+      expect(status).toHaveTextContent(new RegExp(`^${reason}$`, 'u'))
+      expect(status).toHaveClass('handled')
+      expect(row).not.toHaveTextContent('Recorded evidence available')
+    }
+
+    await user.click(lens)
+    await waitFor(() =>
+      expect(getLibrary).toHaveBeenCalledWith(
+        expect.objectContaining({ lens: 'not_matched' }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    )
+    expect(await screen.findByRole('link', { name: 'Not matched' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    // Inside its own lens the rows need no group heading.
+    expect(screen.queryByRole('heading', { name: 'Not matched' })).toBeNull()
+  })
+
+  it('names the Not matched lens without a count it could not read', async () => {
+    renderRoute('/library?lens=all', {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => {
+        throw new ApiError(503, 'unavailable')
+      }),
+    })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Works are unavailable.')
+    expect(screen.getByRole('link', { name: 'Not matched' })).toBeVisible()
+  })
+
+  it('adds Not matched to the Works count only when there is one to state and no search (#1407)', async () => {
+    const page = (search: LibrarySearch, notMatched: number) => ({
+      lens: search.lens,
+      page: 1,
+      counts: { attention: 0, all: 2, clear: 2 - notMatched, notMatched },
+      works: [],
+    })
+    const counted = async (getLibrary: ReviewHttp['getLibrary']) => {
+      cleanup()
+      renderRoute('/library?lens=not_matched', { ...createHttp(), getLibrary })
+      const header = (await screen.findByRole('heading', { name: 'Works' })).parentElement
+      if (!header) throw new Error('the Works heading has a header')
+      return within(header).getByRole('status')
+    }
+    let status = await counted(vi.fn(async (search: LibrarySearch) => page(search, 0)))
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works$/u))
+    status = await counted(
+      vi.fn(async (search: LibrarySearch) =>
+        search.lens === 'all' ? new Promise<never>(() => undefined) : page(search, 1),
+      ),
+    )
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works · … not matched$/u))
+    status = await counted(
+      vi.fn(async (search: LibrarySearch) => {
+        if (search.lens === 'all') throw new ApiError(503, 'unavailable')
+        return page(search, 1)
+      }),
+    )
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works$/u))
+    // A search scopes the list, so the library-wide figure stays out of it.
+    cleanup()
+    renderRoute('/library?lens=not_matched&q=work', {
+      ...createHttp(),
+      getLibrary: vi.fn(async (search: LibrarySearch) => page(search, 1)),
+    })
+    const searched = within(
+      (await screen.findByRole('heading', { name: 'Works' })).parentElement ?? document.body,
+    ).getByRole('status')
+    await waitFor(() => expect(searched).toHaveTextContent(/^Matching: 2 of 2 works$/u))
+  })
+
+  it('keeps an unknown lens out of the URL it reads (#1407)', () => {
+    expect(normalizeLibrarySearch({ lens: 'not_matched' })).toEqual({ lens: 'not_matched' })
+    expect(normalizeLibrarySearch({ lens: 'not_matched_refused' })).toEqual({ lens: 'all' })
   })
 
   it('states media health on an openable row whose latest preparation could not read a file', async () => {
@@ -1904,7 +2050,7 @@ describe('Library route', () => {
       workId: 'library_work_unreadable',
       title: 'Retained audiobook',
       attentionCount: 0,
-      attention: 'no_attention_needed',
+      attention: 'no_attention_needed' as const,
       detailUrl: '/api/v1/library/report?connection=primary&library=audio&item=item-8',
       detailKind: 'report' as const,
       preparation: {
@@ -1933,7 +2079,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
         works: [retained],
       })),
     }
@@ -1973,7 +2119,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 1, all: 1, clear: 0 },
+        counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
         works: [current],
       })),
     }
@@ -2006,7 +2152,7 @@ describe('Library route', () => {
       title: 'Unfiled observation',
       attentionCount: 0,
       summary: {
-        state: 'no_decision_recorded',
+        state: 'no_decision_recorded' as const,
         reason: 'No review decision is recorded for this work.',
         fields: [{ destination: 'title', state: 'value', value: 'Unfiled observation' }],
       },
@@ -2014,7 +2160,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 1, clear: 1 },
+      counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
       works: search.q ? [] : [listed],
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -2062,7 +2208,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2 },
+      counts: { attention: 0, all: 2, clear: 2, notMatched: 0 },
       works: search.q ? [] : [first, second],
     }))
     const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -4766,10 +4912,10 @@ describe('Library route', () => {
         target_fingerprint: series.targetFingerprint,
       },
     }
-    const initialLibrary = { ...library, counts: { all: 1, attention: 1, clear: 0 } }
+    const initialLibrary = { ...library, counts: { all: 1, attention: 1, clear: 0, notMatched: 0 } }
     const settledLibrary = {
       ...initialLibrary,
-      counts: { all: 1, attention: 0, clear: 1 },
+      counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
       works: [{ ...work, attention: 'no_attention_needed' as const, attentionCount: 0 }],
     }
     let currentDetail: CaseDetailView = { ...detail, fields: [series] }
@@ -5124,7 +5270,7 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         ...library,
-        counts: { all: 1, attention: 0, clear: 1 },
+        counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
         works: library.works.map((work) => ({
           ...work,
           workAttentionCount: 0,
@@ -6616,7 +6762,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 1, all: 1, clear: 0 },
+                counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
                 works: [],
               },
       ),
@@ -6813,7 +6959,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 0, all: 1, clear: 1 },
+                counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
                 works: [],
               },
       ),
@@ -8451,7 +8597,11 @@ describe('Library route', () => {
       expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
       await act(async () => {
         if (result === 'absent')
-          settle?.({ ...library, works: [], counts: { attention: 0, all: 0, clear: 0 } })
+          settle?.({
+            ...library,
+            works: [],
+            counts: { attention: 0, all: 0, clear: 0, notMatched: 0 },
+          })
         else reject?.(new Error('Collection unavailable'))
       })
       // Search scopes the result list; the case read keeps the selection (#1365).
@@ -8692,7 +8842,7 @@ describe('Library route', () => {
     const emptyLibrary: LibraryView = {
       lens: 'all',
       page: 1,
-      counts: { attention: 0, all: 0, clear: 0 },
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0 },
       works: [],
     }
     const http: ReviewHttp = {
@@ -8817,6 +8967,7 @@ describe('Library route', () => {
             ready: 9,
             blocked: 0,
             recorded: 0,
+            not_matched: 0,
             rescan_requested: false,
           },
         ],
@@ -10509,7 +10660,7 @@ describe('library provider throttling notice (#1282)', () => {
 describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const counted = (attention: number, all: number): LibraryView => ({
     ...library,
-    counts: { attention, all, clear: all - attention },
+    counts: { attention, all, clear: all - attention, notMatched: 0 },
   })
   const badge = () => document.querySelector('.attention-toggle strong')
   const worksStatus = () => document.querySelector('.library-works-heading [role="status"]')

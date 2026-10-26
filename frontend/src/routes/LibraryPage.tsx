@@ -45,6 +45,7 @@ import type {
   LibraryWorkView,
   PreparationView,
   ProviderOutcomeView,
+  WorkSummaryState,
 } from '../api/http'
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
@@ -769,14 +770,23 @@ const limitingProviderStatuses = new Set([
   'candidate_limit_exceeded',
   'query_limit_exceeded',
 ])
+// Why no provider matched a work, in the row's status slot (#1407).
+const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
+  not_matched_refused: 'Found, but not this work',
+  not_matched_unavailable_scheduled: 'Providers unavailable; will be checked again',
+  not_matched_unavailable: 'Providers unavailable',
+  not_matched_no_match: 'No provider matched',
+}
 const providerGroup = (work: LibraryWorkView) =>
   work.preparation
     ? 'Preparation needs attention'
-    : work.attentionCount === 0
-      ? 'No attention needed'
-      : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
-        ? 'Provider evidence limited'
-        : 'Provider evidence complete'
+    : work.attention === 'not_matched'
+      ? 'Not matched'
+      : work.attentionCount === 0
+        ? 'No attention needed'
+        : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
+          ? 'Provider evidence limited'
+          : 'Provider evidence complete'
 const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
   const counts = new Map<string, number>()
   for (const outcome of outcomes) {
@@ -2518,6 +2528,7 @@ export default function LibraryPage({
   const summary = useQuery(librarySummaryQuery(http))
   const summaryWorks = summary.data?.counts.all
   const summaryAttention = summary.data?.counts.attention
+  const summaryNotMatched = summary.data?.counts.notMatched
   const attentionTitleId = useId()
   const preparationState = usePreparation()
   const presentation =
@@ -4077,37 +4088,48 @@ export default function LibraryPage({
             <h2 id="library-works-title">Works</h2>
             <span role="status" aria-live="polite" aria-busy={retained || undefined}>
               {data
-                ? !search.q
-                  ? workCount(data.counts.all)
-                  : summaryWorks === undefined
-                    ? `Matching: ${workCount(data.counts.all)}`
-                    : `Matching: ${String(data.counts.all)} of ${workCount(summaryWorks)}`
+                ? (!search.q
+                    ? workCount(data.counts.all)
+                    : summaryWorks === undefined
+                      ? `Matching: ${workCount(data.counts.all)}`
+                      : `Matching: ${String(data.counts.all)} of ${workCount(summaryWorks)}`) +
+                  (search.q
+                    ? ''
+                    : summaryNotMatched === undefined
+                      ? summary.isError
+                        ? ''
+                        : ' · … not matched'
+                      : summaryNotMatched === 0
+                        ? ''
+                        : ` · ${String(summaryNotMatched)} not matched`)
                 : failed
                   ? 'Count unavailable'
                   : 'Loading count…'}
             </span>
           </div>
           <nav className="lenses" aria-label="Library lenses">
-            {(['all', 'needs_attention', 'no_attention_needed'] as const).map((lens) => (
-              <Link
-                key={lens}
-                to="/library"
-                search={{
-                  lens,
-                  ...(search.q ? { q: search.q } : {}),
-                  ...(search.preview ? { preview: search.preview } : {}),
-                  ...(search.work ? { work: search.work } : {}),
-                  ...(search.field ? { field: search.field } : {}),
-                  ...(search.preparation ? { preparation: search.preparation } : {}),
-                }}
-                preload="intent"
-                onPointerEnter={() => lensIntent(lens)}
-                onFocus={() => lensIntent(lens)}
-                activeProps={{ 'aria-current': 'page' }}
-              >
-                {fieldLabel(lens === 'no_attention_needed' ? 'No attention needed' : lens)}
-              </Link>
-            ))}
+            {(['all', 'needs_attention', 'no_attention_needed', 'not_matched'] as const).map(
+              (lens) => (
+                <Link
+                  key={lens}
+                  to="/library"
+                  search={{
+                    lens,
+                    ...(search.q ? { q: search.q } : {}),
+                    ...(search.preview ? { preview: search.preview } : {}),
+                    ...(search.work ? { work: search.work } : {}),
+                    ...(search.field ? { field: search.field } : {}),
+                    ...(search.preparation ? { preparation: search.preparation } : {}),
+                  }}
+                  preload="intent"
+                  onPointerEnter={() => lensIntent(lens)}
+                  onFocus={() => lensIntent(lens)}
+                  activeProps={{ 'aria-current': 'page' }}
+                >
+                  {fieldLabel(lens === 'no_attention_needed' ? 'No attention needed' : lens)}
+                </Link>
+              ),
+            )}
           </nav>
           <form className="search library-search" role="search" onSubmit={submitSearch}>
             <label className="sr-only" htmlFor="library-query">
@@ -4184,21 +4206,28 @@ export default function LibraryPage({
                 // later real failure over the same retained report is still a
                 // failure the owner has to see.
                 const recorded = evidence && work.preparation === null
-                const status = recorded
-                  ? 'Recorded evidence available'
-                  : work.preparation
-                    ? 'Preparation failed safely'
-                    : needsAttention
-                      ? work.attentionCount === 1
-                        ? '1 field needs attention'
-                        : `${String(work.attentionCount)} fields need attention`
-                      : 'No attention needed'
+                // A terminal preparation failure outranks a retained report's
+                // not-matched reason: it is the failure the owner must see (#1407).
+                const status =
+                  (work.summary && !work.preparation
+                    ? notMatchedReasons[work.summary.state]
+                    : undefined) ??
+                  (recorded
+                    ? 'Recorded evidence available'
+                    : work.preparation
+                      ? 'Preparation failed safely'
+                      : needsAttention
+                        ? work.attentionCount === 1
+                          ? '1 field needs attention'
+                          : `${String(work.attentionCount)} fields need attention`
+                        : 'No attention needed')
                 const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
                 const group = providerGroup(work)
                 const previousWork = works[index - 1]
                 // Grouping follows the lens these rows were read for, not a retained URL's.
                 const showGroup =
                   data.lens !== 'no_attention_needed' &&
+                  data.lens !== 'not_matched' &&
                   (!previousWork || providerGroup(previousWork) !== group)
                 const summary = providerSummary(work.preparationOutcomes)
                 const summaryId = summary ? `provider-summary-${work.id}` : undefined

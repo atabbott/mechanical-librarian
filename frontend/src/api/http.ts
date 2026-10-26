@@ -166,7 +166,21 @@ export const settingsAudibleMarketplaceOrder: readonly string[] =
 
 export const settingsValidationCopy = settingsVocabulary.errors
 
-export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
+// The lens a work belongs to; All lists every one of them (#1407).
+export const attentionStates = ['needs_attention', 'no_attention_needed', 'not_matched'] as const
+export type AttentionState = (typeof attentionStates)[number]
+export type LibraryLens = 'all' | AttentionState
+// Why a work with no case reads as it does: nothing to decide, a preparation
+// that could not finish, or the reason no provider matched it (#1407).
+export const workSummaryStates = [
+  'no_decision_recorded',
+  'preparation_failed',
+  'not_matched_refused',
+  'not_matched_unavailable_scheduled',
+  'not_matched_unavailable',
+  'not_matched_no_match',
+] as const
+export type WorkSummaryState = (typeof workSummaryStates)[number]
 export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
 export type DecisionOutcome = 'accept' | 'keep_current' | 'reject' | 'owner_entered' | 'withdraw'
@@ -260,7 +274,7 @@ export interface WorkSummaryFieldView {
 export interface WorkSummaryView {
   fields: readonly WorkSummaryFieldView[]
   reason: string
-  state: string
+  state: WorkSummaryState
 }
 export interface ReportEvidenceView {
   basis: string
@@ -319,7 +333,7 @@ export interface LibraryWorkView {
   libraryDisplayName?: string
   mediaKind: string
   attentionCount: number
-  attention: string
+  attention: AttentionState
   // Where this work opens, and what opens there. A work with a review case
   // points at that case; a work with only a published report points at the
   // report itself, which is the one route its evidence has; a work that
@@ -337,7 +351,7 @@ export interface LibraryView {
   nextCursor?: string
   previousCursor?: string
   page: number
-  counts: { attention: number; all: number; clear: number }
+  counts: { attention: number; all: number; clear: number; notMatched: number }
   works: readonly LibraryWorkView[]
 }
 export interface AttentionItemView {
@@ -2265,7 +2279,7 @@ const preparationProgress = (value: unknown): PreparationProgress => {
   if (value.scan_id !== null) stringValue(value.scan_id, 'preparation_scan_id')
   for (const field of ['connection', 'library', 'library_id', 'state'])
     stringValue(value[field], `preparation_${field}`)
-  for (const field of ['checked', 'total', 'ready', 'blocked', 'recorded'])
+  for (const field of ['checked', 'total', 'ready', 'blocked', 'recorded', 'not_matched'])
     integerValue(value[field], `preparation_${field}`)
   if (typeof value.rescan_requested !== 'boolean')
     throw new ApiError(502, 'invalid_preparation_rescan_requested')
@@ -2381,9 +2395,12 @@ const preparationPresentation = (value: unknown) => {
   // The run's works as they stand now; absent or null means not yet known.
   const now = value.now
   if (now === undefined || now === null) return
-  if (!record(now) || !exactKeys(now, ['ready', 'recorded', 'failed', 'in_progress', 'scan_ids']))
+  if (
+    !record(now) ||
+    !exactKeys(now, ['ready', 'recorded', 'not_matched', 'failed', 'in_progress', 'scan_ids'])
+  )
     throw new ApiError(502, 'invalid_preparation_now')
-  for (const field of ['ready', 'recorded', 'failed', 'in_progress'])
+  for (const field of ['ready', 'recorded', 'not_matched', 'failed', 'in_progress'])
     integerValue(now[field], `preparation_now_${field}`)
   if (stringArray(now.scan_ids, 'preparation_now_scan_ids').length > 128)
     throw new ApiError(502, 'invalid_preparation_now_scan_ids')
@@ -3034,14 +3051,12 @@ export const mapLibrary = (value: unknown): LibraryView => {
   // the sibling mappers already refuse; the library is held to the same rule.
   if (
     !record(value) ||
-    value.schema_version !== 'review-library-v2' ||
+    value.schema_version !== 'review-library-v3' ||
     !record(value.counts) ||
     !Array.isArray(value.items)
   )
     throw new ApiError(502, 'invalid_library_response')
-  const lens = stringValue(value.lens, 'library_lens')
-  if (!['needs_attention', 'all', 'no_attention_needed'].includes(lens))
-    throw new ApiError(502, 'invalid_library_lens')
+  const lens = coverObservationValue(value.lens, 'library_lens', ['all', ...attentionStates])
   // Validated at each read: this cast names the DTO's fields, and every one the
   // view model consumes passes through the validators below before it is used.
   const dto = value as unknown as LibraryDto
@@ -3049,7 +3064,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
   const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
   const previousCursor = optionalString(dto.previous_cursor, 'library_previous_cursor')
   return {
-    lens: lens as LibraryLens,
+    lens,
     ...(query ? { query } : {}),
     ...(nextCursor ? { nextCursor } : {}),
     ...(previousCursor ? { previousCursor } : {}),
@@ -3058,6 +3073,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
       attention: integerValue(dto.counts.needs_attention, 'attention_count'),
       all: integerValue(dto.counts.all, 'all_count'),
       clear: integerValue(dto.counts.no_attention_needed, 'clear_count'),
+      notMatched: integerValue(dto.counts.not_matched, 'not_matched_count'),
     },
     works: dto.items.map((item) => {
       const reviewCaseId = optionalString(item.review_case_id, 'review_case_id')
@@ -3106,7 +3122,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
                 },
               ),
               reason: stringValue(item.summary.reason, 'summary_reason'),
-              state: stringValue(item.summary.state, 'summary_state'),
+              state: coverObservationValue(item.summary.state, 'summary_state', workSummaryStates),
             }
       return {
         id: reviewCaseId ?? workId,
@@ -3120,7 +3136,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
           stringValue(item.library, 'library'),
         mediaKind: stringValue(item.media_kind, 'media_kind'),
         attentionCount: integerValue(item.attention_count, 'attention_count'),
-        attention: stringValue(item.attention_state, 'attention_state'),
+        attention: coverObservationValue(item.attention_state, 'attention_state', attentionStates),
         detailUrl: item.detail_url === null ? null : stringValue(item.detail_url, 'detail_url'),
         detailKind: (() => {
           // Read back through `unknown`, as `lens` above is: the DTO type says

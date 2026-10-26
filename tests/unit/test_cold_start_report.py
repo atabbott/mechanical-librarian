@@ -13,6 +13,7 @@ import json
 import os
 import sqlite3
 import tempfile
+from collections import Counter
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
@@ -105,6 +106,7 @@ def _empty_snapshot() -> dict[str, object]:
         "current_cover_pointer_libraries": [],
         "provider_lanes": [],
         "unmatched_works": [],
+        "not_matched_works": [],
         "scans": [],
         "work_states": [],
         "absences": [],
@@ -217,6 +219,11 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
         assert cast("list[object]", snapshot["unmatched_works"]) == [
             ("primary", "ebooks", 2)
         ]
+        # The two caseless copies and the pending report carry no provider
+        # evidence, so Library's Not matched lens holds all three (#1407).
+        assert cast("list[object]", snapshot["not_matched_works"]) == [
+            ("primary", "ebooks", "no_match", 3)
+        ]
 
         report = cold_start.assemble_cold_start_report(
             _configuration(),
@@ -281,6 +288,11 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             {"provider": "catalogue", "lanes": {"candidates": 1}, "zero_lane": False},
         ]
         assert library["works_without_provider_candidates"] == 2
+        assert library["not_matched"] == {
+            "total": 3,
+            "by_reason": {"refused": 0, "unavailable": 0, "no_match": 3},
+            "moved_from_no_attention_needed": 3,
+        }
         # With no cover consideration the stored basis is the live one.
         assert library["attention_stored_basis"] == {
             "basis": "stored_cover_authority",
@@ -408,6 +420,11 @@ def test_current_cover_pointer_marks_attention_counts_unavailable(
         "works": 2,
     }
     assert library["works_without_provider_candidates"] == 0
+    assert library["not_matched"] == {
+        "total": 0,
+        "by_reason": {"refused": 0, "unavailable": 0, "no_match": 0},
+        "moved_from_no_attention_needed": 0,
+    }
     serialized = json.dumps(report)
     assert "private-cover-item" not in serialized
     assert "edition-3" not in serialized
@@ -804,8 +821,66 @@ def test_main_rejects_a_malformed_mount_root() -> None:
         )
 
 
-def test_the_schema_is_pinned_at_its_fourth_version() -> None:
-    assert "cold-start-report-v4" == cold_start.COLD_START_REPORT_SCHEMA
+def test_the_schema_is_pinned_at_its_fifth_version() -> None:
+    assert "cold-start-report-v5" == cold_start.COLD_START_REPORT_SCHEMA
+
+
+def test_not_matched_census_counts_the_lens_by_reason() -> None:
+    """The census is Library's Not matched lens, per reason (#1407)."""
+    from mechanical_librarian.application.review_web import BrowseReviewLibrary
+    from mechanical_librarian.domain.metadata_report import (
+        ProviderObservation,
+        ProviderStatus,
+    )
+    from tests.support.audiobook_reports import recording_lookup_hint_report
+
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "application.sqlite3"
+        repository = open_repository(database)
+        source = _plain_report("Unmatched", "4", "5", actionable=False)
+        for item, identity, status in (
+            ("no-match", "1", ProviderStatus.NO_MATCH),
+            ("unavailable", "2", ProviderStatus.UNAVAILABLE),
+            ("rate-limited", "3", ProviderStatus.RATE_LIMITED),
+        ):
+            report = _for_item(source, item, identity)
+            repository.publish(
+                MetadataReport.create(
+                    target=report.target,
+                    file=report.file,
+                    local_claims=report.local_claims,
+                    local_reasons=report.local_reasons,
+                    providers=(ProviderObservation("hardcover-main", status),),
+                ),
+                lambda: True,
+            )
+        repository.publish(recording_lookup_hint_report(), lambda: True)
+        browse = BrowseReviewLibrary(repository)
+        lens = browse.library(lens="not_matched", search=None, limit=50, cursor=None)
+        repository.close()
+
+        connection = cold_start._open_read_only(database)
+        try:
+            snapshot = cold_start.cold_start_snapshot(connection)
+        finally:
+            connection.close()
+
+        rows = cast("list[tuple[object, ...]]", snapshot["not_matched_works"])
+        assert sorted(rows) == [
+            ("primary", "audio", "refused", 1),
+            ("primary", "ebooks", "no_match", 1),
+            ("primary", "ebooks", "unavailable", 2),
+        ]
+        assert (
+            sum(cast(int, row[3]) for row in rows)
+            == cast("dict[str, int]", lens["counts"])["not_matched"]
+        )
+        census = cold_start._not_matched(Counter({"unavailable": 2, "no_match": 1}))
+        assert census == {
+            "total": 3,
+            "by_reason": {"refused": 0, "unavailable": 2, "no_match": 1},
+            "moved_from_no_attention_needed": 3,
+        }
 
 
 _EMPTY_DISPATCH = {

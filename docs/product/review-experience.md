@@ -401,7 +401,7 @@ first without hiding automatic-only, resolved, pre-admission, current no-case,
 or retired work. Within the attention group it presents works whose current
 provider report is complete before those with a provider-limited lane; both the
 `all` and `needs_attention` lenses keep that grouping while
-`no_attention_needed` remains alphabetical. Page-local headings name
+`no_attention_needed` and `not_matched` remain alphabetical. Page-local headings name
 **Provider evidence complete** and **Provider evidence limited**, preserving the
 server order even when a page begins partway through a group. Clear works end
 the attention grouping. Compact row descriptions name the observed lookup
@@ -410,6 +410,27 @@ it does not promise a match. Limited is broader than retrying: a failure status
 alone never promises a scheduled retry. Recoverable lookups can change group
 when new evidence arrives. Graded ordering remains deferred to #877, including
 the original ≥10% steady-state criterion; the earlier measurement is unavailable.
+
+A work with no review case, nothing to decide, and no admitted provider evidence
+is **Not matched** (#1407): its own lens, counted beside the Works count as
+"7 works · 4 not matched", with zero omitted and nothing added during a
+search, and no longer in
+No attention needed, Needs attention, or the Attention queue. No admitted
+provider evidence means no lane returned candidates, or an audiobook package
+whose work identity was not admitted (`evidence_only`); a work with local
+evidence only counts. Each row's status slot names one reason, in this order:
+**Found, but not this work** when admission refused what a lane found;
+**Providers unavailable** when a dispatched provider is in the limiting set,
+with **; will be checked again** only while the provider-recovery store holds a
+scheduled job for that exact report; otherwise **No provider matched**. A
+recovery store that cannot answer withdraws only that promise, logged without
+values, and never fails the Library page or its counts. A lane
+that kept no ladder cannot tell a refusal from an empty answer and reads as no
+match. Work whose preparation could not finish stays where it was (#1413) and
+reads Preparation failed safely, even when its latest attempt failed over an
+earlier unmatched report; an ebook whose candidates were found but never admitted at the proposal level
+stays in No attention needed. The masthead and run summary name the same
+bucket as "not matched", with zero omitted.
 
 An unresolved Automatic field explains withheld decisions only when its exact
 current policy/report/proposal preview identifies failed contributing provider
@@ -422,7 +443,7 @@ preview action. Internal
 connection and item keys do not become its primary visible identity. Search
 covers bounded title, author, library, item, and media values with literal
 wildcard handling. The
-supported needs-attention and no-attention lenses, bounded search, cursor
+supported needs-attention, no-attention, and not-matched lenses, bounded search, cursor
 pagination, selected-work preview, deep links, and browser history remain
 URL-owned. Library lenses, title links, preview actions, and pagination remain
 44px touch-safe at desktop and compact widths. Long and unbroken work titles

@@ -58,9 +58,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
     _LIBRARY_ATTENTION_SQL,
+    _NOT_MATCHED_REASON_SQL,
     _POLICY_ASK_ATTENTION_SQL,
     _REPORT_BROWSE_FACTS_JOIN_SQL,
-    _REVIEW_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
     _TERMINAL_LIBRARY_SEARCH_SQL,
     _terminal_library_sql,
@@ -76,7 +76,10 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_web import LibraryLabels
+from mechanical_librarian.application.review_web import (
+    LibraryLabels,
+    LibraryLensFilter,
+)
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
@@ -111,6 +114,16 @@ from mechanical_librarian.domain.review_case import (
 )
 from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
 
+# What each filtering Library lens selects from the candidate relation. A
+# work no provider matched has no case and so no attention, and it is neither
+# needing attention nor needing none (#1407).
+_LIBRARY_LENS_CONDITIONS = {
+    "needs_attention": "attention=1",
+    "no_attention_needed": "attention=0 AND match_reason IS NULL",
+    "not_matched": "attention=0 AND match_reason IS NOT NULL",
+}
+_MATCH_REASONS = frozenset({None, "refused", "unavailable", "no_match"})
+
 # The exact column shape of the current_review_case_lineages pointer selected
 # by _validated_review_pointer.  Nullability follows the schema below:
 # review_case_id is the only nullable column of the six.
@@ -124,6 +137,10 @@ class ReviewLibraryPage:
     rows: tuple[tuple[str | None, str], ...]
     total: int
     attention_total: int
+    # #1407: the works no provider matched, and each row's reason, None for a
+    # matched, case or terminal row.
+    not_matched_total: int
+    match_reasons: tuple[str | None, ...]
     # Each row's case (with its identity) and report as this read validated
     # them, None for a terminal row, so a projection of the same read uses them
     # rather than parsing the same bytes again (#1202).
@@ -615,11 +632,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
     ) -> tuple[tuple[str | None, str], ...]:
         return self.read_current_library_page(
-            search, limit, offset, attention, library_labels
+            search, limit, offset, lens, library_labels
         ).rows
 
     @local_operation
@@ -628,19 +645,19 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
     ) -> ReviewLibraryPage:
         try:
             query, pattern = _review_search_pattern(search)
             cover_authority = self._current_cover_authority()
-            condition = _REVIEW_ATTENTION_SQL
-            if attention is False:
-                condition = "attention=0"
-            elif attention is True:
-                condition = "attention=1"
-            elif attention is None:
+            # None reads every work, the `all` lens; any other value refuses.
+            if lens is None:
                 condition = "1"
+            elif type(lens) is str and lens in _LIBRARY_LENS_CONDITIONS:
+                condition = _LIBRARY_LENS_CONDITIONS[lens]
+            else:
+                raise MetadataReportError("review library lens is invalid")
             attached = self.catalogue is not None and self.catalogue.active
             parameters: list[object] = [
                 *(
@@ -660,8 +677,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ]
             terminal_union = (
                 " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-                "item_id,NULL,0,0,ml_casefold(display_title),'',work_id,attempt,"
-                "stage,failure_root,recovery_attempt,failure_code,"
+                "item_id,NULL,0,0,NULL,ml_casefold(display_title),'',work_id,"
+                "attempt,stage,failure_root,recovery_attempt,failure_code,"
                 "display_title,display_authors,display_format FROM terminal"
                 + _TERMINAL_LIBRARY_SEARCH_SQL
             )
@@ -694,6 +711,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 # Provider completeness matters only inside the attention
                 # group: the no-attention lens remains alphabetical.
                 "facts.provider_limited AS provider_limited,"
+                + _NOT_MATCHED_REASON_SQL
+                + " AS match_reason,"
                 "facts.title_key AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order,"
                 "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
@@ -705,16 +724,23 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _REVIEW_SEARCH_SQL
                 + terminal_union
                 + "),totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
-                "AS attention_total FROM candidates),page AS MATERIALIZED (SELECT "
+                "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND "
+                "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total "
+                "FROM candidates),page AS MATERIALIZED (SELECT "
                 "1 AS present,case_id,report_id,proposal_set_id,"
                 "connection_name,library_name,item_id,outcome,"
                 "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
                 "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
-                "AS provider_order,title_order,case_order,work_id,attempt,stage,"
+                "AS provider_order,"
+                # Unmatched works follow the attention group as one block, so
+                # the `all` lens keeps them together ahead of clear works.
+                "CASE WHEN attention=0 AND match_reason IS NOT NULL THEN 0 ELSE 1 END "
+                "AS match_order,CASE WHEN attention=0 THEN match_reason END "
+                "AS match_reason,title_order,case_order,work_id,attempt,stage,"
                 "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
                 + condition
-                + " ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
-                "connection_name,case_order LIMIT ? OFFSET ?) "
+                + " ORDER BY attention_order,provider_order,match_order,title_order,"
+                "library_name,item_id,connection_name,case_order LIMIT ? OFFSET ?) "
                 "SELECT rc.document,CASE WHEN page.present=1 AND page.report_id IS NULL THEN json_object("
                 "'attempt',page.attempt,'connection',page.connection_name,"
                 "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
@@ -723,39 +749,51 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
                 "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
                 "page.connection_name,page.library_name,page.item_id,page.outcome, "
-                "COALESCE(page.present,0),totals.total,totals.attention_total "
+                "page.match_reason,COALESCE(page.present,0),totals.total,"
+                "totals.attention_total,totals.not_matched_total "
                 "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
-                "ORDER BY page.attention_order,page.provider_order,page.title_order,"
-                "page.library_name,page.item_id,page.connection_name,page.case_order",
+                "ORDER BY page.attention_order,page.provider_order,page.match_order,"
+                "page.title_order,page.library_name,page.item_id,page.connection_name,"
+                "page.case_order",
                 tuple(parameters),
             ).fetchall()
             if not rows:
                 raise MetadataReportError("review library count is invalid")
-            total, attention_total = rows[0][-2:]
+            totals = rows[0][-3:]
+            total, attention_total, not_matched_total = totals
             if (
                 type(total) is not int
                 or total < 0
                 or type(attention_total) is not int
+                or type(not_matched_total) is not int
                 or not 0 <= attention_total <= total
+                or not 0 <= not_matched_total <= total - attention_total
             ):
                 raise MetadataReportError("review library count is invalid")
             values: list[tuple[str | None, str]] = []
+            reasons: list[str | None] = []
             envelopes: list[
                 tuple[dict[str, object] | None, str | None, dict[str, object]] | None
             ] = []
             for row in rows:
                 if (
-                    len(row) != 10
-                    or type(row[7]) is not int
-                    or row[7] not in (0, 1)
-                    or row[8:] != (total, attention_total)
+                    len(row) != 12
+                    or type(row[8]) is not int
+                    or row[8] not in (0, 1)
+                    or row[9:] != totals
+                    or row[7] not in _MATCH_REASONS
                 ):
                     raise MetadataReportError("review browse row is invalid")
-                if row[7] == 0:
-                    if len(rows) != 1 or any(value is not None for value in row[:7]):
+                if row[8] == 0:
+                    if len(rows) != 1 or any(value is not None for value in row[:8]):
                         raise MetadataReportError("review browse row is invalid")
                     continue
+                # A reason belongs only to a work with no case, so a case or
+                # terminal row that carries one disagrees with its package.
+                if row[7] is not None and (row[0] is not None or row[6] is None):
+                    raise MetadataReportError("review browse row disagrees")
+                reasons.append(row[7])
                 row = row[:7]
                 if (
                     len(row) != 7
@@ -807,7 +845,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 values.append((row[0], row[1]))
                 envelopes.append((case, case_id, report))
             return ReviewLibraryPage(
-                tuple(values), total, attention_total, tuple(envelopes)
+                tuple(values),
+                total,
+                attention_total,
+                not_matched_total,
+                tuple(reasons),
+                tuple(envelopes),
             )
         except (
             sqlite3.Error,

@@ -129,6 +129,7 @@ from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
     DocumentReuse,
     LibraryLabels,
+    LibraryLensFilter,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
@@ -526,9 +527,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             read_current_library_page=(
-                lambda search, limit, offset, attention, library_labels: (
+                lambda search, limit, offset, lens, library_labels: (
                     self.read_current_library_page(
-                        search, limit, offset, attention, library_labels
+                        search, limit, offset, lens, library_labels
                     )
                 )
             ),
@@ -1589,7 +1590,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot:
@@ -1603,7 +1604,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 ),
             ):
                 return self._review_projections.read_review_library(
-                    search, limit, offset, attention, library_labels, validated
+                    search, limit, offset, lens, library_labels, validated
                 )
         except (CatalogueError, OSError, sqlite3.Error) as error:
             raise MetadataReportError("review library is unavailable") from error
@@ -1638,12 +1639,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
     ) -> ReviewLibraryPage:
         with self.browse_observation():
             return self._review_cases.read_current_library_page(
-                search, limit, offset, attention, library_labels
+                search, limit, offset, lens, library_labels
             )
 
     def read_current_attention_page(
@@ -1663,12 +1664,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
     ) -> tuple[tuple[str | None, str], ...]:
         with self.browse_observation():
             return self._review_cases.list_current_review_case_documents(
-                search, limit, offset, attention, library_labels
+                search, limit, offset, lens, library_labels
             )
 
     def count_current_review_cases(

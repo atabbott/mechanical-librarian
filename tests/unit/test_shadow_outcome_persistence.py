@@ -4777,8 +4777,9 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 ):
                     for attention_filter, expected_rows in (
                         (None, 1),
-                        (True, 1),
-                        (False, 0),
+                        ("needs_attention", 1),
+                        ("no_attention_needed", 0),
+                        ("not_matched", 0),
                     ):
                         calls: list[str] = []
                         assert (
@@ -7561,7 +7562,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
                 "Automatic handling is suspended pending a safety recovery."
                 == title["classification_reason"]
             )
-            library = repository.read_review_library(None, 50, 0, True)
+            library = repository.read_review_library(None, 50, 0, "needs_attention")
             assert 1 == library.total
             assert 1 == library.attention_total
             attention = repository.read_review_attention(None, 50, 0)

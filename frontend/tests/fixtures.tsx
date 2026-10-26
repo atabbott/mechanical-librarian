@@ -46,7 +46,7 @@ export const recordedAcknowledgement = (
 export const library: LibraryView = {
   lens: 'all',
   page: 1,
-  counts: { attention: 1, all: 1, clear: 0 },
+  counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
   works: [
     {
       id: 'case-1',

@@ -322,15 +322,18 @@ class PipelineProgress:
     ready: int
     blocked: int
     recorded: int
+    not_matched: int
     rescan_requested: bool
     updated_at: int = 0
     stages: tuple[tuple[str, int], ...] = ()
     """How many works stand at each preparation stage, in owner order.
 
-    `checked` partitions into `ready`, `recorded` and `blocked`: a case to
-    decide, evidence recorded with nothing to decide, or a work that could not
-    finish. `recorded` is what a completed preparation with no case is, whether
-    its proposals asked nothing or no work identity was admitted at all (#966).
+    `checked` partitions into `ready`, `recorded`, `not_matched` and
+    `blocked`: a case to decide, evidence recorded with nothing to decide, a
+    work no provider matched, or a work that could not finish. `recorded` is
+    what a completed preparation with no case is, whether its proposals asked
+    nothing or no work identity was admitted at all (#966), unless its current
+    package is one no provider matched, which is `not_matched` (#1407).
 
     `checked`, `ready` and `blocked` answer "how far through", which is what a
     progress bar needs and all an owner had. They cannot answer "what is it

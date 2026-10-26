@@ -775,6 +775,78 @@ def test_only_retryable_lanes_become_canonically_ordered_work() -> None:
     assert {"report-1"} == {job.member_id for job in jobs}
 
 
+def test_enrollment_keys_every_job_by_its_package_report() -> None:
+    """The Library's retry read seeks jobs by package report id (#1407).
+
+    It looks a job up by primary key with the package report as its member,
+    so real enrollment, from the outbox through activation into the store,
+    must keep producing exactly that key.
+    """
+    fields = _fields(current_title="Current title enrolled")
+    local_claims = (_publication_local_isbn(),)
+    lane = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Current title enrolled", (), fields=fields),
+        local_claims,
+    ).lanes[0]
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "books", "item-enrolled", fields),
+        file=FileFacts(0, "e" * 64, "f" * 64),
+        local_claims=local_claims,
+        local_reasons=("package_metadata_identifier",),
+        providers=tuple(
+            provider_observation(
+                name,
+                (ProviderLaneResult(lane, ProviderStatus.RATE_LIMITED),),
+                authority=authority,
+            )
+            for name, authority in (
+                ("catalogue-a", "hardcover"),
+                ("catalogue-b", "open_library"),
+            )
+        ),
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        (Path(directory) / "recovery").mkdir()
+        store = SQLiteProviderRecoveryStore.open(
+            Path(directory) / "recovery" / "recovery.sqlite"
+        )
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        activation = ProviderRecoveryActivation(
+            configuration=_CONFIGURATION,
+            repository_factory=lambda: repository,
+            observers=lambda *_: (_ for _ in ()).throw(AssertionError("unused")),
+            provider_resolver=lambda *_: None,
+            pipeline=lambda: None,
+            enqueue=lambda jobs, enqueued_at, outcomes: store.enqueue_jobs(
+                jobs, enqueued_at=enqueued_at, outcomes=outcomes
+            ),
+            clock=lambda: 1,
+        )
+        proposal = evaluate_report(report)
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        package = repository.current_review_package("primary", "books", "item-enrolled")
+        assert package is not None
+        repository._connection.execute("BEGIN IMMEDIATE")
+        repository._recovery_outbox.enqueue(
+            "primary", "books", "item-enrolled", package, 0
+        )
+        repository._connection.execute("COMMIT")
+        assert () == activation.drain_outbox(repository)
+
+        jobs = store._connection.execute(
+            "SELECT connection,member_id,package_report_id FROM provider_recovery_jobs "
+            "ORDER BY connection"
+        ).fetchall()
+        assert [
+            ("catalogue-a", package[1], package[1]),
+            ("catalogue-b", package[1], package[1]),
+        ] == jobs
+        repository.close()
+        store.close()
+
+
 def test_a_report_with_no_retryable_lane_creates_no_work() -> None:
     assert () == provider_recovery_jobs(
         _report(

@@ -122,7 +122,9 @@ _REPORT_BROWSE_FACTS_SQL = (
     "CREATE TABLE metadata_report_browse_facts ("
     "report_id TEXT PRIMARY KEY NOT NULL REFERENCES metadata_reports(report_id), "
     "title_key TEXT NOT NULL, format TEXT, format_key TEXT NOT NULL, "
-    "provider_limited INTEGER NOT NULL CHECK(provider_limited IN (0,1))) WITHOUT ROWID"
+    "provider_limited INTEGER NOT NULL CHECK(provider_limited IN (0,1)), "
+    "provider_match_state TEXT NOT NULL CHECK(provider_match_state IN "
+    "('matched','refused','unavailable','no_match'))) WITHOUT ROWID"
 )
 _REPORT_BROWSE_AUTHORS_SQL = (
     "CREATE TABLE metadata_report_browse_authors ("
@@ -131,10 +133,65 @@ _REPORT_BROWSE_AUTHORS_SQL = (
 )
 
 
-def _report_browse_fact_values_sql(document: str) -> str:
+# The lane statuses that leave a lookup without usable evidence for a reason a
+# later attempt can change: what `provider_limited` flags, and what an
+# unmatched work's `unavailable` state is.
+_LIMITING_PROVIDER_STATUSES_SQL = (
+    "'authentication','authorization','rate_limited','unavailable',"
+    "'incomplete','malformed','oversized','candidate_limit_exceeded',"
+    "'query_limit_exceeded'"
+)
+
+
+def _provider_lanes_sql(document: str) -> tuple[str, str]:
     # Provider lanes are current evidence, not a second workflow state.
     # Aggregate-only observations have no lanes, so the LEFT JOIN falls back to
     # their own status.
+    lanes = (
+        "FROM json_each(" + document + ",'$.providers') provider "
+        "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 WHERE "
+    )
+    status = "COALESCE(json_extract(lane.value,'$.status'),json_extract(provider.value,'$.status'))"
+    return lanes, status
+
+
+def _provider_limited_sql(document: str) -> str:
+    lanes, status = _provider_lanes_sql(document)
+    return (
+        "EXISTS(SELECT 1 "
+        + lanes
+        + status
+        + " IN ("
+        + _LIMITING_PROVIDER_STATUSES_SQL
+        + "))"
+    )
+
+
+def _report_provider_match_state_sql(document: str) -> str:
+    """#1407: whether any provider returned candidates, and if none did, why.
+
+    The owner's precedence: a lane whose candidates work-identity admission
+    refused, then a lookup a later attempt can change, then no match.
+    `empty_or_refused` cannot say which, so it is no match.
+    """
+    lanes, status = _provider_lanes_sql(document)
+    return (
+        "CASE WHEN EXISTS(SELECT 1 "
+        + lanes
+        + status
+        + "='candidates') THEN 'matched' WHEN EXISTS(SELECT 1 "
+        + lanes
+        + "json_extract(lane.value,'$.status')='no_match' AND "
+        "(json_extract(lane.value,'$.dispatch.outcome')='refused' OR EXISTS("
+        "SELECT 1 FROM json_each(lane.value,'$.diagnostics') diagnostic WHERE "
+        "json_extract(diagnostic.value,'$.category')='work_identity_refused'))) "
+        "THEN 'refused' WHEN "
+        + _provider_limited_sql(document)
+        + " THEN 'unavailable' ELSE 'no_match' END"
+    )
+
+
+def _report_browse_fact_values_sql(document: str) -> str:
     return (
         "ml_casefold(COALESCE(json_extract("
         + document
@@ -142,15 +199,10 @@ def _report_browse_fact_values_sql(document: str) -> str:
         + document
         + ",'$.file.format'),ml_casefold(COALESCE(json_extract("
         + document
-        + ",'$.file.format'),'')),CASE WHEN EXISTS(SELECT 1 FROM json_each("
-        + document
-        + ",'$.providers') provider "
-        "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 "
-        "WHERE COALESCE(json_extract(lane.value,'$.status'),"
-        "json_extract(provider.value,'$.status')) IN ("
-        "'authentication','authorization','rate_limited','unavailable',"
-        "'incomplete','malformed','oversized','candidate_limit_exceeded',"
-        "'query_limit_exceeded')) THEN 1 ELSE 0 END"
+        + ",'$.file.format'),'')),CASE WHEN "
+        + _provider_limited_sql(document)
+        + " THEN 1 ELSE 0 END,"
+        + _report_provider_match_state_sql(document)
     )
 
 
@@ -169,7 +221,8 @@ def _report_browse_author_values_sql(source: str, document: str) -> str:
 _REPORT_BROWSE_FACTS_INSERT_SQL = (
     "CREATE TRIGGER metadata_reports_project_browse_facts AFTER INSERT ON metadata_reports "
     "BEGIN INSERT INTO metadata_report_browse_facts("
-    "report_id,title_key,format,format_key,provider_limited) SELECT NEW.report_id,"
+    "report_id,title_key,format,format_key,provider_limited,provider_match_state) "
+    "SELECT NEW.report_id,"
     + _report_browse_fact_values_sql("NEW.document")
     + "; INSERT INTO metadata_report_browse_authors(report_id,author_key) "
     "SELECT DISTINCT NEW.report_id,"
@@ -2206,8 +2259,9 @@ def _report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
             + _report_browse_fact_values_sql("mr.document")
             + " FROM metadata_reports mr WHERE mr.report_id"
             + key,
-            "SELECT report_id,title_key,format,format_key,provider_limited "
-            "FROM metadata_report_browse_facts WHERE report_id" + key,
+            "SELECT report_id,title_key,format,format_key,provider_limited,"
+            "provider_match_state FROM metadata_report_browse_facts WHERE report_id"
+            + key,
         ),
         (
             "SELECT mr.report_id,"

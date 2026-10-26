@@ -91,11 +91,17 @@ export const labelWords = (value: string) => value.replaceAll('_', ' ')
 // Each phrase keeps ordinary spaces and is rendered by CountPhrases, which keeps
 // the number with its first word whenever the two fit on a line (#1013, #1366).
 export const preparationOutcomes = (
-  counts: { readonly ready: number; readonly recorded: number; readonly failed: number } | null,
+  counts: {
+    readonly ready: number
+    readonly recorded: number
+    readonly not_matched: number
+    readonly failed: number
+  } | null,
 ) =>
   [
     [counts?.ready, 'ready to browse'] as const,
     [counts?.recorded, 'recorded, nothing to decide'] as const,
+    [counts?.not_matched, 'not matched'] as const,
     [counts?.failed, 'could not finish'] as const,
   ]
     .filter(([count], index) => index === 0 || count !== 0)

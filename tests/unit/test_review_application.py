@@ -119,7 +119,7 @@ def test_named_browse_operations_return_bounded_views(
     library = application.library(lens="all", search=None, limit=20, cursor=None)
     attention = application.attention(search=None, limit=20, cursor=None)
 
-    assert library.schema_version == "review-library-v2"
+    assert library.schema_version == "review-library-v3"
     assert library.counts["all"] == 1
     assert attention.schema_version == "review-attention-v1"
     assert attention.total == 1
@@ -620,6 +620,7 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
                 1,
                 0,
                 0,
+                0,
                 False,
             )
 
@@ -665,6 +666,7 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
         5,
         2,
         0,
+        0,
         False,
     )
     view = application.preparation()
@@ -679,6 +681,7 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
         7,
         7,
         7,
+        0,
         0,
         0,
         False,

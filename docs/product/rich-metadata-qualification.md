@@ -89,6 +89,16 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Not matched lens successor (#1407)
+
+The current F19a, F20 and F46 records move to semantic revision 75 over base
+`87e00397`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows the Library gaining a fourth Not matched lens, its count and
+each work's reason, and a row's attention state closing to three values. It
+reads browse facts only, and no operation gains or loses automatic authority.
+
 ## Clock step successor (#1386)
 
 The current F19a, F20 and F46 records move to semantic revision 74 over base

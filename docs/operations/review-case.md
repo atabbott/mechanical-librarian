@@ -212,8 +212,8 @@ groupings do not add categories, qualification, or authority. Activation review
 contains keyboard focus until Cancel or Escape returns it to the review trigger;
 the same closed draft, preview, and guarded activation operations remain
 authoritative.
-Authenticated `/library` provides bounded attention-first, all, and
-no-attention-needed lenses; `/attention` contains only exact unresolved/manual
+Authenticated `/library` provides bounded attention-first, all,
+no-attention-needed, and not-matched lenses (#1407); `/attention` contains only exact unresolved/manual
 fields and links to the exact field on detail. Both support bounded search,
 maximum 50-item pages, and query-bound cursors. Automatic-only cases remain
 inspectable in the library but never gain a human control. Decision persistence
