@@ -519,6 +519,7 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
                 repository.read_review_library(None, 7, 3, None),
                 repository.read_review_library(None, 7, 3, "needs_attention"),
                 repository.read_review_library(None, 7, 3, "no_attention_needed"),
+                repository.read_review_library(None, 7, 3, "not_matched"),
                 repository.read_review_library("Representative title 0006", 7, 0, None),
                 repository.read_review_attention(None, 7, 3),
                 repository.read_review_attention("Representative title 0006", 7, 0),

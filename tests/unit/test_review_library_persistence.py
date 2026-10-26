@@ -1731,6 +1731,75 @@ def test_sqlite_library_groups_attention_by_current_provider_completeness() -> N
         repository.close()
 
 
+def test_sqlite_no_attention_needed_orders_by_title_whatever_provider_completeness() -> (
+    None
+):
+    """Completeness ranks attention only; clear works keep their title order."""
+
+    def settled(title: str, item: str, *limits: ProviderStatus) -> MetadataReport:
+        agreeing = tuple(
+            _proposal_provider(
+                name,
+                f"{name}-edition",
+                (
+                    _proposal_claim(
+                        name,
+                        f"{name}-edition",
+                        ClaimKind.TITLE,
+                        "Corrected title",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority=authority,
+            )
+            for name, authority in (
+                ("hardcover_primary", "hardcover"),
+                ("open_library_primary", "open_library"),
+            )
+        )
+        source = _proposal_report(
+            title=title,
+            providers=agreeing
+            + tuple(
+                ProviderObservation(f"limited-{status.value}", status)
+                for status in limits
+            ),
+        )
+        return MetadataReport.create(
+            target=TargetFacts(
+                source.target.connection,
+                source.target.library,
+                item,
+                source.target.fields,
+            ),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "application.sqlite3")
+        # Title order and completeness order disagree: the limited work
+        # sorts first by title and would sort last by completeness.
+        for report in (
+            settled("Zulu settled complete", "complete"),
+            settled("Alpha settled limited", "limited", ProviderStatus.UNAVAILABLE),
+        ):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        clear = repository.list_current_review_case_documents(
+            "settled", 20, 0, "no_attention_needed"
+        )
+        assert [
+            MetadataReport.from_json(report_document).target.fields[0].value
+            for _, report_document in clear
+        ] == ["Alpha settled limited", "Zulu settled complete"]
+        repository.close()
+
+
 def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() -> None:
     with tempfile.TemporaryDirectory() as directory:
         repository = open_repository(Path(directory) / "application.sqlite3")
