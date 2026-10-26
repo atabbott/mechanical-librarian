@@ -152,7 +152,7 @@ The current installed contract is intentionally narrow:
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v10`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
-- `review-session-v1`, `review-library-v2`, `review-case-detail-v6`,
+- `review-session-v1`, `review-library-v3`, `review-case-detail-v6`,
   `review-case-evidence-v4`,
   `review-report-detail-v5`, `review-case-history-v3`, `human-decision-v3`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded

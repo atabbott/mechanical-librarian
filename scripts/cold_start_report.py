@@ -230,10 +230,9 @@ _NOT_MATCHED_WORKS_SQL = (
     "SELECT ml.connection_name,ml.library_name,"
     + _NOT_MATCHED_REASON_SQL
     + " AS reason FROM current_review_packages ml "
-    "JOIN (SELECT mr.report_id,"
-    + _report_provider_match_state_sql("mr.document")
-    + " AS provider_match_state FROM current_review_packages cp "
-    "JOIN metadata_reports mr ON mr.report_id=cp.report_id) facts "
+    "JOIN (SELECT report_id,"
+    + _report_provider_match_state_sql("document")
+    + " AS provider_match_state FROM metadata_reports) facts "
     "ON facts.report_id=ml.report_id WHERE ml.outcome<>'tombstoned') "
     "WHERE reason IS NOT NULL GROUP BY 1,2,3"
 )
@@ -1210,7 +1209,7 @@ def assemble_cold_start_report(
     stage_timings: tuple[StageTiming, ...] | None = None,
     recovery: dict[str, list[tuple[object, ...]]] | None = None,
 ) -> dict[str, object]:
-    """Build the ``cold-start-report-v4`` document from persisted aggregates.
+    """Build the ``cold-start-report-v5`` document from persisted aggregates.
 
     Pure assembly: every input is injected, so the document is deterministic
     for identical inputs and testable without a filesystem or database.
