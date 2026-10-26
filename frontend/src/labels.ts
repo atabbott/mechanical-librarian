@@ -85,6 +85,21 @@ export const writeFieldLabel = (destination: string) =>
 // The same words without the capital, for a label set inside a sentence
 // (`Choose a media kind value`) rather than standing on its own.
 export const labelWords = (value: string) => value.replaceAll('_', ' ')
+// One vocabulary for every preparation count, in the masthead and the run line
+// alike (#1366); a count not yet known reads as an ellipsis, never 0. Only the
+// ready count stands at zero, so a quiet run is not a wall of zeros (#641).
+// Each phrase keeps ordinary spaces and is rendered by CountPhrases, which keeps
+// the number with its first word whenever the two fit on a line (#1013, #1366).
+export const preparationOutcomes = (
+  counts: { readonly ready: number; readonly recorded: number; readonly failed: number } | null,
+) =>
+  [
+    [counts?.ready, 'ready to browse'] as const,
+    [counts?.recorded, 'recorded, nothing to decide'] as const,
+    [counts?.failed, 'could not finish'] as const,
+  ]
+    .filter(([count], index) => index === 0 || count !== 0)
+    .map(([count, words]) => `${count === undefined ? '…' : String(count)} ${words}`)
 // Server identifiers with no meaning for a reader; never shown as a label.
 export const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
 

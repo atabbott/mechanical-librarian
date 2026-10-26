@@ -1395,8 +1395,15 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     # A refusal carried by a fresh render keeps the focus it asked for: the
     # card's own frame would otherwise move it to the heading.
     assert (
-        "control.focus();requestAnimationFrame(()=>{if(control.isConnected)"
-        "control.focus({preventScroll:true})})" in SETUP_JS
+        "control.focus();const settle=requestAnimationFrame(()=>{if("
+        "control.isConnected)control.focus({preventScroll:true})})" in SETUP_JS
+    )
+    # That frame never takes focus back from another field the owner has moved
+    # to since, or typing there lands in the refused one.
+    assert (
+        "form.addEventListener('focusin',event=>{if(event.target!==control&&"
+        "event.target.matches('input,select,textarea'))cancelAnimationFrame("
+        "settle)},{signal:refusalGuard.signal})" in SETUP_JS
     )
     assert "{once:true,signal:refusalGuard.signal}" in SETUP_JS
     assert "mutation:true});mountDraft=null;await load()" in SETUP_JS

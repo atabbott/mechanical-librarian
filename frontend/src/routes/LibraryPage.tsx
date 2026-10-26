@@ -9,6 +9,7 @@ import {
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
+import { CountPhrases } from '../components/CountPhrases'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
@@ -53,6 +54,7 @@ import {
   fieldLabel,
   labelWords,
   opaqueSource,
+  preparationOutcomes,
 } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
@@ -165,6 +167,10 @@ const initials = (title: string) =>
     .map((word) => word[0]?.toUpperCase())
     .join('') || 'ML'
 type PreparationPresentation = NonNullable<PreparationView['presentation']>
+// The run's works as they stand now, in the masthead's words (#1366). The
+// latched passage is first-finish history and is labelled Prepared instead.
+const runOutcomes = (presentation: PreparationPresentation) =>
+  preparationOutcomes(presentation.now ?? null)
 // What the run is doing now, said in the counts the owner is waiting on rather
 // than in the store's state name. A terminal run states its own outcome here
 // because that is the line a reader looks at first.
@@ -177,9 +183,12 @@ const preparationStateLine = (presentation: PreparationPresentation) => {
     case 'blocked':
       return 'Paused until the reported connection issue is resolved'
     case 'completed_clean':
-      return 'Finished · no failures'
     case 'completed_with_failures':
-      return `Finished · ${String(presentation.passage.failed)} could not finish · ${String(presentation.passage.ready)} ready`
+      return (
+        <>
+          Finished · <CountPhrases phrases={runOutcomes(presentation)} />
+        </>
+      )
     case 'dismissed':
       return 'Preparation dismissed'
   }
@@ -228,15 +237,16 @@ const boundedSearchName = (name: string) => {
   return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
 }
 
-// Each count stays with its label; lines break only after a separator (#1013).
-const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) =>
-  [
-    `${String(presentation.passage.ready)} ready`,
-    `${String(presentation.passage.failed)} could not finish`,
-    `${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} ${recoveryRequired ? 'retained' : 'in progress'}`,
-  ]
-    .map((pair) => pair.replaceAll(' ', '\u00a0'))
-    .join('\u00a0· ')
+// A separator never starts a line (#1013).
+const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) => (
+  <CountPhrases
+    phrases={[
+      ...runOutcomes(presentation),
+      `${presentation.now ? String(presentation.now.in_progress) : '…'} ${recoveryRequired ? 'retained' : 'in progress'}`,
+    ]}
+    separator={'\u00a0· '}
+  />
+)
 const preparationPassage = [
   ['read', 'Read from library'],
   ['searches_finished', 'Searches finished'],
@@ -263,38 +273,38 @@ const PreparationSummary = ({
   onSelect: () => void
 }) => {
   const active = presentation.active_books.length + presentation.active_overflow
-  const outcomes = `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish`
   let title: string
-  let copy: string
+  // What follows the run's outcomes on the summary line.
+  let rest: string
   switch (presentation.state) {
     case 'starting':
       title = 'Preparation is starting'
-      copy = `${outcomes} · ${String(active)} active`
+      rest = ` · ${String(active)} active`
       break
     case 'running':
       title = 'Preparing your library'
-      copy = `${outcomes} · ${String(active)} active`
+      rest = ` · ${String(active)} active`
       break
     case 'blocked':
       title = 'Preparation needs attention'
-      copy = `${outcomes} · ${String(active)} active`
+      rest = ` · ${String(active)} active`
       break
     case 'completed_clean':
       title = 'Preparation complete'
-      copy = `${String(presentation.passage.ready)} ready · No failures`
+      rest = ''
       break
     case 'completed_with_failures':
       title = 'Preparation completed with failures'
-      copy = outcomes
+      rest = ''
       break
     case 'dismissed':
       title = 'Preparation dismissed'
-      copy = outcomes
+      rest = ''
       break
   }
   if (recoveryRequired) {
     title = 'Preparation stopped'
-    copy = `${outcomes} · Service restart required`
+    rest = ' · Service restart required'
   }
   return (
     <button
@@ -307,9 +317,14 @@ const PreparationSummary = ({
       <span>
         <strong>{title}</strong>
         <small>
-          {reconnecting && !recoveryRequired
-            ? 'Reconnecting · last confirmed progress shown'
-            : `This run: ${copy}`}
+          {reconnecting && !recoveryRequired ? (
+            'Reconnecting · last confirmed progress shown'
+          ) : (
+            <>
+              This run: <CountPhrases phrases={runOutcomes(presentation)} />
+              {rest}
+            </>
+          )}
         </small>
       </span>
     </button>
@@ -341,7 +356,7 @@ const PreparationDetail = ({
       break
     case 'running':
       heading = 'Preparing your library'
-      introduction = 'Preparation continues here while ready works remain selectable.'
+      introduction = 'Preparation continues here while prepared works remain selectable.'
       break
     case 'blocked':
       heading = 'Preparation needs attention'
@@ -354,7 +369,7 @@ const PreparationDetail = ({
     case 'completed_with_failures':
       heading = 'Preparation completed with failures'
       introduction =
-        'This run finished with reported failures; ready books remain available and the failed outcomes stay visible.'
+        'This run finished with reported failures; prepared books remain available and the failed outcomes stay visible.'
       break
     case 'dismissed':
       heading = 'Preparation dismissed'
@@ -364,7 +379,7 @@ const PreparationDetail = ({
   if (recoveryRequired) {
     heading = 'Preparation stopped'
     introduction =
-      'Restart the Mechanical Librarian service to resume preparation. Refreshing this page or scanning again cannot recover it. Ready books remain available.'
+      'Restart the Mechanical Librarian service to resume preparation. Refreshing this page or scanning again cannot recover it. Prepared books remain available.'
   }
   return (
     <div className="preparation-detail">
@@ -375,7 +390,9 @@ const PreparationDetail = ({
           </h2>
           <p>{introduction}</p>
         </div>
-        <strong>{String(presentation.passage.ready)} ready in this run</strong>
+        <strong>
+          {presentation.now ? String(presentation.now.ready) : '…'} ready to browse in this run
+        </strong>
       </header>
       <p
         className={`preparation-run-state state-${presentation.state}${animateChange ? ' reported-change' : ''}`}
@@ -426,7 +443,9 @@ const PreparationDetail = ({
           </p>
         ) : null}
         {presentation.active_books.length ? (
-          <small className="activity-backup-note">A book appears in Works once it is ready.</small>
+          <small className="activity-backup-note">
+            A book appears in Works once it is prepared.
+          </small>
         ) : null}
       </section>
       <section aria-labelledby="preparation-progress-title">
@@ -434,8 +453,8 @@ const PreparationDetail = ({
           <div>
             <h3 id="preparation-progress-title">Preparation progress</h3>
             <p>
-              Each stage counts books that reached it; a book that could not finish stops at its
-              last stage.
+              Each stage counts the books that first reached it in this run, and a book that could
+              not finish stops at its last stage; In this run counts them as they stand now.
             </p>
           </div>
           {/*
@@ -500,7 +519,9 @@ const PreparationDetail = ({
                     Find in Works
                   </Link>
                 </span>
-                <strong>{completion.outcome === 'ready' ? 'Ready' : 'Could not finish'}</strong>
+                <strong>
+                  {completion.outcome === 'ready' ? 'Prepared' : 'Stopped before finishing'}
+                </strong>
               </li>
             ))}
           </ul>
@@ -2521,6 +2542,7 @@ export default function LibraryPage({
         })),
         total: presentation.total,
         dismissible: presentation.dismissible,
+        now: presentation.now,
       })
     : null
   const adoptedPresentationVersion = useRef<string | null>(null)
@@ -5211,7 +5233,23 @@ export default function LibraryPage({
                 {attention.isError ? (
                   <>
                     Attention could not be loaded.{' '}
-                    <button type="button" onClick={() => void attention.refetch()}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void attention.refetch().then((result) => {
+                          // A successful retry removes this button, so the
+                          // rail takes focus back from it (#1399).
+                          const active = document.activeElement
+                          if (
+                            result.isSuccess &&
+                            (!active ||
+                              active === document.body ||
+                              attentionRail.current?.contains(active))
+                          )
+                            attentionRail.current?.focus({ preventScroll: true })
+                        })
+                      }
+                    >
                       Try again
                     </button>
                   </>

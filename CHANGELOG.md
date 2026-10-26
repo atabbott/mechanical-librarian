@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- The masthead and the Library run summary now count preparation in the same
+  words: ready to browse, recorded with nothing to decide, and could not
+  finish, as the run's books stand now, so the two agree. A library outside the
+  current run is marked as not in it, and first-finish history reads Prepared
+  (#1366).
+
+- Retrying a failed Attention queue now returns focus to the Attention rail
+  instead of leaving it on the page (#1399).
+
+- Moving to another field after a first-run setup refusal now keeps focus
+  there, instead of a late frame pulling it back to the refused field (#1406).
+
 - Claiming a new instance now needs the setup claim token the container prints
   once in its log and keeps in `/data/private/setup-claim-token`, so a network
   visitor who reaches the port first can no longer take ownership. Each start

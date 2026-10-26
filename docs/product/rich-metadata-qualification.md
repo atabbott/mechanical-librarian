@@ -89,6 +89,17 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Preparation counts binding successor (#1366)
+
+The current F19a, F20 and F46 records move to semantic revision 70 over base
+`0a920587`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows the preparation status read naming the run it read and the
+scans that run enrolled, and the application summing the run's current counts
+from those rows. Preparation counts never write, and no operation gains or
+loses automatic authority.
+
 ## Setup claim token successor (#1383)
 
 The current F19a, F20 and F46 records move to semantic revision 69 over base

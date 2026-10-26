@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -5276,6 +5277,13 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                 "completed_at": 101 if terminal else None,
                                 "total": 4,
                                 "dismissible": terminal,
+                                "now": {
+                                    "ready": 4 - failed if terminal else 0,
+                                    "recorded": 0,
+                                    "failed": failed,
+                                    "in_progress": 0 if terminal else 4,
+                                    "scan_ids": [],
+                                },
                             },
                         }
                     )
@@ -5423,17 +5431,17 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     (
                         "blocked",
                         "Preparation needs attention",
-                        "0 ready · 0 could not finish · 1 active",
+                        "0 ready to browse · 1 active",
                     ),
                     (
                         "completed_clean",
                         "Preparation complete",
-                        "4 ready · No failures",
+                        "4 ready to browse",
                     ),
                     (
                         "completed_with_failures",
                         "Preparation completed with failures",
-                        "3 ready · 1 could not finish",
+                        "3 ready to browse · 1 could not finish",
                     ),
                 )
                 for state, title, copy in summary_cases:
@@ -5938,6 +5946,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 hide.click()
                 assert password.get_attribute("type") == "password"
                 # UX-001: the refusal names the field it belongs to and clears.
+                page.evaluate(_LATE_FRAMES_ON_FOCUS, "input[name=password]")
                 page.get_by_role("button", name="Create owner access").click()
                 alert = page.get_by_role("alert")
                 expect(alert).to_be_visible()
@@ -5955,7 +5964,9 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     )
                 # A refusal that moves to another field releases the first one:
                 # typing there must not blank a live alert that now belongs to
-                # the password.
+                # the password. The refused confirmation's settling frame, held
+                # since that refusal, runs only once the password takes focus, as
+                # a slow frame would, and must not take focus back from it.
                 password.fill("")
                 page.get_by_role("button", name="Create owner access").click()
                 expect(password).to_have_attribute("aria-invalid", "true")
@@ -6269,7 +6280,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_role("heading", name="How many books made it this far?")
                 ).to_be_visible()
                 expect(page.get_by_text("1.2 books/min")).to_be_visible()
-                expect(page.get_by_text("Recently ready · Ready")).to_be_visible()
+                expect(page.get_by_text("Recently ready · Prepared")).to_be_visible()
                 for width, height in ((1440, 900), (390, 844)):
                     page.set_viewport_size({"width": width, "height": height})
                     assert page.evaluate(
@@ -7955,7 +7966,9 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 )
                 trigger.click()
                 popover = page.get_by_role("region", name="Background activity")
-                expect(popover).to_contain_text("7 of 9 checked · 4 ready")
+                # A finished scan states only its checked count; its split is
+                # its buckets.
+                expect(popover).to_contain_text("Last saved progress7 of 9 checked")
                 for label in ("Scan now", "Retry", "Pause"):
                     expect(
                         popover.get_by_role("button", name=label, exact=True)
@@ -10087,6 +10100,289 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 browser.close()
 
 
+def test_masthead_and_run_line_agree_on_the_real_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The run line is the masthead rows of its run, before and after a change.
+
+    books-1 finished in an earlier run, so it is outside the current one, which
+    covers books-0. A prepared books-0 work then fails after its cycle completed:
+    the run line and the finished library's buckets move together, and the
+    first-finish history does not (#1366).
+    """
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 10, prepare=True) as (fixture, origin):
+
+        def finished(library: str) -> dict[str, Any]:
+            deadline = time.monotonic() + 30
+            while True:
+                view = fixture.application.preparation().to_data()
+                row = next(
+                    item
+                    for item in cast(list[dict[str, Any]], view["libraries"])
+                    if item["library"] == library
+                )
+                presentation = cast(dict[str, Any] | None, view["presentation"])
+                if (
+                    row["state"] in {"completed", "completed_with_failures"}
+                    and presentation is not None
+                    and presentation["state"]
+                    in {"completed_clean", "completed_with_failures"}
+                ):
+                    return view
+                assert time.monotonic() < deadline, view
+                time.sleep(0.05)
+
+        fixture.application.request_review_scan("primary", "books-1")
+        earlier = finished("books-1")
+        fixture.application.request_review_scan("primary", "books-0")
+        finished("books-0")
+        # One prepared case is re-projected as recorded with nothing to decide,
+        # so the run line carries all three counts, including its longest word.
+        with closing(sqlite3.connect(fixture.database)) as connection:
+            assert (
+                connection.execute(
+                    "UPDATE review_preparation_work SET outcome='evidence_only',"
+                    "proposal_set_id=NULL,review_case_id=NULL WHERE work_id=("
+                    "SELECT work_id FROM review_preparation_work WHERE library_name="
+                    "'books-0' AND state='complete' AND outcome='case' "
+                    "ORDER BY work_id DESC LIMIT 1)"
+                ).rowcount
+                == 1
+            )
+            connection.commit()
+        current = fixture.application.preparation().to_data()
+        presentation = cast(dict[str, Any], current["presentation"])
+        assert presentation["run_id"] != cast(dict, earlier["presentation"])["run_id"]
+        books = next(
+            item for item in current["libraries"] if item["library"] == "books-0"
+        )
+        assert presentation["now"]["scan_ids"] == [books["scan_id"]]
+        assert books["ready"] + books["recorded"] > 0
+
+        def split(ready: int, recorded: int, failed: int) -> str:
+            # Only the ready count stands at zero.
+            return " · ".join(
+                f"{count} {words}"
+                for index, (count, words) in enumerate(
+                    (
+                        (ready, "ready to browse"),
+                        (recorded, "recorded, nothing to decide"),
+                        (failed, "could not finish"),
+                    )
+                )
+                if index == 0 or count
+            )
+
+        def buckets(ready: int, recorded: int, failed: int) -> dict[str, str]:
+            return {
+                words: str(count)
+                for words, count in (
+                    ("Ready to browse", ready),
+                    ("Recorded, nothing to decide", recorded),
+                    ("Could not finish", failed),
+                )
+                if count
+            }
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+
+                def observe() -> tuple[str, str, dict[str, str], str, str]:
+                    summary = page.locator(".preparation-summary small")
+                    expect(summary).to_contain_text("This run: ")
+                    page.locator(".preparation-activity > button").click()
+                    popover = page.get_by_role("region", name="Background activity")
+                    rows = {
+                        library: popover.locator("article").filter(
+                            has=page.locator(
+                                "strong", has_text=re.compile(f"^{library}$")
+                            )
+                        )
+                        for library in ("books-0", "books-1")
+                    }
+                    expect(rows["books-1"]).to_contain_text("not in this run")
+                    expect(rows["books-0"]).not_to_contain_text("not in this run")
+                    stages = rows["books-0"].locator(".preparation-stages > div")
+                    facts = (
+                        cast(str, summary.text_content()),
+                        cast(
+                            str, rows["books-0"].locator("span").nth(1).text_content()
+                        ),
+                        {
+                            cast(str, stage.locator("dt").text_content()): cast(
+                                str, stage.locator("dd").text_content()
+                            )
+                            for stage in stages.all()
+                        },
+                        cast(
+                            str, rows["books-1"].locator("span").nth(0).text_content()
+                        ),
+                    )
+                    page.keyboard.press("Escape")
+                    summary.click()
+                    # The latched first finishes, which a later failure keeps.
+                    outcomes = page.locator(
+                        ".preparation-section-heading:has(#recent-completions-title) > span"
+                    )
+                    return (*facts, cast(str, outcomes.text_content()))
+
+                page.goto(origin + "/library?lens=all")
+                run_line, books_row, books_stages, other_state, prepared = observe()
+                counts = (books["ready"], books["recorded"], books["blocked"])
+                assert run_line == f"This run: {split(*counts)}"
+                # A finished row's split is its buckets, in the same words.
+                assert books_row == f"{books['checked']} of {books['total']} checked"
+                assert books_stages == buckets(*counts)
+                assert other_state.endswith(" · not in this run")
+                # Enlarged on a narrow screen, the counts wrap between words and
+                # never split one (#1013, #1366).
+                page.set_viewport_size({"width": 320, "height": 900})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                for selector in (
+                    ".preparation-run-state",
+                    ".preparation-outcomes strong",
+                ):
+                    assert page.locator(selector).evaluate(_SPLIT_WORDS) == [], selector
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 1440, "height": 1000})
+
+                # A prepared work fails after its cycle completed, as a policy
+                # restart that ends in failure would leave it.
+                with closing(sqlite3.connect(fixture.database)) as connection:
+                    changed = connection.execute(
+                        "UPDATE review_preparation_work SET stage='proposal',"
+                        "state='failed',outcome=NULL,failure_code='failed' "
+                        "WHERE work_id=(SELECT work_id FROM review_preparation_work "
+                        "WHERE scan_id=? AND state='complete' ORDER BY work_id LIMIT 1)",
+                        (books["scan_id"],),
+                    ).rowcount
+                    connection.commit()
+                assert changed == 1
+                after = fixture.application.preparation().to_data()
+                now = cast(dict[str, Any], after["presentation"])["now"]
+                assert now["failed"] == books["blocked"] + 1
+                assert now["ready"] + now["recorded"] == (
+                    books["ready"] + books["recorded"] - 1
+                )
+                page.goto(origin + "/library?lens=all")
+                run_line, books_row, books_stages, other_state, prepared_after = (
+                    observe()
+                )
+                counts = (now["ready"], now["recorded"], now["failed"])
+                assert run_line == f"This run: {split(*counts)}"
+                assert books_stages == buckets(*counts)
+                assert other_state.endswith(" · not in this run")
+                assert prepared_after == prepared
+
+                # In a wide bundled font, so whatever fonts the host has, at
+                # every count length: a number and its first word move to the
+                # next line together when they fit there, break at their space
+                # only when they do not, and no number or word splits (#1366).
+                page.set_viewport_size({"width": 320, "height": 900})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                font = Path(__file__).parent / "fonts/DejaVuSans-Bold-subset.ttf"
+                assert page.evaluate(
+                    _WIDE_BOLD_FONT, base64.b64encode(font.read_bytes()).decode()
+                )
+                for count in ("1", "12", "1234", "123456"):
+                    # Only the rendered numbers are set, inside the page: this
+                    # checks how the lines wrap, not what the server counts.
+                    page.evaluate(_SET_COUNTS, count)
+                    for selector in (
+                        ".preparation-run-state",
+                        ".preparation-outcomes strong",
+                    ):
+                        line = page.locator(selector)
+                        assert line.evaluate(_SPLIT_WORDS) == [], (selector, count)
+                        assert line.evaluate(_SPLIT_PAIRS) == [], (selector, count)
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    ), count
+                for selector in (".preparation-run-state", ".preparation-outcomes"):
+                    assert page.locator(f"{selector} .count-pair").count(), selector
+            finally:
+                browser.close()
+
+
+# Every word in the element whose glyphs land on more than one line.
+_SPLIT_WORDS = """element => {
+  const split = [];
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (const match of node.data.matchAll(/[^\\s\\u00a0·]+/g)) {
+      const range = document.createRange();
+      range.setStart(node, match.index);
+      range.setEnd(node, match.index + match[0].length);
+      const tops = new Set([...range.getClientRects()].map(rect => Math.round(rect.top)));
+      if (tops.size > 1) split.push(match[0]);
+    }
+  }
+  return split;
+}"""
+# Every number and the word after it that fit on one line together but landed
+# on two.
+_SPLIT_PAIRS = """element => {
+  const split = [];
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (const match of node.data.matchAll(/(\\d+)[ \\u00a0]([^\\s\\u00a0·]+)/gu)) {
+      const top = (start, length) => {
+        const range = document.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, start + length);
+        return Math.round(range.getClientRects()[0].top);
+      };
+      const word = match.index + match[1].length + 1;
+      if (top(match.index, match[1].length) === top(word, match[2].length)) continue;
+      const probe = document.createElement('span');
+      probe.style.whiteSpace = 'nowrap';
+      probe.textContent = `${match[1]} ${match[2]}`;
+      node.parentElement.append(probe);
+      const width = probe.getBoundingClientRect().width;
+      probe.remove();
+      let block = node.parentElement;
+      while (['inline', 'inline-block'].includes(getComputedStyle(block).display))
+        block = block.parentElement;
+      const style = getComputedStyle(block);
+      const line = block.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      if (width <= line) split.push(match[0]);
+    }
+  }
+  return split;
+}"""
+# Sets every count the run-state and outcomes lines render to `count`.
+_SET_COUNTS = """count => {
+  for (const line of document.querySelectorAll('.preparation-run-state, .preparation-outcomes strong')) {
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode())
+      node.data = node.data.replace(/\\d+(?=[ \\u00a0])/gu, count);
+  }
+}"""
+# DejaVu Sans Bold in place of the page's first font, for its bold text.
+_WIDE_BOLD_FONT = """async font => {
+  const bytes = Uint8Array.from(atob(font), character => character.charCodeAt(0));
+  const face = new FontFace('Inter', bytes, { weight: '700' });
+  document.fonts.add(await face.load());
+  await document.fonts.ready;
+  return document.fonts.check('700 16px Inter');
+}"""
 _THROTTLE_FILE_SEPARATION = """() => {
   const notice = document.querySelector('.provider-throttle-notice');
   const list = notice.querySelector('ul');
@@ -10097,6 +10393,20 @@ _THROTTLE_FILE_SEPARATION = """() => {
   };
 }"""
 _TWO_FRAMES = "() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))"
+# Holds the page's pending and new animation frames until `selector` takes
+# focus, then runs them just after that focus and restores ordinary frames.
+_LATE_FRAMES_ON_FOCUS = """selector => {
+  const request = window.requestAnimationFrame, cancel = window.cancelAnimationFrame;
+  const held = new Map();
+  let next = 0;
+  window.requestAnimationFrame = callback => { held.set(++next, callback); return next; };
+  window.cancelAnimationFrame = id => { held.delete(id); };
+  document.querySelector(selector).addEventListener('focus', () => queueMicrotask(() => {
+    window.requestAnimationFrame = request;
+    window.cancelAnimationFrame = cancel;
+    for (const callback of [...held.values()]) callback(performance.now());
+  }), { once: true });
+}"""
 _FOCUSED = """() => {
   const active = document.activeElement;
   return active === null ? 'null'

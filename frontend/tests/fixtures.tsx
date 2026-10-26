@@ -449,6 +449,11 @@ export const createLiveStream = (): LiveUpdateStream & {
   }
 }
 
+// Matches the element whose whole text is `text`, across the inline count
+// phrases it renders (#1366); the default matcher reads one text node only.
+export const wholeText = (text: string) => (_: string, element: Element | null) =>
+  element?.textContent.replace(/\s+/gu, ' ') === text &&
+  ![...element.children].some((child) => child.textContent.replace(/\s+/gu, ' ') === text)
 export const renderRoute = (entry: string, http = createHttp(), updates?: LiveUpdateStream) => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createApplicationRouter(

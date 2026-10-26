@@ -1527,20 +1527,27 @@ describe('shipped first-run setup script', () => {
             : response({
                 presentation: {
                   run_id: `preparation_run_${'a'.repeat(64)}`,
-                  state: 'completed_clean',
+                  state: 'completed_with_failures',
+                  // First finishes: two prepared and one stopped, of three.
                   passage: {
-                    read: 1,
-                    searches_finished: 1,
-                    compared: 1,
-                    checked: 1,
-                    ready: 1,
-                    failed: 0,
+                    read: 3,
+                    searches_finished: 3,
+                    compared: 3,
+                    checked: 2,
+                    ready: 2,
+                    failed: 1,
                   },
+                  // One prepared book has since failed: Library's current set,
+                  // which this history list must not show.
+                  now: { ready: 1, recorded: 0, failed: 2, in_progress: 0, scan_ids: [] },
                   active_books: [],
                   active_overflow: 0,
-                  recent_completions: [],
+                  recent_completions: [
+                    { name: 'Shelf one', outcome: 'failed', completed_at: 2 },
+                    { name: 'Shelf two', outcome: 'ready', completed_at: 1 },
+                  ],
                   throughput_per_minute: 1,
-                  total: 1,
+                  total: 3,
                 },
               })
         inFlight -= 1
@@ -1571,6 +1578,30 @@ describe('shipped first-run setup script', () => {
     if (!retry) throw new Error('preparation retry missing')
     await retry()
     expect(await screen.findByRole('heading', { name: 'Preparation is complete' })).toBeVisible()
+    // The list is first-finish history on one time basis: its two outcomes
+    // account for every book, and no label is a phrase Library uses for the
+    // books as they stand now, so one phrase names one set (#1366).
+    const passage = [...document.querySelectorAll('.setup-passage div')].map((row) => [
+      row.querySelector('dt')?.textContent ?? '',
+      row.querySelector('dd')?.textContent ?? '',
+    ])
+    expect(passage).toEqual([
+      ['Read from library', '3'],
+      ['Searches finished', '3'],
+      ['Candidates compared', '3'],
+      ['Metadata checked', '2'],
+      ['Prepared', '2'],
+      ['Stopped before finishing', '1'],
+    ])
+    const figure = (label: string) => Number(passage.find(([term]) => term === label)?.[1])
+    expect(figure('Prepared') + figure('Stopped before finishing')).toBe(3)
+    const completions = [...document.querySelectorAll('.setup-completions li')].map(
+      (item) => item.textContent,
+    )
+    expect(completions).toEqual(['Shelf one · Stopped before finishing', 'Shelf two · Prepared'])
+    const current = /ready to browse|recorded, nothing to decide|could not finish/iu
+    for (const label of [...passage.map(([term]) => term), ...completions])
+      expect(label).not.toMatch(current)
     expect(timers).toHaveLength(0)
     expect(maximumInFlight).toBe(1)
   })

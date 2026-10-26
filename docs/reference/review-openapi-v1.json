@@ -7685,6 +7685,49 @@
         "title": "_PreparationFailure",
         "type": "object"
       },
+      "_PreparationNow": {
+        "additionalProperties": false,
+        "description": "The run's works as they stand now, from the masthead's own rows (#1366).",
+        "properties": {
+          "failed": {
+            "minimum": 0.0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "in_progress": {
+            "minimum": 0.0,
+            "title": "In Progress",
+            "type": "integer"
+          },
+          "ready": {
+            "minimum": 0.0,
+            "title": "Ready",
+            "type": "integer"
+          },
+          "recorded": {
+            "minimum": 0.0,
+            "title": "Recorded",
+            "type": "integer"
+          },
+          "scan_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Scan Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ready",
+          "recorded",
+          "failed",
+          "in_progress",
+          "scan_ids"
+        ],
+        "title": "_PreparationNow",
+        "type": "object"
+      },
       "_PreparationPassage": {
         "additionalProperties": false,
         "properties": {
@@ -7761,6 +7804,16 @@
           "dismissible": {
             "title": "Dismissible",
             "type": "boolean"
+          },
+          "now": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_PreparationNow"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "passage": {
             "$ref": "#/components/schemas/_PreparationPassage"

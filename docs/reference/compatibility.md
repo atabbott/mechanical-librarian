@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1366 adds an optional `now` count to the `review-preparation-v2`
+presentation, whose schema version is unchanged: the run's works as they stand
+now (`ready`, `recorded`, `failed`, `in_progress`) and the `scan_ids` of the
+masthead rows it sums. Nothing persisted changes, so no clean rebuild is
+required. F19a/F20/F46 records are displaced because the web interface,
+application and persistence adapter (`review_scans.py`) they bind changed,
+with permission sets unchanged.
+
 #1383 moves incomplete first-run setup state to `setup-state-v4`, which keeps
 the digest of the deployment-held setup claim token while setup is unclaimed
 ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)).
