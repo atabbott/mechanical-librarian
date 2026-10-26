@@ -43,6 +43,7 @@ def test_current_records_match_runtime_and_frozen_permissions():
     assert [len(current[f]) for f in ("F19A", "F20", "F46")] == [12, 13, 76]
     displaced = {
         "F19A": {
+            "541bfb0ebfeaf7c6fd6a1e8e785c0f54240ff1cb05fec067cd0c8f600891fdc1": 2,
             "5ed0e8065a7e0641bf1c74f451c15b942efb45059f99d0273755ebbedc5e6d23": 2,
             "e1e3feb6bbec7aad91a569df956fe44ac284d03134d73b3c375e7c6bc036ba2e": 2,
             "f010ba87f1500cf8a2c6602a9b954d1da321444a1ad8a9cc985f52b52470567a": 2,
@@ -132,6 +133,7 @@ def test_current_records_match_runtime_and_frozen_permissions():
             "d5903b889fe5b457c7303e5b27d51677bcf798a11ed25bb637a4a7ae4eb5cd77": 2,
         },
         "F20": {
+            "e71857e0d0e6bf0665f47a58f871b22ef94f4536ae130b91a370a1f6ff532327": 7,
             "375c7bab6651e42501dc5b658cf9052228bf064d39895a0b6c753461670b018b": 7,
             "c10c5c9221d60fe6e21becbbc0c9e720c7a866346b9f8d819049c56c3851d726": 7,
             "88c0b2df9b4adb15f1bc7e5462143c88d47dd223d5254d5d36c8cb7f91e63467": 7,
@@ -221,6 +223,7 @@ def test_current_records_match_runtime_and_frozen_permissions():
             "28b95c60856b1c6a5f88b6e67f7cba9c55b215c10567eeb3b29d2a7e98233175": 7,
         },
         "F46": {
+            "34abe0525ea1c7b1bc75c5a7a06e74c6ca1430cddc65e7824ea5a8b50828ddb7": 0,
             "4724f889a3c1e9ab593c4fa3e2792fa0299e6026c42fb732c7a056262e81f91d": 0,
             "ccd2163ad4e524ef184027b3c53f9c5caddcdd61fa78ed323c108e5641c1b7ee": 0,
             "67b1e629733cbca0ec8b56e3f2c0384b7f4c63af9724dc05f37582cde5b3102e": 0,
