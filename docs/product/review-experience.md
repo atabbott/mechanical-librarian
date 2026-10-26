@@ -426,8 +426,9 @@ scheduled job for that exact report; otherwise **No provider matched**. A
 recovery store that cannot answer withdraws only that promise, logged without
 values, and never fails the Library page or its counts. A lane
 that kept no ladder cannot tell a refusal from an empty answer and reads as no
-match. Work whose preparation could not finish stays where it was (#1413), and
-an ebook whose candidates were found but never admitted at the proposal level
+match. Work whose preparation could not finish stays where it was (#1413) and
+reads Preparation failed safely, even when its latest attempt failed over an
+earlier unmatched report; an ebook whose candidates were found but never admitted at the proposal level
 stays in No attention needed. The masthead and run summary name the same
 bucket as "not matched", with zero omitted.
 

@@ -1876,6 +1876,12 @@ describe('Library route', () => {
         stage: 'provider',
         status: 'authentication',
       },
+      // The retained report matched nothing, which the failure still outranks.
+      summary: {
+        fields: [],
+        reason: 'No review decision is recorded for this work.',
+        state: 'not_matched_no_match' as const,
+      },
     }
     const http: ReviewHttp = {
       ...createHttp(),
@@ -1892,6 +1898,9 @@ describe('Library route', () => {
     // Openable, because the evidence is real -- but not reported as a success.
     expect(row).toHaveTextContent('Preparation failed safely')
     expect(row).not.toHaveTextContent('Recorded evidence available')
+    expect(row).not.toHaveTextContent('No provider matched')
+    expect(row).toHaveAccessibleName(/Preparation failed safely/u)
+    expect(row).not.toHaveAccessibleName(/No provider matched/u)
     expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.needs-attention')).not.toBeNull()

@@ -23,7 +23,7 @@ from mechanical_librarian.domain.provider_recovery import (
     ProviderRecoveryJob,
     RecoveryAttemptEvidence,
 )
-from mechanical_librarian.domain.validation import bounded_integer
+from mechanical_librarian.domain.validation import bounded_integer, nonempty_text
 
 
 class ProviderRecoveryStoreError(RuntimeError):
@@ -1493,7 +1493,7 @@ class SQLiteProviderRecoveryStore:
             or any(
                 type(report) is not tuple
                 or len(report) != 4
-                or any(type(value) is not str or not value for value in report)
+                or not all(nonempty_text(value) for value in report)
                 for report in reports
             )
         ):

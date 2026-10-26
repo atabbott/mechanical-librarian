@@ -296,10 +296,17 @@ _ATTENTION_FACTS_JOIN_SQL = (
 # #1407: a current package no provider matched -- no case, and either no
 # admitted work identity or no provider lane that returned candidates -- over
 # the package `ml` and its report's browse facts `facts`. Library's lens and
-# count and the masthead's preparation buckets read it alike.
+# count and the masthead's preparation buckets read it alike. A work whose
+# latest preparation failed terminally is that failure rather than unmatched,
+# so it stays where it was: the same latest-work rule Library's row reads.
 _NOT_MATCHED_PACKAGE_SQL = (
     "(ml.review_case_id IS NULL AND (ml.outcome='evidence_only' "
-    "OR facts.provider_match_state<>'matched'))"
+    "OR facts.provider_match_state<>'matched') AND COALESCE(("
+    "SELECT latest.state='failed' AND latest.failure_code IS NOT NULL "
+    "FROM review_preparation_work latest "
+    "WHERE latest.connection_name=ml.connection_name "
+    "AND latest.library_name=ml.library_name AND latest.item_id=ml.item_id "
+    "ORDER BY latest.updated_at DESC,latest.work_id DESC LIMIT 1),0)=0)"
 )
 # Its one reason, NULL for any other package. Candidates on an unmatched
 # package are an audiobook's that no work identity admitted: found, but refused.

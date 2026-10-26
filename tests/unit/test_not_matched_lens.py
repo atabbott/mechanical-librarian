@@ -8,6 +8,7 @@ reason, and only a scheduled recovery job lets that reason promise a retry.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -423,6 +424,9 @@ def test_recovery_store_names_only_reports_a_live_job_will_check(
             {waiting},
             frozenset({("primary", "ebooks", "waiting")}),
             frozenset({("primary", "ebooks", "", "report-w")}),
+            frozenset({("primary", "ebooks", 7, "report-w")}),
+            # Exact text only: a subclass of str is refused, not trusted.
+            frozenset({("primary", "ebooks", type("Text", (str,), {})("w"), "r")}),
             frozenset(
                 ("primary", "ebooks", f"item-{index}", "report") for index in range(257)
             ),
@@ -625,7 +629,8 @@ def test_preparation_counts_not_matched_by_the_library_predicate(
 
 def test_a_terminal_preparation_failure_stays_where_it_was(tmp_path: Path) -> None:
     """#1413 owns failed preparation; this lens does not move it."""
-    catalogue = open_catalogue(tmp_path / "catalogue.sqlite", create=True)
+    (tmp_path / "catalogue").mkdir(mode=0o700)
+    catalogue = open_catalogue(tmp_path / "catalogue" / "catalogue.sqlite", create=True)
     entry = CatalogueEntry(
         "primary",
         "fiction",
@@ -646,7 +651,9 @@ def test_a_terminal_preparation_failure_stays_where_it_was(tmp_path: Path) -> No
     generation = catalogue.publish("a" * 64, (entry,))
     repository = open_repository(tmp_path / "review.sqlite")
     try:
-        repository.bind_library_catalogue(tmp_path / "catalogue.sqlite", "a" * 64)
+        repository.bind_library_catalogue(
+            tmp_path / "catalogue" / "catalogue.sqlite", "a" * 64
+        )
         repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
         discovery = repository.claim_review_pipeline_action(11)
         assert discovery is not None
@@ -675,3 +682,75 @@ def test_a_terminal_preparation_failure_stays_where_it_was(tmp_path: Path) -> No
     finally:
         repository.close()
         catalogue.close()
+
+
+def test_a_later_terminal_failure_over_an_unmatched_report_stays_where_it_was(
+    tmp_path: Path,
+) -> None:
+    """The latest preparation failed, so the retained report is not Not matched.
+
+    The row carries that failure, so it reads as the failure and is counted
+    where a failed preparation always was, never under Not matched (#1407).
+    """
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        entry = _entry("retained")
+        repository.request_review_scan("primary", _RECOVERY, "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
+        extraction = repository.claim_review_pipeline_action(13)
+        assert extraction is not None
+        repository.publish(
+            _for(_audiobook("x"), _RECOVERY, "retained"),
+            lambda: True,
+            None,
+            _completes_without_identity(extraction, 14),
+        )
+        browse = BrowseReviewLibrary(repository)
+        assert (
+            browse.library(lens="all", search=None, limit=50, cursor=None)["counts"][
+                "not_matched"
+            ]
+            == 1
+        )
+
+        # A rescan finds the file changed and its extraction fails for good,
+        # over the report the first pass retained.
+        repository.request_review_scan("primary", _RECOVERY, "lib-1", "f" * 64, 20)
+        discovery = next(
+            action
+            for tick in range(21, 200)
+            if (action := repository.claim_review_pipeline_action(tick))
+        )
+        repository.complete_review_discovery(
+            discovery, 2, "b" * 64, (replace(entry, file_identity="9" * 64),), 201
+        )
+        failing = repository.claim_review_pipeline_action(202)
+        assert failing is not None
+        assert (failing.stage, failing.item_id) == ("extraction", "retained")
+        repository.fail_review_pipeline_action(
+            failing, "unreadable_media", False, 203, "track_1"
+        )
+
+        page = browse.library(
+            lens="no_attention_needed", search=None, limit=50, cursor=None
+        )
+        assert page["counts"] == {
+            "all": 1,
+            "needs_attention": 0,
+            "no_attention_needed": 1,
+            "not_matched": 0,
+        }
+        (item,) = cast("list[dict[str, object]]", page["items"])
+        assert item["attention_state"] == "no_attention_needed"
+        assert item["preparation"] is not None
+        assert item["summary"]["state"] == "no_decision_recorded"
+        assert not browse.library(
+            lens="not_matched", search=None, limit=50, cursor=None
+        )["items"]
+        progress = repository.review_pipeline_progress("primary", _RECOVERY)
+        assert progress is not None
+        assert (progress.blocked, progress.not_matched) == (1, 0)
+    finally:
+        repository.close()

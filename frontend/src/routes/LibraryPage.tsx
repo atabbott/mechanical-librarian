@@ -4206,8 +4206,12 @@ export default function LibraryPage({
                 // later real failure over the same retained report is still a
                 // failure the owner has to see.
                 const recorded = evidence && work.preparation === null
+                // A terminal preparation failure outranks a retained report's
+                // not-matched reason: it is the failure the owner must see (#1407).
                 const status =
-                  (work.summary ? notMatchedReasons[work.summary.state] : undefined) ??
+                  (work.summary && !work.preparation
+                    ? notMatchedReasons[work.summary.state]
+                    : undefined) ??
                   (recorded
                     ? 'Recorded evidence available'
                     : work.preparation
