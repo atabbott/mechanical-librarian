@@ -1695,7 +1695,8 @@ pre-read releases its decision and is planned again, at most three times, once a
 fresh observation finds the connection healthy; it re-enters the full guard
 order and inherits no capability, consent, or authority evidence. The stale
 after the last is terminal, and covers stay terminal. Withdrawn authority
-supersedes a retry or a waiting connection stale without a request, and a
+or consent supersedes a retry, and withdrawn authority a waiting connection
+stale, without a request, and a
 superseded or abandoned plan whose history reached `applying` is never planned
 afresh. Target and credential authority are absent
 from domain code and reviewers and credentials stay outside diagnostics and the

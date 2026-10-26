@@ -90,7 +90,7 @@ _TRANSITIONS = {
     "applying": frozenset({"verified", "reconciling", "retryable", "stale"}),
     "reconciling": frozenset({"verified", "retryable", "stale"}),
     # `verified` only from an unknown outcome a pre-read shows landed, and
-    # `superseded` only when the plan's authority is withdrawn (#1402).
+    # `superseded` only when its authority or consent is withdrawn (#1402).
     "retryable": frozenset({"claimed", "verified", "stale", "superseded", "abandoned"}),
     # Only a connection stale, which still waits on its authority (#1402).
     "stale": frozenset({"superseded"}),
@@ -808,11 +808,13 @@ class FieldEffectOperation:
                 and self.failure != "target_failure"
             )
             or (
-                state == "superseded"
-                and self.state in {"retryable", "stale"}
-                and failure != "authority_superseded"
+                (self.state, state) == ("retryable", "superseded")
+                and failure not in {"authority_superseded", "consent_revoked"}
             )
-            or (self.state == "stale" and self.failure != "connection")
+            or (
+                self.state == "stale"
+                and (self.failure, failure) != ("connection", "authority_superseded")
+            )
             or type(at) is not int
             or at < self.updated_at
         ):

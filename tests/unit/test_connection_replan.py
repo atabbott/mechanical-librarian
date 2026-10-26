@@ -514,9 +514,10 @@ def _restore_authority(effects: _EffectEnvironment, decision_id: str) -> None:
     connection.commit()
 
 
+@pytest.mark.parametrize("withdrawn", ("authority", "consent"))
 @pytest.mark.parametrize("history", ("sent", "unsent"))
 def test_superseding_a_retry_sends_nothing_and_never_revives_a_sent_request(
-    effects: _EffectEnvironment, history: str
+    effects: _EffectEnvironment, history: str, withdrawn: str
 ) -> None:
     decision, service, operation = _automatic_tags_plan(effects)
     plan_id = operation.plan.plan_id
@@ -532,10 +533,17 @@ def test_superseding_a_retry_sends_nothing_and_never_revives_a_sent_request(
         retry = service.apply(plan_id)
         assert (retry.state, retry.failure) == ("retryable", "not_sent")
     before = list(sent)
-    assert service.supersede(decision.decision_id) == 1
+    if withdrawn == "authority":
+        assert service.supersede(decision.decision_id) == 1
+    else:
+        assert service.revoke_consent(operation.plan.consent.consent_id) == 1
     closed = effects.repository.get_field_effect(plan_id)
-    assert (closed.state, closed.failure) == ("superseded", "authority_superseded")
-    _restore_authority(effects, decision.decision_id)
+    assert (closed.state, closed.failure) == (
+        "superseded",
+        "authority_superseded" if withdrawn == "authority" else "consent_revoked",
+    )
+    if withdrawn == "authority":
+        _restore_authority(effects, decision.decision_id)
     again = effects.repository.record_field_effect(
         FieldEffectOperation(operation.plan, updated_at=operation.plan.created_at)
     )
@@ -547,18 +555,28 @@ def test_superseding_a_retry_sends_nothing_and_never_revives_a_sent_request(
     assert sent == before
 
 
-def test_superseding_a_retry_is_only_an_authority_supersession(
+def test_superseding_a_retry_is_only_a_withdrawal(
     effects: _EffectEnvironment,
 ) -> None:
     operation = _plan(effects, suffix="1")
-    for state, failure in (("retryable", "target_failure"), ("stale", "connection")):
-        current = FieldEffectOperation(operation.plan, state, 1, 5, failure, "1" * 64)
-        assert (
-            current.transition("superseded", at=6, failure="authority_superseded").state
-            == "superseded"
-        )
-        with pytest.raises(FieldEffectError, match="invalid_transition"):
-            current.transition("superseded", at=6, failure="consent_revoked")
+    retry = FieldEffectOperation(
+        operation.plan, "retryable", 1, 5, "target_failure", "1" * 64
+    )
+    waiting = FieldEffectOperation(
+        operation.plan, "stale", 1, 5, "connection", "1" * 64
+    )
+    for current, allowed in (
+        (retry, ("authority_superseded", "consent_revoked")),
+        (waiting, ("authority_superseded",)),
+    ):
+        for failure in ("authority_superseded", "consent_revoked", "owner_abandoned"):
+            if failure in allowed:
+                assert current.transition(
+                    "superseded", at=6, failure=failure
+                ).state == ("superseded")
+            else:
+                with pytest.raises(FieldEffectError, match="invalid_transition"):
+                    current.transition("superseded", at=6, failure=failure)
     for failure in ("connection_exhausted", "capability", "authority"):
         with pytest.raises(FieldEffectError, match="invalid_transition"):
             FieldEffectOperation(
