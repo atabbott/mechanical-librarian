@@ -1770,6 +1770,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="preparation-counts-predecessor-f46",
         ),
+        pytest.param(
+            "fedfb331b4ac6e4b90746bc2aeab6ffea858ee65d469ddf1caf32dd4b35c9dd4",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="sign-in-throttle-predecessor-f19a",
+        ),
+        pytest.param(
+            "dfe8f5c9fb092ccd16b7e99c891d7a13d5893e2e58200ba14fd54992f017da8e",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="sign-in-throttle-predecessor-f20",
+        ),
+        pytest.param(
+            "a4c49e64b2bcaccfc7e1e6cdacc6ab940a3106380e1304de362ca7d8616fafd6",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="sign-in-throttle-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
