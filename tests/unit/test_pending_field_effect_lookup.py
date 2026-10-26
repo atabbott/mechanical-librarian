@@ -933,7 +933,11 @@ def test_consent_revocation_supersedes_in_its_original_order(
             return operation
 
         def transition(self, *_: object, **__: object) -> str:
-            return self.document
+            # The event is stamped with the transition's own time (#1386).
+            class Transitioned(str):
+                updated_at = 200
+
+            return Transitioned(self.document)
 
     effects = SQLiteMetadataReportRepository(connection)._field_effects
     superseded: list[tuple[object, str]] = []

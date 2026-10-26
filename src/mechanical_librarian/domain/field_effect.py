@@ -814,15 +814,18 @@ class FieldEffectOperation:
             )
             or (self.state == "stale" and self.failure != "connection")
             or type(at) is not int
-            or at < self.updated_at
+            or at < 0
         ):
             raise FieldEffectError("invalid_transition")
         token = self.claim_token if claim_token is None else claim_token
         attempt = self.attempt + (1 if state == "claimed" else 0)
+        # A wall clock stepped back mid-write must not strand the plan, so the
+        # transition keeps the later time. A replayed or out-of-order
+        # transition is refused by the state rules above, never by time (#1386).
         return replace(
             self,
             state=state,
-            updated_at=at,
+            updated_at=max(at, self.updated_at),
             failure=failure,
             claim_token=token,
             attempt=attempt,
