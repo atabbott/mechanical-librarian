@@ -1143,7 +1143,15 @@ has proved the store holds exactly that schema. Only the qualification-state
 bridge's historical source, which this build defines no DDL for, takes them
 from its own text, and only after a code-held digest has bound that text byte
 for byte. A CHECK the scanner cannot extract refuses rather than being
-skipped. Persisted content is validated when a
+skipped. On a read-write connection `quick_check` does report a row breaking a
+CHECK or NOT NULL constraint, so open-time admission and ordinary backup
+readiness, which runs on the reader's read-write connection, both catch one.
+The fresh readiness check runs `quick_check` on a read-only verifier and does
+not. That gap is accepted: adding such a row while the store is running needs
+write access to the state volume, which already allows replacing the whole
+store. Closing it measured 2.4 to 3.2 times the fresh check's latency on a
+10,000-work store. Persisted
+content is validated when a
 read selects it and when a selected report participates in publication;
 malformed targeted content fails closed. Unselected history stays isolated and
 is refused only when a read selects it. Browse facts are the exception
