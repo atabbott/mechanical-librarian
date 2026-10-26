@@ -879,7 +879,7 @@ class _LibraryWorkSummary(_ClosedModel):
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
-    attention_state: str
+    attention_state: Literal["needs_attention", "no_attention_needed", "not_matched"]
     detail_url: str | None
     # `case` opens a review case, `report` opens the recorded evidence of a
     # work that has none, and `None` means there is nothing to open. Closed

@@ -1591,7 +1591,7 @@ describe('Library route', () => {
       id: 'failed-work',
       title: 'Preparation unavailable',
       attentionCount: 0,
-      attention: 'no_attention_needed',
+      attention: 'no_attention_needed' as const,
       // Neither a case nor a report: there is nothing here to open.
       detailUrl: null,
       detailKind: null,
@@ -1666,7 +1666,7 @@ describe('Library route', () => {
         title: 'Recorded work',
         mediaKind: 'm4b',
         attentionCount: 0,
-        attention: 'no_attention_needed',
+        attention: 'no_attention_needed' as const,
         detailUrl,
         detailKind: 'report' as const,
         summary: {
@@ -1860,7 +1860,7 @@ describe('Library route', () => {
       workId: 'library_work_masked',
       title: 'Retained work',
       attentionCount: 0,
-      attention: 'no_attention_needed',
+      attention: 'no_attention_needed' as const,
       // Its earlier report is still browsable, but the latest attempt failed
       // for a real reason the owner has to act on.
       detailUrl: '/api/v1/library/report?connection=primary&library=ebooks&item=item-7',
@@ -1916,7 +1916,7 @@ describe('Library route', () => {
       workId: `library_work_${key}`,
       title: `Unmatched ${key}`,
       attentionCount: 0,
-      attention: 'not_matched',
+      attention: 'not_matched' as const,
       detailUrl: `/api/v1/library/report?connection=primary&library=ebooks&item=${key}`,
       detailKind: 'report' as const,
       preparation: null,
@@ -2041,7 +2041,7 @@ describe('Library route', () => {
       workId: 'library_work_unreadable',
       title: 'Retained audiobook',
       attentionCount: 0,
-      attention: 'no_attention_needed',
+      attention: 'no_attention_needed' as const,
       detailUrl: '/api/v1/library/report?connection=primary&library=audio&item=item-8',
       detailKind: 'report' as const,
       preparation: {

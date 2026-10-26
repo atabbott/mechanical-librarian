@@ -6275,6 +6275,11 @@
             "type": "integer"
           },
           "attention_state": {
+            "enum": [
+              "needs_attention",
+              "no_attention_needed",
+              "not_matched"
+            ],
             "title": "Attention State",
             "type": "string"
           },

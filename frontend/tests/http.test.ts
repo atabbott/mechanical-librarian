@@ -2714,6 +2714,14 @@ describe('ReviewApiClient', () => {
     expect(() => mapLibrary(page('not_matched_somehow'))).toThrow(
       new ApiError(502, 'invalid_summary_state'),
     )
+    const stray = {
+      ...page('not_matched_refused'),
+      items: [{ ...work('not_matched_refused'), attention_state: 'unmatched' }],
+    }
+    expect(() => mapLibrary(stray)).toThrow(new ApiError(502, 'invalid_attention_state'))
+    expect(() => mapLibrary({ ...page('not_matched_refused'), lens: 'unmatched' })).toThrow(
+      new ApiError(502, 'invalid_library_lens'),
+    )
     const counts: Record<string, number> = { ...page('not_matched_refused').counts }
     delete counts.not_matched
     expect(() => mapLibrary({ ...page('not_matched_refused'), counts })).toThrow(

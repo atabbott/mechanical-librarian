@@ -166,7 +166,10 @@ export const settingsAudibleMarketplaceOrder: readonly string[] =
 
 export const settingsValidationCopy = settingsVocabulary.errors
 
-export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed' | 'not_matched'
+// The lens a work belongs to; All lists every one of them (#1407).
+export const attentionStates = ['needs_attention', 'no_attention_needed', 'not_matched'] as const
+export type AttentionState = (typeof attentionStates)[number]
+export type LibraryLens = 'all' | AttentionState
 // Why a work with no case reads as it does: nothing to decide, a preparation
 // that could not finish, or the reason no provider matched it (#1407).
 export const workSummaryStates = [
@@ -330,7 +333,7 @@ export interface LibraryWorkView {
   libraryDisplayName?: string
   mediaKind: string
   attentionCount: number
-  attention: string
+  attention: AttentionState
   // Where this work opens, and what opens there. A work with a review case
   // points at that case; a work with only a published report points at the
   // report itself, which is the one route its evidence has; a work that
@@ -2071,16 +2074,6 @@ const booleanValue = (value: unknown, field: string) => {
   if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
   return value
 }
-// One member of a closed vocabulary, refused otherwise.
-const closedStringValue = <T extends string>(
-  value: unknown,
-  label: string,
-  allowed: readonly T[],
-): T => {
-  const result = stringValue(value, label)
-  if (!allowed.includes(result as T)) throw new ApiError(502, `invalid_${label}`)
-  return result as T
-}
 export const mapSettings = (value: unknown): SettingsView => {
   if (
     !record(value) ||
@@ -2441,7 +2434,7 @@ const providerThrottling = (value: unknown): ProviderThrottlingView | null => {
     integerValue(value.generation, 'provider_throttling_generation') < 1
   )
     throw new ApiError(502, 'invalid_provider_throttling')
-  closedStringValue(value.retry, 'provider_throttling_retry', [
+  coverObservationValue(value.retry, 'provider_throttling_retry', [
     'available',
     'managed_by_file',
     'unavailable',
@@ -2455,20 +2448,20 @@ const providerThrottling = (value: unknown): ProviderThrottlingView | null => {
       boundedStringValue(entry.library, 'provider_throttling_library', 64).length === 0
     )
       throw new ApiError(502, 'invalid_provider_throttling_entry')
-    closedStringValue(entry.adapter, 'provider_throttling_adapter', throttleAdapters)
-    closedStringValue(entry.state, 'provider_throttling_state', [
+    coverObservationValue(entry.adapter, 'provider_throttling_adapter', throttleAdapters)
+    coverObservationValue(entry.state, 'provider_throttling_state', [
       'waiting',
       'dormant',
       'checking',
       'exhausted',
     ])
     for (const reason of entry.reasons)
-      closedStringValue(reason, 'provider_throttling_reason', throttleReasons)
+      coverObservationValue(reason, 'provider_throttling_reason', throttleReasons)
     integerValue(entry.deferred, 'provider_throttling_deferred')
     if (entry.next_retry_at !== null)
       integerValue(entry.next_retry_at, 'provider_throttling_next_retry_at')
     if (entry.remedy !== null)
-      closedStringValue(entry.remedy, 'provider_throttling_remedy', [
+      coverObservationValue(entry.remedy, 'provider_throttling_remedy', [
         'add_api_key',
         'check_api_key',
       ])
@@ -3063,9 +3056,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
     !Array.isArray(value.items)
   )
     throw new ApiError(502, 'invalid_library_response')
-  const lens = stringValue(value.lens, 'library_lens')
-  if (!['needs_attention', 'all', 'no_attention_needed', 'not_matched'].includes(lens))
-    throw new ApiError(502, 'invalid_library_lens')
+  const lens = coverObservationValue(value.lens, 'library_lens', ['all', ...attentionStates])
   // Validated at each read: this cast names the DTO's fields, and every one the
   // view model consumes passes through the validators below before it is used.
   const dto = value as unknown as LibraryDto
@@ -3073,7 +3064,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
   const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
   const previousCursor = optionalString(dto.previous_cursor, 'library_previous_cursor')
   return {
-    lens: lens as LibraryLens,
+    lens,
     ...(query ? { query } : {}),
     ...(nextCursor ? { nextCursor } : {}),
     ...(previousCursor ? { previousCursor } : {}),
@@ -3131,7 +3122,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
                 },
               ),
               reason: stringValue(item.summary.reason, 'summary_reason'),
-              state: closedStringValue(item.summary.state, 'summary_state', workSummaryStates),
+              state: coverObservationValue(item.summary.state, 'summary_state', workSummaryStates),
             }
       return {
         id: reviewCaseId ?? workId,
@@ -3145,7 +3136,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
           stringValue(item.library, 'library'),
         mediaKind: stringValue(item.media_kind, 'media_kind'),
         attentionCount: integerValue(item.attention_count, 'attention_count'),
-        attention: stringValue(item.attention_state, 'attention_state'),
+        attention: coverObservationValue(item.attention_state, 'attention_state', attentionStates),
         detailUrl: item.detail_url === null ? null : stringValue(item.detail_url, 'detail_url'),
         detailKind: (() => {
           // Read back through `unknown`, as `lens` above is: the DTO type says
@@ -3540,7 +3531,7 @@ const mapOwnerControl = (value: unknown): OwnerControlView | null => {
               if (!record(item) || !exactKeys(item, ['rule', 'value']))
                 throw new ApiError(502, 'invalid_owner_suggestion')
               return {
-                rule: closedStringValue(item.rule, 'owner_suggestion_rule', [
+                rule: coverObservationValue(item.rule, 'owner_suggestion_rule', [
                   'title_case',
                   'strip_part',
                   'split_author',
@@ -3570,7 +3561,7 @@ const mapOwnerControl = (value: unknown): OwnerControlView | null => {
     withdraw:
       withdraw === null
         ? null
-        : closedStringValue(withdraw, 'owner_withdraw', [
+        : coverObservationValue(withdraw, 'owner_withdraw', [
             'available',
             'automatic_hold',
             'in_progress',
@@ -3949,6 +3940,16 @@ const mapChoiceContexts = (
   return contexts
 }
 
+const coverObservationValue = <T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+): T => {
+  const result = stringValue(value, label)
+  if (!allowed.includes(result as T)) throw new ApiError(502, `invalid_${label}`)
+  return result as T
+}
+
 const mapCoverObservation = (
   value: unknown,
   candidateReference: string,
@@ -3981,72 +3982,71 @@ const mapCoverObservation = (
     throw new ApiError(502, 'misaligned_cover_observation')
   return {
     candidateReference: boundReference,
-    composition: closedStringValue(value.composition, 'cover_observation_composition', [
+    composition: coverObservationValue(value.composition, 'cover_observation_composition', [
       'dense',
       'minimal',
       'unknown',
     ]),
-    coverTextLanguage: closedStringValue(
+    coverTextLanguage: coverObservationValue(
       value.cover_text_language,
       'cover_observation_text_language',
       ['english', 'non_english', 'multiple', 'no_visible_title', 'unknown'],
     ),
-    explicitImagery: closedStringValue(
+    explicitImagery: coverObservationValue(
       value.explicit_imagery,
       'cover_observation_explicit_imagery',
       ['absent', 'suggestive', 'explicit', 'unknown'],
     ),
-    formatBranding: closedStringValue(value.format_branding, 'cover_observation_format_branding', [
-      'absent',
-      'text_edition',
-      'audiobook',
-      'unknown',
-    ]),
-    medium: closedStringValue(value.medium, 'cover_observation_medium', [
+    formatBranding: coverObservationValue(
+      value.format_branding,
+      'cover_observation_format_branding',
+      ['absent', 'text_edition', 'audiobook', 'unknown'],
+    ),
+    medium: coverObservationValue(value.medium, 'cover_observation_medium', [
       'illustrated',
       'mixed',
       'photographic',
       'typographic',
       'unknown',
     ]),
-    overlayMarking: closedStringValue(value.overlay_marking, 'cover_observation_overlay_marking', [
-      'absent',
-      'present',
-      'unknown',
-    ]),
-    placeholder: closedStringValue(value.placeholder, 'cover_observation_placeholder', [
+    overlayMarking: coverObservationValue(
+      value.overlay_marking,
+      'cover_observation_overlay_marking',
+      ['absent', 'present', 'unknown'],
+    ),
+    placeholder: coverObservationValue(value.placeholder, 'cover_observation_placeholder', [
       'absent',
       'present',
       'unknown',
     ]),
     previewSha256: boundPreview,
     previewVariant: stringValue(value.preview_variant, 'cover_observation_preview_variant'),
-    promotionalText: closedStringValue(
+    promotionalText: coverObservationValue(
       value.promotional_text,
       'cover_observation_promotional_text',
       ['absent', 'present', 'unknown'],
     ),
-    reproduction: closedStringValue(value.reproduction, 'cover_observation_reproduction', [
+    reproduction: coverObservationValue(value.reproduction, 'cover_observation_reproduction', [
       'clean',
       'degraded',
       'unknown',
     ]),
-    seriesStyling: closedStringValue(value.series_styling, 'cover_observation_series_styling', [
+    seriesStyling: coverObservationValue(value.series_styling, 'cover_observation_series_styling', [
       'standalone',
       'series_branded',
       'omnibus_or_set',
       'unknown',
     ]),
-    thumbnailLegibility: closedStringValue(
+    thumbnailLegibility: coverObservationValue(
       value.thumbnail_legibility,
       'cover_observation_thumbnail_legibility',
       ['legible', 'illegible', 'unknown'],
     ),
-    tieInBranding: closedStringValue(value.tie_in_branding, 'cover_observation_tie_in_branding', [
-      'absent',
-      'present',
-      'unknown',
-    ]),
+    tieInBranding: coverObservationValue(
+      value.tie_in_branding,
+      'cover_observation_tie_in_branding',
+      ['absent', 'present', 'unknown'],
+    ),
   }
 }
 
