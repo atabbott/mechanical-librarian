@@ -4093,13 +4093,15 @@ export default function LibraryPage({
                     : summaryWorks === undefined
                       ? `Matching: ${workCount(data.counts.all)}`
                       : `Matching: ${String(data.counts.all)} of ${workCount(summaryWorks)}`) +
-                  (summaryNotMatched === undefined
-                    ? summary.isError
-                      ? ''
-                      : ' · … not matched'
-                    : summaryNotMatched === 0
-                      ? ''
-                      : ` · ${String(summaryNotMatched)} not matched`)
+                  (search.q
+                    ? ''
+                    : summaryNotMatched === undefined
+                      ? summary.isError
+                        ? ''
+                        : ' · … not matched'
+                      : summaryNotMatched === 0
+                        ? ''
+                        : ` · ${String(summaryNotMatched)} not matched`)
                 : failed
                   ? 'Count unavailable'
                   : 'Loading count…'}

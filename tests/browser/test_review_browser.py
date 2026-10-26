@@ -3557,7 +3557,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         search = page.get_by_role("searchbox")
         search.fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
-        expect(status).to_have_text("Matching: 1 of 3 works · 1 not matched")
+        expect(status).to_have_text("Matching: 1 of 3 works")
         expect(rail.locator("header p")).to_have_text(
             "Matching: 0 of 1 work needing a decision"
         )
@@ -3565,7 +3565,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
         search.fill("zzz-no-match")
-        expect(status).to_have_text("Matching: 0 of 3 works · 1 not matched")
+        expect(status).to_have_text("Matching: 0 of 3 works")
         expect(badge).to_have_text("1 work")
         search.fill("")
         expect(page).not_to_have_url(re.compile(r"q="))
@@ -3595,7 +3595,7 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         page.get_by_role("searchbox").fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
         expect(page.locator(".library-works-heading [role='status']")).to_have_text(
-            "Matching: 1 of 3 works · 1 not matched"
+            "Matching: 1 of 3 works"
         )
         expect(page.locator(".library-work-row")).to_have_count(1)
         expect(page.locator(".library-work-row.is-terminal")).to_contain_text(

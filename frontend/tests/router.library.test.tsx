@@ -1984,7 +1984,7 @@ describe('Library route', () => {
     expect(screen.getByRole('link', { name: 'Not matched' })).toBeVisible()
   })
 
-  it('adds Not matched to the Works count only when there is one to state (#1407)', async () => {
+  it('adds Not matched to the Works count only when there is one to state and no search (#1407)', async () => {
     const page = (search: LibrarySearch, notMatched: number) => ({
       lens: search.lens,
       page: 1,
@@ -2013,6 +2013,16 @@ describe('Library route', () => {
       }),
     )
     await waitFor(() => expect(status).toHaveTextContent(/^2 works$/u))
+    // A search scopes the list, so the library-wide figure stays out of it.
+    cleanup()
+    renderRoute('/library?lens=not_matched&q=work', {
+      ...createHttp(),
+      getLibrary: vi.fn(async (search: LibrarySearch) => page(search, 1)),
+    })
+    const searched = within(
+      (await screen.findByRole('heading', { name: 'Works' })).parentElement ?? document.body,
+    ).getByRole('status')
+    await waitFor(() => expect(searched).toHaveTextContent(/^Matching: 2 of 2 works$/u))
   })
 
   it('keeps an unknown lens out of the URL it reads (#1407)', () => {
