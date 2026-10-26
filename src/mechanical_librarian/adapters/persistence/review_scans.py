@@ -31,6 +31,9 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_run_state,
     refresh_preparation_work,
 )
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _NOT_MATCHED_PACKAGE_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -50,8 +53,8 @@ from mechanical_librarian.domain.validation import (
     prefixed_hex_identity,
 )
 
-# The nine buckets #641 names, expressed once over the persisted columns that
-# decide them. Order is the order an owner reads them in: the work has not
+# The buckets #641 names, with #1407's Not matched beside recorded, expressed
+# once over the persisted columns that decide them. Order is the order an owner reads them in: the work has not
 # started, it is moving through the stages, it is ready or recorded, or it
 # could not finish.
 #
@@ -61,7 +64,17 @@ _BLOCKED_SQL = "w.state IN ('failed','stale')"
 # What "done, and nothing is being asked of you" is, over one column: a
 # completed work with no case, whether because its proposals found nothing to
 # ask about or because no work identity was admitted for it at all.
-_RECORDED_SQL = "w.state='complete' AND w.outcome IN ('no_case','evidence_only')"
+_CASELESS_SQL = "w.state='complete' AND w.outcome IN ('no_case','evidence_only')"
+# Of those, a work whose current package no provider matched is Not matched,
+# by the predicate Library's lens and count read (#1407).
+_UNMATCHED_PACKAGE_SQL = (
+    "EXISTS (SELECT 1 FROM current_review_packages ml "
+    "JOIN metadata_report_browse_facts facts ON facts.report_id=ml.report_id "
+    "WHERE ml.connection_name=w.connection_name AND ml.library_name=w.library_name "
+    "AND ml.item_id=w.item_id AND " + _NOT_MATCHED_PACKAGE_SQL + ")"
+)
+_RECORDED_SQL = _CASELESS_SQL + " AND NOT " + _UNMATCHED_PACKAGE_SQL
+_NOT_MATCHED_SQL = _CASELESS_SQL + " AND " + _UNMATCHED_PACKAGE_SQL
 _READY_SQL = "w.state='complete' AND w.outcome='case'"
 
 
@@ -84,6 +97,7 @@ _STAGE_BUCKETS = (
     # the scan, so `total == sum(stages)` needs a name for "done, evidence
     # recorded" that is neither an open case nor a blockage.
     ("recorded", _RECORDED_SQL),
+    ("not_matched", _NOT_MATCHED_SQL),
     ("failed", _BLOCKED_SQL),
 )
 _STAGE_COUNT_SQL = ",".join(
@@ -384,6 +398,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             0,
             0,
             0,
+            0,
             False,
             requested_at,
             _EMPTY_STAGES,
@@ -408,6 +423,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 f"COALESCE(SUM(CASE WHEN {_READY_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_RECORDED_SQL} THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_NOT_MATCHED_SQL} THEN 1 ELSE 0 END),0),"
                 f"{_STAGE_COUNT_SQL} "
                 "FROM review_preparation_work w WHERE w.scan_id=?",
                 (row[0],),
@@ -422,9 +438,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 counts[1],
                 counts[2],
                 counts[3],
+                counts[4],
                 bool(row[3]),
                 row[4],
-                _stages(counts, 4),
+                _stages(counts, 5),
             )
         except sqlite3.Error as error:
             raise MetadataReportError(
@@ -469,6 +486,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 f"COALESCE(SUM(CASE WHEN {_READY_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_BLOCKED_SQL} THEN 1 ELSE 0 END),0),"
                 f"COALESCE(SUM(CASE WHEN {_RECORDED_SQL} THEN 1 ELSE 0 END),0),"
+                f"COALESCE(SUM(CASE WHEN {_NOT_MATCHED_SQL} THEN 1 ELSE 0 END),0),"
                 f"{_STAGE_COUNT_SQL} "
                 "FROM review_preparation_scans s "
                 "LEFT JOIN review_preparation_work w ON w.scan_id=s.scan_id "
@@ -506,9 +524,10 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     row[8],
                     row[9],
                     row[10],
+                    row[11],
                     bool(row[5]),
                     row[6],
-                    _stages(row, 11),
+                    _stages(row, 12),
                     None if run is None else run[0],
                     row[0] in enrolled,
                 )

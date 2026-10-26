@@ -517,8 +517,8 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         def results() -> tuple[object, ...]:
             return (
                 repository.read_review_library(None, 7, 3, None),
-                repository.read_review_library(None, 7, 3, True),
-                repository.read_review_library(None, 7, 3, False),
+                repository.read_review_library(None, 7, 3, "needs_attention"),
+                repository.read_review_library(None, 7, 3, "no_attention_needed"),
                 repository.read_review_library("Representative title 0006", 7, 0, None),
                 repository.read_review_attention(None, 7, 3),
                 repository.read_review_attention("Representative title 0006", 7, 0),
@@ -776,7 +776,7 @@ def test_browse_probes_decision_and_policy_history_by_index() -> None:
                 connection,
                 lambda: (
                     repository.read_review_library(None, 7, 0, None),
-                    repository.read_review_library(None, 7, 0, True),
+                    repository.read_review_library(None, 7, 0, "needs_attention"),
                     repository.read_review_library(
                         "Representative title 0006", 7, 0, None
                     ),
@@ -1111,7 +1111,8 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
     assert report_page["counts"] == {
         "all": 1,
         "needs_attention": 0,
-        "no_attention_needed": 1,
+        "no_attention_needed": 0,
+        "not_matched": 1,
     }
     assert report_page["items"][0]["review_case_id"] is None
 
@@ -1123,6 +1124,7 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
         "all": 1,
         "needs_attention": 1,
         "no_attention_needed": 0,
+        "not_matched": 0,
     }
     item = case_page["items"][0]
     assert item["review_case_id"] is not None

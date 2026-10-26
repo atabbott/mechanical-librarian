@@ -449,6 +449,7 @@ def test_the_snapshot_counts_works_at_every_stage_an_owner_reads(
         "projection": 0,
         "ready": 0,
         "recorded": 0,
+        "not_matched": 0,
         "failed": 0,
     }
     repository.close()
@@ -472,6 +473,7 @@ def test_every_stage_bucket_is_named_in_owner_reading_order(
         "projection",
         "ready",
         "recorded",
+        "not_matched",
         "failed",
     ]
 

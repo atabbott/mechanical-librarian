@@ -619,8 +619,11 @@ def test_an_unmatched_audiobook_records_its_evidence_and_completes(
         assert progress is not None
         assert 0 == progress.blocked
         assert 0 == progress.ready
-        assert 1 == progress.recorded
-        assert 1 == dict(progress.stages)["recorded"]
+        # No provider matched it, so it is not matched rather than recorded
+        # (#1407).
+        assert 0 == progress.recorded
+        assert 1 == progress.not_matched
+        assert 1 == dict(progress.stages)["not_matched"]
         assert 0 == dict(progress.stages)["failed"]
 
 
@@ -631,8 +634,8 @@ def test_candidates_outside_the_corroboration_band_admit_no_recording(
 
     Each provider resolves the asserted ASIN and states a running time this
     recording does not have. A retained candidate is not an identity, so no
-    proposal is formed and preparation completes on the recorded outcome
-    exactly as an unanswered recording does (ADR-0061, #966).
+    proposal is formed and preparation completes, not matched, exactly as an
+    unanswered recording does (ADR-0061, #966, #1407).
     """
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -665,7 +668,9 @@ def test_candidates_outside_the_corroboration_band_admit_no_recording(
         assert progress is not None
         assert 0 == progress.blocked
         assert 0 == progress.ready
-        assert 1 == progress.recorded
+        # No work identity was admitted, so it is not matched (#1407).
+        assert 0 == progress.recorded
+        assert 1 == progress.not_matched
         assert 0 == dict(progress.stages)["failed"]
 
 

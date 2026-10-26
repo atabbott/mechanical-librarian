@@ -41,6 +41,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import LibraryLensFilter
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
@@ -86,10 +87,55 @@ def _oracle_browse_scalar_sql(sql: str) -> str:
     ).replace("json_extract(mr.document,'$.target.fields[0].value')", "scalars.title")
 
 
+# #1407: an unmatched package's reason, read from its report document, with
+# the lanes a provider status falls back to exactly as the limited flag reads.
+_ORACLE_LANES_SQL = (
+    "FROM json_each(mr.document,'$.providers') provider "
+    "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 WHERE "
+)
+_ORACLE_STATUS_SQL = (
+    "COALESCE(json_extract(lane.value,'$.status'),"
+    "json_extract(provider.value,'$.status'))"
+)
+_ORACLE_CANDIDATES_SQL = (
+    "EXISTS(SELECT 1 " + _ORACLE_LANES_SQL + _ORACLE_STATUS_SQL + "='candidates')"
+)
+_ORACLE_MATCH_REASON_SQL = (
+    "CASE WHEN ml.review_case_id IS NULL AND (ml.outcome='evidence_only' OR NOT "
+    + _ORACLE_CANDIDATES_SQL
+    + ") THEN CASE WHEN "
+    + _ORACLE_CANDIDATES_SQL
+    + " THEN 'refused' WHEN EXISTS(SELECT 1 "
+    + _ORACLE_LANES_SQL
+    + "json_extract(lane.value,'$.status')='no_match' AND "
+    "(json_extract(lane.value,'$.dispatch.outcome')='refused' OR EXISTS("
+    "SELECT 1 FROM json_each(lane.value,'$.diagnostics') diagnostic WHERE "
+    "json_extract(diagnostic.value,'$.category')='work_identity_refused'))) "
+    "THEN 'refused' WHEN EXISTS(SELECT 1 "
+    + _ORACLE_LANES_SQL
+    + _ORACLE_STATUS_SQL
+    + " IN ('authentication','authorization','rate_limited','unavailable',"
+    "'incomplete','malformed','oversized','candidate_limit_exceeded',"
+    "'query_limit_exceeded')) THEN 'unavailable' ELSE 'no_match' END END"
+)
+_LENSES: tuple[LibraryLensFilter | None, ...] = (
+    None,
+    "needs_attention",
+    "no_attention_needed",
+    "not_matched",
+)
+_ORACLE_LENS_CONDITIONS = {
+    None: "1",
+    "needs_attention": "attention=1",
+    "no_attention_needed": "attention=0 AND match_reason IS NULL",
+    "not_matched": "attention=0 AND match_reason IS NOT NULL",
+}
+
+
 def _oracle_library_sql(attached: bool, condition: str) -> str:
     terminal_union = (
         " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-        "item_id,NULL,0,0,ml_casefold(display_title),'',work_id,attempt,"
+        "item_id,NULL,0,0,NULL,ml_casefold(display_title),'',work_id,attempt,"
         "stage,failure_root,recovery_attempt,failure_code,"
         "display_title,display_authors,display_format FROM terminal"
         + _TERMINAL_LIBRARY_SEARCH_SQL
@@ -119,6 +165,8 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         "'authentication','authorization','rate_limited','unavailable',"
         "'incomplete','malformed','oversized','candidate_limit_exceeded',"
         "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_limited,"
+        + _ORACLE_MATCH_REASON_SQL
+        + " AS match_reason,"
         "ml_casefold(COALESCE(scalars.title,'')) AS title_order,"
         "COALESCE(rc.review_case_id,'') AS case_order,"
         "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
@@ -130,16 +178,20 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         + _oracle_browse_scalar_sql(_ORACLE_REVIEW_SEARCH_SQL)
         + terminal_union
         + "),totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
-        "AS attention_total FROM candidates),page AS MATERIALIZED (SELECT "
+        "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND match_reason "
+        "IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total FROM candidates),"
+        "page AS MATERIALIZED (SELECT "
         "1 AS present,case_id,report_id,proposal_set_id,"
         "connection_name,library_name,item_id,outcome,"
         "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
         "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
-        "AS provider_order,title_order,case_order,work_id,attempt,stage,"
+        "AS provider_order,CASE WHEN attention=0 AND match_reason IS NOT NULL "
+        "THEN 0 ELSE 1 END AS match_order,match_reason,title_order,case_order,"
+        "work_id,attempt,stage,"
         "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
         + condition
-        + " ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
-        "connection_name,case_order LIMIT ? OFFSET ?) "
+        + " ORDER BY attention_order,provider_order,match_order,title_order,"
+        "library_name,item_id,connection_name,case_order LIMIT ? OFFSET ?) "
         "SELECT rc.document,CASE WHEN page.present=1 AND page.report_id IS NULL THEN json_object("
         "'attempt',page.attempt,'connection',page.connection_name,"
         "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
@@ -148,11 +200,13 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
         "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
         "page.connection_name,page.library_name,page.item_id,page.outcome, "
-        "COALESCE(page.present,0),totals.total,totals.attention_total "
+        "COALESCE(page.present,0),totals.total,totals.attention_total,"
+        "page.match_reason,totals.not_matched_total "
         "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
         "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
-        "ORDER BY page.attention_order,page.provider_order,page.title_order,"
-        "page.library_name,page.item_id,page.connection_name,page.case_order"
+        "ORDER BY page.attention_order,page.provider_order,page.match_order,"
+        "page.title_order,page.library_name,page.item_id,page.connection_name,"
+        "page.case_order"
     )
 
 
@@ -251,10 +305,10 @@ def _oracle_library(
     search: str | None,
     limit: int,
     offset: int,
-    attention: bool | None,
+    lens: LibraryLensFilter | None,
     labels: tuple[tuple[str, str, str], ...],
-) -> tuple[tuple[tuple[str | None, str], ...], int, int]:
-    condition = {None: "1", True: "attention=1", False: "attention=0"}[attention]
+) -> tuple[tuple[tuple[str | None, str], ...], int, int, int, tuple[str | None, ...]]:
+    condition = _ORACLE_LENS_CONDITIONS[lens]
     catalogue = _catalogue_parameters(repository)
     rows = repository._connection.execute(
         _oracle_library_sql(bool(catalogue), condition),
@@ -268,16 +322,18 @@ def _oracle_library(
         ),
     ).fetchall()
     values: list[tuple[str | None, str]] = []
+    reasons: list[str | None] = []
     for row in rows:
         if row[7] == 0:
             continue
+        reasons.append(row[10])
         if row[0] is None and row[6] is None:
             terminal = json.loads(row[1])
             if terminal.get("schema_version") == "review-terminal-work-v1":
                 values.append((None, _canonical_json(terminal)))
                 continue
         values.append((row[0], row[1]))
-    return tuple(values), rows[0][8], rows[0][9]
+    return tuple(values), rows[0][8], rows[0][9], rows[0][11], tuple(reasons)
 
 
 def _oracle_attention(
@@ -346,7 +402,7 @@ def _assert_equal_to_oracle(
             repository.count_current_attention_fields(search, labels),
         ) == _oracle_counts(repository, search, labels), search
         for limit, offset in pages:
-            for lens in (None, True, False):
+            for lens in _LENSES:
                 page = repository.read_current_library_page(
                     search, limit, offset, lens, labels
                 )
@@ -354,6 +410,8 @@ def _assert_equal_to_oracle(
                     page.rows,
                     page.total,
                     page.attention_total,
+                    page.not_matched_total,
+                    page.match_reasons,
                 ) == _oracle_library(repository, search, limit, offset, lens, labels), (
                     search,
                     limit,
@@ -617,7 +675,7 @@ def test_edge_library_pages_counts_and_searches_equal_the_document_statements(
             _assert_equal_to_oracle(repository, _EDGE_SEARCHES, _EDGE_PAGES, labels)
             for labels in ((), _LABELS)
         )
-        assert compared == 4 * len(_EDGE_SEARCHES) * len(_EDGE_PAGES) * 4
+        assert compared == 4 * len(_EDGE_SEARCHES) * len(_EDGE_PAGES) * 5
     finally:
         repository.close()
 
@@ -657,7 +715,9 @@ def test_candidate_statements_read_no_report_or_proposal_document(
             for search in searches
         }
         library = {
-            search: repository.read_current_library_page(search, 1, 0, True, _LABELS)
+            search: repository.read_current_library_page(
+                search, 1, 0, "needs_attention", _LABELS
+            )
             for search in searches
         }
         attention = {
@@ -665,7 +725,9 @@ def test_candidate_statements_read_no_report_or_proposal_document(
             for search in searches
         }
         settled = {
-            search: repository.read_current_library_page(search, 1, 0, False, _LABELS)
+            search: repository.read_current_library_page(
+                search, 1, 0, "no_attention_needed", _LABELS
+            )
             for search in searches
         }
         rendered = {
@@ -688,7 +750,9 @@ def test_candidate_statements_read_no_report_or_proposal_document(
                 repository.count_current_attention_fields(search, _LABELS),
             ) == counts[search]
             assert (
-                repository.read_current_library_page(search, 1, 0, True, _LABELS)
+                repository.read_current_library_page(
+                    search, 1, 0, "needs_attention", _LABELS
+                )
                 == library[search]
             )
             assert (
@@ -719,7 +783,9 @@ def test_candidate_statements_read_no_report_or_proposal_document(
                 repository.count_current_attention_fields(search, _LABELS),
             ) == counts[search]
             assert (
-                repository.read_current_library_page(search, 1, 0, False, _LABELS)
+                repository.read_current_library_page(
+                    search, 1, 0, "no_attention_needed", _LABELS
+                )
                 == settled[search]
             )
         # The oracle still reads every document, so it now fails.

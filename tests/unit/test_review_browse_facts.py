@@ -91,6 +91,9 @@ def _canonical_report_facts(report: MetadataReport) -> LibraryReportFacts:
                     else provider.query_kind
                 ).value,
                 lane.status.value,
+                lane.dispatch.outcome.value
+                if type(lane) is ProviderLaneObservation and lane.dispatch is not None
+                else None,
             )
             for provider in report.providers
             for lane in provider.lanes or (provider,)
@@ -209,6 +212,8 @@ def _pages(case_document: str, report_document: str) -> str:
         library_rows,
         len(library_rows),
         1,
+        0,
+        (None,) * len(library_rows),
     )
     repository.read_review_attention.return_value = ReviewAttentionSnapshot(
         attention_rows,

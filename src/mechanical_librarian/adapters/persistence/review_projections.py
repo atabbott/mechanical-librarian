@@ -64,6 +64,7 @@ from mechanical_librarian.application.review_web import (
     BROWSE_SCOPE_REUSE,
     CurrentReviewCaseSnapshot,
     LibraryLabels,
+    LibraryLensFilter,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
@@ -108,7 +109,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             [str, int], tuple[dict[str, object], ...]
         ],
         read_current_library_page: Callable[
-            [str | None, int, int, bool | None, LibraryLabels], ReviewLibraryPage
+            [str | None, int, int, LibraryLensFilter | None, LibraryLabels],
+            ReviewLibraryPage,
         ],
         read_current_attention_page: Callable[
             [str | None, int, int, LibraryLabels], ReviewAttentionPage
@@ -474,13 +476,13 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot:
         with self._consistent_review_read():
             page = self.read_current_library_page(
-                search, limit, offset, attention, library_labels
+                search, limit, offset, lens, library_labels
             )
             projected_rows: list[
                 tuple[
@@ -579,6 +581,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 rows=projected,
                 total=page.total,
                 attention_total=page.attention_total,
+                not_matched_total=page.not_matched_total,
+                match_reasons=page.match_reasons,
                 decision_scopes=tuple(scopes),
             )
         return snapshot

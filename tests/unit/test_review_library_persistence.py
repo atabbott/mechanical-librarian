@@ -594,9 +594,12 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
         "projection": 0,
         "ready": 1,
         "recorded": 0,
+        "not_matched": 0,
         "failed": 2,
     }
-    assert progress.checked == progress.ready + progress.recorded + progress.blocked
+    assert progress.checked == (
+        progress.ready + progress.recorded + progress.not_matched + progress.blocked
+    )
     assert progress.total == sum(count for _stage, count in progress.stages)
     # Stale is terminally blocked: it remains in place, has no retry count,
     # and this read path creates no manual retry or recovery work.
@@ -1153,7 +1156,7 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
         ):
             totals = repository.count_current_review_cases(search)
             attention_total = repository.count_current_attention_fields(search)
-            for lens in (None, True, False):
+            for lens in (None, "needs_attention", "no_attention_needed", "not_matched"):
                 complete = repository.read_current_library_page(search, 50, 0, lens)
                 assert (complete.total, complete.attention_total) == totals
                 for offset in (0, 1, 50):
@@ -1167,7 +1170,7 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
                 assert fields.rows == complete_attention.rows[offset : offset + 1]
                 assert fields.total == attention_total
         attention_rows = repository.list_current_review_case_documents(
-            None, 10, 0, True
+            None, 10, 0, "needs_attention"
         )
         assert len(attention_rows) == 1
         assert (
@@ -1175,7 +1178,7 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
             == ReviewCase.from_json(attention_rows[0][0]).review_case_id
         )
         automatic_rows = repository.list_current_review_case_documents(
-            "édition-2", 10, 0, False
+            "édition-2", 10, 0, "no_attention_needed"
         )
         assert len(automatic_rows) == 1
         assert repository.count_current_review_cases("ångström") == (1, 1)
@@ -1652,7 +1655,9 @@ def test_sqlite_library_groups_attention_by_current_provider_completeness() -> N
             repository.publish_proposal(proposal)
             repository.admit_review_case(proposal)
 
-        rows = repository.list_current_review_case_documents(None, 20, 0, True)
+        rows = repository.list_current_review_case_documents(
+            None, 20, 0, "needs_attention"
+        )
         titles = [
             cast(str, MetadataReport.from_json(report_document).target.fields[0].value)
             for _, report_document in rows
@@ -1674,7 +1679,9 @@ def test_sqlite_library_groups_attention_by_current_provider_completeness() -> N
             proposal = evaluate_report(report)
             repository.publish_proposal(proposal)
             repository.admit_review_case(proposal)
-        before = repository.list_current_review_case_documents(None, 20, 0, True)
+        before = repository.list_current_review_case_documents(
+            None, 20, 0, "needs_attention"
+        )
         assert MetadataReport.from_json(before[-1][1]).target.item == "reclassified"
 
         successor = report_for(
@@ -1684,7 +1691,9 @@ def test_sqlite_library_groups_attention_by_current_provider_completeness() -> N
         successor_proposal = evaluate_report(successor)
         repository.publish_proposal(successor_proposal)
         repository.admit_review_case(successor_proposal)
-        after = repository.list_current_review_case_documents(None, 20, 0, True)
+        after = repository.list_current_review_case_documents(
+            None, 20, 0, "needs_attention"
+        )
         assert MetadataReport.from_json(after[0][1]).target.item == "reclassified"
 
         for report in (
@@ -1707,12 +1716,17 @@ def test_sqlite_library_groups_attention_by_current_provider_completeness() -> N
             proposal = evaluate_report(report)
             repository.publish_proposal(proposal)
             repository.admit_review_case(proposal)
-        no_attention = repository.list_current_review_case_documents(
-            "no attention", 20, 0, False
+        # Caseless works whose providers matched nothing are not matched,
+        # not clear: they leave No attention needed for their own lens.
+        assert not repository.list_current_review_case_documents(
+            "no attention", 20, 0, "no_attention_needed"
+        )
+        not_matched = repository.list_current_review_case_documents(
+            "no attention", 20, 0, "not_matched"
         )
         assert [
             MetadataReport.from_json(report_document).target.fields[0].value
-            for _, report_document in no_attention
+            for _, report_document in not_matched
         ] == ["Alpha no attention", "Zulu no attention"]
         repository.close()
 
@@ -1827,7 +1841,9 @@ def test_current_pointer_excludes_current_only_successors_from_owner_attention()
         assert title["needs_attention"] is True
         assert (
             ReviewCase.from_json(
-                repository.list_current_review_case_documents(None, 10, 0, True)[0][0]
+                repository.list_current_review_case_documents(
+                    None, 10, 0, "needs_attention"
+                )[0][0]
             ).review_case_id
             == case_id
         )
@@ -2071,6 +2087,7 @@ def test_sqlite_library_excludes_epub_conflicting_narrators_from_attention() -> 
             "all": 2,
             "needs_attention": 1,
             "no_attention_needed": 1,
+            "not_matched": 0,
         }
         assert [item["title"] for item in first["items"]] == ["Mistborn Secret History"]
         assert first["next_cursor"] is not None
@@ -2155,7 +2172,12 @@ def test_sqlite_complete_library_keeps_current_no_case_and_retired_work() -> Non
         assert repository.count_current_review_cases(None) == (3, 0)
         assert repository.count_current_review_cases("No-case") == (1, 0)
         assert repository.count_current_review_cases("In-progress") == (1, 0)
-        rows = repository.list_current_review_case_documents(None, 10, 0, False)
+        # None of these works carries provider evidence, so all three are
+        # not matched rather than clear.
+        assert not repository.list_current_review_case_documents(
+            None, 10, 0, "no_attention_needed"
+        )
+        rows = repository.list_current_review_case_documents(None, 10, 0, "not_matched")
         assert len(rows) == 3
         assert all(case_document is None for case_document, _ in rows)
         assert repository.list_current_attention_documents(None, 10, 0) == ()
@@ -2723,7 +2745,12 @@ def test_retained_component_ask_agrees_across_detail_library_and_attention(
         assert (
             all_works["counts"]
             == library["counts"]
-            == {"all": 1, "needs_attention": 1, "no_attention_needed": 0}
+            == {
+                "all": 1,
+                "needs_attention": 1,
+                "no_attention_needed": 0,
+                "not_matched": 0,
+            }
         )
         assert {"title", component} <= {
             item["destination"] for item in attention["items"]
@@ -3416,6 +3443,7 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             "all": 3,
             "needs_attention": 0,
             "no_attention_needed": 3,
+            "not_matched": 0,
         }
         items = cast(list[dict[str, object]], first["items"])
         assert [item["title"] for item in items] == ["Shared 100%_ title"] * 2
@@ -3744,12 +3772,12 @@ def test_combined_browse_validates_empty_marker_and_totals(
     from mechanical_librarian.application.metadata_report import MetadataReportError
 
     repository = open_repository(tmp_path / "review.sqlite")
-    marker = 7 if surface == "library" else 8
+    marker = 8
     reached = False
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != 10:
+        if len(cursor.description) != (12 if surface == "library" else 10):
             return row
         reached = True
         values = list(row)
@@ -3852,9 +3880,16 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
         )
 
         browser = BrowseReviewLibrary(repository)
-        summary = {"all": 3, "needs_attention": 1, "no_attention_needed": 2}
+        # The settled work has no provider evidence, so it is not matched; the
+        # stopped one is a terminal failure and stays clear (#1413).
+        summary = {
+            "all": 3,
+            "needs_attention": 1,
+            "no_attention_needed": 1,
+            "not_matched": 1,
+        }
         observed = []
-        for lens in ("all", "needs_attention", "no_attention_needed"):
+        for lens in ("all", "needs_attention", "no_attention_needed", "not_matched"):
             for limit in (1, 25):
                 first = browser.library(
                     lens=lens, search=None, limit=limit, cursor=None
@@ -3870,10 +3905,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     observed.append((lens, limit, "page 2", second["counts"]))
         assert all(counts == summary for *_, counts in observed), observed
         # A lens holding more than one work has a second page at limit 1.
-        assert {lens for lens, _, page, _ in observed if page == "page 2"} == {
-            "all",
-            "no_attention_needed",
-        }
+        assert {lens for lens, _, page, _ in observed if page == "page 2"} == {"all"}
         all_items = browser.library(lens="all", search=None, limit=25, cursor=None)
         titles = [
             item["title"] for item in cast(list[dict[str, object]], all_items["items"])
@@ -3881,14 +3913,41 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
         assert "Stopped terminal title" in titles, titles
         # Only a search changes the summary.
         for search, expected in (
-            ("Needle", {"all": 1, "needs_attention": 1, "no_attention_needed": 0}),
+            (
+                "Needle",
+                {
+                    "all": 1,
+                    "needs_attention": 1,
+                    "no_attention_needed": 0,
+                    "not_matched": 0,
+                },
+            ),
             (
                 "Stopped terminal",
-                {"all": 1, "needs_attention": 0, "no_attention_needed": 1},
+                {
+                    "all": 1,
+                    "needs_attention": 0,
+                    "no_attention_needed": 1,
+                    "not_matched": 0,
+                },
+            ),
+            (
+                "Settled",
+                {
+                    "all": 1,
+                    "needs_attention": 0,
+                    "no_attention_needed": 0,
+                    "not_matched": 1,
+                },
             ),
             (
                 "zzz-no-match",
-                {"all": 0, "needs_attention": 0, "no_attention_needed": 0},
+                {
+                    "all": 0,
+                    "needs_attention": 0,
+                    "no_attention_needed": 0,
+                    "not_matched": 0,
+                },
             ),
         ):
             for lens in ("all", "needs_attention"):

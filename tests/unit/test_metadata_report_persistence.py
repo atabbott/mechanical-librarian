@@ -47,11 +47,14 @@ from mechanical_librarian.domain.metadata_report import (
 from tests.support.metadata_report_schemas import (
     PRIOR_ATTENTION_FACT_OBJECTS,
     PRIOR_HUMAN_DECISIONS_SQL,
+    PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL,
+    PRIOR_REPORT_BROWSE_FACTS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     create_legacy_schema,
     create_prior_schema,
     forged_latin_work_report_json,
     leave_hot_journal,
+    prior_report_browse_fact_pairs,
     synthetic_latin_work_report,
     synthetic_reordered_work_report,
     synthetic_report,
@@ -2480,6 +2483,21 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_ATTENTION_FACT_OBJECTS",
             PRIOR_ATTENTION_FACT_OBJECTS,
+        )
+        old.setattr(
+            persistence_schema,
+            "_REPORT_BROWSE_FACTS_SQL",
+            PRIOR_REPORT_BROWSE_FACTS_SQL,
+        )
+        old.setattr(
+            persistence_schema,
+            "_REPORT_BROWSE_FACTS_INSERT_SQL",
+            PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL,
+        )
+        old.setattr(
+            persistence_schema,
+            "_report_browse_fact_pairs",
+            prior_report_browse_fact_pairs,
         )
         if not current_scaffolding:
             old.setattr(

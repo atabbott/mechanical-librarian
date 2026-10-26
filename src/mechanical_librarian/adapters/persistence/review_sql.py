@@ -293,6 +293,22 @@ _ATTENTION_FACTS_JOIN_SQL = (
     "AND f.library_name=c.library_name AND f.item_id=c.item_id "
     "AND f.report_id=mr.report_id "
 )
+# #1407: a current package no provider matched -- no case, and either no
+# admitted work identity or no provider lane that returned candidates -- over
+# the package `ml` and its report's browse facts `facts`. Library's lens and
+# count and the masthead's preparation buckets read it alike.
+_NOT_MATCHED_PACKAGE_SQL = (
+    "(ml.review_case_id IS NULL AND (ml.outcome='evidence_only' "
+    "OR facts.provider_match_state<>'matched'))"
+)
+# Its one reason, NULL for any other package. Candidates on an unmatched
+# package are an audiobook's that no work identity admitted: found, but refused.
+_NOT_MATCHED_REASON_SQL = (
+    "CASE WHEN "
+    + _NOT_MATCHED_PACKAGE_SQL
+    + " THEN CASE WHEN facts.provider_match_state='matched' THEN 'refused' "
+    "ELSE facts.provider_match_state END END"
+)
 _CURRENT_REVIEW_CASE_COUNT_SQL = (
     "SELECT count(*),COALESCE(sum(CASE WHEN "
     + _LIBRARY_ATTENTION_SQL
@@ -320,6 +336,8 @@ __all__ = [
     "_ATTENTION_FACT_SOURCE_SQL",
     "_ATTENTION_FACTS_JOIN_SQL",
     "_LIBRARY_ATTENTION_SQL",
+    "_NOT_MATCHED_PACKAGE_SQL",
+    "_NOT_MATCHED_REASON_SQL",
     "_STORED_COVER_ATTENTION_AUTHORITY_SQL",
     "_AUTOMATIC_SAFETY_ATTENTION_SQL",
     "_CURRENT_COVER_ATTENTION_AUTHORITY_SQL",

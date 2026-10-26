@@ -58,6 +58,7 @@ from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
     LibraryLabels,
     OwnerSessionService,
+    ProviderRecoverySchedule,
     RecordHumanDecision,
     ReviewLibraryStore,
     ReviewSessionStore,
@@ -1419,6 +1420,7 @@ class ReviewApplication:
                 "ready": 0 if progress is None else progress.ready,
                 "blocked": 0 if progress is None else progress.blocked,
                 "recorded": 0 if progress is None else progress.recorded,
+                "not_matched": 0 if progress is None else progress.not_matched,
                 "rescan_requested": False
                 if progress is None
                 else progress.rescan_requested,
@@ -1471,6 +1473,7 @@ class ReviewApplication:
             else {
                 "ready": sum(progress.ready for progress in in_run),
                 "recorded": sum(progress.recorded for progress in in_run),
+                "not_matched": sum(progress.not_matched for progress in in_run),
                 "failed": sum(progress.blocked for progress in in_run),
                 "in_progress": sum(
                     max(progress.total - progress.checked, 0) for progress in in_run
@@ -1569,6 +1572,7 @@ class ReviewApplication:
             "ready": progress.ready,
             "blocked": progress.blocked,
             "recorded": progress.recorded,
+            "not_matched": progress.not_matched,
             "rescan_requested": progress.rescan_requested,
             "stages": [
                 {"stage": stage, "count": count} for stage, count in progress.stages
@@ -1767,6 +1771,7 @@ def compose_review_application(
     acknowledge_first_boot: Callable[[], None] | None = None,
     validated_documents: ValidatedDocumentCache | None = None,
     provider_throttling: Callable[[], dict[str, object]] | None = None,
+    provider_recovery: ProviderRecoverySchedule | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = operation_lock or RLock()
@@ -1823,6 +1828,7 @@ def compose_review_application(
             ValidatedDocumentCache()
             if validated_documents is None
             else validated_documents,
+            provider_recovery,
         ),
         policy=PolicyNotebook(
             policy_store,

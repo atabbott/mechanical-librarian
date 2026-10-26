@@ -987,6 +987,14 @@ def _case(case_id: str) -> dict[str, object]:
     }
 
 
+def _clear(item: dict[str, object]) -> bool:
+    """Nothing to decide, and a provider matched it (#1407)."""
+    return (
+        int(cast(int, item["attention_count"])) == 0
+        and item["attention_state"] != "not_matched"
+    )
+
+
 def _library(query: dict[str, list[str]]) -> dict[str, object]:
     lens = query.get("lens", ["all"])[0]
     needle = query.get("q", [""])[0].casefold().strip()
@@ -1009,13 +1017,15 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
     if lens == "needs_attention":
         works = [item for item in works if int(cast(int, item["attention_count"])) > 0]
     elif lens == "no_attention_needed":
-        works = [item for item in works if int(cast(int, item["attention_count"])) == 0]
+        works = [item for item in works if _clear(item)]
+    elif lens == "not_matched":
+        works = [item for item in works if item["attention_state"] == "not_matched"]
     cursor = query.get("cursor", [""])[0]
     page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
     end = start + 6
     return {
-        "schema_version": "review-library-v2",
+        "schema_version": "review-library-v3",
         "lens": lens,
         "query": needle or None,
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
@@ -1026,8 +1036,9 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
                 int(cast(int, item["attention_count"])) > 0 for item in matched
             ),
             "all": len(matched),
-            "no_attention_needed": sum(
-                int(cast(int, item["attention_count"])) == 0 for item in matched
+            "no_attention_needed": sum(_clear(item) for item in matched),
+            "not_matched": sum(
+                item["attention_state"] == "not_matched" for item in matched
             ),
         },
         "items": deepcopy(works[start:end]),

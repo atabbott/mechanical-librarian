@@ -6242,6 +6242,7 @@ def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
         assert presentation["now"] == {
             "ready": 1,
             "recorded": 1,
+            "not_matched": 0,
             "failed": 1,
             "in_progress": 0,
             "scan_ids": [scan.scan_id],
@@ -6277,6 +6278,7 @@ def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
     assert presentation["now"] == {
         "ready": 1,
         "recorded": 0,
+        "not_matched": 0,
         "failed": 2,
         "in_progress": 0,
         "scan_ids": [scan.scan_id],
@@ -9415,6 +9417,7 @@ class _ScheduledPipeline:
             0,
             0,
             0,
+            0,
             False,
         )
 
@@ -9672,6 +9675,7 @@ def test_lifecycle_foreground_controls_share_one_reentrant_lock_and_workers_keep
         0,
         0,
         0,
+        0,
         False,
         1,
     )
@@ -9764,6 +9768,7 @@ def test_lifecycle_foreground_operations_validate_before_each_repository_call() 
         0,
         0,
         0,
+        0,
         False,
         1,
     )
@@ -9836,6 +9841,7 @@ def test_foreground_control_holds_observation_through_close_then_falls_back() ->
         "primary",
         "fiction",
         "queued",
+        0,
         0,
         0,
         0,
@@ -10154,6 +10160,7 @@ def test_startup_interval_and_pause_admission_are_bounded() -> None:
             1,
             0,
             0,
+            0,
             False,
             100,
         )
@@ -10192,6 +10199,7 @@ def test_terminal_failures_wait_for_owner_action_without_idle_status_reads() -> 
             1,
             0,
             1,
+            0,
             0,
             False,
             100,
@@ -10276,6 +10284,7 @@ def test_lane_zero_rechecks_due_deadline_between_bounded_work_batches() -> None:
             1,
             1,
             1,
+            0,
             0,
             0,
             False,
@@ -10397,6 +10406,7 @@ def test_retry_is_limited_to_terminal_actionable_failure() -> None:
         1,
         0,
         1,
+        0,
         0,
         False,
         100,
@@ -11541,11 +11551,12 @@ def test_a_scans_stage_counts_still_account_for_every_work_it_carried(
 ) -> None:
     """Every work a scan carried lands in exactly one stage bucket.
 
-    The nine buckets partition the scan: an owner reading them is reading
+    The ten buckets partition the scan: an owner reading them is reading
     where the whole scan got to, so a work in none of them is a work the
-    progress surface silently loses. A recorded work is neither `ready` --
-    nothing is being asked of the owner -- nor `failed`, and `recorded` is
-    the bucket that says so (#966).
+    progress surface silently loses. A finished work with no case is neither
+    `ready` -- nothing is being asked of the owner -- nor `failed`. With no
+    provider evidence behind it, as here, `not_matched` is the bucket that
+    says so (#1407); with provider evidence it is `recorded` (#966).
     """
     report = _audio_report("item", "1" * 64)
     repository = open_repository(application_path)
@@ -11560,16 +11571,20 @@ def test_a_scans_stage_counts_still_account_for_every_work_it_carried(
     assert progress.total == 1
     assert sum(count for _name, count in progress.stages) == progress.total
     stages = dict(progress.stages)
-    # `recorded` is where a scan's work stops with nothing left owed. That is
-    # exactly what a published report with no case to follow it is, and it is
-    # emphatically neither `ready` nor `failed`.
-    assert stages["recorded"] == 1
+    # A published report with no case and no provider evidence is not
+    # matched: nothing is owed, and it is emphatically neither `ready` nor
+    # `failed`, nor the `recorded` a provider-backed report would be.
+    assert stages["not_matched"] == 1
+    assert stages["recorded"] == 0
     assert stages["ready"] == 0
     assert stages["failed"] == 0
-    assert progress.recorded == 1
+    assert progress.not_matched == 1
+    assert progress.recorded == 0
     assert progress.ready == 0
     assert progress.blocked == 0
-    assert progress.checked == progress.ready + progress.recorded + progress.blocked
+    assert progress.checked == (
+        progress.ready + progress.recorded + progress.not_matched + progress.blocked
+    )
 
 
 def test_audiobook_publication_refreshes_before_interleaved_claim_next(

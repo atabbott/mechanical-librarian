@@ -3609,6 +3609,7 @@ def compose_store_runtime_generation(
                 provider_throttling=_provider_throttling_reader(
                     provider_recovery, configuration, credentials, "available"
                 ),
+                provider_recovery=provider_recovery,
             )
             review_app = create_review_app(review_application, review)
         except BaseException:
@@ -4145,6 +4146,7 @@ def run_review_server(
                     provider_throttling=_provider_throttling_reader(
                         provider_recovery, configuration, credentials, "managed_by_file"
                     ),
+                    provider_recovery=provider_recovery,
                 )
                 active_review_application = review_application
                 app = create_review_app(review_application, review)

@@ -41,11 +41,13 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
     LibraryLabels,
+    LibraryLensFilter,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
 )
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
+from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.field_effect import LIST_DESTINATIONS
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
@@ -55,8 +57,11 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    DispatchOutcome,
     FileFacts,
     MetadataReport,
+    ProviderLaneObservation,
+    ProviderStatus,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -83,6 +88,20 @@ from tests.unit.review_app_fixture import (
 # The exact attention row `ReviewAttentionSnapshot` declares. `rows` below is
 # annotated with it so a narrowed row fails the gate rather than reaching the
 # reader as padding (#703).
+# The statuses `metadata_report_browse_facts.provider_limited` flags.
+_LIMITING_STATUSES = frozenset(
+    {
+        "authentication",
+        "authorization",
+        "rate_limited",
+        "unavailable",
+        "incomplete",
+        "malformed",
+        "oversized",
+        "candidate_limit_exceeded",
+        "query_limit_exceeded",
+    }
+)
 _AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool]
 
 # The exact library row `ReviewLibrarySnapshot` declares, annotated for the
@@ -521,6 +540,34 @@ class FakeReviewRepository:
         )
 
     @staticmethod
+    def _match_reason(report: MetadataReport) -> str | None:
+        """A caseless report's #1407 reason, as the browse fact derives it."""
+        lanes = [
+            lane
+            for provider in report.providers
+            for lane in provider.lanes or (provider,)
+        ]
+        if any(lane.status is ProviderStatus.CANDIDATES for lane in lanes):
+            return None
+        if any(
+            lane.status is ProviderStatus.NO_MATCH
+            and (
+                type(lane) is ProviderLaneObservation
+                and lane.dispatch is not None
+                and lane.dispatch.outcome is DispatchOutcome.REFUSED
+                or any(
+                    value.category is FailureCategory.WORK_IDENTITY_REFUSED
+                    for value in lane.diagnostics
+                )
+            )
+            for lane in lanes
+        ):
+            return "refused"
+        if any(lane.status.value in _LIMITING_STATUSES for lane in lanes):
+            return "unavailable"
+        return "no_match"
+
+    @staticmethod
     def _attention(case: ReviewCase) -> bool:
         return any(
             FakeReviewRepository._field_attention(case, proposal)
@@ -564,49 +611,63 @@ class FakeReviewRepository:
     def _current_review_cases(
         self,
         search: str | None,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
     ) -> list[tuple[ReviewCase | None, MetadataReport]]:
+        # A case is in attention or it is not; a caseless report is matched,
+        # or it is the Not matched lens's (#1407).
         rows: list[tuple[ReviewCase | None, MetadataReport]] = [
             (case, report)
             for case, report in self._searched(search, library_labels)
-            if attention is None or self._attention(case) is attention
+            if lens is None
+            or (
+                lens != "not_matched"
+                and self._attention(case) is (lens == "needs_attention")
+            )
         ]
-        if attention is not True:
+        if lens != "needs_attention":
             query = None if search is None else search.casefold()
             rows.extend(
                 (None, report)
                 for report in self.browse_without_cases
-                if query is None
-                or query
-                in " ".join(
-                    (
-                        report.target.current_title or "",
-                        " ".join(
-                            value
-                            for field in report.target.fields
-                            if field.destination is TargetDestination.AUTHORS
-                            and type(field.value) is tuple
-                            for value in cast(tuple[str, ...], field.value)
-                        ),
-                        next(
-                            (
-                                label
-                                for connection, library, label in library_labels
-                                if (connection, library)
-                                == (report.target.connection, report.target.library)
+                if (
+                    lens is None
+                    or (self._match_reason(report) is None)
+                    is (lens == "no_attention_needed")
+                )
+                and (
+                    query is None
+                    or query
+                    in " ".join(
+                        (
+                            report.target.current_title or "",
+                            " ".join(
+                                value
+                                for field in report.target.fields
+                                if field.destination is TargetDestination.AUTHORS
+                                and type(field.value) is tuple
+                                for value in cast(tuple[str, ...], field.value)
                             ),
-                            "",
-                        ),
-                        report.target.library,
-                        report.target.item,
-                        report.file.format,
-                    )
-                ).casefold()
+                            next(
+                                (
+                                    label
+                                    for connection, library, label in library_labels
+                                    if (connection, library)
+                                    == (report.target.connection, report.target.library)
+                                ),
+                                "",
+                            ),
+                            report.target.library,
+                            report.target.item,
+                            report.file.format,
+                        )
+                    ).casefold()
+                )
             )
         rows.sort(
             key=lambda value: (
                 value[0] is None or not self._attention(value[0]),
+                value[0] is not None or self._match_reason(value[1]) is None,
                 (value[1].target.current_title or "").casefold(),
                 "" if value[0] is None else value[0].review_case_id,
             )
@@ -618,13 +679,13 @@ class FakeReviewRepository:
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
     ) -> tuple[tuple[str | None, str], ...]:
         return tuple(
             (None if case is None else case.to_json(), report.to_json())
             for case, report in self._current_review_cases(
-                search, attention, library_labels
+                search, lens, library_labels
             )[offset : offset + limit]
         )
 
@@ -664,13 +725,14 @@ class FakeReviewRepository:
         search: str | None,
         limit: int,
         offset: int,
-        attention: bool | None,
+        lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
     ) -> ReviewLibrarySnapshot:
         rows = self.list_current_review_case_documents(
-            search, limit, offset, attention, library_labels
+            search, limit, offset, lens, library_labels
         )
+        everything = self._current_review_cases(search, None, library_labels)
         total, attention_total = self.count_current_review_cases(search, library_labels)
         identified = [
             (
@@ -721,6 +783,16 @@ class FakeReviewRepository:
             rows=tuple(projected),
             total=total,
             attention_total=attention_total,
+            not_matched_total=sum(
+                case is None and self._match_reason(report) is not None
+                for case, report in everything[:100_000]
+            ),
+            match_reasons=tuple(
+                None
+                if case_document is not None
+                else self._match_reason(MetadataReport.from_json(report_document))
+                for _case_id, case_document, report_document in identified
+            ),
         )
 
     def list_current_attention_documents(
@@ -810,6 +882,7 @@ class FakePreparation:
             1,
             0,
             0,
+            0,
             False,
             0,
             (
@@ -821,6 +894,7 @@ class FakePreparation:
                 ("projection", 0),
                 ("ready", 1),
                 ("recorded", 0),
+                ("not_matched", 0),
                 ("failed", 1),
             ),
         )

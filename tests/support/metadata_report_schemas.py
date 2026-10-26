@@ -295,6 +295,44 @@ PRIOR_ATTENTION_FACT_OBJECTS = tuple(
 )
 
 
+# Every producer before #1407 derived no provider match state for a report.
+PRIOR_REPORT_BROWSE_FACTS_SQL = persistence_schema._REPORT_BROWSE_FACTS_SQL.replace(
+    ", provider_match_state TEXT NOT NULL CHECK(provider_match_state IN "
+    "('matched','refused','unavailable','no_match'))",
+    "",
+)
+
+
+def _without_match_state(sql: str, document: str) -> str:
+    value = persistence_schema._report_browse_fact_values_sql(document).partition(
+        " THEN 1 ELSE 0 END,"
+    )[2]
+    return sql.replace(" THEN 1 ELSE 0 END," + value, " THEN 1 ELSE 0 END")
+
+
+PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL = _without_match_state(
+    persistence_schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(
+        ",provider_limited,provider_match_state)", ",provider_limited)"
+    ),
+    "NEW.document",
+)
+
+
+_CURRENT_REPORT_BROWSE_FACT_PAIRS = persistence_schema._report_browse_fact_pairs
+
+
+def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
+    """The open-time fact comparison those producers' stores answer."""
+    (derived, stored), authors = _CURRENT_REPORT_BROWSE_FACT_PAIRS(key)
+    return (
+        (
+            _without_match_state(derived, "mr.document"),
+            stored.replace(",provider_match_state FROM", " FROM"),
+        ),
+        authors,
+    )
+
+
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
