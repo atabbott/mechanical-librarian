@@ -74,6 +74,13 @@ forever. A retry whose earlier outcome was unknown is never sent again: when its
 pre-read shows the desired value at the desired version it is `verified` with no
 request. Cover plans keep `capability` and stay terminal.
 
+Withdrawn authority supersedes a `retryable` plan, and a connection-stale plan
+waiting on that authority, with `authority_superseded`; neither sends anything.
+A superseded or abandoned plan whose history reached `applying` is never planned
+afresh, since that would send an unknown outcome again. A superseded automatic
+cover is planned again only once its recovery cleanup has completed, and the
+re-plan retires that discharged cleanup with the terminal state it belonged to.
+
 Pause and library consent revocation stop new claims. They do not interrupt a
 claimed service request. Startup recovers only claimed, applying, verifying, or
 reconciling work and its persisted actions and cleanup obligations; a claimed

@@ -998,7 +998,23 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         (operation.plan.authority.decision_id,),
                     ).fetchone()
                     == (1,)
+                    # A plan whose request may have reached Audiobookshelf is
+                    # never planned afresh: that would send an unknown outcome
+                    # again. A cover's recovery bytes must be gone before its
+                    # discharged cleanup is retired with the terminal state it
+                    # belonged to (#1402).
+                    and self._connection.execute(
+                        "SELECT 1 FROM field_effect_events WHERE plan_id=? AND kind='applying' "
+                        "UNION ALL SELECT 1 FROM field_effect_cleanups WHERE plan_id=? "
+                        "AND state='pending'",
+                        (operation.plan.plan_id, operation.plan.plan_id),
+                    ).fetchone()
+                    is None
                 ):
+                    self._connection.execute(
+                        "DELETE FROM field_effect_cleanups WHERE plan_id=?",
+                        (operation.plan.plan_id,),
+                    )
                     self._connection.execute(
                         "UPDATE field_effects SET state='planned',attempt=0,updated_at=?,document=? "
                         "WHERE plan_id=? AND state IN ('superseded','abandoned')",
@@ -1566,8 +1582,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             "SELECT document,state FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects WHERE decision_id=? "
             "UNION ALL SELECT rowid FROM field_effects WHERE "
             + _FIELD_EFFECT_COMPANION_DECISION_SQL
-            + "=?) AND state IN "
+            + "=?) AND (state IN "
             + _FIELD_EFFECT_READY_STATES_SQL
+            # A plan a lost connection released waits on this authority, so
+            # it closes with it rather than reading as waiting (#1402).
+            + " OR (state='stale' AND json_extract(document,'$.failure')='connection'))"
             + " ORDER BY rowid",
             (decision_id, decision_id),
         ).fetchall()

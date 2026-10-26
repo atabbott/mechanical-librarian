@@ -18,19 +18,27 @@ import pytest
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
-from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
     FieldEffectError,
     FieldEffectOperation,
+    FieldEffectPlan,
 )
 from mechanical_librarian.domain.human_decision import HumanDecisionError
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.field_effects import (
+    CAPABILITY,
+    DEPENDENCY,
     _EffectEnvironment,
     _plan,
     _replan,
@@ -331,8 +339,9 @@ def owner(tmp_path: Path) -> Iterator[OwnerStore]:
         store.close()
 
 
-def test_a_superseded_stranded_claim_stales_at_preclaim_in_production(
-    owner: OwnerStore,
+@pytest.mark.parametrize("superseded", ("during_claim", "after_recovery"))
+def test_a_superseded_stranded_claim_sends_nothing_in_production(
+    owner: OwnerStore, superseded: str
 ) -> None:
     case_id, _ = publish_genre_case(owner.repository, genre_report())
     owner.load(case_id)
@@ -350,12 +359,21 @@ def test_a_superseded_stranded_claim_stales_at_preclaim_in_production(
         owner.decide(
             "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
         )
-    assert owner.service.supersede(automatic.decision_id) == 0
+    if superseded == "during_claim":
+        assert owner.service.supersede(automatic.decision_id) == 0
     assert owner.service.recover_startup() == (1, 0, 0)
     returned = owner.service.status(plan_id)
     assert (returned.state, returned.failure) == ("retryable", "not_sent")
-    stale = owner.service.apply(plan_id)
-    assert (stale.state, stale.failure) == ("stale", "authority")
+    if superseded == "during_claim":
+        closed = owner.service.apply(plan_id)
+        assert (closed.state, closed.failure) == ("stale", "authority")
+    else:
+        # Once the claim is returned the owner's decision supersedes it.
+        owner.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+        closed = owner.service.apply(plan_id)
+        assert (closed.state, closed.failure) == ("superseded", "authority_superseded")
     assert owner.patches == []
 
 
@@ -438,3 +456,168 @@ def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
     lane._run_until_idle()
     assert sorted(sent) == plan_ids
     assert effects.repository.pending_field_effect_decision_documents(100) == ()
+
+
+def _automatic_tags_plan(
+    effects: _EffectEnvironment,
+) -> tuple[AutomaticDecision, GuardedFieldApplication, FieldEffectOperation]:
+    report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
+    (decision,) = (
+        value
+        for value in _automatic_decisions(
+            effects,
+            report,
+            category,
+            option,
+            qualified=True,
+            also=(("tags", "fill_empty"),),
+        )
+        if value.outcome == "candidate"
+    )
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    effects.repository.grant_field_effect_consents("primary", ("ebooks",), ("tags",), 5)
+    snapshot = authority.resolve(decision)
+    key = (snapshot.connection, snapshot.library, snapshot.work_id, "tags")
+    effects.target._values[key] = snapshot.pre_value
+    effects.target._versions[key] = snapshot.target_version
+    service = effects.persisted_service(effects.repository, effects.target, authority)
+    lane = ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "ebooks"): service},
+        {("primary", "ebooks"): effects.capabilities},
+        authority,
+        (("primary", "ebooks"),),
+        effects.clock,
+        lambda *_: None,
+    )
+    assert lane.schedule() == 1
+    ((document,),) = effects.repository._connection.execute(
+        "SELECT document FROM field_effects"
+    ).fetchall()
+    return decision, service, FieldEffectOperation.from_json(document)
+
+
+def _restore_authority(effects: _EffectEnvironment, decision_id: str) -> None:
+    """Stand for the owner returning the field to automatic, which makes the
+    automatic authority current again."""
+    connection = effects.repository._connection
+    (document,) = connection.execute(
+        "SELECT document FROM field_effect_authorities WHERE decision_id=?",
+        (decision_id,),
+    ).fetchone()
+    raw = json.loads(document)
+    raw["current"] = True
+    connection.execute(
+        "UPDATE field_effect_authorities SET current=1,document=? WHERE decision_id=?",
+        (json.dumps(raw, sort_keys=True, separators=(",", ":")), decision_id),
+    )
+    connection.commit()
+
+
+@pytest.mark.parametrize("history", ("sent", "unsent"))
+def test_superseding_a_retry_sends_nothing_and_never_revives_a_sent_request(
+    effects: _EffectEnvironment, history: str
+) -> None:
+    decision, service, operation = _automatic_tags_plan(effects)
+    plan_id = operation.plan.plan_id
+    sent = _sent(effects)
+    if history == "sent":
+        effects.target.fail_next = True
+        retry = service.apply(plan_id)
+        assert (retry.state, retry.failure) == ("retryable", "target_failure")
+    else:
+        effects.repository.claim_field_effect(
+            plan_id, "planned", "1" * 64, effects.clock()
+        )
+        retry = service.apply(plan_id)
+        assert (retry.state, retry.failure) == ("retryable", "not_sent")
+    before = list(sent)
+    assert service.supersede(decision.decision_id) == 1
+    closed = effects.repository.get_field_effect(plan_id)
+    assert (closed.state, closed.failure) == ("superseded", "authority_superseded")
+    _restore_authority(effects, decision.decision_id)
+    again = effects.repository.record_field_effect(
+        FieldEffectOperation(operation.plan, updated_at=operation.plan.created_at)
+    )
+    # A request that may have landed is never planned afresh; one that was
+    # never sent is planned again like any other superseded plan.
+    assert again.state == ("superseded" if history == "sent" else "planned")
+    if history == "sent":
+        assert service.apply(plan_id).state == "superseded"
+    assert sent == before
+
+
+def test_superseding_a_retry_is_only_an_authority_supersession(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _plan(effects, suffix="1")
+    for state, failure in (("retryable", "target_failure"), ("stale", "connection")):
+        current = FieldEffectOperation(operation.plan, state, 1, 5, failure, "1" * 64)
+        assert (
+            current.transition("superseded", at=6, failure="authority_superseded").state
+            == "superseded"
+        )
+        with pytest.raises(FieldEffectError, match="invalid_transition"):
+            current.transition("superseded", at=6, failure="consent_revoked")
+    for failure in ("connection_exhausted", "capability", "authority"):
+        with pytest.raises(FieldEffectError, match="invalid_transition"):
+            FieldEffectOperation(
+                operation.plan, "stale", 1, 5, failure, "1" * 64
+            ).transition("superseded", at=6, failure="authority_superseded")
+
+
+@pytest.mark.parametrize("cleanup", ("completed", "pending"))
+def test_a_revived_superseded_cover_reopens_cleanly(
+    effects: _EffectEnvironment, cleanup: str
+) -> None:
+    consent = effects.repository.grant_field_effect_consents(
+        "primary", ("books",), ("cover",), 9
+    )[0]
+    plan = FieldEffectPlan.create(
+        connection="primary",
+        library="books",
+        work_id="book-1",
+        destination="cover",
+        pre_value="cover_" + "0" * 64,
+        desired_value="cover_" + "1" * 64,
+        target_fingerprint="c" * 64,
+        target_version="version-1",
+        dependency_digests=(DEPENDENCY,),
+        authority=EffectAuthority(
+            "automatic_decision_" + "a" * 64,
+            "review_case_" + "b" * 64,
+            "c" * 64,
+            "persisted_review_case",
+            "automatic_policy",
+            "candidate",
+            "policy-1",
+            "d" * 64,
+        ),
+        consent=consent,
+        capability_digest=CAPABILITY,
+        created_at=9,
+    )
+    operation = FieldEffectOperation(plan, updated_at=9)
+    effects.repository.record_field_effect(operation)
+    effects.recovery.fail_remove_next = cleanup == "pending"
+    # Revoking consent supersedes the plan and schedules its cleanup while
+    # its automatic authority stays current.
+    assert effects.service.revoke_consent(consent.consent_id) == 1
+    assert effects.repository.field_effect_cleanup_pending(plan.plan_id) is (
+        cleanup == "pending"
+    )
+    # Recovery bytes not yet removed keep the plan where it is; once they are
+    # gone the re-plan retires the discharged cleanup with the terminal state.
+    expected = "superseded" if cleanup == "pending" else "planned"
+    assert effects.repository.record_field_effect(operation).state == expected
+    if cleanup == "pending":
+        assert effects.service.recover_pending() == (0, 1)
+        assert effects.repository.record_field_effect(operation).state == "planned"
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM field_effect_cleanups"
+    ).fetchone() == (0,)
+    effects.repository.close()
+    effects.repository = open_repository(
+        effects.database_path, create=False, cross_thread=True
+    )
+    assert effects.repository.get_field_effect(plan.plan_id).state == "planned"

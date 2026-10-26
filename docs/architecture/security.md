@@ -1694,7 +1694,10 @@ a fresh claim. A plan staled only by a connection-scoped refusal or a lost
 pre-read releases its decision and is planned again, at most three times, once a
 fresh observation finds the connection healthy; it re-enters the full guard
 order and inherits no capability, consent, or authority evidence. The stale
-after the last is terminal, and covers stay terminal. Target and credential authority are absent
+after the last is terminal, and covers stay terminal. Withdrawn authority
+supersedes a retry or a waiting connection stale without a request, and a
+superseded or abandoned plan whose history reached `applying` is never planned
+afresh. Target and credential authority are absent
 from domain code and reviewers and credentials stay outside diagnostics and the
 API. Continuous composition contains the Audiobookshelf target and API-key
 capability observer; qualification proves

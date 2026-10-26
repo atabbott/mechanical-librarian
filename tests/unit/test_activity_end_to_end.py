@@ -1895,3 +1895,37 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
         "was prepared again 3 times"
     )
     assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
+
+
+def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    """Only a write that can still be prepared again reads as waiting (#1402)."""
+    report = metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    arguments = dict(
+        destination="title",
+        pre="Paper Moons: Larkspur",
+        desired="Paper Moons over Larkspur Station",
+        suffix="a",
+    )
+    planned = _plan(effects, **arguments)
+    effects.capabilities.category = "connection_unavailable"
+    assert effects.service.apply(planned.plan.plan_id).failure == "connection"
+    assert effects.service.supersede(planned.plan.authority.decision_id) == 1
+    effects.capabilities.category = "allowed"
+    again = _replan(effects, **arguments)
+    assert again is not None
+    assert (again.state, again.failure) == ("superseded", "authority_superseded")
+    latest = next(
+        event for event in _ledger(effects) if event["category"] == "recovery"
+    )
+    assert latest["state"] == "superseded"
+    assert latest["change"] == "Prepared change closed"
+    assert _facts(latest)["Why it stopped"] == (
+        "The authority behind this change was replaced"
+    )
+    assert _facts(latest)["Confirmed in Audiobookshelf"] == (
+        "The selected change was not confirmed"
+    )
+    assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
