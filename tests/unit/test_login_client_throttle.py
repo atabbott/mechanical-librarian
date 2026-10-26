@@ -144,7 +144,7 @@ def test_the_global_ceiling_needs_twenty_clients_and_then_holds(
         throttle.fail(f"192.0.2.{host}", 5)
 
     assert throttle.login("192.0.2.120", _PASSWORD) == 429
-    assert throttle.login("2001:db8::120", _PASSWORD) == 429
+    assert throttle.login("2001:db8:120::1", _PASSWORD) == 429
 
 
 def test_an_untrusted_peers_forwarded_for_is_ignored(throttle: _Throttle) -> None:
@@ -175,6 +175,30 @@ def test_unresolvable_forwarding_shares_one_throttled_key(throttle: _Throttle) -
     assert throttle.login(_PROXY, _PASSWORD, _OWNER) == 200
 
 
+def test_addresses_in_one_ipv6_64_share_a_throttle(throttle: _Throttle) -> None:
+    throttle.fail("2001:db8:1:2::a", 5)
+
+    assert throttle.login("2001:db8:1:2:ffff:ffff:ffff:fffe", _PASSWORD) == 429
+    assert throttle.login(_PROXY, _PASSWORD, "2001:db8:1:2::c") == 429
+
+
+def test_addresses_in_different_ipv6_64s_do_not_share_a_throttle(
+    throttle: _Throttle,
+) -> None:
+    throttle.fail("2001:db8:1:2::a", 5)
+
+    assert throttle.login("2001:db8:1:3::a", _PASSWORD) == 200
+    assert throttle.login(_PROXY, _PASSWORD, "2001:db8:1:1:ffff::a") == 200
+
+
+def test_a_mapped_ipv4_address_is_its_plain_ipv4_client(throttle: _Throttle) -> None:
+    throttle.fail(f"::ffff:{_ATTACKER}", 5)
+
+    assert throttle.login(_ATTACKER, _PASSWORD) == 429
+    assert throttle.login(_PROXY, _PASSWORD, _ATTACKER) == 429
+    assert throttle.login(f"::ffff:{_OWNER}", _PASSWORD) == 200
+
+
 def _request(peer: str | None, *forwarded: str) -> Request:
     return Request(
         {
@@ -189,9 +213,12 @@ def _request(peer: str | None, *forwarded: str) -> Request:
     ("peer", "forwarded", "identity"),
     (
         (_ATTACKER, (_OWNER,), f"client:{_ATTACKER}"),
-        ("2001:db8::66", (), "client:2001:db8::66"),
+        ("2001:db8:1:2::66", (), "client:2001:db8:1:2::/64"),
+        ("2001:db8:1:3::66", (), "client:2001:db8:1:3::/64"),
+        (f"::ffff:{_ATTACKER}", (), f"client:{_ATTACKER}"),
         (_PROXY, (f"{_ATTACKER}, {_OWNER}",), f"client:{_OWNER}"),
-        (_PROXY, ("2001:DB8:0:0::7",), "client:2001:db8::7"),
+        (_PROXY, ("2001:DB8:0:0:1::7",), "client:2001:db8::/64"),
+        (_PROXY, (f"::FFFF:{_OWNER}",), f"client:{_OWNER}"),
         (_PROXY, (), "unresolved"),
         (_PROXY, (_OWNER, _OWNER), "unresolved"),
         (_PROXY, ("not-an-address",), "unresolved"),
@@ -200,9 +227,12 @@ def _request(peer: str | None, *forwarded: str) -> Request:
     ),
     ids=(
         "untrusted-peer-ignores-forwarding",
-        "untrusted-ipv6-peer",
+        "untrusted-ipv6-peer-is-its-64",
+        "another-64-is-another-client",
+        "untrusted-mapped-ipv4-peer",
         "trusted-rightmost-entry",
-        "trusted-entry-normalized",
+        "trusted-ipv6-entry-is-its-64",
+        "trusted-mapped-ipv4-entry",
         "trusted-missing",
         "trusted-two-lines",
         "trusted-unparsable",

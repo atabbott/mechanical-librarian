@@ -749,6 +749,29 @@ def test_one_client_cannot_exhaust_the_claim_nonce_pool() -> None:
     assert others[9].get("/api/setup/claim").status_code == 503
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    (
+        ("2001:db8:1:2::a", "2001:db8:1:2:ffff::b"),
+        ("::ffff:192.0.2.40", "192.0.2.40"),
+    ),
+    ids=("one-ipv6-64", "mapped-and-plain-ipv4"),
+)
+def test_one_client_holds_one_nonce_share_across_its_addresses(
+    first: str, second: str
+) -> None:
+    client, _state, _connection = _client()
+    holders = [
+        TestClient(client.app, base_url="https://setup.invalid", client=(peer, 1))
+        for peer in (first, second, "2001:db8:1:3::a")
+    ]
+    for _ in range(10):
+        assert holders[0].get("/api/setup/claim").status_code == 200
+
+    assert holders[1].get("/api/setup/claim").status_code == 503
+    assert holders[2].get("/api/setup/claim").status_code == 200
+
+
 def test_first_owner_claim_requires_the_deployment_claim_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

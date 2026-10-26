@@ -11,7 +11,7 @@ import stat
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
-from ipaddress import ip_address
+from ipaddress import IPv6Address, IPv6Network, ip_address
 from pathlib import Path
 from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
 from urllib.parse import urlsplit
@@ -4375,27 +4375,49 @@ def owner_password_binding(encoded: str) -> OwnerPasswordBinding:
 _UNRESOLVED_CLIENT = "unresolved"
 
 
+def _address_identity(address: str) -> str | None:
+    """Name the client an address belongs to, or ``None`` when it is no address.
+
+    One host on an ordinary IPv6 network holds a whole /64, so an IPv6 client
+    is its /64 rather than each address it can mint. An IPv4-mapped IPv6
+    address is its IPv4 address, and an IPv4 client is that one address.
+    """
+    try:
+        parsed = ip_address(address)
+    except ValueError:
+        return None
+    if isinstance(parsed, IPv6Address):
+        if parsed.ipv4_mapped is None:
+            prefix = int(parsed) >> 64 << 64
+            return f"client:{IPv6Network((prefix, 64))}"
+        parsed = parsed.ipv4_mapped
+    return f"client:{parsed}"
+
+
 def client_identity(request: Request, trusted_proxy_ips: tuple[str, ...]) -> str:
     """Resolve the sign-in client from the transport, never from its own claim.
 
     An untrusted peer is its socket address, and any ``X-Forwarded-For`` it
     sends is ignored. A trusted proxy is the address it appended: the
     rightmost entry of its single ``X-Forwarded-For`` line, which must parse
-    as an IP address. The result is an identity, not a log value; callers pass
-    it straight to the keyed digest.
+    as an IP address. Either address names its client as ``_address_identity``
+    states. The result is an identity, not a log value; callers pass it
+    straight to the keyed digest.
     """
     peer = None if request.client is None else request.client.host
     if peer is None:
         return _UNRESOLVED_CLIENT
     if peer not in trusted_proxy_ips:
-        return f"client:{peer}"
+        # A socket peer is always an address; an in-process test transport's
+        # named peer stays its own client rather than collapsing into the
+        # shared key.
+        return _address_identity(peer) or f"client:{peer}"
     forwarded = request.headers.getlist("x-forwarded-for")
     if len(forwarded) != 1:
         return _UNRESOLVED_CLIENT
-    try:
-        return f"client:{ip_address(forwarded[0].rsplit(',', 1)[-1].strip())}"
-    except ValueError:
-        return _UNRESOLVED_CLIENT
+    return (
+        _address_identity(forwarded[0].rsplit(",", 1)[-1].strip()) or _UNRESOLVED_CLIENT
+    )
 
 
 def _request_matches_origin(

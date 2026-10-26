@@ -532,7 +532,12 @@ exception, API response or evidence. The client is resolved from the
 transport, never from a header the client chooses: an untrusted peer is its
 socket address and any `X-Forwarded-For` it sends is ignored; a peer listed in
 `trusted_proxy_ips` is the rightmost entry of its single `X-Forwarded-For`
-line, which must parse as an IP address. No peer, or a trusted proxy that sends
+line, which must parse as an IP address. Either address then names its
+client: an IPv6 address is its /64 network, because one host on an ordinary
+IPv6 network holds a whole /64 and could otherwise mint enough identities to
+reach the global ceiling; an IPv4-mapped IPv6 address is its IPv4 address; and
+an IPv4 address is itself. The same identity bounds the setup claim nonces
+below. No peer, or a trusted proxy that sends
 no `X-Forwarded-For`, several lines or an unparsable last entry, maps to one
 shared unresolved key that is throttled like any client and never borrows a
 resolved one. A trusted proxy that omits `X-Forwarded-For` therefore collapses
