@@ -61,20 +61,26 @@ class AudiobookshelfFieldEffectCapabilities:
                 me = _json_response(client, "GET", self._endpoint + "/api/me", None, self._maximum_response_bytes)
             except (httpx.HTTPError, OSError, ValueError):
                 return self._result(plan.destination, "connection_unavailable", False, False)
+            user = me.get("user", me) if type(me) is dict else None
+            permissions = user.get("permissions") if type(user) is dict else None
+            accessible = user.get("librariesAccessible") if type(user) is dict else None
+            selected = (type(permissions) is dict and permissions.get("accessAllLibraries") is True) or (type(accessible) is list and all(type(value) is str for value in accessible) and self._library_id in accessible)
+            active = type(user) is dict and user.get("isActive") is True
+            # The connection is reached only when a usable account's identity
+            # check and the item request were both answered: a lost transport,
+            # a rejected key, or an unusable account waits for the owner (#1402).
+            usable = active and selected
             try:
                 detail = _json_response(client, "GET", self._endpoint + "/api/items/" + quote(plan.work_id, safe=""), {"expanded": "1"}, self._maximum_response_bytes)
-            except (httpx.HTTPError, OSError, ValueError):
-                return self._result(plan.destination, "connection_unavailable", False, False, reached=True)
-        user = me.get("user", me) if type(me) is dict else None
-        permissions = user.get("permissions") if type(user) is dict else None
-        accessible = user.get("librariesAccessible") if type(user) is dict else None
-        selected = (type(permissions) is dict and permissions.get("accessAllLibraries") is True) or (type(accessible) is list and all(type(value) is str for value in accessible) and self._library_id in accessible)
+            except (httpx.TransportError, OSError):
+                return self._result(plan.destination, "connection_unavailable", False, False)
+            except (httpx.HTTPError, ValueError):
+                return self._result(plan.destination, "connection_unavailable", False, False, reached=usable)
         item_matches = type(detail) is dict and detail.get("id") == plan.work_id and detail.get("libraryId") == self._library_id and detail.get("mediaType") == "book"
         update = type(permissions) is dict and permissions.get("update") is True
         upload = type(permissions) is dict and permissions.get("upload") is True
-        active = type(user) is dict and user.get("isActive") is True
         if not active or not selected or not item_matches:
-            return self._result(plan.destination, "connection_unavailable", update, upload, reached=True)
+            return self._result(plan.destination, "connection_unavailable", update, upload, reached=usable)
         if not update or (plan.destination == "cover" and not upload):
             return self._result(plan.destination, "insufficient_permission", update, upload, True, reached=True)
         try:
@@ -93,7 +99,7 @@ class AudiobookshelfFieldEffectCapabilities:
         if destination == "cover":
             capability["upload"] = upload
         payload = json.dumps(capability, sort_keys=True, separators=(",", ":")).encode()
-        # `reached` says /api/me answered; it is not capability evidence (#1402).
+        # `reached` is not capability evidence and never enters the digest (#1402).
         return CapabilityObservation(category, hashlib.sha256(payload).hexdigest(), reached)
 
 

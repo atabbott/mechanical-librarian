@@ -511,10 +511,10 @@ class ContinuousGuardedApplication:
         is no longer ready, and the schedule cursor is already past it. Each
         library waiting on its connection is observed through one of its
         waiting plans, rotating so that one item that keeps failing cannot hide
-        a recovery. Only an unanswered identity check keeps the wait: any
-        answer, even a refused item, clears the lost connection and starts the
-        schedule over, so the plan is prepared again and its preclaim decides,
-        using one of its bounded attempts.
+        a recovery. Only an observation that did not reach the connection
+        keeps the wait: any other, even a refused item, clears the lost
+        connection and starts the schedule over, so the plan is prepared again
+        and its preclaim decides, using one of its bounded attempts.
         """
         with self._schedule_lock:
             waiting = sorted(self._replans_waiting)

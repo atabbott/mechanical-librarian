@@ -660,11 +660,12 @@ def test_a_revived_superseded_cover_reopens_cleanly(
 def test_a_lone_waiting_plan_ends_once_the_service_answers(
     effects: _EffectEnvironment, answer: str, failure: str, connection_stales: int
 ) -> None:
-    """Only an unanswered identity check keeps a lone plan waiting (#1402).
+    """Only an observation that reached the connection ends the wait (#1402).
 
     A deleted item answers, so it uses its bounded preparations and stops; a
     withdrawn permission or field answers and stops through its own code. A
-    rejected key or a lost transport is not an answer, so the plan waits with
+    rejected key, an unusable account or a lost transport does not reach the
+    connection, so the plan waits with
     its bound untouched and the owner keeps the decision.
     """
     decision, _, operation, lane = _automatic_tags_lane(effects)

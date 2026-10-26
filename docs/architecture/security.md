@@ -1692,8 +1692,10 @@ version is verified without a request (#1402). A claim recovered at startup sent
 nothing and returns unsent as `retryable`, applied only through every guard and
 a fresh claim. A plan staled only by a connection-scoped refusal or a lost
 pre-read releases its decision and is planned again, at most three times, once a
-fresh observation is answered: only an unanswered identity check (a transport
-failure or a rejected key) keeps it waiting. The re-plan reuses the waiting
+fresh observation reaches the connection: `/api/me` succeeded for an active,
+selected account and the item request returned any HTTP response, a 404
+included. A transport failure on either request, a rejected key, or an
+inactive or unselected account keeps it waiting with its bound untouched. The re-plan reuses the waiting
 plan's `capability_digest`, so it re-enters the full guard order, where the
 preclaim checks a fresh observation against that digest and current consent and
 authority. The stale after the last is terminal, and covers stay terminal.

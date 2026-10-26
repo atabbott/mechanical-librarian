@@ -65,11 +65,13 @@ every guard and a fresh claim.
 A plan staled only because its connection was unavailable, refused by a
 connection-scoped capability observation or by a lost pre-read, is stale with
 `connection` and releases its decision. While it waits, one of the library's
-waiting plans is observed each pass. The wait continues only while the
-connection's own identity check (`GET /api/me`) goes unanswered: a transport
-failure, or a rejected key, which the owner fixes without losing the decision.
-Any other answer, including an item Audiobookshelf no longer has, clears the
-lost connection and the decision is planned again into the same plan, restored
+waiting plans is observed each pass. The connection counts as reached only
+when `GET /api/me` succeeded for an active account that can reach the library
+and `GET /api/items/{id}` returned any HTTP response, a 404 included. A
+transport failure or timeout on either request, a rejected key, or an inactive
+or unselected account keeps the plan waiting with its bound untouched, since the
+owner fixes those without losing the decision. Once reached, the lost
+connection is cleared and the decision is planned again into the same plan, restored
 to the state the stale interrupted with its attempt, claim token, and whole
 history, and every guard runs again in order. A withdrawn permission or field
 then stales through its own code. The third such re-plan of one decision is the
