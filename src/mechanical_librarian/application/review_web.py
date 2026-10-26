@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
 import secrets
 import threading
@@ -1686,11 +1687,25 @@ class BrowseReviewLibrary:
                 )
                 for index, facts in unavailable.items()
             }
-            scheduled = (
-                frozenset()
-                if self._recovery is None or not identities
-                else self._recovery.scheduled_recoveries(frozenset(identities.values()))
-            )
+            scheduled: frozenset[tuple[str, str, str, str]] = frozenset()
+            if self._recovery is not None and identities:
+                try:
+                    scheduled = self._recovery.scheduled_recoveries(
+                        frozenset(identities.values())
+                    )
+                except Exception as error:
+                    # The promise is display-only: a recovery store that cannot
+                    # answer withdraws it and never fails the page (#1407). The
+                    # log carries a closed code and the exception type only.
+                    logging.getLogger(__name__).warning(
+                        "provider recovery schedule unavailable (%s)",
+                        type(error).__name__,
+                        extra={
+                            "event": "provider_recovery_schedule",
+                            "code": "unavailable",
+                            "error": type(error).__name__,
+                        },
+                    )
             for index, (row, scope, match_reason) in enumerate(visible):
                 (
                     case_document,

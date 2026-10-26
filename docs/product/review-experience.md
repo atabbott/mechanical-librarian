@@ -422,7 +422,9 @@ evidence only counts. Each row's status slot names one reason, in this order:
 **Found, but not this work** when admission refused what a lane found;
 **Providers unavailable** when a dispatched provider is in the limiting set,
 with **; will be checked again** only while the provider-recovery store holds a
-scheduled job for that exact report; otherwise **No provider matched**. A lane
+scheduled job for that exact report; otherwise **No provider matched**. A
+recovery store that cannot answer withdraws only that promise, logged without
+values, and never fails the Library page or its counts. A lane
 that kept no ladder cannot tell a refusal from an empty answer and reads as no
 match. Work whose preparation could not finish stays where it was (#1413), and
 an ebook whose candidates were found but never admitted at the proposal level

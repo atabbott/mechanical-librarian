@@ -433,6 +433,49 @@ def test_recovery_store_names_only_reports_a_live_job_will_check(
         store.close()
 
 
+def test_an_unreadable_recovery_store_withdraws_only_the_promise(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A recovery store that cannot answer leaves the page and its counts whole
+    and promises no retry, logging a closed code and no values (#1407)."""
+    repository = _reasoned_library(tmp_path)
+    (tmp_path / "recovery").mkdir()
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery" / "recovery.sqlite")
+    try:
+        report_id = repository._connection.execute(
+            "SELECT report_id FROM current_review_packages WHERE item_id='unavailable'"
+        ).fetchone()[0]
+        store.enqueue_jobs((_recovery_job("unavailable", report_id),), enqueued_at=3)
+        browse = BrowseReviewLibrary(repository, recovery=store)
+
+        def state() -> tuple[object, object]:
+            page = browse.library(
+                lens="not_matched", search=None, limit=50, cursor=None
+            )
+            row = _items(page)["unavailable"]["summary"]
+            return cast("dict[str, object]", row)["state"], page["counts"]
+
+        scheduled, counts = state()
+        assert scheduled == "not_matched_unavailable_scheduled"
+        store._connection.execute("DROP TABLE provider_recovery_jobs")
+        caplog.set_level("WARNING")
+        assert state() == ("not_matched_unavailable", counts)
+        store.close()
+        assert state() == ("not_matched_unavailable", counts)
+        records = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "provider_recovery_schedule"
+        ]
+        assert [(record.code, record.error) for record in records] == [
+            ("unavailable", "ProviderRecoveryStoreError")
+        ] * 2
+        assert report_id not in caplog.text and "unavailable'" not in caplog.text
+    finally:
+        store.close()
+        repository.close()
+
+
 def test_the_refused_lane_reads_as_a_refusal_on_its_report(tmp_path: Path) -> None:
     repository = _reasoned_library(tmp_path)
     try:
