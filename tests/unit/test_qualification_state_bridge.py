@@ -153,8 +153,13 @@ def _v26_document(
 
 
 def _create_source(
-    path: Path, *, missing_work_lineage: bool = False, document: str | None = None
+    path: Path,
+    *,
+    missing_work_lineage: bool = False,
+    document: str | None = None,
+    report_check: str = "",
 ) -> str:
+    """`report_check` adds a table CHECK the report row is written past."""
     path.parent.chmod(0o700)
     report_document = (
         _v26_document(missing_work_lineage=missing_work_lineage)
@@ -163,13 +168,16 @@ def _create_source(
     )
     data = json.loads(report_document)
     connection = sqlite3.connect(path)
+    connection.execute("PRAGMA ignore_check_constraints=1")
     connection.execute(
         "CREATE TABLE metadata_reports ("
         "report_id TEXT PRIMARY KEY NOT NULL, "
         "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, "
         "item_id TEXT NOT NULL, file_identity TEXT NOT NULL, "
         "content_digest TEXT NOT NULL, schema_version TEXT NOT NULL, "
-        "document_digest TEXT NOT NULL, document TEXT NOT NULL)"
+        "document_digest TEXT NOT NULL, document TEXT NOT NULL"
+        + (f", CHECK({report_check})" if report_check else "")
+        + ")"
     )
     connection.execute(
         "CREATE TABLE current_metadata_reports ("
@@ -617,6 +625,30 @@ def test_semantically_changed_source_document_fails_before_backup(
             source, backup, output, RETAINED_LIBRARY_V26_TO_V32
         )
 
+    assert not backup.exists()
+    assert not output.exists()
+
+
+def test_source_row_outside_its_check_constraints_fails_before_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A mode=ro integrity check skips CHECKs, so the bridge sweeps the ones
+    # the digest-bound source schema states (#1401).
+    source, backup, output = _paths(tmp_path)
+    _create_source(source, report_check="length(document) < 2")
+    _accept_synthetic_source_and_target(monkeypatch, source)
+    before = _digest(source)
+
+    with pytest.raises(
+        MetadataReportError,
+        match="^qualification-state source is incompatible: "
+        "CHECK constraint failed in metadata_reports$",
+    ):
+        bridge.bridge_qualification_state(
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
+        )
+
+    assert _digest(source) == before
     assert not backup.exists()
     assert not output.exists()
 

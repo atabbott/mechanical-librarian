@@ -1848,10 +1848,12 @@ def test_schema_validation_reads_one_transaction_snapshot() -> None:
         transactions: list[bool] = []
 
         def record(
-            connection: sqlite3.Connection, *documents: ActivityDocuments | None
+            connection: sqlite3.Connection,
+            *documents: ActivityDocuments | None,
+            read_only: bool = False,
         ) -> None:
             transactions.append(connection.in_transaction)
-            validate(connection, *documents)
+            validate(connection, *documents, read_only=read_only)
 
         with patch.object(persistence_schema, "_validate_schema", record):
             reopened = open_repository(path, create=False)
@@ -1930,14 +1932,19 @@ def test_current_pointer_scope_must_agree_with_decoded_report() -> None:
 
 
 @pytest.mark.parametrize(
-    "mutation",
+    ("mutation", "refusal"),
     (
-        "INSERT INTO reviewer_access VALUES(1,2,'{}')",
-        "INSERT INTO reviewer_access_secrets VALUES('unexpected','secret-key')",
+        # Its CHECK is NULL for '{}', so SQLite and the read-only CHECK sweep
+        # both admit the row and only the reviewer-access check refuses it.
+        ("INSERT INTO reviewer_access VALUES(1,2,'{}')", "reviewer access state"),
+        (
+            "INSERT INTO reviewer_access_secrets VALUES('unexpected','secret-key')",
+            "CHECK constraint failed in reviewer_access_secrets$",
+        ),
     ),
 )
 def test_startup_rejects_malformed_reviewer_access_content(
-    tmp_path: Path, mutation: str
+    tmp_path: Path, mutation: str, refusal: str
 ) -> None:
     path = tmp_path / "reports.sqlite"
     repository = open_repository(path)
@@ -1945,7 +1952,7 @@ def test_startup_rejects_malformed_reviewer_access_content(
     with sqlite3.connect(path) as connection:
         connection.execute("PRAGMA ignore_check_constraints=ON")
         connection.execute(mutation)
-    with pytest.raises(MetadataReportError, match="reviewer access state"):
+    with pytest.raises(MetadataReportError, match=refusal):
         open_repository(path)
 
 

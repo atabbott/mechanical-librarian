@@ -9,6 +9,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
+from mechanical_librarian.adapters.persistence.schema import (
+    _check_constraint_violation,
+)
 from mechanical_librarian.domain.provider_recovery import (
     DEFERRED_RECOVERY_FAILURES,
     MAX_TIMESTAMP,
@@ -173,7 +176,7 @@ class SQLiteProviderRecoveryStore:
                     if connection.in_transaction:
                         connection.execute("ROLLBACK")
                     raise
-            _validate(connection)
+            _validate(connection, read_only=read_only)
             return cls(connection)
         except ProviderRecoveryStoreError:
             connection.close()
@@ -2831,7 +2834,7 @@ class SQLiteProviderRecoveryStore:
                 return owner_successor
 
 
-def _validate(connection: sqlite3.Connection) -> None:
+def _validate(connection: sqlite3.Connection, *, read_only: bool) -> None:
     objects = _recovery_objects(connection)
     expected = sorted(
         (
@@ -2853,6 +2856,12 @@ def _validate(connection: sqlite3.Connection) -> None:
     ).fetchone() != ("ok",):
         raise ProviderRecoveryStoreError(
             "provider recovery database is unavailable or incompatible"
+        )
+    # A `mode=ro` integrity check skips CHECK constraints (#1401).
+    if read_only and (table := _check_constraint_violation(connection, expected)):
+        raise ProviderRecoveryStoreError(
+            "provider recovery database is unavailable or incompatible: "
+            f"CHECK constraint failed in {table}"
         )
     try:
         members = set(

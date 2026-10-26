@@ -37,6 +37,7 @@ from mechanical_librarian.adapters.persistence.offline_backup import (
     _schema_objects_digest,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _check_constraint_violation,
     _create_schema,
     _register_casefold,
     _validate_schema,
@@ -392,6 +393,18 @@ def _load_bridge_data(connection: sqlite3.Connection) -> _BridgeData:
     integrity = connection.execute("PRAGMA integrity_check").fetchall()
     if integrity != [("ok",)]:
         raise MetadataReportError("qualification-state source is incompatible")
+    # The source predates every schema this build defines, so its expressions
+    # come from the objects the digest above just bound to the exact historical
+    # text, read inside the same read transaction (#1401).
+    if table := _check_constraint_violation(
+        connection,
+        connection.execute(
+            "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+        ).fetchall(),
+    ):
+        raise MetadataReportError(
+            f"qualification-state source is incompatible: CHECK constraint failed in {table}"
+        )
     reconstructed = []
     source_reports: dict[str, MetadataReport] = {}
     unique_reports: dict[str, MetadataReport] = {}
@@ -581,7 +594,7 @@ def _validate_output(path: Path, bridge_data: _BridgeData) -> tuple[int, int]:
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(connection, path, descriptor)
         _register_casefold(connection)
-        _validate_schema(connection)
+        _validate_schema(connection, read_only=True)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise MetadataReportError("qualification-state output is incompatible")
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:

@@ -2644,7 +2644,7 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
             raise MetadataReportError("database query-only mode is unavailable")
         if connection.execute("PRAGMA database_list").fetchall() == []:
             raise MetadataReportError("database connection identity is unavailable")
-        _validate_schema(connection)
+        _validate_schema(connection, read_only=True)
         _reject_database_sidecars(path)
         current = path.lstat()
         if (

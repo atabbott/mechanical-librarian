@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import sys
 import unicodedata
@@ -1317,7 +1318,7 @@ def _validate_existing_read_only(
         # one from after it and reject a database that was never inconsistent.
         connection.execute("BEGIN")
         connection.execute("PRAGMA schema_version").fetchone()
-        _validate_schema(connection, documents)
+        _validate_schema(connection, documents, read_only=True)
     finally:
         if connection is not None:
             try:
@@ -1737,16 +1738,102 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
     )
 
 
+_CHECK_TOKENS = re.compile(
+    r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"|(?<![\w$])CHECK(?![\w$])|[()]|--|/\*|['\"`\[]",
+    re.IGNORECASE,
+)
+
+
+def _check_expressions(sql: str) -> tuple[str, ...] | None:
+    """Return every CHECK expression in one CREATE TABLE, or None.
+
+    The scanner skips quoted strings and identifiers and matches parentheses;
+    a CHECK it cannot take whole -- one not opened by a parenthesis, one left
+    unclosed, a nested one, or one beside a comment or a bracket or backtick
+    identifier -- makes the whole table unextractable rather than skipped.
+    """
+    expressions: list[str] = []
+    depth = 0
+    opened: tuple[int, int] | None = None  # (depth outside, expression start)
+    awaiting = -1  # end of a CHECK keyword still waiting for its parenthesis
+    for token in _CHECK_TOKENS.finditer(sql):
+        text = token.group()
+        if awaiting >= 0:
+            if text != "(" or sql[awaiting : token.start()].strip():
+                return None
+            awaiting = -1
+            opened = (depth, token.end())
+            depth += 1
+        elif text.upper() == "CHECK":
+            if opened is not None:
+                return None
+            awaiting = token.end()
+        elif text == "(":
+            depth += 1
+        elif text == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+            if opened is not None and depth == opened[0]:
+                expressions.append(sql[opened[1] : token.start()])
+                opened = None
+        elif text[0] not in "'\"" or len(text) == 1:
+            return None
+    if depth or opened is not None or awaiting >= 0:
+        return None
+    return tuple(expressions)
+
+
+def _check_constraint_violation(
+    connection: sqlite3.Connection, objects: list[tuple[str, str, str | None]]
+) -> str | None:
+    """Name the first table holding a row that one of its CHECKs refuses.
+
+    SQLite's `integrity_check` and `quick_check` skip CHECK constraints on a
+    `mode=ro` connection, so every read-only open re-evaluates them here
+    (#1401). `objects` is the schema the application defines, which the caller
+    has just proved the store holds; an expression is never taken from the
+    store unproved. Only a false result refuses: like SQLite's own enforcement,
+    a CHECK whose expression is NULL passes. A table whose CHECKs cannot all be
+    extracted is named as well, so an unreadable constraint refuses.
+    """
+    for kind, name, sql in objects:
+        if kind != "table" or sql is None:
+            continue
+        expressions = _check_expressions(sql)
+        if expressions is None:
+            return name
+        if (
+            expressions
+            and connection.execute(
+                f'SELECT 1 FROM "{name}" WHERE NOT ('
+                + ") OR NOT (".join(expressions)
+                + ") LIMIT 1"
+            ).fetchone()
+            is not None
+        ):
+            return name
+    return None
+
+
 def _validate_schema_against(
     connection: sqlite3.Connection,
     expected_objects: list[tuple[str, str, str | None]],
     documents: ActivityDocuments | None = None,
+    *,
+    read_only: bool = False,
 ) -> None:
     objects = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
     ).fetchall()
     if objects != expected_objects:
         raise MetadataReportError("database is unavailable or incompatible")
+    if read_only and (
+        table := _check_constraint_violation(connection, expected_objects)
+    ):
+        raise MetadataReportError(
+            f"database is unavailable or incompatible: CHECK constraint failed in {table}"
+        )
     _validate_schema_contents(connection, documents)
 
 
@@ -2167,9 +2254,15 @@ def _require_equal_facts(
 
 
 def _validate_schema(
-    connection: sqlite3.Connection, documents: ActivityDocuments | None = None
+    connection: sqlite3.Connection,
+    documents: ActivityDocuments | None = None,
+    *,
+    read_only: bool = False,
 ) -> None:
-    _validate_schema_against(connection, _expected_schema_objects(), documents)
+    """Prove the exact current schema; `read_only` marks a `mode=ro` connection."""
+    _validate_schema_against(
+        connection, _expected_schema_objects(), documents, read_only=read_only
+    )
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
