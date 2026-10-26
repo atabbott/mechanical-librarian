@@ -15,6 +15,9 @@ from urllib.parse import quote
 from mechanical_librarian.adapters.persistence.binding import (
     _LinuxDirectoryChain,
 )
+from mechanical_librarian.adapters.persistence.schema import (
+    _check_constraint_violation,
+)
 from mechanical_librarian.application.batch import CatalogueSnapshot
 from mechanical_librarian.application.catalogue import (
     CatalogueBusyError,
@@ -58,6 +61,8 @@ def _require_bound_name(
 def _validate_schema(
     connection: sqlite3.Connection,
     rows: list[tuple[str, str, str | None]] | None = None,
+    *,
+    read_only: bool = False,
 ) -> None:
     rows = (
         rows
@@ -95,6 +100,11 @@ def _validate_schema(
         or connection.execute("PRAGMA foreign_key_check").fetchall()
     ):
         raise CatalogueError("catalogue schema is unsupported")
+    # A `mode=ro` integrity check skips CHECK constraints (#1401).
+    if read_only and (table := _check_constraint_violation(connection, expected)):
+        raise CatalogueError(
+            f"catalogue schema is unsupported: CHECK constraint failed in {table}"
+        )
 
 
 class SQLiteCatalogueRepository:
@@ -193,7 +203,7 @@ class SQLiteCatalogueRepository:
             isolation_level=None,
         )
         try:
-            _validate_schema(connection)
+            _validate_schema(connection, read_only=True)
         finally:
             connection.close()
 
@@ -508,7 +518,7 @@ class CatalogueReadAdmission:
                 )
                 try:
                     validation.execute("BEGIN")
-                    _validate_schema(validation)
+                    _validate_schema(validation, read_only=True)
                     self._schema_version = validation.execute(
                         "PRAGMA schema_version"
                     ).fetchone()[0]

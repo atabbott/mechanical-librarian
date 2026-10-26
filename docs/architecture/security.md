@@ -1135,7 +1135,23 @@ The report database, `catalogue-v2` database, `config-v9`, artifact records,
 and `batch-manifest-v5` each accept only absent or their exact current schema.
 An earlier schema, an extra object, altered SQL, or a failed integrity check
 fails closed before mutation, and is never migrated, imported, preserved, or
-passed through a compatibility parser. Persisted content is validated when a
+passed through a compatibility parser. SQLite's integrity check skips CHECK
+constraints on a read-only connection, so every read-only open re-evaluates
+each CHECK and refuses a row any of them refuses, naming only the table
+(#1401). The expressions come from the DDL the application defines, once open
+has proved the store holds exactly that schema. Only the qualification-state
+bridge's historical source, which this build defines no DDL for, takes them
+from its own text, and only after a code-held digest has bound that text byte
+for byte. A CHECK the scanner cannot extract refuses rather than being
+skipped. On a read-write connection `quick_check` does report a row breaking a
+CHECK or NOT NULL constraint, so open-time admission and ordinary backup
+readiness, which runs on the reader's read-write connection, both catch one.
+The fresh readiness check runs `quick_check` on a read-only verifier and does
+not. That gap is accepted: adding such a row while the store is running needs
+write access to the state volume, which already allows replacing the whole
+store. Closing it measured 2.4 to 3.2 times the fresh check's latency on a
+10,000-work store. Persisted
+content is validated when a
 read selects it and when a selected report participates in publication;
 malformed targeted content fails closed. Unselected history stays isolated and
 is refused only when a read selects it. Browse facts are the exception

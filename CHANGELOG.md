@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A store holding a row outside the schema's own value rules is now refused
+  when it is opened, instead of passing because SQLite skips those rules when
+  it checks a read-only connection. A refusal never includes a row's values
+  (#1401).
+
 - A write Audiobookshelf could not be reached for is now prepared again once
   the connection is back, at most three times, instead of being dropped, and a
   write that had already landed is confirmed without sending it twice.

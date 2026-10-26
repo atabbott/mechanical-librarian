@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Read-only CHECK sweep successor (#1401)
+
+The current F19a, F20 and F46 records move to semantic revision 73 over base
+`dcaf0561`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows every store opened read-only, and the qualification-state
+bridge source, being refused when a row breaks one of the schema's own CHECK
+constraints, which SQLite skips when it checks a read-only connection. The
+refusal names only the table, and no operation gains or loses automatic
+authority.
+
 ## Connection re-plan successor (#1402)
 
 The current F19a, F20 and F46 records move to semantic revision 72 over base
