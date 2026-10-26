@@ -1937,7 +1937,9 @@ describe('Library route', () => {
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
 
-    const lens = await screen.findByRole('link', { name: 'Not matched · 4 works' })
+    const lens = await screen.findByRole('link', { name: 'Not matched' })
+    // The count sits beside the Works count, in the same words.
+    expect(await screen.findByText('4 works · 4 not matched')).toBeVisible()
     expect(
       within(screen.getByRole('navigation', { name: 'Library lenses' })).getAllByRole('link'),
     ).toHaveLength(4)
@@ -1963,7 +1965,7 @@ describe('Library route', () => {
         expect.anything(),
       ),
     )
-    expect(await screen.findByRole('link', { name: 'Not matched · 4 works' })).toHaveAttribute(
+    expect(await screen.findByRole('link', { name: 'Not matched' })).toHaveAttribute(
       'aria-current',
       'page',
     )
@@ -1980,6 +1982,37 @@ describe('Library route', () => {
     })
     expect(await screen.findByRole('alert')).toHaveTextContent('Works are unavailable.')
     expect(screen.getByRole('link', { name: 'Not matched' })).toBeVisible()
+  })
+
+  it('adds Not matched to the Works count only when there is one to state (#1407)', async () => {
+    const page = (search: LibrarySearch, notMatched: number) => ({
+      lens: search.lens,
+      page: 1,
+      counts: { attention: 0, all: 2, clear: 2 - notMatched, notMatched },
+      works: [],
+    })
+    const counted = async (getLibrary: ReviewHttp['getLibrary']) => {
+      cleanup()
+      renderRoute('/library?lens=not_matched', { ...createHttp(), getLibrary })
+      const header = (await screen.findByRole('heading', { name: 'Works' })).parentElement
+      if (!header) throw new Error('the Works heading has a header')
+      return within(header).getByRole('status')
+    }
+    let status = await counted(vi.fn(async (search: LibrarySearch) => page(search, 0)))
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works$/u))
+    status = await counted(
+      vi.fn(async (search: LibrarySearch) =>
+        search.lens === 'all' ? new Promise<never>(() => undefined) : page(search, 1),
+      ),
+    )
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works · … not matched$/u))
+    status = await counted(
+      vi.fn(async (search: LibrarySearch) => {
+        if (search.lens === 'all') throw new ApiError(503, 'unavailable')
+        return page(search, 1)
+      }),
+    )
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works$/u))
   })
 
   it('keeps an unknown lens out of the URL it reads (#1407)', () => {

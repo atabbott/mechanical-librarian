@@ -412,7 +412,8 @@ when new evidence arrives. Graded ordering remains deferred to #877, including
 the original ≥10% steady-state criterion; the earlier measurement is unavailable.
 
 A work with no review case, nothing to decide, and no admitted provider evidence
-is **Not matched** (#1407): its own lens, counted like All, and no longer in
+is **Not matched** (#1407): its own lens, counted beside the Works count as
+"7 works · 4 not matched" with zero omitted, and no longer in
 No attention needed, Needs attention, or the Attention queue. No admitted
 provider evidence means no lane returned candidates, or an audiobook package
 whose work identity was not admitted (`evidence_only`); a work with local

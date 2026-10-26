@@ -3543,7 +3543,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         badge = page.locator(".attention-toggle strong")
         rail = page.get_by_role("complementary", name="Attention queue")
         handoff = page.locator(".cm-library-handoff h2")
-        expect(status).to_have_text("3 works")
+        expect(status).to_have_text("3 works · 1 not matched")
         expect(badge).to_have_text("1 work")
         expect(rail.locator("header p")).to_have_text("1 work needs a decision")
         # One work with two open fields is one group with two rows.
@@ -3557,7 +3557,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         search = page.get_by_role("searchbox")
         search.fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
-        expect(status).to_have_text("Matching: 1 of 3 works")
+        expect(status).to_have_text("Matching: 1 of 3 works · 1 not matched")
         expect(rail.locator("header p")).to_have_text(
             "Matching: 0 of 1 work needing a decision"
         )
@@ -3565,11 +3565,11 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
         search.fill("zzz-no-match")
-        expect(status).to_have_text("Matching: 0 of 3 works")
+        expect(status).to_have_text("Matching: 0 of 3 works · 1 not matched")
         expect(badge).to_have_text("1 work")
         search.fill("")
         expect(page).not_to_have_url(re.compile(r"q="))
-        expect(status).to_have_text("3 works")
+        expect(status).to_have_text("3 works · 1 not matched")
         expect(rail.locator("header p")).to_have_text("1 work needs a decision")
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
@@ -3595,7 +3595,7 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         page.get_by_role("searchbox").fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
         expect(page.locator(".library-works-heading [role='status']")).to_have_text(
-            "Matching: 1 of 3 works"
+            "Matching: 1 of 3 works · 1 not matched"
         )
         expect(page.locator(".library-work-row")).to_have_count(1)
         expect(page.locator(".library-work-row.is-terminal")).to_contain_text(
@@ -10773,8 +10773,12 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
                 page.get_by_role("button", name="Sign in").click()
                 page.get_by_role("heading", name="Works", exact=True).wait_for()
                 page.goto(origin + "/library?lens=all")
-                lens = page.get_by_role("link", name="Not matched · 4 works")
+                lens = page.get_by_role("link", name="Not matched", exact=True)
                 expect(lens).to_be_visible()
+                # Counted beside the Works count, in the All count's words.
+                expect(
+                    page.get_by_role("status").filter(has_text="not matched")
+                ).to_have_text("5 works · 4 not matched")
                 with page.expect_response(_lens_read("not_matched")):
                     lens.click()
                 expect(page).to_have_url(re.compile(r"lens=not_matched"))

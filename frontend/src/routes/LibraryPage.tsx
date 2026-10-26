@@ -4088,11 +4088,18 @@ export default function LibraryPage({
             <h2 id="library-works-title">Works</h2>
             <span role="status" aria-live="polite" aria-busy={retained || undefined}>
               {data
-                ? !search.q
-                  ? workCount(data.counts.all)
-                  : summaryWorks === undefined
-                    ? `Matching: ${workCount(data.counts.all)}`
-                    : `Matching: ${String(data.counts.all)} of ${workCount(summaryWorks)}`
+                ? (!search.q
+                    ? workCount(data.counts.all)
+                    : summaryWorks === undefined
+                      ? `Matching: ${workCount(data.counts.all)}`
+                      : `Matching: ${String(data.counts.all)} of ${workCount(summaryWorks)}`) +
+                  (summaryNotMatched === undefined
+                    ? summary.isError
+                      ? ''
+                      : ' · … not matched'
+                    : summaryNotMatched === 0
+                      ? ''
+                      : ` · ${String(summaryNotMatched)} not matched`)
                 : failed
                   ? 'Count unavailable'
                   : 'Loading count…'}
@@ -4118,9 +4125,6 @@ export default function LibraryPage({
                   activeProps={{ 'aria-current': 'page' }}
                 >
                   {fieldLabel(lens === 'no_attention_needed' ? 'No attention needed' : lens)}
-                  {lens === 'not_matched' && (summaryNotMatched !== undefined || !summary.isError)
-                    ? ` · ${summaryNotMatched === undefined ? '…' : workCount(summaryNotMatched)}`
-                    : null}
                 </Link>
               ),
             )}
