@@ -1783,6 +1783,7 @@ def test_exact_current_presentation_rows_fail_closed(
     connection.commit()
     connection.close()
 
+    _assert_presentation_validator_refuses(path)
     with pytest.raises(
         MetadataReportError, match="database is unavailable or incompatible"
     ):
@@ -1834,6 +1835,7 @@ def test_nonhex_presentation_cycle_identity_fails_closed(
     connection.commit()
     connection.close()
 
+    _assert_presentation_validator_refuses(path)
     with pytest.raises(
         MetadataReportError, match="database is unavailable or incompatible"
     ):
@@ -1888,6 +1890,18 @@ _PRESENTATION_REFUSAL = (
 )
 
 
+def _assert_presentation_validator_refuses(path: Path) -> None:
+    """Reach the content validator the read-only CHECK sweep now pre-empts."""
+    connection = sqlite3.connect(path)
+    try:
+        with pytest.raises(
+            MetadataReportError, match="^database is unavailable or incompatible$"
+        ):
+            validate_preparation_presentation(connection)
+    finally:
+        connection.close()
+
+
 def _assert_presentation_reopen_refuses_without_mutation(path: Path) -> None:
     connection = sqlite3.connect(path)
     before = tuple(
@@ -1897,6 +1911,7 @@ def _assert_presentation_reopen_refuses_without_mutation(path: Path) -> None:
     )
     connection.close()
     before_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    _assert_presentation_validator_refuses(path)
     with pytest.raises(MetadataReportError, match=_PRESENTATION_REFUSAL) as raised:
         open_repository(path, create=False)
     assert raised.value.__cause__ is None
@@ -2416,6 +2431,7 @@ def test_presentation_corruption_is_value_free_and_refused_without_repair(
     connection.close()
     before_hash = hashlib.sha256(path.read_bytes()).hexdigest()
 
+    _assert_presentation_validator_refuses(path)
     with pytest.raises(MetadataReportError, match=_PRESENTATION_REFUSAL) as raised:
         open_repository(path, create=False)
 
