@@ -46,6 +46,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -1008,6 +1009,47 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     )
                     transaction.commit()
                     return operation
+                if (
+                    persisted.state,
+                    persisted.failure,
+                ) == ("stale", "connection") and all(
+                    self._connection.execute(
+                        "SELECT current FROM field_effect_authorities WHERE decision_id=?",
+                        (member.authority.decision_id,),
+                    ).fetchone()
+                    == (1,)
+                    for member in (operation.plan, operation.plan.subtitle_plan())
+                    if member is not None
+                ):
+                    # A lost connection is not the decision's end, whatever its
+                    # origin (#1402). The plan returns to the state the stale
+                    # interrupted, with its attempt and claim token, so a retry
+                    # whose outcome is unknown is still that retry; its history
+                    # stays whole and every guard runs again before a claim.
+                    interrupted = json.loads(
+                        self._connection.execute(
+                            "SELECT document FROM field_effect_events WHERE plan_id=? "
+                            "ORDER BY sequence DESC LIMIT 1 OFFSET 1",
+                            (operation.plan.plan_id,),
+                        ).fetchone()[0]
+                    )
+                    revived = replace(
+                        operation,
+                        state="retryable"
+                        if interrupted["state"] == "retryable"
+                        else "planned",
+                        attempt=persisted.attempt,
+                        failure=interrupted["failure"]
+                        if interrupted["state"] == "retryable"
+                        else None,
+                        claim_token=persisted.claim_token,
+                    )
+                    self._update_field_effect(revived, "stale")
+                    self._record_field_effect_event(
+                        revived, revived.state, revived.updated_at
+                    )
+                    transaction.commit()
+                    return revived
                 transaction.commit()
                 return persisted
             for member in (operation.plan, operation.plan.subtitle_plan()):
@@ -1247,6 +1289,57 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise FieldEffectError("invalid_event")
             return tuple(documents)
         except (sqlite3.Error, json.JSONDecodeError) as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def field_effect_connection_stales(self, decision_id: str) -> int:
+        """Count a decision's connection stales from its immutable ledger."""
+        try:
+            return int(
+                self._connection.execute(
+                    "SELECT count(*) FROM field_effect_events WHERE plan_id IN "
+                    "(SELECT plan_id FROM field_effects WHERE decision_id=?) "
+                    "AND kind='stale' AND json_extract(document,'$.failure')='connection'",
+                    (decision_id,),
+                ).fetchone()[0]
+            )
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def field_effect_connection_replan(
+        self, decision_id: str
+    ) -> FieldEffectOperation | None:
+        """Return the decision's plan waiting for its connection, if any."""
+        try:
+            row = self._connection.execute(
+                "SELECT document FROM field_effects WHERE decision_id=? AND state='stale' "
+                "AND json_extract(document,'$.failure')='connection' "
+                "ORDER BY updated_at DESC,plan_id LIMIT 1",
+                (decision_id,),
+            ).fetchone()
+            return None if row is None else FieldEffectOperation.from_json(row[0])
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def next_field_effect_connection_replan(
+        self, connection: str, library: str, after: str | None
+    ) -> tuple[str, str, str] | None:
+        """Choose the next plan waiting for this connection, wrapping around."""
+        try:
+            for bound in (after or "", ""):
+                row = self._connection.execute(
+                    "SELECT plan_id,work_id,destination FROM field_effects "
+                    "WHERE connection_name=? AND library_name=? AND state='stale' "
+                    "AND json_extract(document,'$.failure')='connection' AND plan_id>? "
+                    "ORDER BY plan_id LIMIT 1",
+                    (connection, library, bound),
+                ).fetchone()
+                if row is not None:
+                    return row[0], row[1], row[2]
+            return None
+        except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
     @local_operation

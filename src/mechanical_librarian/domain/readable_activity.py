@@ -21,6 +21,8 @@ import sys
 from dataclasses import dataclass
 from typing import cast
 
+from mechanical_librarian.domain.field_effect import CONNECTION_REPLAN_LIMIT
+
 __all__ = [
     "ABSENT",
     "AUTOMATIC_AUTHORITY_UNAVAILABLE",
@@ -101,11 +103,15 @@ _FAILURE_REASONS = {
     "backup": "A safety copy of the current value was unavailable",
     "capability": "Audiobookshelf did not offer this field",
     "circuit_open": "Writing paused after repeated failures",
+    "connection": "Audiobookshelf could not be reached",
+    "connection_exhausted": "Audiobookshelf could not be reached, and this change "
+    f"stopped after it was prepared again {CONNECTION_REPLAN_LIMIT} times",
     "consent": "Write permission was not in place",
     "consent_revoked": "Write permission was withdrawn",
     "cover_recovery": "Cover recovery took this change over",
     "dependency": "Something this change depended on moved",
     "not_applied": "Audiobookshelf did not apply the change",
+    "not_sent": "This change was not sent to Audiobookshelf",
     "owner_abandoned": "You stopped this change",
     "readback": "The change could not be confirmed after writing",
     "restart_readback": "The change could not be confirmed after a restart",

@@ -58,10 +58,15 @@ class _Repository:
         self.operations = {
             plan_id: SimpleNamespace(
                 plan=SimpleNamespace(connection="primary", library=library),
+                state="verified",
+                failure=None,
                 affected_review_case_ids=(),
             )
             for plan_id, library in self.ready
         }
+
+    def field_effect_connection_replan(self, decision_id):
+        return None
 
     def pending_field_effect_decision_documents(self, limit, after=None):
         return ()
@@ -118,6 +123,8 @@ class _RecoveryRepository(_Repository):
         self.operations = {
             plan_id: SimpleNamespace(
                 plan=SimpleNamespace(connection="primary", library="alpha"),
+                state="verified",
+                failure=None,
                 affected_review_case_ids=(),
             )
             for plan_id in self.plans + self.actions
@@ -167,6 +174,8 @@ class _StuckRecoveryRepository(_Repository):
         self.operations = {
             plan_id: SimpleNamespace(
                 plan=SimpleNamespace(connection="primary", library="alpha"),
+                state="verified",
+                failure=None,
                 affected_review_case_ids=(),
             )
             for plan_id in self.plans
@@ -223,6 +232,9 @@ class _PagedRepository:
                 if (value.occurred_at, value.decision_id) > after
             ]
         return tuple(value.to_json() for value in values[:limit])
+
+    def field_effect_connection_replan(self, decision_id):
+        return None
 
     def pending_field_effect_activity_example_document(self):
         return self.decisions[-1].to_json() if self.decisions else None

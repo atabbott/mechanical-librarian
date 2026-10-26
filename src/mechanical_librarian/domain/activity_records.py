@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
+from mechanical_librarian.domain.field_effect import CONNECTION_REPLAN_LIMIT
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
@@ -242,6 +243,8 @@ def _write_facts(
             if state == "reconciling"
             else "Paired title and subtitle change pending"
             if not failure
+            else "Paired title and subtitle change waiting"
+            if failure == "connection"
             else "Paired title and subtitle change stopped"
         )
         return ReadableChange(summary, summary), [
@@ -291,6 +294,19 @@ def _write_facts(
             )
             return ReadableChange(
                 "Prepared change paused", "Prepared change paused"
+            ), facts
+        if failure == "connection":
+            # A lost connection closes this attempt, not the decision (#1402).
+            facts.append(
+                {
+                    "label": "What happens next",
+                    "value": "Mechanical Librarian prepares it again once "
+                    "Audiobookshelf can be reached, at most "
+                    f"{CONNECTION_REPLAN_LIMIT} times",
+                }
+            )
+            return ReadableChange(
+                "Prepared change waiting", "Prepared change waiting"
             ), facts
         facts.append(
             {

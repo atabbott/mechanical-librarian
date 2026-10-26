@@ -474,6 +474,66 @@ def test_a_stopped_write_says_why_and_never_claims_a_new_value(
     ) or state != "retryable"
 
 
+@pytest.mark.parametrize(
+    ("state", "failure", "compact", "reason", "next_step"),
+    (
+        (
+            "retryable",
+            "not_sent",
+            "Prepared change paused",
+            "This change was not sent to Audiobookshelf",
+            "Mechanical Librarian checks the current value again",
+        ),
+        (
+            "retryable",
+            "not_applied",
+            "Prepared change paused",
+            "Audiobookshelf did not apply the change",
+            "Mechanical Librarian checks the current value again",
+        ),
+        (
+            "stale",
+            "connection",
+            "Prepared change waiting",
+            "Audiobookshelf could not be reached",
+            "Mechanical Librarian prepares it again once Audiobookshelf can be "
+            "reached, at most 3 times",
+        ),
+        (
+            "stale",
+            "connection_exhausted",
+            "Prepared change closed",
+            "Audiobookshelf could not be reached, and this change stopped after "
+            "it was prepared again 3 times",
+            None,
+        ),
+    ),
+    ids=("not_sent", "not_applied", "waiting", "bound"),
+)
+def test_an_unsent_or_unreachable_write_says_what_happened_and_what_follows(
+    state: str, failure: str, compact: str, reason: str, next_step: str | None
+) -> None:
+    event = _project(
+        _event(
+            event_type="safety",
+            state=state,
+            record={
+                "source_kind": "field_effect",
+                "pre_value": "The Lathe of Heaven",
+                "desired_value": "The Lathe of Heaven (1971)",
+                "failure": failure,
+            },
+        )
+    )
+    assert event["change"] == compact
+    facts = _facts(event)
+    assert facts["Why it stopped"] == reason
+    assert facts.get("What happens next") == next_step
+    assert ("Confirmed in Audiobookshelf" in facts) is (
+        failure == "connection_exhausted"
+    )
+
+
 def test_a_policy_row_carries_its_own_exact_from_and_to() -> None:
     changes = [
         {

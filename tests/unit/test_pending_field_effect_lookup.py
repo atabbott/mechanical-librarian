@@ -22,6 +22,9 @@ from typing import Any
 import pytest
 
 from mechanical_librarian.adapters.persistence import field_effects
+from mechanical_librarian.adapters.persistence.field_effect_activity import (
+    _FIELD_EFFECT_HOLDS_DECISION_SQL,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
@@ -54,9 +57,21 @@ _ORIGINAL_PREDICATE = (
 # The two indexed arms that replace it in both statements.
 _CURRENT_PREDICATE = (
     "NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
-    "AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
+    "AND "
+    + _FIELD_EFFECT_HOLDS_DECISION_SQL
+    + ") AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
     + _FIELD_EFFECT_COMPANION_DECISION_SQL
-    + "=pending.decision_id AND state NOT IN ('superseded','abandoned')) "
+    + "=pending.decision_id AND "
+    + _FIELD_EFFECT_HOLDS_DECISION_SQL
+    + ") "
+)
+# #1402 later released a decision whose effect only a lost connection staled,
+# so the original the oracle runs carries that release as the current does.
+_HELD_1204 = "state NOT IN ('superseded','abandoned')"
+_ORIGINAL_RELEASED = _ORIGINAL_PREDICATE.replace(
+    "effect." + _HELD_1204,
+    "effect." + _HELD_1204 + " AND NOT (effect.state='stale' AND "
+    "json_extract(effect.document,'$.failure')='connection')",
 )
 _DECISION_ARM = (
     "SEARCH field_effects USING INDEX field_effects_decision (decision_id=?)"
@@ -155,7 +170,7 @@ def _statements(connection: sqlite3.Connection) -> dict[str, str]:
 
 def _original(statement: str) -> str:
     assert statement.count(_CURRENT_PREDICATE) == 1
-    return statement.replace(_CURRENT_PREDICATE, _ORIGINAL_PREDICATE)
+    return statement.replace(_CURRENT_PREDICATE, _ORIGINAL_RELEASED)
 
 
 def _effect(
@@ -255,6 +270,14 @@ def test_current_statements_equal_the_original_across_effect_shapes(
     _effect(connection, "both", pending[4], _companion(pending[4]))
     # Own authority and companion authority are two different pending decisions.
     _effect(connection, "pair", pending[5], _companion(pending[6]))
+    # A connection stale releases its decision in either arm (#1402).
+    _effect(
+        connection,
+        "released",
+        pending[1],
+        json.dumps({"failure": "connection", **json.loads(_companion(pending[2]))}),
+        "stale",
+    )
     # A second live effect for a decision already excluded.
     _effect(connection, "repeat", pending[5], _companion(pending[5]), "retryable")
     # Missing paths and companion values that are not text.
@@ -1165,6 +1188,7 @@ def test_lineage_membership_restores_the_1204_text(
             _before_1205(name, statement)
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
             .replace(_HELD_DESCRIPTION, "", 1)
+            .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)
             .encode()
         ).hexdigest()
         for name, statement in _statements(connection).items()

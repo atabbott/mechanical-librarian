@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import threading
 from typing import Any, Callable, Literal
 
@@ -24,6 +23,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectError,
     FieldEffectPlan,
+    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 
@@ -130,7 +130,9 @@ class FakeTargetService:
         with self._lock:
             key = self._key(plan)
             self._values[key] = value
-            self._versions[key] = hashlib.sha256(repr(value).encode()).hexdigest()[:32]
+            # Production versions a field by its normalized value, so a landed
+            # write is recognised at its planned version shape (#1402).
+            self._versions[key] = field_value_version(plan.destination, value)
 
     @staticmethod
     def _key(plan: FieldEffectPlan) -> tuple[str, str, str, str]:

@@ -3194,7 +3194,7 @@ def test_capability_failures_persist_the_smallest_scope_and_close_claim_races(
         effects, destination="authors", pre=["old"], desired=["new"], suffix="3"
     )
     effects.capabilities.category = "connection_unavailable"
-    assert effects.service.apply(authors.plan.plan_id).failure == "capability"
+    assert effects.service.apply(authors.plan.plan_id).failure == "connection"
     effects.capabilities.category = "allowed"
     genres = _plan(
         effects, destination="genres", pre=["old"], desired=["new"], suffix="4"
@@ -3241,7 +3241,7 @@ def test_final_target_read_persists_typed_connection_unavailability(
     operation = _plan(effects, suffix="8")
     effects.target.unavailable_scope_next = "connection"
     result = effects.service.apply(operation.plan.plan_id)
-    assert (result.state, result.failure) == ("stale", "capability")
+    assert (result.state, result.failure) == ("stale", "connection")
     assert (
         effects.repository.field_effect_capability_suspension("primary", "title")
         == "connection_unavailable"
@@ -3308,7 +3308,7 @@ def test_connection_unavailability_alone_waits_for_a_fresh_observation(
     assert effects.service.apply(unobserved.plan.plan_id).state == "retryable"
     effects.capabilities.category = "connection_unavailable"
     result = effects.service.apply(unobserved.plan.plan_id)
-    assert (result.state, result.failure) == ("stale", "capability")
+    assert (result.state, result.failure) == ("stale", "connection")
     assert suspension("subtitle") == "connection_unavailable"
 
 
@@ -3359,7 +3359,7 @@ def test_recovered_claim_sends_nothing_until_every_guard_passes_again(
     # nothing and refuses nothing, whatever the guards now say.
     assert effects.service.recover_startup() == (1, 0, 0)
     held = effects.service.status(plan_id)
-    assert (held.state, held.failure) == ("retryable", "not_applied")
+    assert (held.state, held.failure) == ("retryable", "not_sent")
     assert sent == []
     if guard == "paused":
         with pytest.raises(GuardedApplicationError, match="paused"):
@@ -3966,7 +3966,7 @@ def test_supersession_does_not_interrupt_claimed_and_cover_bytes_are_private(
     # atomic claim refuses the superseded authority before anything is sent
     # (#1382).
     recovered = effects.service.apply(claimed.plan.plan_id)
-    assert (recovered.state, recovered.failure) == ("retryable", "not_applied")
+    assert (recovered.state, recovered.failure) == ("retryable", "not_sent")
     with pytest.raises(GuardedApplicationError, match="authority"):
         effects.service.apply(claimed.plan.plan_id)
     assert effects.service.status(claimed.plan.plan_id).state == "retryable"
@@ -4081,7 +4081,7 @@ def test_startup_recovers_claimed_applying_and_reconciling_checkpoints(
 
     assert effects.service.start() == (3, 0, 0)
     returned = effects.service.status(claimed.plan.plan_id)
-    assert (returned.state, returned.failure) == ("retryable", "not_applied")
+    assert (returned.state, returned.failure) == ("retryable", "not_sent")
     assert effects.service.apply(claimed.plan.plan_id).state == "verified"
     assert effects.service.status(applying.plan.plan_id).state == "retryable"
     assert effects.service.status(reconciling.plan.plan_id).state == "retryable"
@@ -4128,7 +4128,7 @@ def test_startup_contains_verification_read_failure_after_successful_apply(
     assert effects.service.start() == (2, 0, 0)
     for operation in (first, sibling):
         returned = effects.service.status(operation.plan.plan_id)
-        assert (returned.state, returned.failure) == ("retryable", "not_applied")
+        assert (returned.state, returned.failure) == ("retryable", "not_sent")
         effects.service.apply(operation.plan.plan_id)
     assert effects.service.recover_pending() == (1, 0)
     failed = effects.service.status(first.plan.plan_id)

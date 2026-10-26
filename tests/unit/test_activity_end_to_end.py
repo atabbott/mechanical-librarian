@@ -78,6 +78,7 @@ from tests.support.field_effects import (  # noqa: F401
     _authorize,
     _EffectEnvironment,
     _plan,
+    _replan,
     effects,
     envelope,
     metadata_report,
@@ -1053,7 +1054,7 @@ def test_a_write_the_library_refused_never_claims_a_before_and_after(
         desired="Paper Moons over Larkspur Station",
         suffix="a",
     )
-    effects.target.unavailable_scope_next = "connection"
+    effects.target.unavailable_scope_next = "destination"
     assert effects.service.apply(planned.plan.plan_id).state == "stale"
 
     stopped = next(
@@ -1854,3 +1855,43 @@ def test_configured_witness_utf8_failure_retains_query_scoped_canonical_admissio
     finally:
         reader.close()
         root.close()
+
+
+def test_a_write_waits_through_three_lost_connections_and_then_stops(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    """The bound is counted from the ledger and stated in plain words (#1402)."""
+    report = metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    arguments = dict(
+        destination="title",
+        pre="Paper Moons: Larkspur",
+        desired="Paper Moons over Larkspur Station",
+        suffix="a",
+    )
+    planned = _plan(effects, **arguments)
+    plan_id = planned.plan.plan_id
+    effects.capabilities.category = "connection_unavailable"
+    for _ in range(3):
+        waiting = effects.service.apply(plan_id)
+        assert (waiting.state, waiting.failure) == ("stale", "connection")
+        row = next(event for event in _ledger(effects) if event["state"] == "stale")
+        assert row["change"] == "Prepared change waiting"
+        assert _facts(row)["What happens next"] == (
+            "Mechanical Librarian prepares it again once Audiobookshelf can be "
+            "reached, at most 3 times"
+        )
+        revived = _replan(effects, **arguments)
+        assert revived is not None and revived.state == "planned"
+    stopped = effects.service.apply(plan_id)
+    assert (stopped.state, stopped.failure) == ("stale", "connection_exhausted")
+    again = _replan(effects, **arguments)
+    assert again is not None
+    assert (again.state, again.failure) == ("stale", "connection_exhausted")
+    row = next(event for event in _ledger(effects) if event["state"] == "stale")
+    assert row["change"] == "Prepared change closed"
+    assert _facts(row)["Why it stopped"] == (
+        "Audiobookshelf could not be reached, and this change stopped after it "
+        "was prepared again 3 times"
+    )
+    assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"

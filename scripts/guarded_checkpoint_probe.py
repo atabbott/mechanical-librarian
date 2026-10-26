@@ -219,7 +219,7 @@ def main() -> None:
             service.status(identifiers[name]).state,
             service.status(identifiers[name]).failure,
         )
-        != ("retryable", "not_applied")
+        != ("retryable", "not_sent")
         for name in ("claimed", "verification")
     ):
         raise RuntimeError("stranded claim was not returned unsent")

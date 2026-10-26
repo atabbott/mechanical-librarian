@@ -6,6 +6,8 @@ Status: Accepted
 admission carries a work's active hold to its successor case.
 Issue #1370 amends consent across an owner's policy activation: see
 [Consent across policy activation](#consent-across-policy-activation).
+Issue #1402 amends recovery: a stranded claim returns unsent, and a plan a lost
+connection staled is planned again within a bound.
 
 ## Context
 
@@ -55,11 +57,27 @@ A superseded unclaimed plan may
 be planned again only after current authority, target, dependency, consent, and
 capability checks; its complete event history remains intact. A policy
 demotion or generation change prevents unclaimed automatic work from becoming
-current, while already claimed work finishes to its durable checkpoint.
+current, while already claimed work finishes to its durable checkpoint: a
+request already sent reaches verification or reconciliation, and a claim that
+sent nothing returns to `retryable` as `not_sent`, applied later only through
+every guard and a fresh claim.
+
+A plan staled only because its connection was unavailable, refused by a
+connection-scoped capability observation or by a lost pre-read, is stale with
+`connection` and releases its decision. When the connection is next observed
+healthy the decision is planned again into the same plan, restored to the state
+the stale interrupted with its attempt, claim token, and whole history, and
+every guard runs again in order. The third such re-plan of one decision is the
+last: the next connection stale is `connection_exhausted` and terminal, so an
+item Audiobookshelf answers as missing or unauthorized stops instead of waiting
+forever. A retry whose earlier outcome was unknown is never sent again: when its
+pre-read shows the desired value at the desired version it is `verified` with no
+request. Cover plans keep `capability` and stay terminal.
 
 Pause and library consent revocation stop new claims. They do not interrupt a
 claimed service request. Startup recovers only claimed, applying, verifying, or
-reconciling work and its persisted actions and cleanup obligations. Backup
+reconciling work and its persisted actions and cleanup obligations; a claimed
+plan it finds sent nothing and returns to `retryable` as `not_sent`. Backup
 readiness means the exact-current SQLite store passes its consistency check and
 is outside a transaction so the documented stopped-volume backup can be made;
 it is not a claim that an external backup copy exists.

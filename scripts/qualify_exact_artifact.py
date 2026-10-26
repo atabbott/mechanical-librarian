@@ -775,7 +775,7 @@ restarted = service(reopened_store)
 if restarted.start() != (3, 0, 1):
     raise RuntimeError("startup recovery count")
 returned = restarted.status(claimed.plan_id)
-if (returned.state, returned.failure) != ("retryable", "not_applied"):
+if (returned.state, returned.failure) != ("retryable", "not_sent"):
     raise RuntimeError("claimed recovery")
 if restarted.apply(claimed.plan_id).state != "verified":
     raise RuntimeError("claimed reapplication")

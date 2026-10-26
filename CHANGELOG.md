@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A write Audiobookshelf could not be reached for is now prepared again once
+  the connection is back, at most three times, instead of being dropped, and a
+  write that had already landed is confirmed without sending it twice.
+  Activity says the change is waiting, or that it stopped after the third try,
+  and a write interrupted before sending reads as not sent (#1402).
+
 - Wrong passwords from one client now slow only that client, so a stranger can
   no longer keep the owner from signing in elsewhere; a backstop still limits
   all clients together. Setup asks for an owner password of at least 12

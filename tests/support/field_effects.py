@@ -243,6 +243,31 @@ def _plan(
     return result
 
 
+def _replan(
+    effects: _EffectEnvironment,
+    destination: str = "title",
+    pre: object = "old",
+    desired: object = "new",
+    suffix: str = "a",
+) -> FieldEffectOperation | None:
+    """Plan `_plan`'s decision again, as the scheduler does, leaving the
+    fake library holding whatever it holds now."""
+    selected = envelope(destination, desired)
+    return effects.service.plan(
+        decision(destination, selected, suffix),
+        connection="primary",
+        library="books",
+        work_id="book-1",
+        destination=destination,
+        pre_value=pre,
+        desired_value=selected,
+        target_fingerprint="d" * 64,
+        target_version="version-1",
+        dependency_digests=(DEPENDENCY,),
+        capability_digest=CAPABILITY,
+    )
+
+
 def _authorize(
     effects: _EffectEnvironment,
     source: HumanDecision | AutomaticDecision,
