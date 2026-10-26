@@ -10261,9 +10261,17 @@ def test_masthead_and_run_line_agree_on_the_real_server(
         finished("books-0")
         # One prepared case is re-projected as recorded with nothing to decide,
         # so the run line carries all three counts, including its longest word.
-        with closing(sqlite3.connect(fixture.database)) as connection:
+        # Each state change goes through the fixture repository's own scope:
+        # a raw connection to the configured path leaves its rollback journal
+        # beside the database, which the Linux binding refuses as recovery
+        # state, so a pipeline lane opening a repository in that window would
+        # stop for recovery (#1422). The scope writes through the private
+        # binding, serialized with the pipeline.
+        scope = fixture.repository._transaction("reproject_recorded_work")
+        scope.begin()
+        try:
             assert (
-                connection.execute(
+                fixture.repository._connection.execute(
                     "UPDATE review_preparation_work SET outcome='evidence_only',"
                     "proposal_set_id=NULL,review_case_id=NULL WHERE work_id=("
                     "SELECT work_id FROM review_preparation_work WHERE library_name="
@@ -10272,7 +10280,8 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                 ).rowcount
                 == 1
             )
-            connection.commit()
+        finally:
+            scope.commit()
         current = fixture.application.preparation().to_data()
         presentation = cast(dict[str, Any], current["presentation"])
         assert presentation["run_id"] != cast(dict, earlier["presentation"])["run_id"]
@@ -10379,15 +10388,18 @@ def test_masthead_and_run_line_agree_on_the_real_server(
 
                 # A prepared work fails after its cycle completed, as a policy
                 # restart that ends in failure would leave it.
-                with closing(sqlite3.connect(fixture.database)) as connection:
-                    changed = connection.execute(
+                scope = fixture.repository._transaction("fail_completed_work")
+                scope.begin()
+                try:
+                    changed = fixture.repository._connection.execute(
                         "UPDATE review_preparation_work SET stage='proposal',"
                         "state='failed',outcome=NULL,failure_code='failed' "
                         "WHERE work_id=(SELECT work_id FROM review_preparation_work "
                         "WHERE scan_id=? AND state='complete' ORDER BY work_id LIMIT 1)",
                         (books["scan_id"],),
                     ).rowcount
-                    connection.commit()
+                finally:
+                    scope.commit()
                 assert changed == 1
                 after = fixture.application.preparation().to_data()
                 now = cast(dict[str, Any], after["presentation"])["now"]
