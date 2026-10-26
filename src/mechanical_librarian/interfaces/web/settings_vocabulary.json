@@ -5,7 +5,7 @@
     "printable_ascii": "^[\\u0021-\\u007e]+$",
     "forbidden_prefix": "bearer"
   },
-  "owner_password": { "minimum_bytes": 1, "maximum_bytes": 1024 },
+  "owner_password": { "minimum_characters": 12, "maximum_bytes": 1024 },
   "endpoint": { "minimum": 1, "maximum": 2048 },
   "open_library_email": {
     "minimum": 3,
@@ -43,7 +43,8 @@
   "audible_marketplace_order": ["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"],
   "errors": {
     "secret": "Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.",
-    "owner_password": "Use an owner password between 1 and 1,024 bytes.",
+    "owner_password": "Use at least 12 characters.",
+    "owner_password_long": "That password is too long. Use a shorter one.",
     "owner_password_empty": "Enter an owner password. Any characters are allowed, including spaces.",
     "owner_password_mismatch": "The two passwords do not match. Retype the confirmation.",
     "invalid_origin": "This page was not reached through the address this deployment publishes. Open the published address; if a reverse proxy sits in front, have it send exactly one canonical forwarded host and protocol pair.",

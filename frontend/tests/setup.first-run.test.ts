@@ -336,7 +336,7 @@ describe('shipped first-run setup script', () => {
     await waitFor(() => expect(screen.getByLabelText('Owner password')).toHaveFocus())
   })
 
-  it('states the owner-password rules, reveals on demand, and refuses an over-long value', async () => {
+  it('states the owner-password rules, reveals on demand, and refuses a short or over-long value', async () => {
     let sessions = 0
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(request)
@@ -359,7 +359,23 @@ describe('shipped first-run setup script', () => {
     // The seven-step ledger is drawn on the very first screen, which is
     // reached before any setup session exists.
     expect(document.querySelectorAll('#setup-ledger .ledger-row')).toHaveLength(7)
-    expect(screen.getByText(/Between 1 and 1,024 bytes/u)).toBeVisible()
+    // #1384: the rules follow the password field they govern and describe it,
+    // rather than reading as rules for the claim token above them.
+    const stated = screen.getByText(
+      'At least 12 characters. Any characters are allowed, including spaces.',
+    )
+    expect(stated).toBeVisible()
+    const rulesList = stated.closest('ul')
+    if (!rulesList) throw new Error('password rules missing')
+    expect(rulesList.id).toBe('setup-password-rules')
+    expect(screen.getByText('Both fields must match exactly.').id).toBe('setup-password-match')
+    expect(screen.getByLabelText('Confirm owner password')).toHaveAttribute(
+      'aria-describedby',
+      'setup-password-match',
+    )
+    expect(rulesList.previousElementSibling).toContainElement(
+      screen.getByLabelText('Owner password'),
+    )
     expect(screen.getByText(/cannot be read back or reset/u)).toBeVisible()
     // ADR-0072's supported default first run is plain HTTP, and jsdom serves
     // this page over `http:`, so the clear-text statement is the live branch.
@@ -369,6 +385,7 @@ describe('shipped first-run setup script', () => {
     const confirmation = screen.getByLabelText('Confirm owner password')
     const reveal = screen.getByRole('button', { name: 'Show the owner password' })
     expect(password).toHaveAttribute('type', 'password')
+    expect(password).toHaveAttribute('aria-describedby', 'setup-password-rules')
     expect(reveal).toHaveAttribute('aria-pressed', 'false')
     expect(reveal).toHaveAttribute('aria-controls', password.id)
     fireEvent.click(reveal)
@@ -386,14 +403,32 @@ describe('shipped first-run setup script', () => {
     // themselves instead of repeating the grey rules.
     expect(alert).toHaveTextContent(settingsVocabulary.errors.owner_password_empty)
     expect(password).toHaveAttribute('aria-invalid', 'true')
-    expect(password).toHaveAttribute('aria-describedby', alert.id)
+    expect(password).toHaveAttribute('aria-describedby', `${alert.id} setup-password-rules`)
     expect(password).toHaveFocus()
+    // The refusal sits directly under the field it refuses.
+    expect(alert.previousElementSibling).toContainElement(password)
     expect(sessions).toBe(0)
 
     fireEvent.input(password, { target: { value: 'correct horse battery staple' } })
     expect(password).not.toHaveAttribute('aria-invalid')
-    expect(password).not.toHaveAttribute('aria-describedby')
+    expect(password).toHaveAttribute('aria-describedby', 'setup-password-rules')
     expect(alert.textContent).toBe('')
+
+    // Characters are counted, not bytes: eleven two-byte characters are still
+    // too short.
+    for (const short of ['a'.repeat(11), 'é'.repeat(11), '😀'.repeat(11)]) {
+      fireEvent.input(password, { target: { value: short } })
+      fireEvent.input(confirmation, { target: { value: short } })
+      fireEvent.submit(form)
+      await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
+      expect(screen.getByRole('alert')).toHaveTextContent(settingsVocabulary.errors.owner_password)
+      expect(password).toHaveFocus()
+      expect(sessions).toBe(0)
+      // Let the refusal's focus settle before the next refusal, as a person
+      // typing into another field would by focusing it first.
+      await new Promise(requestAnimationFrame)
+    }
+    fireEvent.input(password, { target: { value: 'é'.repeat(12) } })
 
     fireEvent.input(confirmation, { target: { value: 'wrong horse' } })
     fireEvent.submit(form)
@@ -401,6 +436,7 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       settingsVocabulary.errors.owner_password_mismatch,
     )
+    expect(confirmation).toHaveAttribute('aria-describedby', 'setup-error setup-password-match')
     expect(confirmation).toHaveFocus()
     expect(password).not.toHaveAttribute('aria-invalid')
     expect(sessions).toBe(0)
@@ -410,7 +446,9 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(confirmation, { target: { value: oversize } })
     fireEvent.submit(form)
     await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
-    expect(screen.getByRole('alert')).toHaveTextContent(settingsVocabulary.errors.owner_password)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      settingsVocabulary.errors.owner_password_long,
+    )
     expect(sessions).toBe(0)
 
     const admitted = 'a'.repeat(settingsVocabulary.owner_password.maximum_bytes)
@@ -458,9 +496,10 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(confirmation, { target: { value: 'second password again' } })
     expect(alert).toHaveTextContent(settingsVocabulary.errors.owner_password_empty)
     expect(password).toHaveAttribute('aria-invalid', 'true')
-    expect(password).toHaveAttribute('aria-describedby', alert.id)
+    expect(password).toHaveAttribute('aria-describedby', `${alert.id} setup-password-rules`)
+    expect(alert.previousElementSibling).toContainElement(password)
     expect(confirmation).not.toHaveAttribute('aria-invalid')
-    expect(confirmation).not.toHaveAttribute('aria-describedby')
+    expect(confirmation).toHaveAttribute('aria-describedby', 'setup-password-match')
 
     // The marked field still clears its own refusal.
     fireEvent.input(password, { target: { value: 'second password again' } })
@@ -469,6 +508,51 @@ describe('shipped first-run setup script', () => {
     expect(sessions).toBe(0)
     fireEvent.submit(form)
     await waitFor(() => expect(sessions).toBe(1))
+  })
+
+  it('refuses a password the server rejects on that field, with a fresh nonce', async () => {
+    const nonces: (string | null)[] = []
+    let claimReads = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/claim') {
+        claimReads += 1
+        return response({ claimed: false, nonce: String(claimReads).repeat(32), revision: 1 })
+      }
+      if (url === '/api/setup/session' && init?.method === 'POST') {
+        nonces.push(new Headers(init.headers).get('x-setup-nonce'))
+        if (nonces.length === 1) return response({ detail: { error: 'invalid_password' } }, 422)
+        return response({ csrf_token: 'csrf-token' })
+      }
+      return response({ error: 'unauthorized' }, 401)
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    const password = await screen.findByLabelText('Owner password')
+    const confirmation = screen.getByLabelText('Confirm owner password')
+    const claimToken = screen.getByLabelText('Setup claim token')
+    const form = password.closest('form')
+    if (!form) throw new Error('claim form missing')
+    fireEvent.input(claimToken, { target: { value: 'synthetic-claim-token' } })
+    fireEvent.input(password, { target: { value: 'correct horse battery staple' } })
+    fireEvent.input(confirmation, { target: { value: 'correct horse battery staple' } })
+    fireEvent.submit(form)
+
+    // The refused claim spent its nonce, so a fresh one is read before the
+    // refusal is shown on the password, not on the claim token.
+    const alert = await screen.findByRole('alert')
+    await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
+    expect(alert).toHaveTextContent(settingsVocabulary.errors.owner_password)
+    expect(alert.previousElementSibling).toContainElement(password)
+    expect(password).toHaveAttribute('aria-describedby', `${alert.id} setup-password-rules`)
+    expect(claimToken).not.toHaveAttribute('aria-invalid')
+    expect(password).toHaveFocus()
+    expect(claimReads).toBe(2)
+
+    fireEvent.submit(form)
+    await waitFor(() => expect(nonces).toHaveLength(2))
+    expect(nonces).toEqual(['1'.repeat(32), '2'.repeat(32)])
   })
 
   it.each([

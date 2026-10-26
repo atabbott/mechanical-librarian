@@ -328,6 +328,7 @@ def _compose_review_client(
         policy_store=repository,
         verify_password=password_binding[0],
         session_digest=password_binding[1],
+        client_digest=password_binding[2],
         clock=lambda: int(time.time()),
         session_lifetime_seconds=review.session_lifetime_seconds,
         graceful_shutdown_seconds=review.graceful_shutdown_seconds,

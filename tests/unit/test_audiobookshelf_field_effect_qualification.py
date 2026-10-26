@@ -295,7 +295,7 @@ def test_installed_qualification_composes_application_before_fastapi(
     with (
         patch(
             "scripts.qualify_audiobookshelf_field_effect.load_owner_password_binding",
-            return_value=(lambda _: False, lambda _: "d" * 64),
+            return_value=(lambda _: False, lambda _: "d" * 64, lambda _: "e" * 64),
         ),
         patch(
             "scripts.qualify_audiobookshelf_field_effect.compose_review_application",

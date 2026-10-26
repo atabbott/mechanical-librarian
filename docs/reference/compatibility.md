@@ -1,5 +1,14 @@
 # Pre-release compatibility policy
 
+#1384 keys the session database's `review_login_failures` rows by a
+verifier-bound client HMAC, so sign-in is throttled per client. **Clean rebuild
+required** for `/data/private/review-sessions.sqlite` only: startup refuses the
+predecessor table before mutation, with no adoption or migration. Remove the
+file and restart; every browser signs in again. The application database,
+settings, setup state and public API schemas are unchanged. F19a/F20/F46
+records are displaced because the session service, web interface, validation
+vocabulary and composition they bind changed, with permission sets unchanged.
+
 #1366 adds an optional `now` count to the `review-preparation-v2`
 presentation, whose schema version is unchanged: the run's works as they stand
 now (`ready`, `recorded`, `failed`, `in_progress`) and the `scan_ids` of the

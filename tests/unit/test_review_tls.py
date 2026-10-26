@@ -430,7 +430,7 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
             ) as composed,
             patch(
                 "mechanical_librarian.bootstrap.composition.load_owner_password_binding",
-                return_value=(lambda _: False, lambda _: "d" * 64),
+                return_value=(lambda _: False, lambda _: "d" * 64, lambda _: "e" * 64),
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.create_review_pipeline",

@@ -851,8 +851,8 @@ class ReviewApplication:
     # sign-in and session checks never queue behind an operation that holds
     # the application gate while it waits on a scan's write transaction.
 
-    def login(self, password: str) -> SessionTokens:
-        return self._sessions.login(password)
+    def login(self, password: str, client: str) -> SessionTokens:
+        return self._sessions.login(password, client)
 
     def authenticate(self, session_token: str, csrf_token: str | None = None) -> str:
         return self._sessions.authenticate(session_token, csrf_token)
@@ -1732,6 +1732,7 @@ def compose_review_application(
     session_lifetime_seconds: int,
     graceful_shutdown_seconds: int,
     session_digest: Callable[[str], str],
+    client_digest: Callable[[str], str],
     close_state_owner: bool = False,
     preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
@@ -1813,6 +1814,7 @@ def compose_review_application(
             session_digest,
             clock,
             session_lifetime_seconds,
+            client_digest=client_digest,
         ),
         cases=InspectCurrentReviewCase(case_store, cover_considerations),
         decisions=RecordHumanDecision(decision_store, clock, timing),

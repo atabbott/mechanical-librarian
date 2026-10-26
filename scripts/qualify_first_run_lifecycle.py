@@ -22,6 +22,7 @@ CASES = (
     "tests/unit/test_review_web_transport.py::test_first_boot_acknowledgement_is_authenticated_csrf_bound_and_durable",
     "tests/browser/test_review_browser.py::test_first_run_installed_semantics_responsiveness_and_handoff",
     "tests/browser/test_review_browser.py::test_first_owner_claim_requires_the_deployment_claim_token",
+    "tests/browser/test_review_browser.py::test_a_short_owner_password_is_refused_on_its_own_field",
 )
 
 

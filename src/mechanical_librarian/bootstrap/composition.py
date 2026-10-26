@@ -3577,6 +3577,7 @@ def compose_store_runtime_generation(
                 policy_store=repository,
                 verify_password=owner_binding[0],
                 session_digest=owner_binding[1],
+                client_digest=owner_binding[2],
                 clock=lambda: int(time.time()),
                 session_lifetime_seconds=review.session_lifetime_seconds,
                 graceful_shutdown_seconds=review.graceful_shutdown_seconds,
@@ -3690,12 +3691,21 @@ def _compose_setup_runtime_generation(
             ),
         )
 
+    def established_owner_client_digest(identity: str) -> str:
+        return cast(
+            "str",
+            state.use_owner_verifier(
+                lambda encoded: owner_password_binding(encoded)[2](identity)
+            ),
+        )
+
     sessions = OwnerSessionService(
         session_store,
         verify_established_owner,
         established_owner_session_digest,
         lambda: int(time.time()),
         OWNER_SESSION_LIFETIME_DEFAULT,
+        client_digest=established_owner_client_digest,
     )
     setup_probe = AudiobookshelfSetupProbe(
         lambda endpoint, key: target_client_token(endpoint, key, 30)
@@ -4111,6 +4121,7 @@ def run_review_server(
                     policy_store=repository,
                     verify_password=password_binding[0],
                     session_digest=password_binding[1],
+                    client_digest=password_binding[2],
                     clock=lambda: int(time.time()),
                     session_lifetime_seconds=review.session_lifetime_seconds,
                     graceful_shutdown_seconds=review.graceful_shutdown_seconds,
@@ -4736,11 +4747,23 @@ class _OfflineSessionStore:
     def _unavailable(self) -> MetadataReportError:
         return MetadataReportError("review sessions are unavailable offline")
 
-    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
+    def begin_login(
+        self,
+        now: int,
+        client_digest: str,
+        window_seconds: int,
+        client_maximum: int,
+        global_maximum: int,
+    ) -> bool:
         raise self._unavailable()
 
     def create_review_session(
-        self, session_digest: str, csrf_digest: str, created_at: int, expires_at: int
+        self,
+        session_digest: str,
+        csrf_digest: str,
+        created_at: int,
+        expires_at: int,
+        client_digest: str,
     ) -> None:
         raise self._unavailable()
 
@@ -4801,6 +4824,7 @@ def run_cover_review(
             policy_store=repository,
             verify_password=lambda _: False,
             session_digest=lambda _: "",
+            client_digest=lambda _: "",
             clock=lambda: int(time.time()),
             session_lifetime_seconds=1,
             graceful_shutdown_seconds=1,

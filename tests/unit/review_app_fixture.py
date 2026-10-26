@@ -134,6 +134,7 @@ def create_transport_test_app(
         policy_store=repository,
         verify_password=password_binding[0],
         session_digest=password_binding[1],
+        client_digest=password_binding[2],
         clock=clock,
         session_lifetime_seconds=configuration.session_lifetime_seconds,
         graceful_shutdown_seconds=configuration.graceful_shutdown_seconds,

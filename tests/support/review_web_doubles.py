@@ -113,7 +113,8 @@ class FakeReviewRepository:
             "results": [],
             "state": "not_requested",
         }
-        self.failures: list[int] = []
+        # (occurred_at, client_digest), as the session store keeps them.
+        self.failures: list[tuple[int, str]] = []
         self.sessions: dict[str, tuple[str, str, int, int | None]] = {}
         self.decisions: dict[str, str] = {}
         self.automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
@@ -293,20 +294,34 @@ class FakeReviewRepository:
     def list_shadow_outcomes(self, limit):
         return self.shadow_outcomes[:limit]
 
-    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
+    def begin_login(
+        self,
+        now: int,
+        client_digest: str,
+        window_seconds: int,
+        client_maximum: int,
+        global_maximum: int,
+    ) -> bool:
         self.failures = [
-            value for value in self.failures if value >= now - window_seconds
+            value for value in self.failures if value[0] >= now - window_seconds
         ]
-        permitted = len(self.failures) < maximum_failures
+        permitted = len(self.failures) < global_maximum and (
+            sum(client == client_digest for _, client in self.failures) < client_maximum
+        )
         if permitted:
-            self.failures.append(now)
+            self.failures.append((now, client_digest))
         return permitted
 
     def create_review_session(
-        self, session_digest: str, csrf_digest: str, created_at: int, expires_at: int
+        self,
+        session_digest: str,
+        csrf_digest: str,
+        created_at: int,
+        expires_at: int,
+        client_digest: str,
     ) -> None:
         self.sessions[session_digest] = ("owner", csrf_digest, expires_at, None)
-        self.failures.clear()
+        self.failures = [value for value in self.failures if value[1] != client_digest]
 
     def authenticate_review_session(
         self, session_digest: str, now: int

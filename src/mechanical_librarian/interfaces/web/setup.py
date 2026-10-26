@@ -43,10 +43,14 @@ from mechanical_librarian.domain.setup_state import (
     SetupStateDocument,
     claim_token_matches,
 )
-from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
+from mechanical_librarian.domain.validation import (
+    OWNER_SESSION_LIFETIME_DEFAULT,
+    owner_password,
+)
 from mechanical_librarian.interfaces.web.app import (
     BodyLimitMiddleware,
     _request_matches_origin,
+    client_identity,
     reviewer_failure_response,
 )
 from mechanical_librarian.interfaces.web.setup_frontend import (
@@ -58,6 +62,12 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
+# Outstanding claim nonces, each valid for 600 seconds. One client holds at
+# most a tenth of the pool. A reload replaces the page's cookie without spending
+# the nonce it held, so a client at its share retires its own oldest nonce
+# instead of being refused, and only the global pool can refuse (#1384).
+_CLAIM_NONCES_GLOBAL = 100
+_CLAIM_NONCES_PER_CLIENT = 10
 _SETUP_SESSION_BODY_LIMIT = 2 * 1_024 * 6 + 128 * 6 + 128
 _SETUP_BODY_LIMITS = {
     # Two maximum passwords and the bounded claim token may each expand
@@ -357,23 +367,28 @@ def create_setup_app(
         return SETUP_HTML
 
     @app.get("/api/setup/claim")
-    def claim_state(response: Response) -> dict[str, object]:
+    def claim_state(request: Request, response: Response) -> dict[str, object]:
         """Mint a bounded host-only synchronizer nonce for first ownership."""
         try:
             document = state.read(bootstrap_verifier)
         except Exception as error:
             raise HTTPException(503, {"error": "unavailable"}) from error
         now = clock()
-        nonces: dict[str, int] = app.state.claim_nonces
-        for value, expires_at in tuple(nonces.items()):
+        client = client_identity(request, trusted_proxy_ips)
+        # In memory only: the identity never leaves this process.
+        nonces: dict[str, tuple[int, str]] = app.state.claim_nonces
+        for value, (expires_at, _) in tuple(nonces.items()):
             if expires_at <= now:
                 nonces.pop(value, None)
-        if len(nonces) >= 100:
+        held = [value for value, (_, holder) in nonces.items() if holder == client]
+        if len(held) >= _CLAIM_NONCES_PER_CLIENT:
+            nonces.pop(min(held, key=lambda value: nonces[value][0]))
+        if len(nonces) >= _CLAIM_NONCES_GLOBAL:
             raise HTTPException(503, {"error": "unavailable"})
         nonce = token_factory(32)
         if not 32 <= len(nonce) <= 128:
             raise HTTPException(500, {"error": "unavailable"})
-        nonces[nonce] = now + 600
+        nonces[nonce] = (now + 600, client)
         response.set_cookie(
             "ml_setup_nonce",
             nonce,
@@ -404,6 +419,7 @@ def create_setup_app(
     @app.post("/api/setup/session")
     def login(
         request: _LoginRequest,
+        http_request: Request,
         response: Response,
         origin: str | None = Header(default=None),
         x_setup_nonce: str | None = Header(default=None),
@@ -417,13 +433,13 @@ def create_setup_app(
             raise HTTPException(403, {"error": "csrf"})
         if not current.claimed:
             now = clock()
-            nonces: dict[str, int] = app.state.claim_nonces
+            nonces: dict[str, tuple[int, str]] = app.state.claim_nonces
             if (
                 origin != canonical_origin
                 or x_setup_nonce is None
                 or ml_setup_nonce is None
                 or not secrets.compare_digest(x_setup_nonce, ml_setup_nonce)
-                or nonces.pop(x_setup_nonce, 0) <= now
+                or nonces.pop(x_setup_nonce, (0, ""))[0] <= now
             ):
                 raise HTTPException(403, {"error": "csrf"})
             claim_token = request.claim_token
@@ -437,7 +453,7 @@ def create_setup_app(
                 request.expected_revision is None
                 or request.confirmation is None
                 or request.password != request.confirmation
-                or not 1 <= len(request.password.encode("utf-8")) <= 1024
+                or not owner_password(request.password)
             ):
                 raise HTTPException(422, {"error": "invalid_password"})
             owner_verifier = PasswordHasher().hash(request.password)
@@ -464,7 +480,9 @@ def create_setup_app(
             # issuance fails here, the claim stands and resubmitting the same
             # form reaches this already-claimed branch.
         try:
-            tokens = sessions.login(request.password)
+            tokens = sessions.login(
+                request.password, client_identity(http_request, trusted_proxy_ips)
+            )
         except ReviewWebError as error:
             status = (
                 429

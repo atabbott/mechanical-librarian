@@ -716,6 +716,7 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
         lambda: 1_000,
         3_600,
         lambda _length: next(tokens),
+        client_digest=lambda identity: hashlib.sha256(identity.encode()).hexdigest(),
     )
     document = state.read(_BOOTSTRAP)
     write_failure: list[Exception] = []
@@ -732,7 +733,7 @@ def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
             write_failure.append(error)
 
     def login() -> None:
-        login_tokens.append(sessions.login("owner password"))
+        login_tokens.append(sessions.login("owner password", "client:192.0.2.10"))
 
     writer = threading.Thread(target=write_state)
     signer = threading.Thread(target=login)

@@ -38,6 +38,7 @@ FieldCheck = Callable[[object], bool]
 OWNER_SESSION_LIFETIME_MINIMUM = 300
 OWNER_SESSION_LIFETIME_DEFAULT = 2_592_000
 OWNER_SESSION_LIFETIME_MAXIMUM = 2_592_000
+OWNER_PASSWORD_MINIMUM_CHARACTERS = 12
 
 
 def exact_type(expected: type) -> FieldCheck:
@@ -85,6 +86,20 @@ def bounded_utf8_text(maximum_bytes: int) -> FieldCheck:
             return False
 
     return check
+
+
+def owner_password(value: object) -> bool:
+    """Accept a new owner password: 12 code points or more, at most 1024 bytes.
+
+    The minimum counts characters, so a multi-byte password is not credited
+    for its encoding. It governs only a password being set; sign-in keeps
+    accepting any verifier already established (#1384).
+    """
+    return (
+        type(value) is str
+        and len(value) >= OWNER_PASSWORD_MINIMUM_CHARACTERS
+        and bounded_utf8_text(1024)(value)
+    )
 
 
 def prefixed_hex_identity(prefix: str) -> FieldCheck:

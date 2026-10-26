@@ -6195,6 +6195,7 @@ def test_run_line_is_the_current_split_of_the_masthead_rows_it_covers(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: "a" * 64,
+        client_digest=lambda _: "b" * 64,
         clock=lambda: 20,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,

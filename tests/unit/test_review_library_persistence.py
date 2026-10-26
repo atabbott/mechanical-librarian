@@ -3612,6 +3612,7 @@ def test_active_labels_filter_current_and_terminal_before_count_and_page(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: "a" * 64,
+        client_digest=lambda _: "b" * 64,
         clock=lambda: 20,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,

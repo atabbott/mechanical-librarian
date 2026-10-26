@@ -67,6 +67,7 @@ def application(repository: FakeReviewRepository) -> ReviewApplication:
         policy_store=repository,
         verify_password=lambda value: value == "correct horse",
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -185,6 +186,7 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -249,6 +251,7 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -266,7 +269,7 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
 def test_session_operations_are_composed_before_transport(
     application: ReviewApplication,
 ) -> None:
-    tokens = application.login("correct horse")
+    tokens = application.login("correct horse", "client:192.0.2.10")
 
     assert application.authenticate(tokens.session_token) == "owner"
     browser_csrf = application.issue_browser_csrf(tokens.session_token)
@@ -296,13 +299,14 @@ def test_password_verifier_fault_is_not_reported_as_a_wrong_password(
             MemoryError("argon2 memory cost unavailable")
         ),
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
     )
 
     with pytest.raises(ReviewWebError) as raised:
-        application.login("correct horse")
+        application.login("correct horse", "client:192.0.2.10")
 
     assert raised.value.code == "runtime"
     assert isinstance(raised.value.__cause__, MemoryError)
@@ -338,6 +342,7 @@ def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(
         policy_store=repository,
         verify_password=lambda value: value == "correct horse",
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -376,6 +381,7 @@ def test_activity_projection_bypasses_the_owner_operation_gate(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -465,6 +471,7 @@ def test_fallback_activity_serializes_a_worker_commit_past_its_read_snapshot(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -529,6 +536,7 @@ def test_shutdown_closes_activity_projection_after_another_lane_fails(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -579,6 +587,7 @@ def test_published_preparation_work_wakes_the_guarded_scheduler(
         policy_store=repository,
         verify_password=lambda value: value == "correct horse",
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -633,6 +642,7 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
         policy_store=repository,
         verify_password=lambda value: value == "correct horse",
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -702,6 +712,7 @@ def test_first_boot_status_length_mismatch_keeps_typed_persistence_error(
         policy_store=repository,
         verify_password=lambda value: value == "correct horse",
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -813,6 +824,7 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -865,6 +877,7 @@ def test_attached_reviewer_selection_returns_success_and_supported_invalidations
         policy_store=repository,
         verify_password=lambda _value: False,
         session_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
@@ -935,6 +948,7 @@ def test_library_display_rename_preserves_case_and_target_identity(repository):
         policy_store=repository,
         verify_password=lambda _: True,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,

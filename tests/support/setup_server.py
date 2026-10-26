@@ -25,7 +25,9 @@ from tests.support.tls import synthetic_tls_identity
 
 
 @contextmanager
-def real_setup_server(root: Path) -> Iterator[tuple[str, Path, Path]]:
+def real_setup_server(
+    root: Path, trusted_proxy_ips: tuple[str, ...] = ()
+) -> Iterator[tuple[str, Path, Path]]:
     """Yield the origin, the minted token file and the trusted certificate."""
     certificate, private_key = synthetic_tls_identity(root, "setup")
     data = root / "data"
@@ -38,6 +40,7 @@ def real_setup_server(root: Path) -> Iterator[tuple[str, Path, Path]]:
         canonical_origin=origin,
         tls_certificate_file=str(certificate),
         tls_private_key_file=str(private_key),
+        trusted_proxy_ips=list(trusted_proxy_ips),
     )
     repository = composition.open_repository(database, create=True, cross_thread=True)
     session_store = composition._open_review_session_store(database)

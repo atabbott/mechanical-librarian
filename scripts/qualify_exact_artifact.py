@@ -622,6 +622,7 @@ with tempfile.TemporaryDirectory() as directory:
         policy_store=repository,
         verify_password=binding[0],
         session_digest=binding[1],
+        client_digest=binding[2],
         clock=lambda: 1_000,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=5,

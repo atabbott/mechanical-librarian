@@ -5587,6 +5587,112 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
             browser.close()
 
 
+def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
+    """#1384 through the shipped page, on the real setup generation.
+
+    The twelve-character rule is stated with the password field and describes
+    it. A short password is refused on that field before anything is sent, and
+    a password the server itself refuses lands on the same field after a fresh
+    nonce is read, so the corrected claim succeeds without a reload.
+    """
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        real_setup_server(Path(directory)) as (origin, token_file, _certificate),
+    ):
+        token = token_file.read_text(encoding="ascii").strip()
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            with _closing_context(context):
+                page = context.new_page()
+                errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, errors))
+                page.route(
+                    "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
+                )
+                requests: list[str] = []
+                page.on(
+                    "request",
+                    lambda request: requests.append(urlparse(request.url).path),
+                )
+                page.set_viewport_size({"width": 390, "height": 844})
+                page.goto(origin)
+                password = page.get_by_label("Owner password", exact=True)
+                confirmation = page.get_by_label("Confirm owner password", exact=True)
+                claim_token = page.get_by_label("Setup claim token", exact=True)
+                expect(page.locator("#setup-password-rules")).to_contain_text(
+                    "At least 12 characters. Any characters are allowed, including spaces."
+                )
+                expect(confirmation).to_have_attribute(
+                    "aria-describedby", "setup-password-match"
+                )
+                expect(password).to_have_attribute(
+                    "aria-describedby", "setup-password-rules"
+                )
+                follows = """selector => document.querySelector(selector)
+                  .previousElementSibling
+                  .contains(document.querySelector('input[name=password]'))"""
+                # The rules follow the password field, not the claim token.
+                assert page.evaluate(follows, "#setup-password-rules")
+                claim_token.fill(token)
+                for short in ("a" * 11, "é" * 11, "\U0001f600" * 11):
+                    password.fill(short)
+                    confirmation.fill(short)
+                    page.get_by_role("button", name="Create owner access").click()
+                    alert = page.get_by_role("alert")
+                    expect(alert).to_have_text("Use at least 12 characters.")
+                    expect(password).to_have_attribute("aria-invalid", "true")
+                    expect(password).to_have_attribute(
+                        "aria-describedby", "setup-error setup-password-rules"
+                    )
+                    page.evaluate("() => new Promise(requestAnimationFrame)")
+                    expect(password).to_be_focused()
+                    assert claim_token.get_attribute("aria-invalid") is None
+                    assert page.evaluate(follows, "#setup-error")
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                # Over the byte ceiling is refused in place too, in its own words.
+                password.fill("a" * 1_025)
+                confirmation.fill("a" * 1_025)
+                page.get_by_role("button", name="Create owner access").click()
+                expect(page.get_by_role("alert")).to_have_text(
+                    "That password is too long. Use a shorter one."
+                )
+                expect(password).to_have_attribute("aria-invalid", "true")
+                assert "/api/setup/session" not in requests
+                password.fill(_PASSWORD)
+                expect(page.get_by_role("alert")).to_be_empty()
+                confirmation.fill(_PASSWORD)
+
+                # A refusal from the server itself spends the nonce: the page
+                # reads a fresh one and refuses on the password field.
+                def shorten(route) -> None:
+                    body = json.loads(route.request.post_data or "{}")
+                    body.update(password="a" * 11, confirmation="a" * 11)
+                    route.continue_(post_data=json.dumps(body))
+
+                page.route("**/api/setup/session", shorten)
+                claims_before = requests.count("/api/setup/claim")
+                page.get_by_role("button", name="Create owner access").click()
+                expect(page.get_by_role("alert")).to_contain_text(
+                    "Use at least 12 characters"
+                )
+                expect(password).to_have_attribute("aria-invalid", "true")
+                assert claim_token.get_attribute("aria-invalid") is None
+                assert requests.count("/api/setup/claim") == claims_before + 1
+                assert page.evaluate(follows, "#setup-error")
+                assert token_file.exists()
+                page.unroute("**/api/setup/session", shorten)
+                page.get_by_role("button", name="Create owner access").click()
+                expect(
+                    page.get_by_role("heading", name="Connect Audiobookshelf")
+                ).to_be_visible()
+                assert not token_file.exists()
+                assert errors == []
+            browser.close()
+
+
 def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -5922,7 +6028,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     )
                 ).to_be_visible()
                 expect(
-                    page.get_by_text("Between 1 and 1,024 bytes", exact=False)
+                    page.get_by_text("At least 12 characters", exact=False)
                 ).to_be_visible()
                 # This listener terminates TLS itself, so the claim step states
                 # the browser-trusted mode rather than the clear-text one.
@@ -5953,7 +6059,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 confirmation = page.get_by_label("Confirm owner password", exact=True)
                 expect(confirmation).to_have_attribute("aria-invalid", "true")
                 expect(confirmation).to_have_attribute(
-                    "aria-describedby", "setup-error"
+                    "aria-describedby", "setup-error setup-password-match"
                 )
                 expect(confirmation).to_be_focused()
                 assert alert.get_attribute("id") == "setup-error"
@@ -5978,8 +6084,12 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 confirmation.fill("a different password")
                 expect(alert).not_to_be_empty()
                 expect(password).to_have_attribute("aria-invalid", "true")
-                expect(password).to_have_attribute("aria-describedby", "setup-error")
-                assert confirmation.get_attribute("aria-describedby") is None
+                expect(password).to_have_attribute(
+                    "aria-describedby", "setup-error setup-password-rules"
+                )
+                expect(confirmation).to_have_attribute(
+                    "aria-describedby", "setup-password-match"
+                )
                 password.fill(_PASSWORD)
                 expect(alert).to_be_empty()
                 assert password.get_attribute("aria-invalid") is None

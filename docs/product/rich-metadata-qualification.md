@@ -89,6 +89,17 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Sign-in throttle successor (#1384)
+
+The current F19a, F20 and F46 records move to semantic revision 71 over base
+`984400f1`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows sign-in throttling moving to per-client keys, the composed
+client digest that keys them, and the 12-character rule for a new owner
+password. Sign-in and setup never write library data, and no operation gains or
+loses automatic authority.
+
 ## Preparation counts binding successor (#1366)
 
 The current F19a, F20 and F46 records move to semantic revision 70 over base

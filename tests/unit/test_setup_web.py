@@ -221,23 +221,26 @@ def test_setup_external_reviewer_observation_allows_commit_and_refuses_stale_vie
 
 class _Sessions:
     def __init__(self) -> None:
-        self.failures = 0
+        # One entry per recorded attempt, naming its client digest.
+        self.failures: list[str] = []
         self.fail_create = False
         self.records: dict[str, tuple[str, int]] = {}
 
-    def begin_login(self, _now: int, _window: int, maximum: int) -> bool:
-        if self.failures >= maximum:
+    def begin_login(
+        self, _now: int, client: str, _window: int, maximum: int, ceiling: int
+    ) -> bool:
+        if len(self.failures) >= ceiling or self.failures.count(client) >= maximum:
             return False
-        self.failures += 1
+        self.failures.append(client)
         return True
 
     def create_review_session(
-        self, token: str, csrf: str, _now: int, expires: int
+        self, token: str, csrf: str, _now: int, expires: int, client: str
     ) -> None:
         if self.fail_create:
             raise RuntimeError("synthetic session persistence failure")
         self.records[token] = (csrf, expires)
-        self.failures = 0
+        self.failures = [value for value in self.failures if value != client]
 
     def authenticate_review_session(self, token: str, now: int) -> tuple[str, str, int]:
         csrf, expires = self.records[token]
@@ -396,6 +399,9 @@ def _client(
         lambda: 1_000,
         3,
         lambda _n: "x" * 32,
+        client_digest=lambda identity: state.use_owner_verifier(
+            lambda encoded: owner_password_binding(encoded)[2](identity)
+        ),
     )
     connection = _Connection(state)
     journey = SetupJourneyOperation(
@@ -438,8 +444,9 @@ def _claim(
     client: TestClient,
     password: str = "correct horse battery staple",
     claim_token: str | None = _CLAIM_TOKEN,
+    nonce: Any = None,
 ) -> Any:
-    nonce = client.get("/api/setup/claim")
+    nonce = client.get("/api/setup/claim") if nonce is None else nonce
     nonce_cookie = nonce.headers["set-cookie"].split(";", 1)[0]
     return client.post(
         "/api/setup/session",
@@ -669,6 +676,129 @@ def test_maximum_setup_password_pair_reaches_owner_claim() -> None:
     assert state.document.claimed
 
 
+@pytest.mark.parametrize(
+    ("password", "status"),
+    (
+        ("a" * 11, 422),
+        ("a" * 12, 200),
+        ("\u00e9" * 11, 422),
+        ("\u00e9" * 12, 200),
+        ("\U0001f600" * 11, 422),
+        ("\U0001f600" * 12, 200),
+        ("\u20ac" * 342, 422),
+    ),
+    ids=(
+        "eleven-characters",
+        "twelve-characters",
+        "eleven-characters-in-twenty-two-bytes",
+        "twelve-two-byte-characters",
+        "eleven-astral-characters-in-forty-four-bytes",
+        "twelve-astral-characters",
+        "over-the-byte-bound",
+    ),
+)
+def test_a_new_owner_password_needs_twelve_characters_within_1024_bytes(
+    password: str, status: int
+) -> None:
+    client, state, _connection = _client()
+
+    response = _claim(client, password)
+
+    assert response.status_code == status
+    if status == 200:
+        assert state.document.claimed
+        return
+    # The fixed envelope names no value, the claim is untouched and the token
+    # still claims once the owner chooses a longer password.
+    assert response.json() == {"detail": {"error": "invalid_password"}}
+    assert not state.document.claimed and state.claim_attempts == 0
+    assert _claim(client, "b" * 12).status_code == 200
+
+
+def test_an_established_short_owner_password_still_signs_in() -> None:
+    client, state, _connection = _client()
+    assert _claim(client).status_code == 200
+    # An owner whose verifier predates the length rule (#1384).
+    state.owner_verifier = PasswordHasher().hash("short")
+
+    response = client.post(
+        "/api/setup/session",
+        json={"password": "short"},
+        headers={"origin": "https://setup.invalid"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_a_reloading_owner_retires_their_oldest_nonce_instead_of_being_refused() -> (
+    None
+):
+    client, state, _connection = _client()
+
+    issued = [client.get("/api/setup/claim") for _ in range(11)]
+
+    # A reload replaces the cookie without spending the nonce it held, so the
+    # eleventh page load retires the oldest rather than refusing the owner.
+    assert [response.status_code for response in issued] == [200] * 11
+    stale = _claim(client, nonce=issued[0])
+    assert stale.status_code == 403
+    assert stale.json() == {"detail": {"error": "csrf"}}
+    assert _claim(client, nonce=issued[10]).status_code == 200
+    assert state.document.claimed
+
+
+def test_one_client_cannot_exhaust_the_claim_nonce_pool() -> None:
+    client, _state, _connection = _client()
+    for _ in range(15):
+        assert client.get("/api/setup/claim").status_code == 200
+    others = [
+        TestClient(
+            client.app, base_url="https://setup.invalid", client=(f"192.0.2.{host}", 1)
+        )
+        for host in range(20, 30)
+    ]
+    # However often it asks, one client holds only its ten, so nine more clients
+    # fill the unchanged global pool of 100 and a tenth is refused for the pool.
+    for other in others[:9]:
+        for _ in range(10):
+            assert other.get("/api/setup/claim").status_code == 200
+
+    refused = others[9].get("/api/setup/claim")
+
+    assert refused.status_code == 503
+    assert refused.json() == {"detail": {"error": "unavailable"}}
+    assert "192.0.2." not in refused.text
+    # A client already at its share still renews within it at a full pool.
+    assert client.get("/api/setup/claim").status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    (
+        ("2001:db8:1:2::a", "2001:db8:1:2:ffff::b"),
+        ("::ffff:192.0.2.40", "192.0.2.40"),
+    ),
+    ids=("one-ipv6-64", "mapped-and-plain-ipv4"),
+)
+def test_one_client_holds_one_nonce_share_across_its_addresses(
+    first: str, second: str
+) -> None:
+    client, _state, _connection = _client()
+    holders = [
+        TestClient(client.app, base_url="https://setup.invalid", client=(peer, 1))
+        for peer in (first, second, "2001:db8:1:3::a")
+    ]
+    issued = [holders[0].get("/api/setup/claim") for _ in range(10)]
+    for _ in range(10):
+        assert holders[2].get("/api/setup/claim").status_code == 200
+
+    # The second address renews the first one's share, retiring its oldest
+    # nonce; another /64's ten retired none of them.
+    assert holders[1].get("/api/setup/claim").status_code == 200
+    assert _claim(holders[0], nonce=issued[0]).status_code == 403
+    assert _claim(holders[0], nonce=issued[1]).status_code == 200
+
+
 def test_first_owner_claim_requires_the_deployment_claim_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -699,7 +829,7 @@ def test_first_owner_claim_requires_the_deployment_claim_token(
     assert state.document.claim_token_digest == claim_token_digest(_CLAIM_TOKEN)
     assert state.claim_attempts == 0
     assert hashed == []
-    assert state.sessions.failures == 0
+    assert state.sessions.failures == []
     assert retired == []
 
     # The refused request consumed its nonce, so the same nonce cannot carry a
@@ -847,6 +977,7 @@ def test_unexpected_setup_failure_returns_fixed_secure_response() -> None:
         lambda: 1_000,
         3,
         lambda _n: "x" * 32,
+        client_digest=owner_password_binding(verifier)[2],
     )
     client = TestClient(
         create_setup_app(sessions, _FailingState(), verifier),
@@ -931,6 +1062,7 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
         lambda: 1_000,
         3,
         lambda _n: next(login_tokens),
+        client_digest=owner_password_binding(verifier)[2],
     )
     first_client = TestClient(
         create_setup_app(
@@ -955,6 +1087,7 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
         lambda: 1_000,
         3,
         lambda _n: "r" * 32,
+        client_digest=owner_password_binding(verifier)[2],
     )
     resumed_client = TestClient(
         create_setup_app(
@@ -1246,13 +1379,21 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     seams a later `.replace` layer could silently drop.
     """
     # UX-002: the rules and the reveal control come from the vocabulary.
-    assert "settingsVocabulary.owner_password.minimum_bytes" in SETUP_JS
+    assert "settingsVocabulary.owner_password.minimum_characters" in SETUP_JS
     assert "settingsVocabulary.owner_password.maximum_bytes" in SETUP_JS
+    assert "minimum_bytes" not in SETUP_JS
     assert "invalid_password:settingsVocabulary.errors.owner_password" in SETUP_JS
+    # #1384: the length is counted in characters, as the server counts it, and
+    # the byte ceiling stays a byte ceiling.
+    assert "const length=[...password.value].length" in SETUP_JS
     assert "new TextEncoder().encode(password.value).length" in SETUP_JS
-    # One sentence per refusal: empty, mismatched and over-length are distinct.
+    # One sentence per refusal: empty, mismatched and out-of-range are distinct.
     assert (
-        "error(form,size===0?'invalid_password_empty':'invalid_password',password)"
+        "error(form,length===0?'invalid_password_empty':long?'invalid_password_long'"
+        ":'invalid_password',password)" in SETUP_JS
+    )
+    assert (
+        "invalid_password_long:settingsVocabulary.errors.owner_password_long"
         in SETUP_JS
     )
     assert "error(form,'invalid_password_mismatch',confirmation)" in SETUP_JS
@@ -1261,6 +1402,24 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "toggle.setAttribute('aria-pressed','false')" in SETUP_JS
     assert "control.type=reveal?'text':'password'" in SETUP_JS
     assert "secretField('Owner password',password,'the owner password')" in SETUP_JS
+    # #1384: the rules follow the password field they govern, are linked to it,
+    # and are not stated under the claim-token field.
+    assert (
+        "form.append(secretField('Owner password',password,'the owner password'));"
+        "if(!claim.claimed){const list=rules([`At least "
+        "${settingsVocabulary.owner_password.minimum_characters} characters. Any "
+        "characters are allowed, including spaces.`,'Both fields must match "
+        "exactly.'," in SETUP_JS
+    )
+    assert (
+        "list.id='setup-password-rules';list.children[1].id='setup-password-match';"
+        "password.dataset.hint=list.id;describe(password,false);form.append(list)}"
+        in SETUP_JS
+    )
+    assert (
+        "confirmation.dataset.hint='setup-password-match';describe(confirmation,false)"
+        in SETUP_JS
+    )
     # ADR-0086: the unclaimed form asks for the deployment-held token, says
     # where it is and that a restart replaces it, and recovers a typo in place.
     assert (
@@ -1274,11 +1433,16 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     )
     assert "claim_token:claimToken.value.trim()" in SETUP_JS
     assert (
-        "if(claimToken&&e.message==='claim_token'){try{const fresh=await "
-        "api('/api/setup/claim');" in SETUP_JS
+        "if(claimToken&&['claim_token','invalid_password'].includes(e.message))"
+        "{try{const fresh=await api('/api/setup/claim');" in SETUP_JS
     )
     assert "claim.nonce=fresh.nonce;claim.revision=fresh.revision" in SETUP_JS
-    assert "error(form,'claim_token',claimToken);return}" in SETUP_JS
+    # #1384: a refused password spent the nonce too, so it is refreshed the
+    # same way and the refusal lands on the password, not on the token.
+    assert (
+        "error(form,e.message,e.message==='claim_token'?claimToken:password);return}"
+        in SETUP_JS
+    )
     assert "claim_token:'That setup claim token was not accepted." in SETUP_JS
     assert "The first visitor creates the only owner password" not in SETUP_JS
     assert "toggle.setAttribute('aria-label',`Show ${subject}`)" in SETUP_JS
@@ -1291,7 +1455,13 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "completed_steps:[]};drawLedger()" in SETUP_JS
     assert "node.id='setup-error'" in SETUP_JS
     assert "control.setAttribute('aria-invalid','true')" in SETUP_JS
-    assert "control.setAttribute('aria-describedby','setup-error')" in SETUP_JS
+    assert "describe(control,true)" in SETUP_JS
+    assert "`${refused?'setup-error ':''}${control.dataset.hint||''}`" in SETUP_JS
+    # #1384: the refusal sits with the field it refuses, not above the form.
+    assert (
+        "const anchor=control?.closest('.field');if(anchor)anchor.after(node);"
+        "else form.prepend(node)" in SETUP_JS
+    )
     assert "control.addEventListener('input',()=>{" in SETUP_JS
     assert "{once:true})" in SETUP_JS
 

@@ -1254,6 +1254,7 @@ def test_authored_description_acknowledgement_retries_only_postcommit_confirmati
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
         session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
         admission=admission,
         operation_lock=repository.operation_lock,
     )
