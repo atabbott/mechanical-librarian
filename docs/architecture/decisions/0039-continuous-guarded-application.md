@@ -64,18 +64,22 @@ every guard and a fresh claim.
 
 A plan staled only because its connection was unavailable, refused by a
 connection-scoped capability observation or by a lost pre-read, is stale with
-`connection` and releases its decision. When the connection is next observed
-healthy the decision is planned again into the same plan, restored to the state
-the stale interrupted with its attempt, claim token, and whole history, and
-every guard runs again in order. The third such re-plan of one decision is the
-last: the next connection stale is `connection_exhausted` and terminal, so an
-item Audiobookshelf answers as missing or unauthorized stops instead of waiting
-forever. A retry whose earlier outcome was unknown is never sent again: when its
+`connection` and releases its decision. While it waits, one of the library's
+waiting plans is observed each pass. The wait continues only while the
+connection's own identity check (`GET /api/me`) goes unanswered: a transport
+failure, or a rejected key, which the owner fixes without losing the decision.
+Any other answer, including an item Audiobookshelf no longer has, clears the
+lost connection and the decision is planned again into the same plan, restored
+to the state the stale interrupted with its attempt, claim token, and whole
+history, and every guard runs again in order. A withdrawn permission or field
+then stales through its own code. The third such re-plan of one decision is the
+last: the next connection stale is `connection_exhausted` and terminal, so a
+missing item stops instead of waiting forever. A retry whose earlier outcome was unknown is never sent again: when its
 pre-read shows the desired value at the desired version it is `verified` with no
 request. Cover plans keep `capability` and stay terminal.
 
-Withdrawn authority or consent supersedes a `retryable` plan, and withdrawn
-authority a connection-stale plan waiting on it; neither sends anything.
+Withdrawn authority or consent supersedes a `retryable` plan or a
+connection-stale plan waiting on it; neither sends anything.
 A superseded or abandoned plan whose history reached `applying` is never planned
 afresh, since that would send an unknown outcome again. A superseded automatic
 cover is planned again only once its recovery cleanup has completed, and the

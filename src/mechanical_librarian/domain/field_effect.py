@@ -92,7 +92,7 @@ _TRANSITIONS = {
     # `verified` only from an unknown outcome a pre-read shows landed, and
     # `superseded` only when its authority or consent is withdrawn (#1402).
     "retryable": frozenset({"claimed", "verified", "stale", "superseded", "abandoned"}),
-    # Only a connection stale, which still waits on its authority (#1402).
+    # Only a connection stale, which waits on its authority and consent (#1402).
     "stale": frozenset({"superseded"}),
 }
 _HEX = re.compile(r"[0-9a-f]{64}")
@@ -808,13 +808,11 @@ class FieldEffectOperation:
                 and self.failure != "target_failure"
             )
             or (
-                (self.state, state) == ("retryable", "superseded")
+                (self.state, state)
+                in {("retryable", "superseded"), ("stale", "superseded")}
                 and failure not in {"authority_superseded", "consent_revoked"}
             )
-            or (
-                self.state == "stale"
-                and (self.failure, failure) != ("connection", "authority_superseded")
-            )
+            or (self.state == "stale" and self.failure != "connection")
             or type(at) is not int
             or at < self.updated_at
         ):

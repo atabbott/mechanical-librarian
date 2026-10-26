@@ -883,3 +883,57 @@ def test_qualification_pre_plan_reads_reach_the_real_target(case: _Case) -> None
 
     _stable_cover_observation(case.target, "item-1")
     assert sum(request.method == "GET" for request in case.requests) >= 2
+
+
+@pytest.mark.parametrize(
+    ("answer", "category", "reached"),
+    (
+        ("transport", "connection_unavailable", False),
+        ("key_rejected", "connection_unavailable", False),
+        ("item_gone", "connection_unavailable", True),
+        ("allowed", "allowed", True),
+    ),
+)
+def test_only_an_answered_identity_check_reaches_the_connection(
+    case: _Case, answer: str, category: str, reached: bool
+) -> None:
+    """A refused item is an answer; a refused key or lost transport is not.
+
+    Category and digest stay what they were: the fact rides beside the
+    capability evidence and never changes it (#1402).
+    """
+    user = {
+        "isActive": True,
+        "permissions": {"update": True, "upload": True, "accessAllLibraries": True},
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if answer == "transport":
+            raise httpx.ConnectError("synthetic outage", request=request)
+        if request.url.path == "/api/me":
+            if answer == "key_rejected":
+                return httpx.Response(401)
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, json=user
+            )
+        if answer == "item_gone":
+            return httpx.Response(404)
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=case.detail
+        )
+
+    capabilities = AudiobookshelfFieldEffectCapabilities(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+        endpoint="https://abs.example.invalid",
+        library_id="library-1",
+    )
+    observed = capabilities.result(_plan("title", "Before", "After"))
+    assert (observed.category, observed.connection_reached) == (category, reached)
+    if answer != "allowed":
+        # Every unanswered or refused observation keeps the digest it had.
+        assert (
+            observed.digest
+            == capabilities._result(
+                "title", "connection_unavailable", False, False
+            ).digest
+        )

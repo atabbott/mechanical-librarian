@@ -497,7 +497,7 @@ def test_a_stopped_write_says_why_and_never_claims_a_new_value(
             "Prepared change waiting",
             "Audiobookshelf could not be reached",
             "Mechanical Librarian prepares it again once Audiobookshelf can be "
-            "reached, at most 3 times",
+            "reached. Prepared again 2 of 3 times",
         ),
         (
             "stale",
@@ -522,12 +522,16 @@ def test_an_unsent_or_unreachable_write_says_what_happened_and_what_follows(
                 "pre_value": "The Lathe of Heaven",
                 "desired_value": "The Lathe of Heaven (1971)",
                 "failure": failure,
+                **({"connection_stales": 3} if failure == "connection" else {}),
             },
         )
     )
     assert event["change"] == compact
     facts = _facts(event)
-    assert facts["Why it stopped"] == reason
+    # A change that has not stopped never says why it stopped.
+    label = "What happened" if failure == "connection" else "Why it stopped"
+    assert facts[label] == reason
+    assert ("Why it stopped" in facts) is (failure != "connection")
     assert facts.get("What happens next") == next_step
     assert ("Confirmed in Audiobookshelf" in facts) is (
         failure == "connection_exhausted"

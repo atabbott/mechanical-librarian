@@ -109,6 +109,10 @@ class CapabilityObservation:
         "field_unavailable",
     ]
     digest: str
+    # Whether the connection's own identity check was answered, so a lost
+    # connection can be told from an item or key the service refused. It is
+    # not capability evidence and never enters `digest` (#1402).
+    connection_reached: bool = False
 
 
 @dataclass(frozen=True, slots=True)

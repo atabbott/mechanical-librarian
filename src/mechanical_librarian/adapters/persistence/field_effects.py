@@ -1619,12 +1619,32 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             )
             # The unary plus lets the planner use field_effects_ready and then
             # sort; a bare rowid order forces a full scan of every effect.
-            rows = self._connection.execute(
-                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
-                + _FIELD_EFFECT_READY_STATES_SQL
-                + " ORDER BY +rowid",
-                (consent_id, consent_id),
-            ).fetchall()
+            rows = (
+                self._connection.execute(
+                    "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
+                    + _FIELD_EFFECT_READY_STATES_SQL
+                    + " ORDER BY +rowid",
+                    (consent_id, consent_id),
+                ).fetchall()
+                + self._connection.execute(
+                    # A plan a lost connection released waits on this consent,
+                    # so it closes with it rather than reading as waiting. The
+                    # consent names one library, whose effects the target index
+                    # finds without walking every terminal effect (#1402).
+                    "SELECT document,state FROM field_effects WHERE connection_name=? "
+                    "AND library_name=? AND state='stale' "
+                    "AND json_extract(document,'$.failure')='connection' AND "
+                    "(json_extract(document,'$.plan.consent.consent_id')=? OR "
+                    "json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) "
+                    "ORDER BY rowid",
+                    (
+                        raw["consent"]["connection"],
+                        raw["consent"]["library"],
+                        consent_id,
+                        consent_id,
+                    ),
+                ).fetchall()
+            )
             for document, state in rows:
                 operation = FieldEffectOperation.from_json(document).transition(
                     "superseded", at=changed_at, failure="consent_revoked"
@@ -1634,7 +1654,13 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 self._schedule_field_effect_cleanup(operation, changed_at)
             transaction.commit()
             return len(rows)
-        except (sqlite3.Error, FieldEffectError, json.JSONDecodeError) as error:
+        except (
+            sqlite3.Error,
+            FieldEffectError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+        ) as error:
             transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise

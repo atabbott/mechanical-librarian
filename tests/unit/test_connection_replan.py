@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -48,6 +49,7 @@ from tests.support.field_effects import (
 )
 from tests.support.genre_reports import genre_report, publish_genre_case
 from tests.support.owner_values import OwnerStore
+from tests.unit.test_activity_end_to_end import _facts, _ledger
 
 
 def _sent(effects: _EffectEnvironment) -> list[str]:
@@ -458,9 +460,14 @@ def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
     assert effects.repository.pending_field_effect_decision_documents(100) == ()
 
 
-def _automatic_tags_plan(
+def _automatic_tags_lane(
     effects: _EffectEnvironment,
-) -> tuple[AutomaticDecision, GuardedFieldApplication, FieldEffectOperation]:
+) -> tuple[
+    AutomaticDecision,
+    GuardedFieldApplication,
+    FieldEffectOperation,
+    ContinuousGuardedApplication,
+]:
     report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
     (decision,) = (
         value
@@ -494,7 +501,7 @@ def _automatic_tags_plan(
     ((document,),) = effects.repository._connection.execute(
         "SELECT document FROM field_effects"
     ).fetchall()
-    return decision, service, FieldEffectOperation.from_json(document)
+    return decision, service, FieldEffectOperation.from_json(document), lane
 
 
 def _restore_authority(effects: _EffectEnvironment, decision_id: str) -> None:
@@ -519,7 +526,7 @@ def _restore_authority(effects: _EffectEnvironment, decision_id: str) -> None:
 def test_superseding_a_retry_sends_nothing_and_never_revives_a_sent_request(
     effects: _EffectEnvironment, history: str, withdrawn: str
 ) -> None:
-    decision, service, operation = _automatic_tags_plan(effects)
+    decision, service, operation, _ = _automatic_tags_lane(effects)
     plan_id = operation.plan.plan_id
     sent = _sent(effects)
     if history == "sent":
@@ -567,7 +574,7 @@ def test_superseding_a_retry_is_only_a_withdrawal(
     )
     for current, allowed in (
         (retry, ("authority_superseded", "consent_revoked")),
-        (waiting, ("authority_superseded",)),
+        (waiting, ("authority_superseded", "consent_revoked")),
     ):
         for failure in ("authority_superseded", "consent_revoked", "owner_abandoned"):
             if failure in allowed:
@@ -639,3 +646,84 @@ def test_a_revived_superseded_cover_reopens_cleanly(
         effects.database_path, create=False, cross_thread=True
     )
     assert effects.repository.get_field_effect(plan.plan_id).state == "planned"
+
+
+@pytest.mark.parametrize(
+    ("answer", "failure", "connection_stales"),
+    (
+        ("item_gone", "connection_exhausted", 3),
+        ("insufficient_permission", "capability", 1),
+        ("field_unavailable", "capability", 1),
+        ("key_rejected", "connection", 1),
+    ),
+)
+def test_a_lone_waiting_plan_ends_once_the_service_answers(
+    effects: _EffectEnvironment, answer: str, failure: str, connection_stales: int
+) -> None:
+    """Only an unanswered identity check keeps a lone plan waiting (#1402).
+
+    A deleted item answers, so it uses its bounded preparations and stops; a
+    withdrawn permission or field answers and stops through its own code. A
+    rejected key or a lost transport is not an answer, so the plan waits with
+    its bound untouched and the owner keeps the decision.
+    """
+    decision, _, operation, lane = _automatic_tags_lane(effects)
+    plan_id = operation.plan.plan_id
+    sent = _sent(effects)
+    observed: list[str] = []
+    observe = effects.capabilities.observe
+
+    def counted(plan):
+        observed.append(plan.destination)
+        return observe(plan)
+
+    effects.capabilities.observe = counted  # type: ignore[method-assign]  # reason: the observer is the probe traffic counted here.
+    effects.capabilities.category = "connection_unavailable"
+    lane._run_until_idle()
+    assert effects.repository.get_field_effect(plan_id).failure == "connection"
+    if answer in {"item_gone", "key_rejected"}:
+        effects.capabilities.connection_reached = answer == "item_gone"
+    else:
+        effects.capabilities.category = answer  # type: ignore[assignment]  # reason: the parametrized answer is one of the observer's closed categories.
+    for _ in range(8):
+        lane._run_until_idle()
+    final = effects.repository.get_field_effect(plan_id)
+    assert (final.state, final.failure) == ("stale", failure)
+    assert (
+        effects.repository.field_effect_connection_stales(decision.decision_id)
+        == connection_stales
+    )
+    traffic = len(observed)
+    for _ in range(3):
+        lane._run_until_idle()
+    # A stopped plan is never observed again; a waiting one keeps its probe.
+    assert len(observed) - traffic == (3 if answer == "key_rejected" else 0)
+    assert sent == []
+    if answer == "key_rejected":
+        row = next(event for event in _ledger(effects) if event["state"] == "stale")
+        assert _facts(row)["What happens next"].endswith("Prepared again 0 of 3 times")
+
+
+@pytest.mark.parametrize(
+    ("failure", "signal"),
+    (
+        ("connection", ("automatic_recovery", "in_progress")),
+        (
+            "connection_exhausted",
+            ("service_incompatibility", "service_incompatibility"),
+        ),
+        ("capability", ("service_incompatibility", "service_incompatibility")),
+    ),
+)
+def test_a_stopped_connection_stale_signals_as_a_capability_stale_did(
+    effects: _EffectEnvironment, failure: str, signal: tuple[str, str]
+) -> None:
+    """The bound's terminal stale keeps the signal a lost connection had (#1402)."""
+    operation = _plan(effects, suffix="1")
+    effects.repository.transition_field_effect(
+        operation.plan.plan_id, "planned", "stale", effects.clock(), failure
+    )
+    signals = cast(
+        "list[dict[str, object]]", effects.repository.operational_snapshot()["signals"]
+    )
+    assert [(value["kind"], value["cause"]) for value in signals] == [signal]

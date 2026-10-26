@@ -155,9 +155,16 @@ class FakeCapabilityObserver:
             "connection_unavailable",
             "field_unavailable",
         ] = "allowed"
+        # A lost connection by default; set to model an item or key the
+        # reachable service refused. Every other category was answered.
+        self.connection_reached = False
 
     def observe(self, plan: FieldEffectPlan) -> CapabilityObservation:
-        return CapabilityObservation(self.category, self.digest)
+        return CapabilityObservation(
+            self.category,
+            self.digest,
+            self.connection_reached or self.category != "connection_unavailable",
+        )
 
 
 class FakeAuthorityCurrentness:

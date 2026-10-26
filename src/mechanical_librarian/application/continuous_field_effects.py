@@ -505,13 +505,16 @@ class ContinuousGuardedApplication:
             self._replans_waiting.add(key)
 
     def _observe_waiting_connections(self) -> None:
-        """Notice, once a pass, that a lost connection is healthy again (#1402).
+        """Notice, once a pass, that a lost connection answers again (#1402).
 
         Nothing else revisits a decision a lost connection released: its plan
         is no longer ready, and the schedule cursor is already past it. Each
         library waiting on its connection is observed through one of its
         waiting plans, rotating so that one item that keeps failing cannot hide
-        a recovery, and the schedule starts over once nothing is suspended.
+        a recovery. Only an unanswered identity check keeps the wait: any
+        answer, even a refused item, clears the lost connection and starts the
+        schedule over, so the plan is prepared again and its preclaim decides,
+        using one of its bounded attempts.
         """
         with self._schedule_lock:
             waiting = sorted(self._replans_waiting)
@@ -536,12 +539,36 @@ class ContinuousGuardedApplication:
                         observed = capability.observe(
                             _CapabilityProbe(work_id, destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies.
                         )
-                        if not self._schedule_capability_ready(
-                            observed.category,
-                            connection,
-                            destination,
-                            observed_at,
-                            affected_review_case_ids,
+                        reached = (
+                            observed.category != "connection_unavailable"
+                            or observed.connection_reached
+                        )
+                        if not reached or observed.category != "connection_unavailable":
+                            # Records a refusal or re-asserts the lost
+                            # connection; `allowed` clears them.
+                            self._schedule_capability_ready(
+                                observed.category,
+                                connection,
+                                destination,
+                                observed_at,
+                                affected_review_case_ids,
+                            )
+                        if not reached:
+                            continue
+                        self._repository.clear_field_effect_capability_suspension(
+                            scope="connection",
+                            connection=connection,
+                            destination="",
+                            reason="connection_unavailable",
+                            observed_at=observed_at,
+                        )
+                        # A loss recorded in this clock second survives the
+                        # clear; the next pass observes again.
+                        if (
+                            self._repository.field_effect_capability_suspension(
+                                connection, ""
+                            )
+                            is not None
                         ):
                             continue
                         suspension = None
@@ -950,10 +977,11 @@ class ContinuousGuardedApplication:
                 raise
             del consent
             # A decision released by a lost connection is planned again with
-            # its waiting plan's capability while nothing is suspended: the
-            # preclaim's fresh observation then decides, and counts a refusal
-            # against the bound. Under a suspension it is observed here, as
-            # any other decision is (#1402).
+            # its waiting plan's capability unless the connection is still
+            # lost: the preclaim's guards then decide, staling a field refusal
+            # through its own code and counting a lost connection against the
+            # bound. While the connection is lost it is observed here, as any
+            # other decision is (#1402).
             released = self._repository.field_effect_connection_replan(
                 decision.decision_id
             )
@@ -963,7 +991,7 @@ class ContinuousGuardedApplication:
                 and self._repository.field_effect_capability_suspension(
                     snapshot.connection, snapshot.destination
                 )
-                is None
+                != "connection_unavailable"
             ):
                 capability_digest = released.plan.capability_digest
             else:
@@ -1035,7 +1063,7 @@ class ContinuousGuardedApplication:
                     and self._repository.field_effect_capability_suspension(
                         snapshot.connection, "subtitle"
                     )
-                    is None
+                    != "connection_unavailable"
                 ):
                     companion_digest = waiting.capability_digest
                 else:

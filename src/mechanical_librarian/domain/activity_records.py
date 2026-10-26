@@ -282,7 +282,13 @@ def _write_facts(
         # A closed preparation may follow a write whose outcome was not confirmed.
         facts = [
             {"label": "Prepared value", "value": value_text(destination, desired)},
-            {"label": "Why it stopped", "value": failure_reason(failure)},
+            {
+                # A lost connection has not stopped the change (#1402).
+                "label": "What happened"
+                if failure == "connection"
+                else "Why it stopped",
+                "value": failure_reason(failure),
+            },
             {"label": "Chosen by", "value": chosen},
         ]
         if state == "retryable":
@@ -296,13 +302,15 @@ def _write_facts(
                 "Prepared change paused", "Prepared change paused"
             ), facts
         if failure == "connection":
-            # A lost connection closes this attempt, not the decision (#1402).
+            # A lost connection closes this attempt, not the decision: say what
+            # follows and how many bounded preparations it has used (#1402).
+            prepared = cast(int, record.get("connection_stales", 1)) - 1
             facts.append(
                 {
                     "label": "What happens next",
                     "value": "Mechanical Librarian prepares it again once "
-                    "Audiobookshelf can be reached, at most "
-                    f"{CONNECTION_REPLAN_LIMIT} times",
+                    f"Audiobookshelf can be reached. Prepared again {prepared} "
+                    f"of {CONNECTION_REPLAN_LIMIT} times",
                 }
             )
             return ReadableChange(

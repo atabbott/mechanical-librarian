@@ -877,7 +877,16 @@ def test_consent_revocation_supersedes_in_its_original_order(
     connection.execute(
         "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) "
         "VALUES(?,1,0,?)",
-        (consent_id, json.dumps({"consent_id": consent_id, "current": True})),
+        (
+            consent_id,
+            json.dumps(
+                {
+                    "consent": {"connection": "primary", "library": "books"},
+                    "consent_id": consent_id,
+                    "current": True,
+                }
+            ),
+        ),
     )
     own: dict[str, object] = {"plan": {"consent": {"consent_id": consent_id}}}
     companion: dict[str, object] = {
@@ -942,7 +951,7 @@ def test_consent_revocation_supersedes_in_its_original_order(
     )
     monkeypatch.setattr(effects, "_schedule_field_effect_cleanup", lambda *_: None)
     revoked: list[int] = []
-    (statement,) = (
+    statement, waiting = (
         traced
         for traced in _traced_selects(
             connection,
@@ -958,6 +967,12 @@ def test_consent_revocation_supersedes_in_its_original_order(
     # Only live effects are walked, through the claim's partial index.
     assert _effect_steps(_plan(connection, statement, ())) == [
         "SCAN field_effects USING INDEX field_effects_ready"
+    ]
+    # Plans a lost connection left waiting are found within the consent's
+    # library, never by walking every terminal effect (#1402).
+    assert _effect_steps(_plan(connection, waiting, ())) == [
+        "SEARCH field_effects USING INDEX field_effects_target "
+        "(connection_name=? AND library_name=?)"
     ]
 
 

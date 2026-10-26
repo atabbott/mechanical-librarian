@@ -1872,14 +1872,16 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
     planned = _plan(effects, **arguments)
     plan_id = planned.plan.plan_id
     effects.capabilities.category = "connection_unavailable"
-    for _ in range(3):
+    for prepared in range(3):
         waiting = effects.service.apply(plan_id)
         assert (waiting.state, waiting.failure) == ("stale", "connection")
         row = next(event for event in _ledger(effects) if event["state"] == "stale")
         assert row["change"] == "Prepared change waiting"
+        assert "Why it stopped" not in _facts(row)
+        assert _facts(row)["What happened"] == "Audiobookshelf could not be reached"
         assert _facts(row)["What happens next"] == (
             "Mechanical Librarian prepares it again once Audiobookshelf can be "
-            "reached, at most 3 times"
+            f"reached. Prepared again {prepared} of 3 times"
         )
         revived = _replan(effects, **arguments)
         assert revived is not None and revived.state == "planned"
@@ -1897,8 +1899,17 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
     assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
 
 
+@pytest.mark.parametrize(
+    ("withdrawn", "reason"),
+    (
+        ("authority", "The authority behind this change was replaced"),
+        ("consent", "Write permission was withdrawn"),
+    ),
+)
 def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
     effects: _EffectEnvironment,  # noqa: F811
+    withdrawn: str,
+    reason: str,
 ) -> None:
     """Only a write that can still be prepared again reads as waiting (#1402)."""
     report = metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1")
@@ -1912,19 +1923,23 @@ def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
     planned = _plan(effects, **arguments)
     effects.capabilities.category = "connection_unavailable"
     assert effects.service.apply(planned.plan.plan_id).failure == "connection"
-    assert effects.service.supersede(planned.plan.authority.decision_id) == 1
+    if withdrawn == "authority":
+        assert effects.service.supersede(planned.plan.authority.decision_id) == 1
+    else:
+        assert effects.service.revoke_consent(planned.plan.consent.consent_id) == 1
     effects.capabilities.category = "allowed"
     again = _replan(effects, **arguments)
     assert again is not None
-    assert (again.state, again.failure) == ("superseded", "authority_superseded")
+    assert (again.state, again.failure) == (
+        "superseded",
+        "authority_superseded" if withdrawn == "authority" else "consent_revoked",
+    )
     latest = next(
         event for event in _ledger(effects) if event["category"] == "recovery"
     )
     assert latest["state"] == "superseded"
     assert latest["change"] == "Prepared change closed"
-    assert _facts(latest)["Why it stopped"] == (
-        "The authority behind this change was replaced"
-    )
+    assert _facts(latest)["Why it stopped"] == reason
     assert _facts(latest)["Confirmed in Audiobookshelf"] == (
         "The selected change was not confirmed"
     )

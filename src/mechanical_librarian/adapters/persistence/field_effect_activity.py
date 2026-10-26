@@ -2478,6 +2478,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 durable["desired_value"] = raw["desired_value"]
                 if "subtitle_companion" in raw:
                     durable["subtitle_companion"] = raw["subtitle_companion"]
+                if raw["kind"] == "stale" and failure == "connection":
+                    # The decision's connection stales up to this one, from
+                    # its immutable ledger: earlier seconds, or earlier in this
+                    # plan, so a row never counts a later event (#1402).
+                    durable["connection_stales"] = self._connection.execute(
+                        "SELECT count(*) FROM field_effect_events event "
+                        "JOIN field_effects effect ON effect.plan_id=event.plan_id "
+                        "WHERE effect.decision_id=? AND event.kind='stale' AND "
+                        "json_extract(event.document,'$.failure')='connection' AND "
+                        "(event.occurred_at<? OR (event.plan_id=? AND event.sequence<=?))",
+                        (
+                            raw["decision_id"],
+                            raw["occurred_at"],
+                            source_parent_id,
+                            source_sequence,
+                        ),
+                    ).fetchone()[0]
             elif source_kind == "human_decision":
                 if type(decision) is not HumanDecision:
                     raise FieldEffectError("persistence")
@@ -4262,7 +4279,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     kind, cause = "backup_failure", "backup"
                     scope = "library"
                     signal_library, signal_work, signal_field = library, None, None
-                elif failure in {"capability", "target"}:
+                elif failure in {"capability", "target", "connection_exhausted"}:
                     kind, cause = "service_incompatibility", "service_incompatibility"
                     scope = "connection"
                     signal_library, signal_work, signal_field = None, None, None
