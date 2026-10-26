@@ -1386,16 +1386,6 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         ):
             raise FieldEffectError("invalid_suspension")
         stored_destination = "" if scope == "connection" else destination
-        document = canonical_effect_json(
-            {
-                "connection": connection,
-                "destination": stored_destination,
-                "reason": reason,
-                "schema_version": "field-effect-suspension-v1",
-                "scope": scope,
-                "updated_at": changed_at,
-            }
-        )
         transaction = self._transaction("suspend_field_effect_capability")
         try:
             transaction.begin()
@@ -1404,8 +1394,20 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "WHERE scope=? AND connection_name=? AND destination=?",
                 (scope, connection, stored_destination),
             ).fetchone()
-            if existing is not None and existing[0] > changed_at:
-                raise FieldEffectError("invalid_suspension")
+            # A clock stepped back keeps the later time rather than refusing
+            # the suspension a write in flight records (#1386).
+            if existing is not None:
+                changed_at = max(changed_at, existing[0])
+            document = canonical_effect_json(
+                {
+                    "connection": connection,
+                    "destination": stored_destination,
+                    "reason": reason,
+                    "schema_version": "field-effect-suspension-v1",
+                    "scope": scope,
+                    "updated_at": changed_at,
+                }
+            )
             affected_review_case_ids = (
                 ()
                 if existing is not None
@@ -1544,7 +1546,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 state, at=changed_at, failure=failure
             )
             self._update_field_effect(operation, expected_state)
-            self._record_field_effect_event(operation, state, changed_at)
+            self._record_field_effect_event(operation, state, operation.updated_at)
             self._retire_stale_cover_consideration(operation, state, changed_at)
             self._schedule_field_effect_cleanup(operation, changed_at)
             transaction.commit()
@@ -1595,7 +1597,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "superseded", at=changed_at, failure="authority_superseded"
             )
             self._update_field_effect(operation, state)
-            self._record_field_effect_event(operation, "superseded", changed_at)
+            self._record_field_effect_event(
+                operation, "superseded", operation.updated_at
+            )
             self._schedule_field_effect_cleanup(operation, changed_at)
         return len(rows)
 
@@ -1650,7 +1654,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "superseded", at=changed_at, failure="consent_revoked"
                 )
                 self._update_field_effect(operation, state)
-                self._record_field_effect_event(operation, "superseded", changed_at)
+                self._record_field_effect_event(
+                    operation, "superseded", operation.updated_at
+                )
                 self._schedule_field_effect_cleanup(operation, changed_at)
             transaction.commit()
             return len(rows)
@@ -1686,7 +1692,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "reconciling", at=changed_at, failure=failure
             )
             self._update_field_effect(operation, expected_state)
-            self._record_field_effect_event(operation, "reconciling", changed_at)
+            self._record_field_effect_event(
+                operation, "reconciling", operation.updated_at
+            )
             self._upsert_field_effect_action(
                 operation, "targeted_read", "pending", 0, changed_at
             )
@@ -1719,7 +1727,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 state, at=changed_at, failure=failure
             )
             self._update_field_effect(operation, "reconciling")
-            self._record_field_effect_event(operation, state, changed_at)
+            self._record_field_effect_event(operation, state, operation.updated_at)
             self._retire_stale_cover_consideration(operation, state, changed_at)
             action = self._connection.execute(
                 "SELECT attempt FROM field_effect_actions WHERE plan_id=? "

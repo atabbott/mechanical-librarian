@@ -4144,7 +4144,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "claimed", at=claimed_at, claim_token=claim_token
             )
             self._update_field_effect(operation, expected_state)
-            self._record_field_effect_event(operation, "claimed", claimed_at)
+            self._record_field_effect_event(operation, "claimed", operation.updated_at)
             transaction.commit()
             return operation
         except (sqlite3.Error, FieldEffectError) as error:

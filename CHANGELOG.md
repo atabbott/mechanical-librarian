@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A write in progress now completes when the system clock steps backwards,
+  for example after a time correction or a resumed virtual machine, instead of
+  being refused partway and left waiting for a restart. Its history keeps the
+  later time, so events never read as going back in time (#1386).
+
 - A store holding a row outside the schema's own value rules is now refused
   when it is opened, instead of passing because SQLite skips those rules when
   it checks a read-only connection. A refusal never includes a row's values
