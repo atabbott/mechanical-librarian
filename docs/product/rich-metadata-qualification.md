@@ -89,6 +89,17 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Clock step successor (#1386)
+
+The current F19a, F20 and F46 records move to semantic revision 74 over base
+`4de8aa89`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows a guarded write's transitions keeping the later of their own
+time and the plan's when the system clock steps backwards, with each event and
+capability suspension recorded at that time. Replay is still refused by state,
+and no operation gains or loses automatic authority.
+
 ## Read-only CHECK sweep successor (#1401)
 
 The current F19a, F20 and F46 records move to semantic revision 73 over base
