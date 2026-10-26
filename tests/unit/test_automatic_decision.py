@@ -1800,6 +1800,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="connection-replan-predecessor-f46",
         ),
+        pytest.param(
+            "e1e3feb6bbec7aad91a569df956fe44ac284d03134d73b3c375e7c6bc036ba2e",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="check-sweep-predecessor-f19a",
+        ),
+        pytest.param(
+            "c10c5c9221d60fe6e21becbbc0c9e720c7a866346b9f8d819049c56c3851d726",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="check-sweep-predecessor-f20",
+        ),
+        pytest.param(
+            "ccd2163ad4e524ef184027b3c53f9c5caddcdd61fa78ed323c108e5641c1b7ee",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="check-sweep-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
