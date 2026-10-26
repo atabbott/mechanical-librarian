@@ -366,12 +366,13 @@ def test_only_a_scheduled_recovery_promises_another_check(tmp_path: Path) -> Non
 
 
 def _recovery_job(item: str, report_id: str) -> ProviderRecoveryJob:
+    """A job enrolled as enrollment does it: its member is the package report."""
     return ProviderRecoveryJob(
         "google",
         "google_books",
         "books",
         1,
-        item,
+        report_id,
         "primary",
         "ebooks",
         item,
@@ -396,14 +397,17 @@ def test_recovery_store_names_only_reports_a_live_job_will_check(
             enqueued_at=3,
         )
         store._connection.execute(
-            "UPDATE provider_recovery_jobs SET state='complete' WHERE member_id='done'"
+            "UPDATE provider_recovery_jobs SET state='complete' "
+            "WHERE member_id='report-d'"
         )
         waiting = ("primary", "ebooks", "waiting", "report-w")
         done = ("primary", "ebooks", "done", "report-d")
         stale_report = ("primary", "ebooks", "waiting", "report-old")
         absent = ("primary", "ebooks", "absent", "report-a")
+        # The same report under another work is not that job's package.
+        elsewhere = ("primary", "ebooks", "elsewhere", "report-w")
         assert store.scheduled_recoveries(
-            frozenset({waiting, done, stale_report, absent})
+            frozenset({waiting, done, stale_report, absent, elsewhere})
         ) == frozenset({waiting})
         assert store.scheduled_recoveries(frozenset()) == frozenset()
 

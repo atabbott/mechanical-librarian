@@ -1482,6 +1482,10 @@ class SQLiteProviderRecoveryStore:
         scope that is waiting, checking or fanning out; a dormant scope waits
         for the owner and an exhausted one for nothing, so neither is a promise
         that the work will be checked again (#1407).
+
+        Enrollment keys a job's member by its package report, so the read seeks
+        each live scope's primary key by report id rather than scanning every
+        job; the four identity fields are still compared exactly.
         """
         if (
             type(reports) is not frozenset
@@ -1500,17 +1504,18 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 rows = self._connection.execute(
                     "SELECT DISTINCT j.target_connection,j.library,j.item,"
-                    "j.package_report_id FROM json_each(?) wanted "
-                    "JOIN provider_recovery_jobs j "
-                    "ON j.target_connection=json_extract(wanted.value,'$[0]') "
+                    "j.package_report_id FROM provider_recovery_health h "
+                    "CROSS JOIN json_each(?) wanted "
+                    "CROSS JOIN provider_recovery_jobs j "
+                    "ON j.connection=h.connection AND j.adapter=h.adapter "
+                    "AND j.scope=h.scope AND j.generation=h.generation "
+                    "AND j.member_id=json_extract(wanted.value,'$[3]') "
+                    "WHERE h.state IN ('waiting','checking','fanout') "
+                    "AND j.state IN ('queued','running') "
+                    "AND j.target_connection=json_extract(wanted.value,'$[0]') "
                     "AND j.library=json_extract(wanted.value,'$[1]') "
                     "AND j.item=json_extract(wanted.value,'$[2]') "
-                    "AND j.package_report_id=json_extract(wanted.value,'$[3]') "
-                    "JOIN provider_recovery_health h ON h.connection=j.connection "
-                    "AND h.adapter=j.adapter AND h.scope=j.scope "
-                    "AND h.generation=j.generation "
-                    "WHERE j.state IN ('queued','running') "
-                    "AND h.state IN ('waiting','checking','fanout')",
+                    "AND j.package_report_id=json_extract(wanted.value,'$[3]')",
                     (json.dumps(sorted(reports)),),
                 ).fetchall()
             return frozenset(rows) & reports
