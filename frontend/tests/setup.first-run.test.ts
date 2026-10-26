@@ -361,11 +361,18 @@ describe('shipped first-run setup script', () => {
     expect(document.querySelectorAll('#setup-ledger .ledger-row')).toHaveLength(7)
     // #1384: the rules follow the password field they govern and describe it,
     // rather than reading as rules for the claim token above them.
-    const stated = screen.getByText(/At least 12 characters, and no more than 1,024 bytes/u)
+    const stated = screen.getByText(
+      'At least 12 characters. Any characters are allowed, including spaces.',
+    )
     expect(stated).toBeVisible()
     const rulesList = stated.closest('ul')
     if (!rulesList) throw new Error('password rules missing')
     expect(rulesList.id).toBe('setup-password-rules')
+    expect(screen.getByText('Both fields must match exactly.').id).toBe('setup-password-match')
+    expect(screen.getByLabelText('Confirm owner password')).toHaveAttribute(
+      'aria-describedby',
+      'setup-password-match',
+    )
     expect(rulesList.previousElementSibling).toContainElement(
       screen.getByLabelText('Owner password'),
     )
@@ -409,7 +416,7 @@ describe('shipped first-run setup script', () => {
 
     // Characters are counted, not bytes: eleven two-byte characters are still
     // too short.
-    for (const short of ['a'.repeat(11), 'é'.repeat(11)]) {
+    for (const short of ['a'.repeat(11), 'é'.repeat(11), '😀'.repeat(11)]) {
       fireEvent.input(password, { target: { value: short } })
       fireEvent.input(confirmation, { target: { value: short } })
       fireEvent.submit(form)
@@ -429,6 +436,7 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       settingsVocabulary.errors.owner_password_mismatch,
     )
+    expect(confirmation).toHaveAttribute('aria-describedby', 'setup-error setup-password-match')
     expect(confirmation).toHaveFocus()
     expect(password).not.toHaveAttribute('aria-invalid')
     expect(sessions).toBe(0)
@@ -438,7 +446,9 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(confirmation, { target: { value: oversize } })
     fireEvent.submit(form)
     await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
-    expect(screen.getByRole('alert')).toHaveTextContent(settingsVocabulary.errors.owner_password)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      settingsVocabulary.errors.owner_password_long,
+    )
     expect(sessions).toBe(0)
 
     const admitted = 'a'.repeat(settingsVocabulary.owner_password.maximum_bytes)
@@ -489,7 +499,7 @@ describe('shipped first-run setup script', () => {
     expect(password).toHaveAttribute('aria-describedby', `${alert.id} setup-password-rules`)
     expect(alert.previousElementSibling).toContainElement(password)
     expect(confirmation).not.toHaveAttribute('aria-invalid')
-    expect(confirmation).not.toHaveAttribute('aria-describedby')
+    expect(confirmation).toHaveAttribute('aria-describedby', 'setup-password-match')
 
     // The marked field still clears its own refusal.
     fireEvent.input(password, { target: { value: 'second password again' } })

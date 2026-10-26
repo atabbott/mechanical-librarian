@@ -444,8 +444,9 @@ def _claim(
     client: TestClient,
     password: str = "correct horse battery staple",
     claim_token: str | None = _CLAIM_TOKEN,
+    nonce: Any = None,
 ) -> Any:
-    nonce = client.get("/api/setup/claim")
+    nonce = client.get("/api/setup/claim") if nonce is None else nonce
     nonce_cookie = nonce.headers["set-cookie"].split(";", 1)[0]
     return client.post(
         "/api/setup/session",
@@ -682,6 +683,8 @@ def test_maximum_setup_password_pair_reaches_owner_claim() -> None:
         ("a" * 12, 200),
         ("\u00e9" * 11, 422),
         ("\u00e9" * 12, 200),
+        ("\U0001f600" * 11, 422),
+        ("\U0001f600" * 12, 200),
         ("\u20ac" * 342, 422),
     ),
     ids=(
@@ -689,6 +692,8 @@ def test_maximum_setup_password_pair_reaches_owner_claim() -> None:
         "twelve-characters",
         "eleven-characters-in-twenty-two-bytes",
         "twelve-two-byte-characters",
+        "eleven-astral-characters-in-forty-four-bytes",
+        "twelve-astral-characters",
         "over-the-byte-bound",
     ),
 )
@@ -725,28 +730,46 @@ def test_an_established_short_owner_password_still_signs_in() -> None:
     assert response.status_code == 200
 
 
+def test_a_reloading_owner_retires_their_oldest_nonce_instead_of_being_refused() -> (
+    None
+):
+    client, state, _connection = _client()
+
+    issued = [client.get("/api/setup/claim") for _ in range(11)]
+
+    # A reload replaces the cookie without spending the nonce it held, so the
+    # eleventh page load retires the oldest rather than refusing the owner.
+    assert [response.status_code for response in issued] == [200] * 11
+    stale = _claim(client, nonce=issued[0])
+    assert stale.status_code == 403
+    assert stale.json() == {"detail": {"error": "csrf"}}
+    assert _claim(client, nonce=issued[10]).status_code == 200
+    assert state.document.claimed
+
+
 def test_one_client_cannot_exhaust_the_claim_nonce_pool() -> None:
     client, _state, _connection = _client()
-    for _ in range(10):
+    for _ in range(15):
         assert client.get("/api/setup/claim").status_code == 200
-
-    refused = client.get("/api/setup/claim")
-
-    assert refused.status_code == 503
-    assert refused.json() == {"detail": {"error": "unavailable"}}
-    assert "127.0.0.1" not in refused.text
     others = [
         TestClient(
             client.app, base_url="https://setup.invalid", client=(f"192.0.2.{host}", 1)
         )
         for host in range(20, 30)
     ]
-    # Nine more clients fill the unchanged global pool of 100, after which a
-    # tenth is refused for the pool rather than for its own share.
+    # However often it asks, one client holds only its ten, so nine more clients
+    # fill the unchanged global pool of 100 and a tenth is refused for the pool.
     for other in others[:9]:
         for _ in range(10):
             assert other.get("/api/setup/claim").status_code == 200
-    assert others[9].get("/api/setup/claim").status_code == 503
+
+    refused = others[9].get("/api/setup/claim")
+
+    assert refused.status_code == 503
+    assert refused.json() == {"detail": {"error": "unavailable"}}
+    assert "192.0.2." not in refused.text
+    # A client already at its share still renews within it at a full pool.
+    assert client.get("/api/setup/claim").status_code == 200
 
 
 @pytest.mark.parametrize(
@@ -765,11 +788,15 @@ def test_one_client_holds_one_nonce_share_across_its_addresses(
         TestClient(client.app, base_url="https://setup.invalid", client=(peer, 1))
         for peer in (first, second, "2001:db8:1:3::a")
     ]
+    issued = [holders[0].get("/api/setup/claim") for _ in range(10)]
     for _ in range(10):
-        assert holders[0].get("/api/setup/claim").status_code == 200
+        assert holders[2].get("/api/setup/claim").status_code == 200
 
-    assert holders[1].get("/api/setup/claim").status_code == 503
-    assert holders[2].get("/api/setup/claim").status_code == 200
+    # The second address renews the first one's share, retiring its oldest
+    # nonce; another /64's ten retired none of them.
+    assert holders[1].get("/api/setup/claim").status_code == 200
+    assert _claim(holders[0], nonce=issued[0]).status_code == 403
+    assert _claim(holders[0], nonce=issued[1]).status_code == 200
 
 
 def test_first_owner_claim_requires_the_deployment_claim_token(
@@ -1362,7 +1389,11 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "new TextEncoder().encode(password.value).length" in SETUP_JS
     # One sentence per refusal: empty, mismatched and out-of-range are distinct.
     assert (
-        "error(form,length===0?'invalid_password_empty':'invalid_password',password)"
+        "error(form,length===0?'invalid_password_empty':long?'invalid_password_long'"
+        ":'invalid_password',password)" in SETUP_JS
+    )
+    assert (
+        "invalid_password_long:settingsVocabulary.errors.owner_password_long"
         in SETUP_JS
     )
     assert "error(form,'invalid_password_mismatch',confirmation)" in SETUP_JS
@@ -1376,12 +1407,18 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert (
         "form.append(secretField('Owner password',password,'the owner password'));"
         "if(!claim.claimed){const list=rules([`At least "
-        "${settingsVocabulary.owner_password.minimum_characters} characters, and "
-        "no more than ${settingsVocabulary.owner_password.maximum_bytes" in SETUP_JS
+        "${settingsVocabulary.owner_password.minimum_characters} characters. Any "
+        "characters are allowed, including spaces.`,'Both fields must match "
+        "exactly.'," in SETUP_JS
     )
     assert (
-        "list.id='setup-password-rules';password.dataset.hint=list.id;"
-        "describe(password,false);form.append(list)}" in SETUP_JS
+        "list.id='setup-password-rules';list.children[1].id='setup-password-match';"
+        "password.dataset.hint=list.id;describe(password,false);form.append(list)}"
+        in SETUP_JS
+    )
+    assert (
+        "confirmation.dataset.hint='setup-password-match';describe(confirmation,false)"
+        in SETUP_JS
     )
     # ADR-0086: the unclaimed form asks for the deployment-held token, says
     # where it is and that a restart replaces it, and recovers a typo in place.

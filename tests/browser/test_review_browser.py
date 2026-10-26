@@ -5621,7 +5621,10 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 confirmation = page.get_by_label("Confirm owner password", exact=True)
                 claim_token = page.get_by_label("Setup claim token", exact=True)
                 expect(page.locator("#setup-password-rules")).to_contain_text(
-                    "At least 12 characters, and no more than 1,024 bytes."
+                    "At least 12 characters. Any characters are allowed, including spaces."
+                )
+                expect(confirmation).to_have_attribute(
+                    "aria-describedby", "setup-password-match"
                 )
                 expect(password).to_have_attribute(
                     "aria-describedby", "setup-password-rules"
@@ -5632,12 +5635,12 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 # The rules follow the password field, not the claim token.
                 assert page.evaluate(follows, "#setup-password-rules")
                 claim_token.fill(token)
-                for short in ("a" * 11, "é" * 11):
+                for short in ("a" * 11, "é" * 11, "\U0001f600" * 11):
                     password.fill(short)
                     confirmation.fill(short)
                     page.get_by_role("button", name="Create owner access").click()
                     alert = page.get_by_role("alert")
-                    expect(alert).to_contain_text("Use at least 12 characters")
+                    expect(alert).to_have_text("Use at least 12 characters.")
                     expect(password).to_have_attribute("aria-invalid", "true")
                     expect(password).to_have_attribute(
                         "aria-describedby", "setup-error setup-password-rules"
@@ -5649,6 +5652,14 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= window.innerWidth"
                     )
+                # Over the byte ceiling is refused in place too, in its own words.
+                password.fill("a" * 1_025)
+                confirmation.fill("a" * 1_025)
+                page.get_by_role("button", name="Create owner access").click()
+                expect(page.get_by_role("alert")).to_have_text(
+                    "That password is too long. Use a shorter one."
+                )
+                expect(password).to_have_attribute("aria-invalid", "true")
                 assert "/api/setup/session" not in requests
                 password.fill(_PASSWORD)
                 expect(page.get_by_role("alert")).to_be_empty()
@@ -6048,7 +6059,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 confirmation = page.get_by_label("Confirm owner password", exact=True)
                 expect(confirmation).to_have_attribute("aria-invalid", "true")
                 expect(confirmation).to_have_attribute(
-                    "aria-describedby", "setup-error"
+                    "aria-describedby", "setup-error setup-password-match"
                 )
                 expect(confirmation).to_be_focused()
                 assert alert.get_attribute("id") == "setup-error"
@@ -6076,7 +6087,9 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(password).to_have_attribute(
                     "aria-describedby", "setup-error setup-password-rules"
                 )
-                assert confirmation.get_attribute("aria-describedby") is None
+                expect(confirmation).to_have_attribute(
+                    "aria-describedby", "setup-password-match"
+                )
                 password.fill(_PASSWORD)
                 expect(alert).to_be_empty()
                 assert password.get_attribute("aria-invalid") is None

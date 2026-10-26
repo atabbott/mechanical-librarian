@@ -534,8 +534,10 @@ def test_the_first_run_vocabulary_states_owner_rules_and_every_contribution() ->
         "minimum_characters": OWNER_PASSWORD_MINIMUM_CHARACTERS,
         "maximum_bytes": 1024,
     }
-    assert "at least 12 characters" in vocabulary["errors"]["owner_password"]
-    assert "1,024 bytes" in vocabulary["errors"]["owner_password"]
+    assert vocabulary["errors"]["owner_password"] == "Use at least 12 characters."
+    assert vocabulary["errors"]["owner_password_long"].startswith(
+        "That password is too long."
+    )
     assert set(vocabulary["provider_contributions"]) == set(PROVIDER_LABELS)
     assert all(
         value.strip() == value and value.endswith(".")

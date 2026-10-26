@@ -521,8 +521,9 @@ records revocation.
 
 Sign-in attempts are throttled durably per client (#1384): five per client in
 any five minutes, under a global backstop of 100 across all clients, so one
-client cannot reach the ceiling alone and the Argon2 work unauthenticated
-callers can force stays near one verification every three seconds. A granted
+client identity cannot reach the ceiling alone and the Argon2 work
+unauthenticated callers can force stays near one verification every three
+seconds. A granted
 session clears only its own client's attempts, so another client's debt
 survives the owner's sign-in, and a refusal is `throttled` (429), distinct from
 an unavailable store. Each throttle row keeps the client only as a second
@@ -537,12 +538,25 @@ client: an IPv6 address is its /64 network, because one host on an ordinary
 IPv6 network holds a whole /64 and could otherwise mint enough identities to
 reach the global ceiling; an IPv4-mapped IPv6 address is its IPv4 address; and
 an IPv4 address is itself. The same identity bounds the setup claim nonces
-below. No peer, or a trusted proxy that sends
-no `X-Forwarded-For`, several lines or an unparsable last entry, maps to one
+below. No peer, or a request from a trusted proxy that carries no
+`X-Forwarded-For`, several lines or an unparsable last entry, maps to one
 shared unresolved key that is throttled like any client and never borrows a
-resolved one. A trusted proxy that omits `X-Forwarded-For` therefore collapses
-all its clients into that one shared key, where one client's failures throttle
-every other client behind the same proxy. The store admits only absence or
+resolved one. A trusted proxy must therefore append the address that connected
+to it to `X-Forwarded-For`, or overwrite the header with that address. Only a
+proxy that sends no `X-Forwarded-For` at all falls back to the shared key,
+where one client's failures throttle every client behind it. A proxy that
+passes a client's own `X-Forwarded-For` through unchanged lets each client
+choose its throttle key, so one client can spread its attempts over invented
+keys and reach the global ceiling.
+
+The bound holds per identity, not per attacker. Twenty identities reach the
+global ceiling: twenty IPv4 addresses, or twenty IPv6 /64 networks, which any
+holder of a /59 or larger prefix has, including any 6to4 (`2002::/16`) host,
+whose one IPv4 address yields a /48. Such an attacker can keep sign-in at the
+ceiling, and so refused for every client, for as long as it keeps all twenty
+busy. This residual risk is accepted: closing it would need an allow list or
+an owner lockout, both outside this boundary, and the Argon2 budget above still
+holds. The store admits only absence or
 its exact schema and integrity; incompatible or corrupt state, including the
 pre-#1384 throttle table without client keys, fails closed without repair.
 Its clean rebuild deletes only session authority and throttle history,
@@ -555,7 +569,9 @@ ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
 An unauthenticated visitor may fetch only a bounded synchronizer nonce: at most
 100 are outstanding for 600 seconds, and at most 10 per client under the same
 resolution rule, held only in process memory, so one client cannot exhaust the
-pool (#1384). A new owner password must be at least 12 characters, counted as
+pool (#1384). A reload replaces the page's nonce cookie without spending the
+nonce it held, so a client at its share retires its own oldest nonce for the
+new one instead of being refused; only the full global pool refuses. A new owner password must be at least 12 characters, counted as
 code points rather than bytes, and at most 1,024 UTF-8 bytes; a shorter one is
 refused with the fixed `422 invalid_password` before Argon2 or any claim. The
 setup page states the same rule from the shared vocabulary beside the password

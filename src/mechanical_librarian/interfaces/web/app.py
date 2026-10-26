@@ -4386,7 +4386,7 @@ def _address_identity(address: str) -> str | None:
         parsed = ip_address(address)
     except ValueError:
         return None
-    if isinstance(parsed, IPv6Address):
+    if type(parsed) is IPv6Address:
         if parsed.ipv4_mapped is None:
             prefix = int(parsed) >> 64 << 64
             return f"client:{IPv6Network((prefix, 64))}"

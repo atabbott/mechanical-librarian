@@ -62,9 +62,10 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
-# Outstanding claim nonces, each valid for 600 seconds. A spent nonce leaves
-# the count, so an owner reloading or retrying stays far below the per-client
-# share, while one client can hold at most a tenth of the pool (#1384).
+# Outstanding claim nonces, each valid for 600 seconds. One client holds at
+# most a tenth of the pool. A reload replaces the page's cookie without spending
+# the nonce it held, so a client at its share retires its own oldest nonce
+# instead of being refused, and only the global pool can refuse (#1384).
 _CLAIM_NONCES_GLOBAL = 100
 _CLAIM_NONCES_PER_CLIENT = 10
 _SETUP_SESSION_BODY_LIMIT = 2 * 1_024 * 6 + 128 * 6 + 128
@@ -379,11 +380,10 @@ def create_setup_app(
         for value, (expires_at, _) in tuple(nonces.items()):
             if expires_at <= now:
                 nonces.pop(value, None)
-        if (
-            len(nonces) >= _CLAIM_NONCES_GLOBAL
-            or sum(holder == client for _, holder in nonces.values())
-            >= _CLAIM_NONCES_PER_CLIENT
-        ):
+        held = [value for value, (_, holder) in nonces.items() if holder == client]
+        if len(held) >= _CLAIM_NONCES_PER_CLIENT:
+            nonces.pop(min(held, key=lambda value: nonces[value][0]))
+        if len(nonces) >= _CLAIM_NONCES_GLOBAL:
             raise HTTPException(503, {"error": "unavailable"})
         nonce = token_factory(32)
         if not 32 <= len(nonce) <= 128:
