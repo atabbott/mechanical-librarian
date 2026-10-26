@@ -3918,6 +3918,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 or type(item.get("occurred_at")) is not int
                 or type(item.get("state")) is not str
                 or type(item.get("sequence")) is not int
+                or (
+                    item.get("failure") is not None and type(item["failure"]) is not str
+                )
                 for item in transitions
             ):
                 raise FieldEffectError("persistence")
@@ -3927,6 +3930,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "occurred_at": item["occurred_at"],
                     "state": item["state"],
                     "sequence": item["sequence"],
+                    # A stale reads as waiting only for a lost connection, so
+                    # each transition carries its own failure (#1402).
+                    "failure": item.get("failure"),
                 }
                 for item in transitions
                 if after_sequence is None or item["sequence"] > after_sequence

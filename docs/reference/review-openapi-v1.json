@@ -2648,6 +2648,18 @@
             "title": "Event Id",
             "type": "string"
           },
+          "failure": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
           "occurred_at": {
             "title": "Occurred At",
             "type": "integer"
@@ -2667,7 +2679,8 @@
           "event_id",
           "occurred_at",
           "sequence",
-          "state"
+          "state",
+          "failure"
         ],
         "title": "_ActivityTransition",
         "type": "object"

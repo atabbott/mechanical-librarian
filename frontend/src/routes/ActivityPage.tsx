@@ -213,12 +213,9 @@ function PageJump({
 function ActivityTransitions({
   eventId,
   advice,
-  failure,
 }: {
   eventId: string
   advice: 'description' | 'cover' | undefined
-  /** The failure of the change's latest transition, which its row shows. */
-  failure: string | null
 }) {
   const { http } = useReviewContext()
   const [extraPages, setExtraPages] = useState<ActivityTransitionView[][]>([])
@@ -256,20 +253,13 @@ function ActivityTransitions({
   if (!events.length) return null
   return (
     <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
-      {events.map((transition, index) => (
+      {events.map((transition) => (
         // One flow; the no-break space keeps each separator off a line start.
         <li key={transition.event_id}>
           <time>
             {dateParts(transition.occurred_at).day}&nbsp;· {dateParts(transition.occurred_at).time}
           </time>
-          &nbsp;·{' '}
-          {stateLabel(
-            transition.state,
-            advice,
-            // Only a connection stale is ever followed by another transition,
-            // so any earlier stale waited; the latest has the row's failure.
-            index < events.length - 1 || moreAvailable ? 'connection' : failure,
-          )}
+          &nbsp;· {stateLabel(transition.state, advice, transition.failure)}
         </li>
       ))}
       {moreAvailable ? (
@@ -397,12 +387,7 @@ function ActivityEventRow({
             ))}
           </dl>
           {event.transition_id ? (
-            <ActivityTransitions
-              key={changeId}
-              eventId={event.transition_id}
-              advice={advice}
-              failure={event.failure}
-            />
+            <ActivityTransitions key={changeId} eventId={event.transition_id} advice={advice} />
           ) : null}
         </div>
       ) : null}

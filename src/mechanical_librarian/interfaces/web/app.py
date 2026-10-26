@@ -1086,6 +1086,7 @@ class _ActivityTransition(_ClosedModel):
     occurred_at: int
     sequence: int = Field(ge=1)
     state: str = Field(max_length=512)
+    failure: str | None = Field(max_length=512)
 
 
 class _ActivityTransitions(_ClosedModel):

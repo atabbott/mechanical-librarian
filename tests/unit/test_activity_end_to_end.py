@@ -1903,6 +1903,13 @@ def test_a_write_waits_through_three_lost_connections_and_then_stops(
         "Audiobookshelf could not be reached for this book, and this change "
         "stopped after it was prepared again 3 times"
     )
+    # Each recorded stale carries its own failure, so its history reads the
+    # waiting ones as waiting and only the last as stopped (#1402).
+    assert [
+        transition["failure"]
+        for transition in effects.repository.field_effect_activity_transitions(plan_id)
+        if transition["state"] == "stale"
+    ] == ["connection"] * 3 + ["connection_exhausted"]
     assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
 
 

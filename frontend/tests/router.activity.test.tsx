@@ -1248,6 +1248,7 @@ describe('Activity route', () => {
       occurred_at: index + 1,
       sequence: index + 1,
       state: index === 24 ? 'verified' : 'planned',
+      failure: null,
     }))
     let failFirst = true
     const http: ReviewHttp = {
@@ -1308,6 +1309,7 @@ describe('Activity route', () => {
           occurred_at: 1786000000 + index,
           sequence: index + 1,
           state,
+          failure: null,
         })),
         has_more: false,
       })),
@@ -1326,7 +1328,7 @@ describe('Activity route', () => {
   it.each([
     ['connection', 'Waiting safely'],
     ['connection_exhausted', 'Stale'],
-  ])('reads each connection stale in a %s lifecycle as waiting', async (failure, latest) => {
+  ])('labels each lifecycle stale from its own %s failure', async (failure, latest) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
@@ -1343,11 +1345,17 @@ describe('Activity route', () => {
         }),
       ),
       getActivityTransitions: vi.fn(async () => ({
-        events: ['planned', 'stale', 'planned', 'stale'].map((state, index) => ({
+        events: [
+          ['planned', null],
+          ['stale', 'connection'],
+          ['planned', null],
+          ['stale', failure],
+        ].map(([state, transitionFailure], index) => ({
           event_id: `transition-${String(index)}`,
           occurred_at: 1786000000 + index,
           sequence: index + 1,
-          state,
+          state: state ?? '',
+          failure: transitionFailure ?? null,
         })),
         has_more: false,
       })),
@@ -1359,8 +1367,7 @@ describe('Activity route', () => {
     const lines = [...lifecycle.querySelectorAll('li')].map((item) =>
       item.textContent.split('\u00a0· ').at(-1),
     )
-    // Only a lost connection is ever followed by another preparation, so the
-    // earlier stale waited; the latest reads as the row's own result (#1402).
+    // Each recorded stale reads from the failure it was recorded with (#1402).
     expect(lines).toEqual(['Planned', 'Waiting safely', 'Planned', latest])
   })
 
@@ -1373,6 +1380,7 @@ describe('Activity route', () => {
         occurred_at: start + index,
         sequence: start + index,
         state: 'planned',
+        failure: null,
       }))
     let current = activity({
       events: [
