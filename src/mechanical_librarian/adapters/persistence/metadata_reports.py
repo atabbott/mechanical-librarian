@@ -1072,6 +1072,21 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def field_effect_event_documents(self, plan_id: str) -> tuple[str, ...]:
         return self._field_effects.field_effect_event_documents(plan_id)
 
+    def field_effect_connection_stales(self, decision_id: str) -> int:
+        return self._field_effects.field_effect_connection_stales(decision_id)
+
+    def field_effect_connection_replan(
+        self, decision_id: str
+    ) -> FieldEffectOperation | None:
+        return self._field_effects.field_effect_connection_replan(decision_id)
+
+    def next_field_effect_connection_replan(
+        self, connection: str, library: str, after: str | None
+    ) -> tuple[str, str, str] | None:
+        return self._field_effects.next_field_effect_connection_replan(
+            connection, library, after
+        )
+
     def suspend_field_effect_capability(
         self,
         *,

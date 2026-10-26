@@ -61,29 +61,38 @@ class AudiobookshelfFieldEffectCapabilities:
                 me = _json_response(client, "GET", self._endpoint + "/api/me", None, self._maximum_response_bytes)
             except (httpx.HTTPError, OSError, ValueError):
                 return self._result(plan.destination, "connection_unavailable", False, False)
+            user = me.get("user", me) if type(me) is dict else None
+            permissions = user.get("permissions") if type(user) is dict else None
+            accessible = user.get("librariesAccessible") if type(user) is dict else None
+            selected = (type(permissions) is dict and permissions.get("accessAllLibraries") is True) or (type(accessible) is list and all(type(value) is str for value in accessible) and self._library_id in accessible)
+            active = type(user) is dict and user.get("isActive") is True
+            # The connection is reached only when a usable account's identity
+            # check was answered and the item request returned a valid body or
+            # a definite refusal: a lost transport, a rejected key, an unusable
+            # account, a server error, a throttle, a timeout answer or a body
+            # that cannot be read waits for the service to recover (#1402).
+            usable = active and selected
             try:
                 detail = _json_response(client, "GET", self._endpoint + "/api/items/" + quote(plan.work_id, safe=""), {"expanded": "1"}, self._maximum_response_bytes)
+            except _ResponseStatusError as error:
+                refused = 400 <= error.status < 500 and error.status not in {408, 429}
+                return self._result(plan.destination, "connection_unavailable", False, False, reached=usable and refused)
             except (httpx.HTTPError, OSError, ValueError):
                 return self._result(plan.destination, "connection_unavailable", False, False)
-        user = me.get("user", me) if type(me) is dict else None
-        permissions = user.get("permissions") if type(user) is dict else None
-        accessible = user.get("librariesAccessible") if type(user) is dict else None
-        selected = (type(permissions) is dict and permissions.get("accessAllLibraries") is True) or (type(accessible) is list and all(type(value) is str for value in accessible) and self._library_id in accessible)
         item_matches = type(detail) is dict and detail.get("id") == plan.work_id and detail.get("libraryId") == self._library_id and detail.get("mediaType") == "book"
         update = type(permissions) is dict and permissions.get("update") is True
         upload = type(permissions) is dict and permissions.get("upload") is True
-        active = type(user) is dict and user.get("isActive") is True
         if not active or not selected or not item_matches:
-            return self._result(plan.destination, "connection_unavailable", update, upload)
+            return self._result(plan.destination, "connection_unavailable", update, upload, reached=usable)
         if not update or (plan.destination == "cover" and not upload):
-            return self._result(plan.destination, "insufficient_permission", update, upload, True)
+            return self._result(plan.destination, "insufficient_permission", update, upload, True, reached=True)
         try:
             _capability_value_shape(detail, plan.destination)
         except (httpx.HTTPError, OSError, ValueError):
-            return self._result(plan.destination, "field_unavailable", update, upload, True)
-        return self._result(plan.destination, "allowed", update, upload, True)
+            return self._result(plan.destination, "field_unavailable", update, upload, True, reached=True)
+        return self._result(plan.destination, "allowed", update, upload, True, reached=True)
 
-    def _result(self, destination: str, category: Literal["allowed", "insufficient_permission", "connection_unavailable", "field_unavailable"], update: bool, upload: bool, selected: bool = False) -> CapabilityObservation:
+    def _result(self, destination: str, category: Literal["allowed", "insufficient_permission", "connection_unavailable", "field_unavailable"], update: bool, upload: bool, selected: bool = False, *, reached: bool = False) -> CapabilityObservation:
         capability = {
             "destination": destination,
             "category": category,
@@ -93,7 +102,8 @@ class AudiobookshelfFieldEffectCapabilities:
         if destination == "cover":
             capability["upload"] = upload
         payload = json.dumps(capability, sort_keys=True, separators=(",", ":")).encode()
-        return CapabilityObservation(category, hashlib.sha256(payload).hexdigest())
+        # `reached` is not capability evidence and never enters the digest (#1402).
+        return CapabilityObservation(category, hashlib.sha256(payload).hexdigest(), reached)
 
 
 class AudiobookshelfFieldEffectTarget:

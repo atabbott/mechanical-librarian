@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from dataclasses import dataclass, replace
 from typing import Callable, Literal, Protocol, cast
@@ -15,12 +16,14 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
+    CONNECTION_REPLAN_LIMIT,
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
     SubtitleCompanion,
+    field_value_version,
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -63,7 +66,13 @@ class TargetObservation:
     ) -> bool:
         if self.value != (plan.desired_value if desired else plan.pre_value):
             return False
-        if check_version and self.version != plan.target_version:
+        # The desired value's version is the planned shape a landed write
+        # leaves behind; the pre-value's is the version the plan captured.
+        if check_version and self.version != (
+            field_value_version(plan.destination, plan.desired_value)
+            if desired
+            else plan.target_version
+        ):
             return False
         companion = plan.subtitle_plan()
         if companion is None:
@@ -100,6 +109,11 @@ class CapabilityObservation:
         "field_unavailable",
     ]
     digest: str
+    # Whether a usable account and the item request were both answered, so a
+    # lost connection or unusable account can be told from an item the
+    # service refused. It is not capability evidence and never enters
+    # `digest` (#1402).
+    connection_reached: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +186,7 @@ class FieldEffectRepository(Protocol):
         self, decision_id: str, changed_at: int
     ) -> bool: ...
     def field_effect_event_documents(self, plan_id: str) -> tuple[str, ...]: ...
+    def field_effect_connection_stales(self, decision_id: str) -> int: ...
     def suspend_field_effect_capability(
         self,
         *,
@@ -640,7 +655,7 @@ class GuardedFieldApplication:
             # to the ordinary scheduler, which applies it only through every
             # guard and a fresh atomic claim (#1382).
             return self._repository.transition_field_effect(
-                plan_id, "claimed", "retryable", self._clock(), "not_applied"
+                plan_id, "claimed", "retryable", self._clock(), "not_sent"
             )
         if operation.state == "applying":
             operation = self._repository.schedule_field_effect_reconciliation(
@@ -983,7 +998,13 @@ class GuardedFieldApplication:
                     affected_review_case_ids=affected_review_case_ids,
                 )
                 return self._with_affected_review_cases(
-                    self._stale(operation, "capability"), affected
+                    self._stale(
+                        operation,
+                        self._connection_failure(plan)
+                        if scope == "connection"
+                        else "capability",
+                    ),
+                    affected,
                 )
             if capability.digest != member.capability_digest:
                 return self._stale(operation, "capability")
@@ -1004,10 +1025,31 @@ class GuardedFieldApplication:
             )
             if isinstance(error, TargetServiceUnavailable):
                 return self._with_affected_review_cases(
-                    self._stale(operation, "capability"), affected
+                    self._stale(
+                        operation,
+                        self._connection_failure(plan)
+                        if error.scope == "connection"
+                        else "capability",
+                    ),
+                    affected,
                 )
             raise
         if not observed.matches(plan, desired=False, check_version=True):
+            # A retry whose earlier request may have landed, and did: record
+            # what this read shows instead of a change it did not make. Only
+            # history can say a request may have been sent, so a plan that
+            # never reached `applying` is not taken for one (#1402).
+            if (
+                (operation.state, operation.failure) == ("retryable", "target_failure")
+                and observed.matches(plan, desired=True, check_version=True)
+                and any(
+                    json.loads(event)["kind"] == "applying"
+                    for event in self._repository.field_effect_event_documents(
+                        plan.plan_id
+                    )
+                )
+            ):
+                return self._complete(operation, "retryable")
             return self._stale(operation, "target_changed")
         if operation.attempt >= 3:
             return self._stale(operation, "circuit_open")
@@ -1016,6 +1058,24 @@ class GuardedFieldApplication:
         if self._draining.is_set():
             raise GuardedApplicationError("draining")
         return None
+
+    def _connection_failure(self, plan: FieldEffectPlan) -> str:
+        """Name a stale caused only by a lost connection, within its bound.
+
+        A cover plan keeps `capability`: its stale retires the owner's cover
+        consideration and schedules recovery cleanup, which a later plan
+        cannot take back, so covers stay terminal as before (#1402).
+        """
+        if plan.destination == "cover":
+            return "capability"
+        return (
+            "connection"
+            if self._repository.field_effect_connection_stales(
+                plan.authority.decision_id
+            )
+            < CONNECTION_REPLAN_LIMIT
+            else "connection_exhausted"
+        )
 
     def _persist_target_suspension(
         self,

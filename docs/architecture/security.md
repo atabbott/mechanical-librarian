@@ -1686,7 +1686,25 @@ lost in the interval before Audiobookshelf accepts that request; this boundary
 does not claim cross-system atomicity. Cover upload reads only the immutable
 digest-verified original artifact, never recovery bytes, and neither bytes nor
 credentials enter diagnostics, logs, support bundles or reviewers.
-Unknown and stale facts fail closed. Target and credential authority are absent
+Unknown and stale facts fail closed. A request whose outcome is unknown is never
+sent again; a retry whose final pre-read shows the desired value at the desired
+version is verified without a request (#1402). A claim recovered at startup sent
+nothing and returns unsent as `retryable`, applied only through every guard and
+a fresh claim. A plan staled only by a connection-scoped refusal or a lost
+pre-read releases its decision and is planned again, at most three times, once a
+fresh observation reaches the connection: `/api/me` succeeded for an active,
+selected account and the item request returned a readable item or a `4xx`
+other than `408` or `429`, a 404 included. A transport failure on either
+request, a rejected key, an inactive or unselected account, a `5xx`, `408` or
+`429`, or an unreadable or oversized body keeps it waiting with its bound
+untouched. The re-plan reuses the waiting
+plan's `capability_digest`, so it re-enters the full guard order, where the
+preclaim checks a fresh observation against that digest and current consent and
+authority. The stale after the last is terminal, and covers stay terminal.
+Withdrawn authority or consent supersedes a retry or a waiting connection stale
+without a request, and a
+superseded or abandoned plan whose history reached `applying` is never planned
+afresh. Target and credential authority are absent
 from domain code and reviewers and credentials stay outside diagnostics and the
 API. Continuous composition contains the Audiobookshelf target and API-key
 capability observer; qualification proves

@@ -50,11 +50,14 @@ FIELD_EFFECT_FAILURES = frozenset(
         "backup",
         "capability",
         "circuit_open",
+        "connection",
+        "connection_exhausted",
         "consent",
         "consent_revoked",
         "cover_recovery",
         "dependency",
         "not_applied",
+        "not_sent",
         "owner_abandoned",
         "readback",
         "restart_readback",
@@ -77,12 +80,20 @@ _STATES = frozenset(
         "abandoned",
     }
 )
+# A plan staled only because its connection was unavailable is planned again
+# when the connection is next observed healthy, this many times per decision;
+# the stale after the last is `connection_exhausted` and terminal (#1402).
+CONNECTION_REPLAN_LIMIT = 3
 _TRANSITIONS = {
     "planned": frozenset({"claimed", "superseded", "stale", "abandoned"}),
     "claimed": frozenset({"applying", "reconciling", "retryable", "stale"}),
     "applying": frozenset({"verified", "reconciling", "retryable", "stale"}),
     "reconciling": frozenset({"verified", "retryable", "stale"}),
-    "retryable": frozenset({"claimed", "stale", "abandoned"}),
+    # `verified` only from an unknown outcome a pre-read shows landed, and
+    # `superseded` only when its authority or consent is withdrawn (#1402).
+    "retryable": frozenset({"claimed", "verified", "stale", "superseded", "abandoned"}),
+    # Only a connection stale, which waits on its authority and consent (#1402).
+    "stale": frozenset({"superseded"}),
 }
 _HEX = re.compile(r"[0-9a-f]{64}")
 _IDENTITY = re.compile(r"[a-z][a-z0-9_-]{0,127}")
@@ -792,6 +803,16 @@ class FieldEffectOperation:
     ) -> Self:
         if (
             state not in _TRANSITIONS.get(self.state, ())
+            or (
+                (self.state, state) == ("retryable", "verified")
+                and self.failure != "target_failure"
+            )
+            or (
+                (self.state, state)
+                in {("retryable", "superseded"), ("stale", "superseded")}
+                and failure not in {"authority_superseded", "consent_revoked"}
+            )
+            or (self.state == "stale" and self.failure != "connection")
             or type(at) is not int
             or at < self.updated_at
         ):

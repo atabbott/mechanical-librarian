@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
+from mechanical_librarian.domain.field_effect import CONNECTION_REPLAN_LIMIT
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
@@ -186,8 +187,14 @@ def project_readable_activity_event(
     readable_activity_event(event, report)
 
 
-def activity_result_label(state: str) -> ActivityResult:
-    """Return the closed owner-visible result word for one durable state."""
+def activity_result_label(state: str, failure: object = None) -> ActivityResult:
+    """Return the closed owner-visible result word for one durable state.
+
+    A change stopped only by a lost connection is still waiting to be prepared
+    again, so it reads as waiting rather than as a stopped stale (#1402).
+    """
+    if (state, failure) == ("stale", "connection"):
+        return ActivityResult.WAITING_SAFELY
     return _RESULT_LABELS.get(state, ActivityResult.RECORDED)
 
 
@@ -242,6 +249,8 @@ def _write_facts(
             if state == "reconciling"
             else "Paired title and subtitle change pending"
             if not failure
+            else "Paired title and subtitle change waiting"
+            if failure == "connection"
             else "Paired title and subtitle change stopped"
         )
         return ReadableChange(summary, summary), [
@@ -279,7 +288,14 @@ def _write_facts(
         # A closed preparation may follow a write whose outcome was not confirmed.
         facts = [
             {"label": "Prepared value", "value": value_text(destination, desired)},
-            {"label": "Why it stopped", "value": failure_reason(failure)},
+            {
+                # A lost connection or a paused retry has not stopped the
+                # change (#1402).
+                "label": "What happened"
+                if failure == "connection" or state == "retryable"
+                else "Why it stopped",
+                "value": failure_reason(failure),
+            },
             {"label": "Chosen by", "value": chosen},
         ]
         if state == "retryable":
@@ -292,10 +308,34 @@ def _write_facts(
             return ReadableChange(
                 "Prepared change paused", "Prepared change paused"
             ), facts
+        if failure == "connection":
+            # A lost connection closes this attempt, not the decision: say what
+            # follows and how many bounded preparations it has used (#1402).
+            prepared = cast(int, record.get("connection_stales", 1)) - 1
+            facts.append(
+                {
+                    "label": "What happens next",
+                    "value": "Mechanical Librarian prepares it again once "
+                    "Audiobookshelf can be reached. "
+                    + (
+                        f"Prepared again {prepared} of {CONNECTION_REPLAN_LIMIT} times."
+                        if prepared
+                        else "Not prepared again yet; up to "
+                        f"{CONNECTION_REPLAN_LIMIT} times."
+                    ),
+                }
+            )
+            return ReadableChange(
+                "Prepared change waiting", "Prepared change waiting"
+            ), facts
         facts.append(
             {
                 "label": "Confirmed in Audiobookshelf",
-                "value": "The selected change was not confirmed",
+                # A withdrawn change whose request never left is not an
+                # unconfirmed one (#1402).
+                "value": "Nothing was sent to Audiobookshelf"
+                if record.get("unsent") is True
+                else "The selected change was not confirmed",
             }
         )
         return ReadableChange("Prepared change closed", "Prepared change closed"), facts
@@ -631,7 +671,7 @@ def activity_search_text(
             values.append(value)
     state = projected.get("state")
     if type(state) is str:
-        values.append(activity_result_label(state).value)
+        values.append(activity_result_label(state, projected.get("failure")).value)
     if report is not None:
         values.append(report.target.current_title or "Untitled")
     evidence = projected.get("evidence")

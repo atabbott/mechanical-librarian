@@ -2014,6 +2014,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "occurred_at": 1_754_858_100 + sequence,
                 "sequence": sequence,
                 "state": "planned" if sequence < 25 else "verified",
+                "failure": None,
             }
             for sequence in range(after_sequence + 1, min(after_sequence + 20, 25) + 1)
         ]

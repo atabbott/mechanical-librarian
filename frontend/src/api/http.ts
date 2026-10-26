@@ -675,6 +675,7 @@ export interface ActivityTransitionView {
   occurred_at: number
   sequence: number
   state: string
+  failure: string | null
 }
 export interface ActivityTransitionsView {
   events: readonly ActivityTransitionView[]
@@ -1467,7 +1468,8 @@ export class ReviewApiClient implements ReviewHttp {
           typeof event.sequence === 'number' &&
           Number.isSafeInteger(event.sequence) &&
           event.sequence >= 1 &&
-          typeof event.state === 'string',
+          typeof event.state === 'string' &&
+          (event.failure === null || typeof event.failure === 'string'),
       )
     )
       throw new ApiError(502, 'invalid_activity_response')

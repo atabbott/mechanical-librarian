@@ -193,6 +193,14 @@ _RECORDED_ONLY_EXCLUDED_SQL = (
     "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND "
 )
 
+# An effect holds its decision unless it was superseded, abandoned, or staled
+# only by a lost connection, which the scheduler plans again within its bound
+# once the connection is observed healthy (#1402).
+_FIELD_EFFECT_HOLDS_DECISION_SQL = (
+    "state NOT IN ('superseded','abandoned') AND NOT (state='stale' "
+    "AND json_extract(document,'$.failure')='connection')"
+)
+
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
     "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
@@ -1261,9 +1269,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "hold.review_case_id=d.review_case_id AND "
                 "hold.destination='description' AND hold.active=1))"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
-                "AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
+                "AND "
+                + _FIELD_EFFECT_HOLDS_DECISION_SQL
+                + ") AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
                 + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                + "=pending.decision_id AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
+                + "=pending.decision_id AND "
+                + _FIELD_EFFECT_HOLDS_DECISION_SQL
+                + ") AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 + cursor
                 + (
                     "ORDER BY pending.occurred_at,pending.decision_id "
@@ -1356,9 +1368,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "AND package.report_id=lineage.report_id AND package.review_case_id=lineage.review_case_id "
                 "AND package.checkpoint=lineage.checkpoint "
                 "WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
-                "AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
+                "AND "
+                + _FIELD_EFFECT_HOLDS_DECISION_SQL
+                + ") AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
                 + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                + "=pending.decision_id AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
+                + "=pending.decision_id AND "
+                + _FIELD_EFFECT_HOLDS_DECISION_SQL
+                + ") AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination ORDER BY lineage.connection_name,"
                 "lineage.library_name,pending.origin,pending.destination"
@@ -2462,6 +2478,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 durable["desired_value"] = raw["desired_value"]
                 if "subtitle_companion" in raw:
                     durable["subtitle_companion"] = raw["subtitle_companion"]
+                if raw["kind"] == "stale" and failure == "connection":
+                    # The decision's connection stales up to this one, from
+                    # its immutable ledger: earlier seconds, or earlier in this
+                    # plan, so a row never counts a later event (#1402).
+                    durable["connection_stales"] = self._connection.execute(
+                        "SELECT count(*) FROM field_effect_events event "
+                        "JOIN field_effects effect ON effect.plan_id=event.plan_id "
+                        "WHERE effect.decision_id=? AND event.kind='stale' AND "
+                        "json_extract(event.document,'$.failure')='connection' AND "
+                        "(event.occurred_at<? OR (event.plan_id=? AND event.sequence<=?))",
+                        (
+                            raw["decision_id"],
+                            raw["occurred_at"],
+                            source_parent_id,
+                            source_sequence,
+                        ),
+                    ).fetchone()[0]
+                if raw["kind"] == "superseded":
+                    # A withdrawn plan sent nothing when no attempt of it ever
+                    # reached the applying step before this event (#1402).
+                    durable["unsent"] = (
+                        self._connection.execute(
+                            "SELECT 1 FROM field_effect_events WHERE plan_id=? "
+                            "AND kind='applying' AND sequence<? LIMIT 1",
+                            (source_parent_id, source_sequence),
+                        ).fetchone()
+                        is None
+                    )
             elif source_kind == "human_decision":
                 if type(decision) is not HumanDecision:
                     raise FieldEffectError("persistence")
@@ -3874,6 +3918,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 or type(item.get("occurred_at")) is not int
                 or type(item.get("state")) is not str
                 or type(item.get("sequence")) is not int
+                or (
+                    item.get("failure") is not None and type(item["failure"]) is not str
+                )
                 for item in transitions
             ):
                 raise FieldEffectError("persistence")
@@ -3883,6 +3930,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "occurred_at": item["occurred_at"],
                     "state": item["state"],
                     "sequence": item["sequence"],
+                    # A stale reads as waiting only for a lost connection, so
+                    # each transition carries its own failure (#1402).
+                    "failure": item.get("failure"),
                 }
                 for item in transitions
                 if after_sequence is None or item["sequence"] > after_sequence
@@ -4246,7 +4296,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     kind, cause = "backup_failure", "backup"
                     scope = "library"
                     signal_library, signal_work, signal_field = library, None, None
-                elif failure in {"capability", "target"}:
+                elif failure in {"capability", "target", "connection_exhausted"}:
                     kind, cause = "service_incompatibility", "service_incompatibility"
                     scope = "connection"
                     signal_library, signal_work, signal_field = None, None, None
@@ -4258,7 +4308,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         work_id,
                         destination,
                     )
-                elif state in {"claimed", "applying", "reconciling", "retryable"}:
+                elif state in {"claimed", "applying", "reconciling", "retryable"} or (
+                    failure == "connection"
+                ):
                     kind, cause = (
                         "automatic_recovery",
                         ("reconciliation" if state == "reconciling" else "in_progress"),

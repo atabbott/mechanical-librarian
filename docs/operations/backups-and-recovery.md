@@ -92,8 +92,10 @@ persisted targeted read and enters reconciliation; verified, stale,
 superseded, and abandoned work remains terminal while any pending cover-cleanup
 obligation is retried. Desired target state verifies, the captured
 pre-state may requeue only under current authority and freshness, and a third
-value stays stale for forward re-evaluation. Never edit rows or blindly repeat
-an ambiguous request.
+value stays stale for forward re-evaluation. A plan staled only by a lost
+connection is planned again once the connection is seen healthy, at most three
+times, and a retry whose read-back shows the desired value verifies without a
+second request. Never edit rows or blindly repeat an ambiguous request.
 
 After opening the exact-current repository, invoke the bounded field-effect
 recovery entry point. It claims and dispatches at most 100 closed targeted-read

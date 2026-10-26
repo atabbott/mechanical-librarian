@@ -78,6 +78,7 @@ from tests.support.field_effects import (  # noqa: F401
     _authorize,
     _EffectEnvironment,
     _plan,
+    _replan,
     effects,
     envelope,
     metadata_report,
@@ -1053,7 +1054,7 @@ def test_a_write_the_library_refused_never_claims_a_before_and_after(
         desired="Paper Moons over Larkspur Station",
         suffix="a",
     )
-    effects.target.unavailable_scope_next = "connection"
+    effects.target.unavailable_scope_next = "destination"
     assert effects.service.apply(planned.plan.plan_id).state == "stale"
 
     stopped = next(
@@ -1854,3 +1855,107 @@ def test_configured_witness_utf8_failure_retains_query_scoped_canonical_admissio
     finally:
         reader.close()
         root.close()
+
+
+def test_a_write_waits_through_three_lost_connections_and_then_stops(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    """The bound is counted from the ledger and stated in plain words (#1402)."""
+    report = metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    arguments = dict(
+        destination="title",
+        pre="Paper Moons: Larkspur",
+        desired="Paper Moons over Larkspur Station",
+        suffix="a",
+    )
+    planned = _plan(effects, **arguments)
+    plan_id = planned.plan.plan_id
+    effects.capabilities.category = "connection_unavailable"
+    for prepared in range(3):
+        waiting = effects.service.apply(plan_id)
+        assert (waiting.state, waiting.failure) == ("stale", "connection")
+        row = next(event for event in _ledger(effects) if event["state"] == "stale")
+        assert row["change"] == "Prepared change waiting"
+        assert "Why it stopped" not in _facts(row)
+        assert _facts(row)["What happened"] == (
+            "Audiobookshelf could not be reached for this book"
+        )
+        assert _facts(row)["What happens next"] == (
+            "Mechanical Librarian prepares it again once Audiobookshelf can be "
+            "reached. "
+            + (
+                f"Prepared again {prepared} of 3 times."
+                if prepared
+                else "Not prepared again yet; up to 3 times."
+            )
+        )
+        revived = _replan(effects, **arguments)
+        assert revived is not None and revived.state == "planned"
+    stopped = effects.service.apply(plan_id)
+    assert (stopped.state, stopped.failure) == ("stale", "connection_exhausted")
+    again = _replan(effects, **arguments)
+    assert again is not None
+    assert (again.state, again.failure) == ("stale", "connection_exhausted")
+    row = next(event for event in _ledger(effects) if event["state"] == "stale")
+    assert row["change"] == "Prepared change closed"
+    assert _facts(row)["Why it stopped"] == (
+        "Audiobookshelf could not be reached for this book, and this change "
+        "stopped after it was prepared again 3 times"
+    )
+    # Each recorded stale carries its own failure, so its history reads the
+    # waiting ones as waiting and only the last as stopped (#1402).
+    assert [
+        transition["failure"]
+        for transition in effects.repository.field_effect_activity_transitions(plan_id)
+        if transition["state"] == "stale"
+    ] == ["connection"] * 3 + ["connection_exhausted"]
+    assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"
+
+
+@pytest.mark.parametrize(
+    ("withdrawn", "reason"),
+    (
+        ("authority", "The authority behind this change was replaced"),
+        ("consent", "Write permission was withdrawn"),
+    ),
+)
+def test_a_waiting_write_whose_authority_is_withdrawn_reads_as_stopped(
+    effects: _EffectEnvironment,  # noqa: F811
+    withdrawn: str,
+    reason: str,
+) -> None:
+    """Only a write that can still be prepared again reads as waiting (#1402)."""
+    report = metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    arguments = dict(
+        destination="title",
+        pre="Paper Moons: Larkspur",
+        desired="Paper Moons over Larkspur Station",
+        suffix="a",
+    )
+    planned = _plan(effects, **arguments)
+    effects.capabilities.category = "connection_unavailable"
+    assert effects.service.apply(planned.plan.plan_id).failure == "connection"
+    if withdrawn == "authority":
+        assert effects.service.supersede(planned.plan.authority.decision_id) == 1
+    else:
+        assert effects.service.revoke_consent(planned.plan.consent.consent_id) == 1
+    effects.capabilities.category = "allowed"
+    again = _replan(effects, **arguments)
+    assert again is not None
+    assert (again.state, again.failure) == (
+        "superseded",
+        "authority_superseded" if withdrawn == "authority" else "consent_revoked",
+    )
+    latest = next(
+        event for event in _ledger(effects) if event["category"] == "recovery"
+    )
+    assert latest["state"] == "superseded"
+    assert latest["change"] == "Prepared change closed"
+    assert _facts(latest)["Why it stopped"] == reason
+    # The waiting change never reached Audiobookshelf (#1402).
+    assert _facts(latest)["Confirmed in Audiobookshelf"] == (
+        "Nothing was sent to Audiobookshelf"
+    )
+    assert effects.target.read(planned.plan).value == "Paper Moons: Larkspur"

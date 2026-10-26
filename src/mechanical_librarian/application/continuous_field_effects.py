@@ -148,6 +148,12 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_capability_suspension(
         self, connection: str, destination: str
     ) -> str | None: ...
+    def field_effect_connection_replan(
+        self, decision_id: str
+    ) -> FieldEffectOperation | None: ...
+    def next_field_effect_connection_replan(
+        self, connection: str, library: str, after: str | None
+    ) -> tuple[str, str, str] | None: ...
     def next_field_effect_plan_id(
         self, last_library: str | None
     ) -> tuple[str, str] | None: ...
@@ -312,6 +318,10 @@ class ContinuousGuardedApplication:
         self._schedule_cursor: tuple[int, str] | None = None
         self._schedule_generation = 0
         self._schedule_lock = threading.Lock()
+        # Libraries whose released decisions wait for a lost connection, and
+        # the plan each one last probed it through (#1402).
+        self._replans_waiting: set[tuple[str, str]] = set()
+        self._replan_probe_after: dict[tuple[str, str], str] = {}
         self._manual_return_cursor: tuple[int, str, str] | None = None
         self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
         self._capability_lock = threading.Lock()
@@ -489,6 +499,85 @@ class ContinuousGuardedApplication:
         with self._schedule_lock:
             self._schedule_generation += 1
             self._schedule_cursor = None
+
+    def _wait_for_connection(self, key: tuple[str, str]) -> None:
+        with self._schedule_lock:
+            self._replans_waiting.add(key)
+
+    def _observe_waiting_connections(self) -> None:
+        """Notice, once a pass, that a lost connection answers again (#1402).
+
+        Nothing else revisits a decision a lost connection released: its plan
+        is no longer ready, and the schedule cursor is already past it. Each
+        library waiting on its connection is observed through one of its
+        waiting plans, rotating so that one item that keeps failing cannot hide
+        a recovery. Only an observation that did not reach the connection
+        keeps the wait: any other, even a refused item, clears the lost
+        connection and starts the schedule over, so the plan is prepared again
+        and its preclaim decides, using one of its bounded attempts.
+        """
+        with self._schedule_lock:
+            waiting = sorted(self._replans_waiting)
+        affected_review_case_ids: set[str] = set()
+        try:
+            for key in waiting:
+                connection, library = key
+                suspension = self._repository.field_effect_capability_suspension(
+                    connection, ""
+                )
+                if suspension == "connection_unavailable":
+                    probe = self._repository.next_field_effect_connection_replan(
+                        connection, library, self._replan_probe_after.get(key)
+                    )
+                    capability = self._capabilities.get(key)
+                    if probe is None or capability is None:
+                        suspension = "nothing_waiting"
+                    else:
+                        plan_id, work_id, destination = probe
+                        self._replan_probe_after[key] = plan_id
+                        observed_at = self._clock()
+                        observed = capability.observe(
+                            _CapabilityProbe(work_id, destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies.
+                        )
+                        reached = (
+                            observed.category != "connection_unavailable"
+                            or observed.connection_reached
+                        )
+                        if not reached or observed.category != "connection_unavailable":
+                            # Records a refusal or re-asserts the lost
+                            # connection; `allowed` clears them.
+                            self._schedule_capability_ready(
+                                observed.category,
+                                connection,
+                                destination,
+                                observed_at,
+                                affected_review_case_ids,
+                            )
+                        if not reached:
+                            continue
+                        self._repository.clear_field_effect_capability_suspension(
+                            scope="connection",
+                            connection=connection,
+                            destination="",
+                            reason="connection_unavailable",
+                            observed_at=observed_at,
+                        )
+                        # A loss recorded in this clock second survives the
+                        # clear; the next pass observes again.
+                        if (
+                            self._repository.field_effect_capability_suspension(
+                                connection, ""
+                            )
+                            is not None
+                        ):
+                            continue
+                        suspension = None
+                with self._schedule_lock:
+                    self._replans_waiting.discard(key)
+                if suspension is None:
+                    self._restart_schedule()
+        finally:
+            self._flush_affected_review_case_ids(affected_review_case_ids)
 
     def _advance_schedule_cursor(
         self,
@@ -670,6 +759,10 @@ class ContinuousGuardedApplication:
             with self._slot:
                 applied = application.apply(plan_id, affected_review_case_ids)
             completed = True
+            if (applied.state, applied.failure) == ("stale", "connection"):
+                self._wait_for_connection(
+                    (applied.plan.connection, applied.plan.library)
+                )
             return applied
         except BaseException as error:
             delegated_error = error
@@ -883,19 +976,43 @@ class ContinuousGuardedApplication:
                     continue
                 raise
             del consent
-            observed_at = self._clock()
-            observed = capability.observe(
-                _CapabilityProbe(snapshot.work_id, snapshot.destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies; a full FieldEffectPlan does not exist before planning.
+            # A decision released by a lost connection is planned again with
+            # its waiting plan's capability unless the connection is still
+            # lost: the preclaim's guards then decide, staling a field refusal
+            # through its own code and counting a lost connection against the
+            # bound. While the connection is lost it is observed here, as any
+            # other decision is (#1402).
+            released = self._repository.field_effect_connection_replan(
+                decision.decision_id
             )
-            if not self._schedule_capability_ready(
-                observed.category,
-                snapshot.connection,
-                snapshot.destination,
-                observed_at,
-                affected_review_case_ids,
+            observed_at = self._clock()
+            if (
+                released is not None
+                and self._repository.field_effect_capability_suspension(
+                    snapshot.connection, snapshot.destination
+                )
+                != "connection_unavailable"
             ):
-                self._advance_schedule_cursor(decision, generation)
-                continue
+                capability_digest = released.plan.capability_digest
+            else:
+                observed = capability.observe(
+                    _CapabilityProbe(snapshot.work_id, snapshot.destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies; a full FieldEffectPlan does not exist before planning.
+                )
+                if not self._schedule_capability_ready(
+                    observed.category,
+                    snapshot.connection,
+                    snapshot.destination,
+                    observed_at,
+                    affected_review_case_ids,
+                ):
+                    if (
+                        released is not None
+                        and observed.category == "connection_unavailable"
+                    ):
+                        self._wait_for_connection(key)
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
+                capability_digest = observed.digest
             operation: FieldEffectOperation | None
             if snapshot.paired_bundle_id is not None:
                 if (
@@ -940,23 +1057,40 @@ class ContinuousGuardedApplication:
                         raise
                     self._advance_schedule_cursor(decision, generation)
                     continue
-                companion_capability = capability.observe(
-                    _CapabilityProbe(snapshot.work_id, "subtitle")  # type: ignore[arg-type]  # reason: observers read work_id and destination; the paired plan does not exist until both capabilities pass.
-                )
-                if not self._schedule_capability_ready(
-                    companion_capability.category,
-                    snapshot.connection,
-                    "subtitle",
-                    observed_at,
-                    affected_review_case_ids,
+                waiting = None if released is None else released.plan.subtitle_companion
+                if (
+                    waiting is not None
+                    and self._repository.field_effect_capability_suspension(
+                        snapshot.connection, "subtitle"
+                    )
+                    != "connection_unavailable"
                 ):
-                    self._advance_schedule_cursor(decision, generation)
-                    continue
+                    companion_digest = waiting.capability_digest
+                else:
+                    companion_capability = capability.observe(
+                        _CapabilityProbe(snapshot.work_id, "subtitle")  # type: ignore[arg-type]  # reason: observers read work_id and destination; the paired plan does not exist until both capabilities pass.
+                    )
+                    if not self._schedule_capability_ready(
+                        companion_capability.category,
+                        snapshot.connection,
+                        "subtitle",
+                        observed_at,
+                        affected_review_case_ids,
+                    ):
+                        if (
+                            released is not None
+                            and companion_capability.category
+                            == "connection_unavailable"
+                        ):
+                            self._wait_for_connection(key)
+                        self._advance_schedule_cursor(decision, generation)
+                        continue
+                    companion_digest = companion_capability.digest
                 operation = application.plan_title_subtitle(
                     decision,
                     sibling,
-                    title_capability_digest=observed.digest,
-                    subtitle_capability_digest=companion_capability.digest,
+                    title_capability_digest=capability_digest,
+                    subtitle_capability_digest=companion_digest,
                 )
             else:
                 operation = application.plan(
@@ -972,7 +1106,7 @@ class ContinuousGuardedApplication:
                     dependency_digests=(
                         snapshot.dependency_digests or (snapshot.target_fingerprint,)
                     ),
-                    capability_digest=observed.digest,
+                    capability_digest=capability_digest,
                     allow_corrective_keep_current=(
                         type(decision) is HumanDecision
                         and decision.outcome == "keep_current"
@@ -1723,6 +1857,8 @@ class ContinuousGuardedApplication:
                         self.reconcile(plan_id)
                     except Exception as error:
                         failures.append(error)
+            if not self._stop.is_set():
+                self._observe_waiting_connections()
             while not self._stop.is_set() and self.run_cycle():
                 pass
             if failures:

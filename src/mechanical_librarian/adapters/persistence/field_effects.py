@@ -46,6 +46,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -997,7 +998,23 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         (operation.plan.authority.decision_id,),
                     ).fetchone()
                     == (1,)
+                    # A plan whose request may have reached Audiobookshelf is
+                    # never planned afresh: that would send an unknown outcome
+                    # again. A cover's recovery bytes must be gone before its
+                    # discharged cleanup is retired with the terminal state it
+                    # belonged to (#1402).
+                    and self._connection.execute(
+                        "SELECT 1 FROM field_effect_events WHERE plan_id=? AND kind='applying' "
+                        "UNION ALL SELECT 1 FROM field_effect_cleanups WHERE plan_id=? "
+                        "AND state='pending'",
+                        (operation.plan.plan_id, operation.plan.plan_id),
+                    ).fetchone()
+                    is None
                 ):
+                    self._connection.execute(
+                        "DELETE FROM field_effect_cleanups WHERE plan_id=?",
+                        (operation.plan.plan_id,),
+                    )
                     self._connection.execute(
                         "UPDATE field_effects SET state='planned',attempt=0,updated_at=?,document=? "
                         "WHERE plan_id=? AND state IN ('superseded','abandoned')",
@@ -1008,6 +1025,47 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     )
                     transaction.commit()
                     return operation
+                if (
+                    persisted.state,
+                    persisted.failure,
+                ) == ("stale", "connection") and all(
+                    self._connection.execute(
+                        "SELECT current FROM field_effect_authorities WHERE decision_id=?",
+                        (member.authority.decision_id,),
+                    ).fetchone()
+                    == (1,)
+                    for member in (operation.plan, operation.plan.subtitle_plan())
+                    if member is not None
+                ):
+                    # A lost connection is not the decision's end, whatever its
+                    # origin (#1402). The plan returns to the state the stale
+                    # interrupted, with its attempt and claim token, so a retry
+                    # whose outcome is unknown is still that retry; its history
+                    # stays whole and every guard runs again before a claim.
+                    interrupted = json.loads(
+                        self._connection.execute(
+                            "SELECT document FROM field_effect_events WHERE plan_id=? "
+                            "ORDER BY sequence DESC LIMIT 1 OFFSET 1",
+                            (operation.plan.plan_id,),
+                        ).fetchone()[0]
+                    )
+                    revived = replace(
+                        operation,
+                        state="retryable"
+                        if interrupted["state"] == "retryable"
+                        else "planned",
+                        attempt=persisted.attempt,
+                        failure=interrupted["failure"]
+                        if interrupted["state"] == "retryable"
+                        else None,
+                        claim_token=persisted.claim_token,
+                    )
+                    self._update_field_effect(revived, "stale")
+                    self._record_field_effect_event(
+                        revived, revived.state, revived.updated_at
+                    )
+                    transaction.commit()
+                    return revived
                 transaction.commit()
                 return persisted
             for member in (operation.plan, operation.plan.subtitle_plan()):
@@ -1250,6 +1308,57 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     @local_operation
+    def field_effect_connection_stales(self, decision_id: str) -> int:
+        """Count a decision's connection stales from its immutable ledger."""
+        try:
+            return int(
+                self._connection.execute(
+                    "SELECT count(*) FROM field_effect_events WHERE plan_id IN "
+                    "(SELECT plan_id FROM field_effects WHERE decision_id=?) "
+                    "AND kind='stale' AND json_extract(document,'$.failure')='connection'",
+                    (decision_id,),
+                ).fetchone()[0]
+            )
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def field_effect_connection_replan(
+        self, decision_id: str
+    ) -> FieldEffectOperation | None:
+        """Return the decision's plan waiting for its connection, if any."""
+        try:
+            row = self._connection.execute(
+                "SELECT document FROM field_effects WHERE decision_id=? AND state='stale' "
+                "AND json_extract(document,'$.failure')='connection' "
+                "ORDER BY updated_at DESC,plan_id LIMIT 1",
+                (decision_id,),
+            ).fetchone()
+            return None if row is None else FieldEffectOperation.from_json(row[0])
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def next_field_effect_connection_replan(
+        self, connection: str, library: str, after: str | None
+    ) -> tuple[str, str, str] | None:
+        """Choose the next plan waiting for this connection, wrapping around."""
+        try:
+            for bound in (after or "", ""):
+                row = self._connection.execute(
+                    "SELECT plan_id,work_id,destination FROM field_effects "
+                    "WHERE connection_name=? AND library_name=? AND state='stale' "
+                    "AND json_extract(document,'$.failure')='connection' AND plan_id>? "
+                    "ORDER BY plan_id LIMIT 1",
+                    (connection, library, bound),
+                ).fetchone()
+                if row is not None:
+                    return row[0], row[1], row[2]
+            return None
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
     def suspend_field_effect_capability(
         self,
         *,
@@ -1473,8 +1582,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             "SELECT document,state FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects WHERE decision_id=? "
             "UNION ALL SELECT rowid FROM field_effects WHERE "
             + _FIELD_EFFECT_COMPANION_DECISION_SQL
-            + "=?) AND state IN "
+            + "=?) AND (state IN "
             + _FIELD_EFFECT_READY_STATES_SQL
+            # A plan a lost connection released waits on this authority, so
+            # it closes with it rather than reading as waiting (#1402).
+            + " OR (state='stale' AND json_extract(document,'$.failure')='connection'))"
             + " ORDER BY rowid",
             (decision_id, decision_id),
         ).fetchall()
@@ -1507,12 +1619,32 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             )
             # The unary plus lets the planner use field_effects_ready and then
             # sort; a bare rowid order forces a full scan of every effect.
-            rows = self._connection.execute(
-                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
-                + _FIELD_EFFECT_READY_STATES_SQL
-                + " ORDER BY +rowid",
-                (consent_id, consent_id),
-            ).fetchall()
+            rows = (
+                self._connection.execute(
+                    "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
+                    + _FIELD_EFFECT_READY_STATES_SQL
+                    + " ORDER BY +rowid",
+                    (consent_id, consent_id),
+                ).fetchall()
+                + self._connection.execute(
+                    # A plan a lost connection released waits on this consent,
+                    # so it closes with it rather than reading as waiting. The
+                    # consent names one library, whose effects the target index
+                    # finds without walking every terminal effect (#1402).
+                    "SELECT document,state FROM field_effects WHERE connection_name=? "
+                    "AND library_name=? AND state='stale' "
+                    "AND json_extract(document,'$.failure')='connection' AND "
+                    "(json_extract(document,'$.plan.consent.consent_id')=? OR "
+                    "json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) "
+                    "ORDER BY rowid",
+                    (
+                        raw["consent"]["connection"],
+                        raw["consent"]["library"],
+                        consent_id,
+                        consent_id,
+                    ),
+                ).fetchall()
+            )
             for document, state in rows:
                 operation = FieldEffectOperation.from_json(document).transition(
                     "superseded", at=changed_at, failure="consent_revoked"
@@ -1522,7 +1654,13 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 self._schedule_field_effect_cleanup(operation, changed_at)
             transaction.commit()
             return len(rows)
-        except (sqlite3.Error, FieldEffectError, json.JSONDecodeError) as error:
+        except (
+            sqlite3.Error,
+            FieldEffectError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+        ) as error:
             transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise

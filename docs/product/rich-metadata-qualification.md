@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Connection re-plan successor (#1402)
+
+The current F19a, F20 and F46 records move to semantic revision 72 over base
+`796479ae`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows a write staled by a lost Audiobookshelf connection being
+planned again at most three times through every guard, a landed retry being
+verified without a second request, and Activity reading a waiting change and
+each history entry from its recorded failure. No request whose outcome is
+unknown is sent again, and no operation gains or loses automatic authority.
+
 ## Sign-in throttle successor (#1384)
 
 The current F19a, F20 and F46 records move to semantic revision 71 over base

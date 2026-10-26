@@ -48,7 +48,10 @@ const capabilityLabel = (state: string) =>
     field_unavailable: 'A field is unavailable',
     not_ready: 'Not ready yet',
   })[state] ?? 'Not ready yet'
-const stateLabel = (state: string, advice?: 'description' | 'cover') =>
+// A change stopped only by a lost connection is still waiting to be prepared
+// again, so it reads as waiting rather than as a stopped stale (#1402).
+const stateLabel = (state: string, advice?: 'description' | 'cover', failure?: string | null) =>
+  (state === 'stale' && failure === 'connection' ? 'Waiting safely' : undefined) ??
   (advice === 'description'
     ? {
         completed: 'Description advice completed',
@@ -256,7 +259,7 @@ function ActivityTransitions({
           <time>
             {dateParts(transition.occurred_at).day}&nbsp;· {dateParts(transition.occurred_at).time}
           </time>
-          &nbsp;· {stateLabel(transition.state, advice)}
+          &nbsp;· {stateLabel(transition.state, advice, transition.failure)}
         </li>
       ))}
       {moreAvailable ? (
@@ -331,7 +334,7 @@ function ActivityEventRow({
       <div className="cm-activity-change" aria-label={event.change_detail}>
         <span aria-hidden="true">{event.change}</span>
       </div>
-      <b>{stateLabel(event.state, advice)}</b>
+      <b>{stateLabel(event.state, advice, event.failure)}</b>
       <button
         data-activity-focus={`details-${changeId}`}
         aria-expanded={expanded}
