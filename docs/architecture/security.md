@@ -727,7 +727,12 @@ current-case history, Library page with its lens counts and decision summaries,
 and Attention page with its field count is read from one authoritative SQLite
 snapshot. Concurrent supersession and decision commits therefore appear wholly
 before or wholly after a response; a failed snapshot yields only the existing
-bounded unavailable response.
+bounded unavailable response. The #1407 Not matched reason is a closed state
+derived from a reconstructible browse fact, never provider text. Its one
+promise of another lookup is read after that snapshot, through an
+application-owned port, from the provider-recovery store and only for the
+visible page's unavailable rows; it is display-only and never enters a count,
+so a job finishing between the two reads can only withdraw the promise.
 
 Cover membership uses immutable derived facts validated against the complete
 canonical consideration at publication and root open. This does not grant

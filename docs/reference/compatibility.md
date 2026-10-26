@@ -1,5 +1,17 @@
 # Pre-release compatibility policy
 
+#1407 adds the derived `provider_match_state` column to
+`metadata_report_browse_facts`, folded by its insert trigger and checked at
+open beside `provider_limited`. **Clean rebuild required** for every
+predecessor application database; startup refuses the predecessor schema before
+mutation, with no adoption or migration. The Library response advances to
+`review-library-v3` for the `not_matched` lens, count and closed row reasons;
+`review-preparation-v2` keeps its version and gains a `not_matched` stage and
+`now` count; the cold-start report advances to `cold-start-report-v5`.
+Settings, sessions, setup state and the recovery store are unchanged.
+F19a/F20/F46 records are displaced because the schema, application and web
+interface they bind changed, with permission sets unchanged.
+
 #1384 keys the session database's `review_login_failures` rows by a
 verifier-bound client HMAC, so sign-in is throttled per client. **Clean rebuild
 required** for `/data/private/review-sessions.sqlite` only: startup refuses the

@@ -15,7 +15,7 @@ uv run python scripts/cold_start_report.py \
     --recovery-database /copy/provider-recovery.sqlite
 ```
 
-It writes nothing and prints one `cold-start-report-v4` JSON document. It can
+It writes nothing and prints one `cold-start-report-v5` JSON document. It can
 run at any point during or after preparation, repeatedly. `--mount-root`
 remaps a configured mount name to a host path for the extension census,
 because the configuration records container paths. `--stage-timings` is
@@ -124,6 +124,14 @@ same four reasons, so work-only reports are counted too (#1299):
 - `not_recording_admitted` has a `total` and a count per reason;
 - `work_only_by_reason` gives the same counts for work-only reports alone;
 - `work_only_cases` counts the work-only reports that reached a review case.
+
+Each library also carries `not_matched` (#1407), the works the Library lists
+under Not matched, counted with the lens's own reason SQL over the same derived
+match state: a `total`, `by_reason` with `refused`, `unavailable` and
+`no_match`, and `moved_from_no_attention_needed`, which equals the total
+because every such work was counted under No attention needed before #1407.
+The reason never says whether a retry is scheduled; that promise is read only
+for the visible Library page.
 
 Each library also carries `dispatches`, over every current item of any media
 kind, `report_only` packages included, read from each provider's persisted

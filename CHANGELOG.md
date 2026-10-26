@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Works no provider matched now have their own Library lens, Not matched, with
+  a count and one reason each: found but not this work, providers unavailable
+  (saying it will be checked again only when a retry is scheduled), or no
+  provider matched. They no longer count as No attention needed, and the
+  masthead and run summary name them. Clean rebuild required (#1407).
+
 - A write in progress now completes when the system clock steps backwards,
   for example after a time correction or a resumed virtual machine, instead of
   being refused partway and left waiting for a restart. Its history keeps the
