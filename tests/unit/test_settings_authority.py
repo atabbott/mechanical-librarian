@@ -29,6 +29,7 @@ from mechanical_librarian.domain.owner_settings import (
     SettingsView,
     provider_capabilities,
 )
+from mechanical_librarian.domain.validation import OWNER_PASSWORD_MINIMUM_CHARACTERS
 from mechanical_librarian.infrastructure.settings_authority import (
     ReviewBootstrap,
     load_review_bootstrap,
@@ -521,14 +522,19 @@ def test_the_first_run_vocabulary_states_owner_rules_and_every_contribution() ->
     """The wizard states its password rule and each provider's relevance from
     the one shared vocabulary, so no copy is authored twice (#1008).
 
-    The owner-password bound is the server's own byte range in
-    `interfaces.web.setup.login`; the contribution map must cover exactly the
-    closed adapter set, because the providers step reads it by adapter and a
-    missing entry would render `undefined` beside a named provider.
+    The owner-password bound is the server's own rule in
+    `domain.validation.owner_password`, a character minimum and a byte
+    ceiling; the contribution map must cover exactly the closed adapter set,
+    because the providers step reads it by adapter and a missing entry would
+    render `undefined` beside a named provider.
     """
     vocabulary = _settings_vocabulary()
 
-    assert vocabulary["owner_password"] == {"minimum_bytes": 1, "maximum_bytes": 1024}
+    assert vocabulary["owner_password"] == {
+        "minimum_characters": OWNER_PASSWORD_MINIMUM_CHARACTERS,
+        "maximum_bytes": 1024,
+    }
+    assert "at least 12 characters" in vocabulary["errors"]["owner_password"]
     assert "1,024 bytes" in vocabulary["errors"]["owner_password"]
     assert set(vocabulary["provider_contributions"]) == set(PROVIDER_LABELS)
     assert all(

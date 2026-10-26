@@ -557,9 +557,12 @@ An unauthenticated visitor may fetch only a bounded synchronizer nonce: at most
 resolution rule, held only in process memory, so one client cannot exhaust the
 pool (#1384). A new owner password must be at least 12 characters, counted as
 code points rather than bytes, and at most 1,024 UTF-8 bytes; a shorter one is
-refused with the fixed `422 invalid_password` before Argon2 or any claim. Sign
-in still accepts any established verifier. Creating
-the owner password requires the exact configured Origin plus the same nonce in a
+refused with the fixed `422 invalid_password` before Argon2 or any claim. The
+setup page states the same rule from the shared vocabulary beside the password
+field and refuses a short password there before sending it; because a refused
+claim spends its nonce, the page reads a fresh one before showing a server
+refusal. Sign in still accepts any established verifier. Creating the owner
+password requires the exact configured Origin plus the same nonce in a
 host-only cookie and request header, and, under ADR-0086, the deployment-held
 setup claim token. Every start that finds setup unclaimed mints that token with
 `secrets.token_urlsafe(32)`, commits only its domain-separated SHA-256 digest

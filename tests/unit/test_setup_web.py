@@ -1352,13 +1352,17 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     seams a later `.replace` layer could silently drop.
     """
     # UX-002: the rules and the reveal control come from the vocabulary.
-    assert "settingsVocabulary.owner_password.minimum_bytes" in SETUP_JS
+    assert "settingsVocabulary.owner_password.minimum_characters" in SETUP_JS
     assert "settingsVocabulary.owner_password.maximum_bytes" in SETUP_JS
+    assert "minimum_bytes" not in SETUP_JS
     assert "invalid_password:settingsVocabulary.errors.owner_password" in SETUP_JS
+    # #1384: the length is counted in characters, as the server counts it, and
+    # the byte ceiling stays a byte ceiling.
+    assert "const length=[...password.value].length" in SETUP_JS
     assert "new TextEncoder().encode(password.value).length" in SETUP_JS
-    # One sentence per refusal: empty, mismatched and over-length are distinct.
+    # One sentence per refusal: empty, mismatched and out-of-range are distinct.
     assert (
-        "error(form,size===0?'invalid_password_empty':'invalid_password',password)"
+        "error(form,length===0?'invalid_password_empty':'invalid_password',password)"
         in SETUP_JS
     )
     assert "error(form,'invalid_password_mismatch',confirmation)" in SETUP_JS
@@ -1367,6 +1371,18 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "toggle.setAttribute('aria-pressed','false')" in SETUP_JS
     assert "control.type=reveal?'text':'password'" in SETUP_JS
     assert "secretField('Owner password',password,'the owner password')" in SETUP_JS
+    # #1384: the rules follow the password field they govern, are linked to it,
+    # and are not stated under the claim-token field.
+    assert (
+        "form.append(secretField('Owner password',password,'the owner password'));"
+        "if(!claim.claimed){const list=rules([`At least "
+        "${settingsVocabulary.owner_password.minimum_characters} characters, and "
+        "no more than ${settingsVocabulary.owner_password.maximum_bytes" in SETUP_JS
+    )
+    assert (
+        "list.id='setup-password-rules';password.dataset.hint=list.id;"
+        "describe(password,false);form.append(list)}" in SETUP_JS
+    )
     # ADR-0086: the unclaimed form asks for the deployment-held token, says
     # where it is and that a restart replaces it, and recovers a typo in place.
     assert (
@@ -1380,11 +1396,16 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     )
     assert "claim_token:claimToken.value.trim()" in SETUP_JS
     assert (
-        "if(claimToken&&e.message==='claim_token'){try{const fresh=await "
-        "api('/api/setup/claim');" in SETUP_JS
+        "if(claimToken&&['claim_token','invalid_password'].includes(e.message))"
+        "{try{const fresh=await api('/api/setup/claim');" in SETUP_JS
     )
     assert "claim.nonce=fresh.nonce;claim.revision=fresh.revision" in SETUP_JS
-    assert "error(form,'claim_token',claimToken);return}" in SETUP_JS
+    # #1384: a refused password spent the nonce too, so it is refreshed the
+    # same way and the refusal lands on the password, not on the token.
+    assert (
+        "error(form,e.message,e.message==='claim_token'?claimToken:password);return}"
+        in SETUP_JS
+    )
     assert "claim_token:'That setup claim token was not accepted." in SETUP_JS
     assert "The first visitor creates the only owner password" not in SETUP_JS
     assert "toggle.setAttribute('aria-label',`Show ${subject}`)" in SETUP_JS
@@ -1397,7 +1418,13 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "completed_steps:[]};drawLedger()" in SETUP_JS
     assert "node.id='setup-error'" in SETUP_JS
     assert "control.setAttribute('aria-invalid','true')" in SETUP_JS
-    assert "control.setAttribute('aria-describedby','setup-error')" in SETUP_JS
+    assert "describe(control,true)" in SETUP_JS
+    assert "`${refused?'setup-error ':''}${control.dataset.hint||''}`" in SETUP_JS
+    # #1384: the refusal sits with the field it refuses, not above the form.
+    assert (
+        "const anchor=control?.closest('.field');if(anchor)anchor.after(node);"
+        "else form.prepend(node)" in SETUP_JS
+    )
     assert "control.addEventListener('input',()=>{" in SETUP_JS
     assert "{once:true})" in SETUP_JS
 
