@@ -9,17 +9,25 @@ order, and the store reopens. Replay is refused by state, never by time.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
     FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
 )
-from tests.support.field_effects import _EffectEnvironment, _plan
+from tests.support.field_effects import (
+    CAPABILITY,
+    DEPENDENCY,
+    _EffectEnvironment,
+    _plan,
+    _replan,
+)
 from tests.support.field_effects import effects as effects
 
 
@@ -30,6 +38,40 @@ def _events(effects: _EffectEnvironment, plan_id: str) -> list[tuple[str, int]]:
             json.loads, effects.repository.field_effect_event_documents(plan_id)
         )
     ]
+
+
+def _recorded(effects: _EffectEnvironment, created_at: int) -> FieldEffectOperation:
+    """Record one automatic title plan, which a withdrawal may re-plan."""
+    (consent,) = effects.repository.grant_field_effect_consents(
+        "primary", ("books",), ("title",), 9
+    )
+    plan = FieldEffectPlan.create(
+        connection="primary",
+        library="books",
+        work_id="book-1",
+        destination="title",
+        pre_value="old",
+        desired_value="new",
+        target_fingerprint="c" * 64,
+        target_version="version-1",
+        dependency_digests=(DEPENDENCY,),
+        authority=EffectAuthority(
+            "automatic_decision_" + "a" * 64,
+            "review_case_" + "b" * 64,
+            "c" * 64,
+            "fake_service",
+            "automatic_policy",
+            "candidate",
+            "policy-1",
+            "d" * 64,
+        ),
+        consent=consent,
+        capability_digest=CAPABILITY,
+        created_at=created_at,
+    )
+    return effects.repository.record_field_effect(
+        FieldEffectOperation(plan, updated_at=created_at)
+    )
 
 
 def test_a_transition_earlier_than_the_plan_keeps_the_later_time(
@@ -147,3 +189,73 @@ def test_a_write_losing_its_connection_after_a_later_suspension_lands_retryable(
     assert effects.repository._connection.execute(
         "SELECT reason,updated_at FROM field_effect_suspensions"
     ).fetchall() == [("connection_unavailable", 1_000)]
+
+
+@pytest.mark.parametrize("withdrawn", ("authority", "consent"))
+def test_a_withdrawal_after_a_backward_step_keeps_the_plans_time(
+    effects: _EffectEnvironment, withdrawn: str
+) -> None:
+    plan = _recorded(effects, 1_000).plan
+    if withdrawn == "authority":
+        effects.repository.revoke_field_effect_authority(
+            plan.authority.decision_id, 300
+        )
+    else:
+        effects.repository.revoke_field_effect_consent(plan.consent.consent_id, 300)
+    assert _events(effects, plan.plan_id) == [
+        ("planned", 1_000),
+        ("superseded", 1_000),
+    ]
+    if withdrawn == "consent":
+        # Planned again from a clock still behind, it is not dated before
+        # its own history.
+        replanned = effects.repository.record_field_effect(
+            FieldEffectOperation(replace(plan, created_at=300), updated_at=300)
+        )
+        assert (replanned.state, replanned.updated_at) == ("planned", 1_000)
+        assert _events(effects, plan.plan_id)[-1] == ("planned", 1_000)
+
+
+@pytest.mark.parametrize(
+    ("step", "expected"),
+    (
+        ("reconciling", [("reconciling", 1_002)]),
+        ("completion", [("reconciling", 1_003), ("verified", 1_003)]),
+        ("reclaim", [("retryable", 1_003), ("claimed", 1_003)]),
+    ),
+)
+def test_a_step_after_a_backward_step_keeps_the_plans_time(
+    effects: _EffectEnvironment, step: str, expected: list[tuple[str, int]]
+) -> None:
+    plan_id = _recorded(effects, 1_000).plan.plan_id
+    repository = effects.repository
+    repository.claim_field_effect(plan_id, "planned", "a" * 64, 1_001)
+    repository.transition_field_effect(plan_id, "claimed", "applying", 1_002)
+    if step == "reconciling":
+        repository.schedule_field_effect_reconciliation(plan_id, "applying", 300)
+    elif step == "completion":
+        repository.schedule_field_effect_reconciliation(plan_id, "applying", 1_003)
+        repository.claim_next_field_effect_action(1_003, plan_id)
+        repository.complete_field_effect_reconciliation(plan_id, "verified", None, 300)
+    else:
+        repository.transition_field_effect(
+            plan_id, "applying", "retryable", 1_003, "target_failure"
+        )
+        repository.claim_field_effect(plan_id, "retryable", "b" * 64, 300)
+    assert _events(effects, plan_id)[3:] == expected
+
+
+def test_a_connection_revival_after_a_backward_step_keeps_the_plans_time(
+    effects: _EffectEnvironment,
+) -> None:
+    effects.clock.value = 1_000
+    plan_id = _plan(effects, suffix="5").plan.plan_id
+    effects.capabilities.category = "connection_unavailable"
+    stale = effects.service.apply(plan_id)
+    assert (stale.state, stale.failure) == ("stale", "connection")
+    effects.capabilities.category = "allowed"
+    effects.clock.value = 300
+    revived = _replan(effects, suffix="5")
+    assert revived is not None
+    assert (revived.state, revived.updated_at) == ("planned", stale.updated_at)
+    assert _events(effects, plan_id)[-1] == ("planned", stale.updated_at)

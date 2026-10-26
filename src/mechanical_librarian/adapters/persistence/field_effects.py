@@ -1015,6 +1015,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         "DELETE FROM field_effect_cleanups WHERE plan_id=?",
                         (operation.plan.plan_id,),
                     )
+                    # A clock stepped back never dates it before its history (#1386).
+                    operation = replace(
+                        operation,
+                        updated_at=max(operation.updated_at, persisted.updated_at),
+                    )
+                    document = canonical_effect_json(operation.to_data())
                     self._connection.execute(
                         "UPDATE field_effects SET state='planned',attempt=0,updated_at=?,document=? "
                         "WHERE plan_id=? AND state IN ('superseded','abandoned')",
@@ -1059,6 +1065,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         if interrupted["state"] == "retryable"
                         else None,
                         claim_token=persisted.claim_token,
+                        updated_at=max(operation.updated_at, persisted.updated_at),
                     )
                     self._update_field_effect(revived, "stale")
                     self._record_field_effect_event(
