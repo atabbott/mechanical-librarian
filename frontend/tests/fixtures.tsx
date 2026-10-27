@@ -14,6 +14,7 @@ import type {
   AppearanceView,
   CaseDetailView,
   DecisionAcknowledgementView,
+  DecisionOutcome,
   LibraryView,
   PolicyStateView,
   PreparationView,
@@ -36,7 +37,14 @@ export const recordedAcknowledgement = (
       ...before,
       fields: before.fields.map((field) =>
         field.destination === acknowledgement.destination
-          ? { ...field, needsAttention: false, humanDecision: acknowledgement }
+          ? {
+              ...field,
+              needsAttention: false,
+              humanDecision: {
+                ...acknowledgement,
+                outcome: acknowledgement.outcome as DecisionOutcome,
+              },
+            }
           : field,
       ),
     },
@@ -56,7 +64,7 @@ export const library: LibraryView = {
       title: 'A Book',
       authors: [],
       library: 'Books',
-      mediaKind: 'ebook',
+      mediaKind: 'epub',
       attentionCount: 1,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
@@ -76,12 +84,11 @@ export const detail: CaseDetailView = {
     connection: 'local',
     library: 'Books',
     item: 'internal-item-1',
-    mediaKind: 'ebook',
+    mediaKind: 'epub',
     title: 'A Book',
   },
   title: 'A Book',
   authors: [],
-  subtitle: 'Books · ebook',
   comparisonNotices: [],
   mediaHealth: [],
   writesConsented: false,
@@ -92,8 +99,8 @@ export const detail: CaseDetailView = {
       destination: 'title',
       decisionActions: ['keep_current', 'accept'],
       editable: true,
-      disposition: 'review',
-      effectCapability: 'manual',
+      disposition: 'propose_change',
+      effectCapability: 'unavailable',
       needsAttention: true,
       navigationRole: 'attention',
       manualHold: false,

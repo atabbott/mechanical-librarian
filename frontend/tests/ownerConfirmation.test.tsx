@@ -1,7 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import type { CaseDetailView, LibraryView, ReviewHttp } from '../src/api/http'
+import type { CaseDetailView, DecisionOutcome, LibraryView, ReviewHttp } from '../src/api/http'
 import { hasBackgroundDebt } from '../src/queryWork'
 import { createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 it('confirms an off-page decision despite a pre-ack read and repeated case/resync frames', async () => {
@@ -19,7 +19,13 @@ it('confirms an off-page decision despite a pre-ack read and repeated case/resyn
   if (!('actor' in ack)) throw new Error('Title fixture requires a field decision acknowledgement')
   const settled: CaseDetailView = {
     ...detail,
-    fields: [{ ...field, needsAttention: false, humanDecision: ack }],
+    fields: [
+      {
+        ...field,
+        needsAttention: false,
+        humanDecision: { ...ack, outcome: ack.outcome as DecisionOutcome },
+      },
+    ],
   }
   let reads = 0
   let recorded = false

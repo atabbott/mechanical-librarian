@@ -3,13 +3,13 @@ import type { MouseEvent, SyntheticEvent } from 'react'
 
 import type { AttentionItemView, AttentionView } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
-import { fieldLabel, labelWords } from '../labels'
+import { destinationLabel, destinationPhrase, mediaKindLabels } from '../labels'
 import { attentionRoute } from '../router'
 
 const reasonLabel = (item: AttentionItemView) =>
   item.classificationReason ?? 'The current evidence requires a human choice'
 const outcomePreview = (item: AttentionItemView) =>
-  `Inspect the current value and available ${labelWords(item.destination)} choices${item.provenance.length ? ` · ${String(item.provenance.length)} evidence ${item.provenance.length === 1 ? 'record' : 'records'} available` : ''}.`
+  `Inspect the current value and available ${destinationPhrase(item.destination)} choices${item.provenance.length ? ` · ${String(item.provenance.length)} evidence ${item.provenance.length === 1 ? 'record' : 'records'} available` : ''}.`
 const authors = (item: AttentionItemView) =>
   item.authors.length ? item.authors.join(', ') : 'Author details unavailable'
 const groupItems = (items: readonly AttentionItemView[]) => {
@@ -102,7 +102,7 @@ export default function AttentionPage({
                 <header>
                   <div>
                     <p className="eyebrow">
-                      {work.libraryDisplayName ?? work.library} · {fieldLabel(work.mediaKind)}
+                      {work.libraryDisplayName ?? work.library} · {mediaKindLabels[work.mediaKind]}
                     </p>
                     <h2>{work.title}</h2>
                     <p>{authors(work)}</p>
@@ -127,7 +127,7 @@ export default function AttentionPage({
                       }}
                     >
                       <span className="attention-field-name">
-                        <strong>{fieldLabel(item.destination)}</strong>
+                        <strong>{destinationLabel(item.destination)}</strong>
                         <small>Open exact field</small>
                       </span>
                       <span>

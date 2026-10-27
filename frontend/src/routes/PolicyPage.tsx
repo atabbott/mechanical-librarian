@@ -22,6 +22,7 @@ import type {
   PolicySection,
   PolicyTransitionView,
   ShadowPostureView,
+  TargetDestination,
 } from '../api/http'
 import { ChangeCount } from '../components/ChangeCount'
 import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
@@ -29,7 +30,7 @@ import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
 import { FinishTray } from '../components/FinishTray'
 import { SegmentedControl } from '../components/SegmentedControl'
-import { automaticRefusalReasons, fieldLabel } from '../labels'
+import { automaticRefusalReasons, destinationLabel, languageName } from '../labels'
 import { useLibraryName } from '../libraryNames'
 import { libraryList } from '../writeConsent'
 import { policyRoute, useReviewContext } from '../router'
@@ -43,6 +44,31 @@ const audiobookOperationLabels = {
   replace: 'Replace the current value',
   replace_invalid: 'Replace an invalid ASIN',
   replace_recording: 'Replace a valid ASIN',
+} as const
+
+// How a scope or an operation reads beside a qualified field.
+const operationScopeLabels = {
+  none: 'No automatic effect',
+  fill: 'Fill empty only',
+  fill_or_replace: 'Fill empty or replace',
+  preserve: 'Keep the current value',
+  add: 'Add only',
+  replace: 'Replace',
+} as const
+const operationWords = {
+  fill: 'fill empty',
+  preserve: 'keep current',
+  normalize: 'normalize',
+  add: 'add',
+  replace: 'replace',
+  replace_invalid: 'replace invalid',
+  replace_recording: 'replace recording',
+} as const
+const policyDestinationLabels = {
+  ask: 'Ask me',
+  automatic: 'Automatic',
+  ignore: 'Ignore',
+  unsupported: 'Not supported',
 } as const
 
 interface FieldDefinition {
@@ -238,35 +264,35 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   'title_layout:preserve': {
     admitted: 'the current candidate value and its policy/audit context',
     transformation: 'does not transform the produced candidate',
-    effect: 'Automatic records the exact selected Title value; Subtitle is supporting context',
-    fallback: 'abstains when no decision is qualified',
+    effect: 'Automatic records the selected title; the subtitle is context only',
+    fallback: 'makes no change when Automatic cannot decide safely',
   },
   'title_layout:title_and_subtitle': {
     admitted: 'the current candidate value and its policy/audit context',
     transformation: 'does not split the produced candidate',
-    effect: 'Automatic records the exact selected Title value; Subtitle is supporting context',
-    fallback: 'abstains when no decision is qualified',
+    effect: 'Automatic records the selected title; the subtitle is context only',
+    fallback: 'makes no change when Automatic cannot decide safely',
   },
   'contributor_names:preserve': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without transforming the candidate',
-    effect: 'Automatic writes only that exact selected contributor destination value',
-    fallback: 'abstains when no decision is qualified',
+    effect: 'Automatic writes only the selected contributor value',
+    fallback: 'makes no change when Automatic cannot decide safely',
   },
   'contributor_names:canonical': {
     admitted:
       'the already-produced exact candidate from provider-consensus display evidence and its retained local provenance',
     transformation:
       'replaces only an equivalent local contributor display form without reconciling contributor identity',
-    effect: 'Automatic writes only that exact selected contributor destination value',
-    fallback: 'abstains when no decision is qualified',
+    effect: 'Automatic writes only the selected contributor value',
+    fallback: 'makes no change when Automatic cannot decide safely',
   },
   'language_rendering:preserve': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'keeps an equivalent current value; when filling, prefers an observed code',
     effect: 'Automatic writes only a form present in the selected evidence',
     fallback:
-      'uses another admitted form when no code is present; undetermined values provide no authority',
+      'uses another recorded form when no code is present; an undetermined language is never written',
   },
   'language_rendering:display_name': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
@@ -274,21 +300,21 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
       'keeps an equivalent current value; when filling, prefers an observed English name',
     effect: 'Automatic writes only a form present in the selected evidence',
     fallback:
-      'uses an admitted code when no name is present; undetermined values provide no authority',
+      'uses a recorded code when no name is present; an undetermined language is never written',
   },
   'subtitle:fill_empty': {
     admitted: "one supported subtitle attested by the book's own metadata",
     transformation: 'uses the exact admitted text',
     effect: 'fills an empty Subtitle only',
     fallback:
-      "abstains when Subtitle already has a value or the book's own metadata does not attest the candidate",
+      "makes no change when Subtitle already has a value or the book's own metadata does not state it",
   },
   'subtitle:corroborated_split': {
     admitted: 'one corroborated title and subtitle pair',
     transformation: 'splits only an admitted exact joined title',
     effect: 'sets Title and Subtitle together',
     fallback:
-      'requires both fields to be Automatic and separately consented; either blocked member stops the whole pair',
+      'requires both fields to be Automatic with write permission; if either is blocked, neither changes',
   },
   'subtitle:replace_descriptive': {
     admitted: 'a supported descriptive subtitle for this audiobook work',
@@ -299,116 +325,113 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   'date_precision:year': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without reducing the candidate',
-    effect:
-      'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
+    effect: 'Automatic writes only the selected publication date or year',
     fallback:
-      'requires a qualified original-work date for audiobooks; recording release dates do not qualify',
+      "audiobooks need a confirmed original publication date; a recording's release date is not used",
   },
   'date_precision:full_date': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without changing candidate precision',
-    effect:
-      'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
+    effect: 'Automatic writes only the selected publication date or year',
     fallback:
-      'audiobooks retain the supplied year, month or day precision without inventing a date; the operation must be qualified',
+      'audiobooks retain the supplied year, month or day precision without inventing a date; Automatic must support the change',
   },
   'publisher_preference:publisher': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without selecting a publisher value',
-    effect: 'Automatic writes only that exact selected Publisher value',
-    fallback: 'abstains when no decision is qualified',
+    effect: 'Automatic writes only the selected publisher',
+    fallback: 'makes no change when Automatic cannot decide safely',
   },
   'publisher_preference:imprint': {
     admitted: 'the already-produced exact Publisher preview candidate and its policy/audit context',
     transformation: 'records the option without selecting an imprint value',
-    effect:
-      'Policy preview shows that exact selected Publisher candidate; no Automatic decision is qualified',
-    fallback: 'abstains when no preview candidate is available',
+    effect: 'the preview shows the selected publisher; Automatic does not write an imprint',
+    fallback: 'makes no change when no publisher is found',
   },
   'isbn_form:preserve_exact': {
     admitted: 'an already admitted exact ISBN',
     transformation: 'keeps its observed form',
     effect: 'sets ISBN',
-    fallback: 'abstains when no exact ISBN is admitted',
+    fallback: 'makes no change when no exact ISBN is recorded',
   },
   'isbn_form:prefer_isbn13': {
     admitted: 'an already admitted ISBN-13 representation',
     transformation: 'selects that exact existing form without conversion',
     effect: 'sets ISBN',
-    fallback: 'abstains when no admitted ISBN-13 is available',
+    fallback: 'makes no change when no ISBN-13 is recorded',
   },
   'series:primary_narrative': {
     admitted: 'provider-backed memberships for this work',
     transformation: 'selects the primary narrative membership',
     effect: 'Automatic fills an empty Series field only',
-    fallback: 'abstains when no membership is qualified',
+    fallback: 'makes no change when no series membership is confirmed',
   },
   'series:source_order': {
     admitted: 'provider-backed memberships for this work',
     transformation: 'selects the first admitted source membership',
     effect: 'Automatic fills an empty Series field only',
-    fallback: 'abstains when no membership is qualified',
+    fallback: 'makes no change when no series membership is confirmed',
   },
   'series:all_qualified': {
     admitted: 'all provider-backed qualified memberships for this work',
     transformation: 'keeps them visible in admitted order',
     effect:
       'keeps the full context while Automatic fills an empty Series field with only its first membership',
-    fallback: 'abstains when no membership is qualified',
+    fallback: 'makes no change when no series membership is confirmed',
   },
   'series:add_qualified': {
     admitted: 'supported series and sequence associations for this work',
     transformation: 'retains current memberships and adds missing associations',
-    effect: 'extends Series only when this operation is qualified for the media',
-    fallback: 'requires review when addition is unqualified or evidence is ambiguous',
+    effect: 'extends Series only where Automatic supports adding for this media',
+    fallback: 'asks you when Automatic cannot add safely or the evidence is ambiguous',
   },
   'series:replace_qualified': {
     admitted: 'supported series and sequence associations for this work',
     transformation: 'uses the complete selected list',
-    effect: 'replaces Series only when this operation is qualified for the media',
-    fallback: 'requires review when replacement is unqualified or evidence is ambiguous',
+    effect: 'replaces Series only where Automatic supports replacing for this media',
+    fallback: 'asks you when Automatic cannot replace safely or the evidence is ambiguous',
   },
   'genres:fill_empty': {
     admitted: 'one exact eligible source list',
     transformation: 'keeps the list unchanged',
     effect: 'fills empty Genres only',
-    fallback: 'abstains when Genres is populated or no list is eligible',
+    fallback: 'makes no change when Genres already has values or no list is eligible',
   },
   'genres:add': {
     admitted: 'one exact eligible source list',
     transformation: 'adds only values absent from Genres',
     effect: 'extends Genres',
-    fallback: 'abstains when no list is eligible',
+    fallback: 'makes no change when no list is eligible',
   },
   'genres:replace': {
     admitted: 'one exact eligible source list',
     transformation: 'uses that list without combining providers',
     effect: 'replaces Genres',
-    fallback: 'abstains when no list is eligible',
+    fallback: 'makes no change when no list is eligible',
   },
   'tags:off': {
     admitted: 'no source value',
     transformation: 'does not transform metadata',
     effect: 'leaves Tags unchanged',
-    fallback: 'always abstains from tag changes',
+    fallback: 'never changes tags',
   },
   'tags:fill_empty': {
     admitted: 'compatible explicit tag lists from applicable sources',
     transformation: 'audiobooks combine supported members in stable source order',
     effect: 'fills empty Tags only',
-    fallback: 'abstains when Tags is populated or no list is eligible',
+    fallback: 'makes no change when Tags already has values or no list is eligible',
   },
   'tags:add': {
     admitted: 'compatible explicit tag lists from applicable sources',
     transformation: 'keeps owner tags and adds supported audiobook members in stable order',
     effect: 'extends Tags',
-    fallback: 'abstains when relevant lists are malformed, incomplete or conflicting',
+    fallback: 'makes no change when the lists are malformed, incomplete or conflicting',
   },
   'tags:replace': {
     admitted: 'one exact eligible source list',
     transformation: 'uses that list without combining providers',
     effect: 'replaces Tags',
-    fallback: 'abstains when no list is eligible',
+    fallback: 'makes no change when no list is eligible',
   },
   'description_fill:safe_plain_text': {
     admitted:
@@ -417,7 +440,7 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
       'uses the preferred applicable source; equal sources use stable source-record order, never text length',
     effect: 'fills an empty Description; preserves populated prose',
     fallback:
-      'abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification',
+      'makes no change for unsafe or incomplete source text, conflicting work identity, or when Automatic is unavailable',
   },
   'description_fill:replace_safe_plain_text': {
     admitted: 'safe complete synopsis text from an applicable source',
@@ -426,13 +449,13 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     effect:
       'for audiobooks, fills an empty Description or replaces only whole chapter/track number and no-description/no-synopsis placeholders, preserving other useful prose; for ebooks, fills or replaces a Description with eligible source text',
     fallback:
-      'abstains for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not assess general writing quality',
+      'makes no change for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not judge writing quality',
   },
   'description_fill:google_visible_text': {
     admitted: 'eligible Google Books visible text only',
     transformation: 'turns bounded Google HTML into inert visible text',
     effect: 'fills an empty Description only',
-    fallback: 'abstains without it and never falls back to Hardcover',
+    fallback: 'makes no change without it and never falls back to Hardcover',
   },
   'cover_order:fixed_source_order': {
     admitted: 'identity-confirmed non-current covers after provider fetching is quiescent',
@@ -446,25 +469,25 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     effect:
       'replaces an incumbent below 300 pixels on its shorter edge with a candidate at least 500 pixels and twice as large on that edge',
     fallback:
-      'preserves adequate or unknown incumbents; the candidate must have an acceptable portrait or square aspect and a qualified operation',
+      'keeps a current cover that is large enough or of unknown size; the new cover must be portrait or square, and Automatic must support the change',
   },
   'asin:preserve_exact': {
     admitted: 'an already admitted exact ASIN',
     transformation: 'keeps its observed form',
     effect: 'sets ASIN',
-    fallback: 'abstains when no exact ASIN is admitted',
+    fallback: 'makes no change when no exact ASIN is recorded',
   },
   'asin:ebook_manifestation': {
     admitted: 'an admitted ebook-manifestation ASIN',
     transformation: 'selects that exact manifestation value',
     effect: 'sets ASIN',
-    fallback: 'abstains when no ebook manifestation is admitted',
+    fallback: 'makes no change when no ebook edition ASIN is recorded',
   },
   'explicit:unsupported': {
     admitted: 'no automatic source value',
     transformation: 'does not interpret content',
     effect: 'leaves the explicit-content flag unchanged',
-    fallback: 'stays off until the owner chooses an eligible representation and review mode',
+    fallback: 'stays off until you choose an eligible option and review mode',
   },
   'explicit:adult_product': {
     admitted: 'positive adult-product evidence for the applicable audiobook',
@@ -512,10 +535,11 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
 ]
 
 const readableCategory = (key: string) =>
-  fields.find((field) => field.key === key)?.label ?? fieldLabel(key)
-const previewValue = (value: unknown) => {
+  fields.find((field) => field.key === key)?.label ?? 'Another policy field'
+// A language value reads by its name, `English (en)` (#1286).
+const previewValue = (value: unknown, language = false) => {
   if (value === null || value === undefined || value === '') return 'empty'
-  if (typeof value === 'string') return value
+  if (typeof value === 'string') return language ? languageName(value) : value
   if (
     typeof value === 'object' &&
     Object.keys(value).length === 2 &&
@@ -582,9 +606,14 @@ const humanReason = (reason: string | null) => {
 
 // The server keeps its closed outcome and reason codes for audit detail. This
 // projection deliberately turns them into owner-facing impact language.
+// Under Ask me nothing is written; the change is what the review would propose.
 // eslint-disable-next-line react-refresh/only-export-components
-export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisplay => {
-  const current = previewValue(field.current_value)
+export const policyImpactDisplay = (
+  field: PolicyPreviewField,
+  proposal = false,
+): PolicyImpactDisplay => {
+  const language = field.field === 'language_rendering'
+  const current = previewValue(field.current_value, language)
   const currentIsDisplayable = hasMetadataValue(field.current_value)
   const desiredIsDisplayable = hasMetadataValue(field.desired_value)
   const materialChange =
@@ -595,10 +624,10 @@ export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisp
   if (materialChange) {
     const detail =
       !currentIsDisplayable && desiredIsDisplayable
-        ? `fills the empty field with ${previewValue(field.desired_value)}`
+        ? `${proposal ? 'would propose filling' : 'fills'} the empty field with ${previewValue(field.desired_value, language)}`
         : currentIsDisplayable && !desiredIsDisplayable
-          ? `clears ${current}`
-          : `${current} → ${previewValue(field.desired_value)}`
+          ? `${proposal ? 'would propose clearing' : 'clears'} ${current}`
+          : `${proposal ? 'would propose ' : ''}${current} → ${previewValue(field.desired_value, language)}`
     return {
       changed: true,
       title: 'Change',
@@ -1098,8 +1127,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               const comparison = library.comparisons[caseIndex]
               if (!comparison) return []
               return comparison.fields.map((field, fieldIndex) => {
-                const projected = policyImpactDisplay(field.draft)
-                const before = policyImpactDisplay(field.active)
+                const projected = policyImpactDisplay(
+                  field.draft,
+                  field.draft_destination === 'ask',
+                )
+                const before = policyImpactDisplay(field.active, field.active_destination === 'ask')
                 return {
                   caseId: item.report_id,
                   order: fieldIndex,
@@ -1115,7 +1147,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       ? ('Policy change' as const)
                       : ('No policy change' as const),
                     detail: field.changed
-                      ? `${field.active_destination === 'ask' ? 'Ask me' : field.active_destination}: ${before.detail} → ${field.draft_destination === 'ask' ? 'Ask me' : field.draft_destination}: ${projected.detail}`
+                      ? `${policyDestinationLabels[field.active_destination]}: ${before.detail} → ${policyDestinationLabels[field.draft_destination]}: ${projected.detail}`
                       : projected.detail,
                     technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
                   },
@@ -1162,18 +1194,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         : 'Fill empty or replace only with a confirmed strict-rank upgrade'
     if (media === 'audiobook' && field.key === 'cover_order')
       return 'Replace a small incumbent only with a materially larger confirmed cover'
-    const grouped = new Map<string, string[]>()
+    const grouped = new Map<TargetDestination, string[]>()
     for (const entry of available) {
       if ('operation_scope' in entry)
         return entry.operation_scope === 'fill'
           ? 'Fill empty only'
-          : fieldLabel(entry.operation_scope)
+          : operationScopeLabels[entry.operation_scope]
       const operations = grouped.get(entry.destination) ?? []
-      operations.push(fieldLabel(entry.operation).toLowerCase())
+      operations.push(operationWords[entry.operation])
       grouped.set(entry.destination, operations)
     }
     const operations = [...grouped]
-      .map(([destination, values]) => `${fieldLabel(destination)}: ${values.join(', ')}`)
+      .map(([destination, values]) => `${destinationLabel(destination)}: ${values.join(', ')}`)
       .join(' · ')
     return media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
       ? `${operations} · Narrators: no automatic effect`
@@ -1316,7 +1348,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Review the unchanged preview before making this draft active.'
         : stage === 'preview'
-          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} material ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the bounded sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · snapshot saved automatically.`
+          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} material ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the bounded sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved; activate to keep it — reloading starts from the active policy.`
           : stage === 'validating'
             ? 'Checking every chapter, Automatic qualification, and exact library scope.'
             : draftDisplay.changed
@@ -1370,7 +1402,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 {shadow.posture === 'preview'
                   ? 'Preview mode active'
                   : shadow.posture === 'automatic'
-                    ? 'Qualified Automatic active'
+                    ? 'Automatic active'
                     : 'Human review active'}
               </strong>
               <span>Safety</span>
@@ -1378,10 +1410,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             <div>
               <p>
                 {shadow.posture === 'preview'
-                  ? 'Outcomes remain non-authoritative.'
+                  ? 'Preview records what Automatic would do; nothing is decided or written.'
                   : shadow.posture === 'automatic'
                     ? 'Automatic remains decision-only and separately controlled.'
-                    : 'Enter Preview before enabling qualified Automatic.'}
+                    : 'Turn on Preview before enabling Automatic.'}
               </p>
               <div className="cm-policy-safety-actions">
                 <button
@@ -1438,7 +1470,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   : sample.isError
                     ? 'Recent Preview outcomes are unavailable.'
                     : sample.data.items.length
-                      ? `${String(sample.data.items.length)} recent non-authoritative outcome sets.`
+                      ? `${String(sample.data.items.length)} recent preview ${sample.data.items.length === 1 ? 'result' : 'results'}; none was decided or written.`
                       : 'No Preview outcomes or safety suspensions need attention.'}
               </small>
             </div>
@@ -1485,7 +1517,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                             .filter((entry) => entry.field === field.key && entry.option === option)
                             .map((entry) => (
                               <li key={entry.identity} data-qualification-identity={entry.identity}>
-                                {fieldLabel(entry.destination)}:{' '}
+                                {destinationLabel(entry.destination)}:{' '}
                                 {audiobookOperationLabels[entry.operation]} —{' '}
                                 {entry.automatic_available
                                   ? 'Automatic available'
@@ -1780,8 +1812,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <ul>
                   {changedFields.map((field) => (
                     <li key={field.key}>
-                      <strong>{field.label}:</strong> Ebooks —{' '}
-                      {mediaBehavior(field, draft.options[field.key] ?? '', 'ebook')}; Audiobooks —{' '}
+                      <strong>{field.label}:</strong> Ebook libraries —{' '}
+                      {mediaBehavior(field, draft.options[field.key] ?? '', 'ebook')}; Audiobook
+                      libraries —{' '}
                       {mediaBehavior(field, draft.options[field.key] ?? '', 'audiobook')}
                     </li>
                   ))}

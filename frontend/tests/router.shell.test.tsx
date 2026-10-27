@@ -9,7 +9,7 @@ import { ApiError, CsrfRenewedError } from '../src/api/http'
 import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
-import { createApplicationRouter, preparationQuery } from '../src/router'
+import { RoutePending, createApplicationRouter, preparationQuery } from '../src/router'
 import { createHttp, createLiveStream, library, renderRoute, wholeText } from './fixtures'
 
 const reducedMotion = () => ({
@@ -61,11 +61,11 @@ describe('Application shell', () => {
         items: [
           {
             id: 'case-1',
-            destination: 'title',
+            destination: 'title' as const,
             title: 'A Book',
             authors: [],
             library: 'Books',
-            mediaKind: 'ebook',
+            mediaKind: 'epub' as const,
             classificationReason: 'Title needs a decision',
             notices: [],
             provenance: [],
@@ -416,7 +416,7 @@ describe('Application shell', () => {
     expect(within(audiobooks).getByText('Complete · not in this run')).toBeVisible()
     expect(within(audiobooks).getByText('1 of 1 checked')).toBeVisible()
     expect(buckets(audiobooks)).toEqual([['Recorded, nothing to decide', '1']])
-    expect(within(magazines).getByText('Idle')).toBeVisible()
+    expect(within(magazines).getByText('Not scanned yet')).toBeVisible()
 
     // Figures not yet known read as an ellipsis, and nothing is marked.
     current = view({ ...presentation, now: null })
@@ -550,7 +550,7 @@ describe('Application shell', () => {
             ready: 0,
             rescan_requested: false,
             scan_id: 'scan-1',
-            state: 'scanning',
+            state: 'discovering',
             total: 2,
           },
         ],
@@ -560,9 +560,9 @@ describe('Application shell', () => {
 
     const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
     await user.click(trigger)
-    // A state the label table does not name still reads as a label, never as
-    // the store's identifier.
-    expect(screen.getByText('Scanning')).toBeVisible()
+    // A state reads in the owner's words, never as the store's identifier; the
+    // transport refuses a state the label table does not name (#1286).
+    expect(screen.getByText('Finding your books')).toBeVisible()
     expect(screen.getByText(wholeText('1 of 2 checked · 0 ready to browse'))).toBeVisible()
     expect(
       screen.getByText(
@@ -2049,4 +2049,14 @@ describe('Theme rule', () => {
     system.change(true)
     expect(document.documentElement.dataset.theme).toBe('light')
   })
+})
+
+it('names a loading route as the owner’s private workspace (#1286)', () => {
+  // The pending state the shell shows while a route's code loads says what the
+  // page is in plain words rather than a design term.
+  render(<RoutePending title="Policy" />)
+  expect(screen.getByText('Private workspace')).toBeVisible()
+  expect(screen.getByRole('heading', { level: 1, name: 'Loading policy…' })).toBeVisible()
+  expect(screen.getByText('Private workspace').closest('[aria-busy="true"]')).not.toBeNull()
+  expect(screen.queryByText('Authenticated review')).toBeNull()
 })

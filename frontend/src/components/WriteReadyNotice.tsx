@@ -39,9 +39,15 @@ export const WriteReadyNotice = () => {
     refetchInterval: live ? false : 15_000,
   })
   const data = query.data
-  // A lapse names its libraries as Settings does, and the notice waits for that
-  // read so it is announced once, with the name (#1370).
-  const names = useLibraryName(http, Boolean(data?.lapsed_consents.length))
+  // A lapse, and a library that holds permission beside one that does not, are
+  // named as Settings names them; the notice waits for that read so it is
+  // announced once, with the name (#1370, #1286).
+  const names = useLibraryName(
+    http,
+    data !== undefined &&
+      (data.lapsed_consents.length > 0 ||
+        data.capabilities.some((item) => item.destinations.some((entry) => entry.consented))),
+  )
   if (!data || !names.ready) return null
   const connectionUnavailable = (preparation?.connections ?? []).some(
     (item) => item.state !== 'recovered',
@@ -58,10 +64,21 @@ export const WriteReadyNotice = () => {
   const lapse = consent.lapsed ? `${consent.lapsed} ` : ''
   // Beside a lapse, writes are enabled only for the libraries that kept
   // permission, so the heading names them (#1370).
-  const held = data.capabilities
+  const holding = data.capabilities
     .filter((item) => item.destinations.some((entry) => entry.consented))
-    .map((item) => names.name(item.library))
+    .map((item) => item.library)
+  const held = holding.map(names.name)
   const enabledFor = consent.lapsed && held.length ? ` for ${libraryList(held)}` : ''
+  // Writes are off only for the libraries still waiting on permission; beside
+  // one that holds it, the heading says which is which (#1286).
+  const waiting = data.configured_libraries
+    .map((item) => item.library)
+    .filter((library) => !holding.includes(library))
+    .map(names.name)
+  const offFor =
+    held.length && waiting.length
+      ? `Writes are on for ${libraryList(held)}; ${libraryList(waiting)} ${waiting.length === 1 ? 'needs' : 'need'} permission.`
+      : 'Writes are off.'
   const preparing = Boolean(preparation?.active)
   const inLibrary =
     works !== undefined
@@ -71,7 +88,7 @@ export const WriteReadyNotice = () => {
         : 'Counting works in Library… '
   const heading =
     consent.state === 'off'
-      ? `${inLibrary}Writes are off.`
+      ? `${inLibrary}${offFor}`
       : consent.state === 'enabling'
         ? 'Enabling writes…'
         : consent.state === 'applying'
@@ -79,7 +96,7 @@ export const WriteReadyNotice = () => {
           : `${inLibrary}Writes are enabled${enabledFor}.`
   const copy =
     consent.state === 'off'
-      ? `${lapse}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
+      ? `${lapse}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}.`
       : consent.state === 'enabling'
         ? 'Confirming permission with the authoritative server. No change is sent twice.'
         : consent.state === 'applying'

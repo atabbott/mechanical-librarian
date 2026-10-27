@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
 import { mapActivity, mapActivityConsent } from '../src/api/http'
-import { consentBasis, readWriteConsent } from '../src/writeConsent'
+import type { ActivityCapabilityView, DestinationState, TargetDestination } from '../src/api/http'
+import { consentBasis, destinationReason, readWriteConsent } from '../src/writeConsent'
 import currentActivity from './descriptionAdviceActivityFixture.json'
 import { activity } from './fixtures'
 
@@ -14,12 +15,12 @@ const view = (value: Partial<Parameters<typeof readWriteConsent>[0]>) => ({
 const capability = (
   library: string,
   destinations: readonly {
-    destination: string
-    state: string
+    destination: TargetDestination
+    state: DestinationState
     consented?: boolean
     prepared?: number
   }[],
-) => ({
+): ActivityCapabilityView => ({
   connection: 'primary',
   library,
   state: 'partially_allowed',
@@ -367,4 +368,26 @@ describe('the consent basis a permission draft is kept against', () => {
   ])('changes with %s', (_name, value, policyId) => {
     expect(consentBasis(value, policyId)).not.toBe(consentBasis(base, 'policy-1'))
   })
+})
+
+it('explains an exclusion after a lapse by what is prepared, not readiness (#1286)', () => {
+  expect(destinationReason('not_ready')).toBe('it is not ready yet')
+  expect(destinationReason('not_ready', true)).toBe(
+    'nothing is prepared for it yet; you can give permission again once a change is prepared',
+  )
+  // A held destination keeps its own reason whether or not permission lapsed.
+  expect(destinationReason('insufficient_permission', true)).toBe(
+    'the connection lacks permission for it',
+  )
+  const lapsed = activity({
+    configured_libraries: [{ connection: 'primary', library: 'history' }],
+    capabilities: [
+      capability('history', [{ destination: 'title', state: 'not_ready', prepared: 0 }]),
+    ],
+    lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
+  })
+  // Nothing eligible: no scope is offered, and the card says writes are off.
+  const offer = readWriteConsent({ ...lapsed, backup_ready: true })
+  expect(offer.state).toBe('off')
+  expect(offer.scopes).toEqual([])
 })

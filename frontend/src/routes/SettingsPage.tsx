@@ -96,9 +96,24 @@ interface NumberField {
   description: string
   minimum: number
   maximum?: number
-  unit?: 'seconds' | 'bytes'
+  /**
+   * The unit the owner reads and types. The document keeps whole seconds and
+   * bytes; a minute is 60 seconds and an MB is 1,048,576 bytes (#1286).
+   */
+  unit: 'seconds' | 'minutes' | 'MB'
   advanced?: boolean
 }
+const unitFactor = { seconds: 1, minutes: 60, MB: 1_048_576 } as const
+// A stored value in the field's unit: at most two decimals, or two significant
+// digits below one, so 1,024 bytes reads 0.00098 MB rather than 0.
+const shownNumber = (field: NumberField, value: number) => {
+  const shown = value / unitFactor[field.unit]
+  return Math.abs(shown) < 1 && shown !== 0
+    ? Number(shown.toPrecision(2))
+    : Number(shown.toFixed(2))
+}
+const unitWord = (field: NumberField, shown: number) =>
+  field.unit === 'MB' ? 'MB' : shown === 1 ? field.unit.slice(0, -1) : field.unit
 const numberFields: readonly NumberField[] = [
   {
     fieldId: 'limits.timeout_seconds',
@@ -114,7 +129,7 @@ const numberFields: readonly NumberField[] = [
     description: 'How often libraries are checked for new or changed books.',
     minimum: 60,
     maximum: 86_400,
-    unit: 'seconds',
+    unit: 'minutes',
   },
   {
     fieldId: 'server.graceful_shutdown_seconds',
@@ -130,7 +145,7 @@ const numberFields: readonly NumberField[] = [
     description: 'Largest Audiobookshelf response that is read.',
     minimum: 1024,
     maximum: 4_194_304,
-    unit: 'bytes',
+    unit: 'MB',
     advanced: true,
   },
   {
@@ -139,7 +154,7 @@ const numberFields: readonly NumberField[] = [
     description: 'Largest metadata source response that is read.',
     minimum: 1024,
     maximum: 262_144,
-    unit: 'bytes',
+    unit: 'MB',
     advanced: true,
   },
   {
@@ -148,7 +163,7 @@ const numberFields: readonly NumberField[] = [
     description: 'Largest ebook file opened for evidence.',
     minimum: 1024,
     maximum: 268_435_456,
-    unit: 'bytes',
+    unit: 'MB',
     advanced: true,
   },
   {
@@ -159,7 +174,7 @@ const numberFields: readonly NumberField[] = [
     description: 'Largest audiobook file whose header is read.',
     minimum: 1024,
     maximum: 17_179_869_184,
-    unit: 'bytes',
+    unit: 'MB',
     advanced: true,
   },
   {
@@ -168,7 +183,7 @@ const numberFields: readonly NumberField[] = [
     description: 'How long a sign-in lasts before you sign in again.',
     minimum: 300,
     maximum: 2_592_000,
-    unit: 'seconds',
+    unit: 'minutes',
   },
 ]
 const readNumber = (document: Document, fieldId: string) =>
@@ -185,25 +200,13 @@ const writeNumber = (document: Document, fieldId: string, value: number) => {
     )
   parent[keys.at(-1) ?? fieldId] = value
 }
-const binarySize = (bytes: number) => {
-  const units = ['KiB', 'MiB', 'GiB'] as const
-  let value = bytes
-  let unit = 'bytes'
-  for (const next of units)
-    if (value >= 1024) {
-      value /= 1024
-      unit = next
-    }
-  return `${String(Number(value.toFixed(1)))} ${unit}`
+// Grouped digits, keeping every fraction digit `shownNumber` kept.
+const shownText = (field: NumberField, value: number) =>
+  shownNumber(field, value).toLocaleString(undefined, { maximumFractionDigits: 20 })
+const numberWords = (field: NumberField, value: number) => {
+  if (!Number.isFinite(value)) return 'Not a number'
+  return `${shownText(field, value)} ${unitWord(field, shownNumber(field, value))}`
 }
-const numberWords = (field: NumberField, value: number) =>
-  !Number.isFinite(value)
-    ? 'Not a number'
-    : field.unit === 'bytes'
-      ? `${value.toLocaleString()} bytes (${binarySize(value)})`
-      : field.unit === 'seconds'
-        ? `${value.toLocaleString()} ${value === 1 ? 'second' : 'seconds'}`
-        : value.toLocaleString()
 const onOffWord = (value: boolean) => (value ? 'On' : 'Off')
 const motionWord = (value: Document['reduced_motion']) =>
   value === 'always_reduced' ? 'Always reduced' : 'Follow system'
@@ -223,8 +226,8 @@ const validationErrors = (
         fieldId: field.fieldId,
         message:
           field.maximum === undefined
-            ? `${field.label} must be a whole number of at least ${field.minimum.toLocaleString()}.`
-            : `${field.label} must be from ${field.minimum.toLocaleString()} to ${field.maximum.toLocaleString()}.`,
+            ? `${field.label} must be at least ${numberWords(field, field.minimum)}.`
+            : `${field.label} must be from ${shownText(field, field.minimum)} to ${numberWords(field, field.maximum)}.`,
       })
   for (const connection of document.connections) {
     if (!settingsEndpointValid(connection.endpoint))
@@ -892,22 +895,23 @@ const SettingsEditor = ({
             fieldId={field.fieldId}
             error={fieldError(field.fieldId)}
             type="number"
-            min={field.minimum}
-            max={field.maximum}
-            value={readNumber(draft, field.fieldId)}
+            min={shownNumber(field, field.minimum)}
+            max={field.maximum === undefined ? undefined : shownNumber(field, field.maximum)}
+            step="any"
+            value={shownNumber(field, readNumber(draft, field.fieldId))}
             onChange={(event) =>
               update((value) => {
-                writeNumber(value, field.fieldId, Number(event.currentTarget.value))
+                // Only an edit writes, and it writes whole base units, so an
+                // untouched field keeps its stored value exactly.
+                writeNumber(
+                  value,
+                  field.fieldId,
+                  Math.round(Number(event.currentTarget.value) * unitFactor[field.unit]),
+                )
               })
             }
           />
-          {field.unit ? (
-            <small>
-              {field.unit === 'bytes'
-                ? `bytes · ${binarySize(readNumber(draft, field.fieldId))}`
-                : field.unit}
-            </small>
-          ) : null}
+          <small>{field.unit}</small>
         </span>
       )}
     </FieldRow>

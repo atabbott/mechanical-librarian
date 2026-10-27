@@ -733,7 +733,7 @@ describe('ReviewApiClient', () => {
           title: 'A Book',
           library: 'Books',
           connection: 'primary',
-          media_kind: 'ebook',
+          media_kind: 'epub',
           authors: ['Ada Example'],
         },
         fields: [
@@ -746,12 +746,12 @@ describe('ReviewApiClient', () => {
             preservation_only: false,
             decision_actions: [],
             destination: 'series',
-            deterministic_disposition: 'review',
-            effect_capability: 'manual',
+            deterministic_disposition: 'propose_change',
+            effect_capability: 'unavailable',
             needs_attention: true,
             manual_hold: false,
             owner_control: null,
-            current: { value: series },
+            current: { state: 'value', value: series },
             proposed_values: [],
             choice_contexts: choiceContexts,
             proposal_id: 'proposal-1',
@@ -788,7 +788,7 @@ describe('ReviewApiClient', () => {
         title: 'A Book',
         library: 'Books',
         connection: 'primary',
-        media_kind: 'ebook',
+        media_kind: 'epub',
         authors: ['Ada Example'],
       },
       fields: [
@@ -801,12 +801,12 @@ describe('ReviewApiClient', () => {
           preservation_only: false,
           decision_actions: [],
           destination: 'authors',
-          deterministic_disposition: 'review',
-          effect_capability: 'manual',
+          deterministic_disposition: 'propose_change',
+          effect_capability: 'unavailable',
           needs_attention: true,
           manual_hold: false,
           owner_control: null,
-          current: { value: ['Ada Example'] },
+          current: { state: 'value', value: ['Ada Example'] },
           proposed_values: [],
           choice_contexts: [
             {
@@ -839,6 +839,95 @@ describe('ReviewApiClient', () => {
     ).toEqual(['Hardcover', 'Open Library'])
   })
 
+  // The transport closes the code families the backend closes, so an owner
+  // surface never meets a code it has no words for (#1286, R1).
+  const closedDetail = (
+    field: Record<string, unknown> = {},
+    target: Record<string, unknown> = {},
+  ) => ({
+    schema_version: 'review-case-detail-v6',
+    audiobook_review_scope: null,
+    recording_identity_basis: null,
+    review_case_id: 'case-1',
+    current: true,
+    comparison_notices: [],
+    media_health: [],
+    writes_consented: false,
+    target: {
+      item: 'internal-item-1',
+      title: 'A Book',
+      library: 'Books',
+      connection: 'primary',
+      media_kind: 'epub',
+      authors: ['Ada Example'],
+      ...target,
+    },
+    fields: [
+      {
+        classification: 'needs_attention',
+        classification_reason: 'This field needs your review.',
+        editable: true,
+        inventory_role: 'primary',
+        navigation_role: 'attention',
+        preservation_only: false,
+        decision_actions: [],
+        destination: 'title',
+        deterministic_disposition: 'propose_change',
+        effect_capability: 'unavailable',
+        needs_attention: true,
+        manual_hold: false,
+        owner_control: null,
+        current: { state: 'value', value: 'A Book' },
+        proposed_values: [],
+        choice_contexts: [
+          {
+            alternative_id: null,
+            evidence: [],
+            limitations: [],
+            rationale: 'The local library has no retained value for this field.',
+            recommendation: 'no_recommendation',
+            recommendation_reason: 'No recommendation retained.',
+            selection: 'current',
+          },
+        ],
+        proposal_id: 'proposal-1',
+        target_fingerprint: 'fingerprint-1',
+        human_decision: null,
+        automatic_decision: null,
+        automatic_selection_sources: [],
+        notices: [],
+        provenance: [],
+        corroboration_sources: [],
+        ...field,
+      },
+    ],
+  })
+
+  it.each([
+    ['destination', { destination: 'publication_date' }, {}, 'invalid_destination'],
+    ['disposition', { deterministic_disposition: 'review' }, {}, 'invalid_disposition'],
+    ['write capability', { effect_capability: 'manual' }, {}, 'invalid_effect_capability'],
+    ['current state', { current: { state: 'absent', value: null } }, {}, 'invalid_current_state'],
+    ['media kind', {}, { media_kind: 'ebook' }, 'invalid_target_media_kind'],
+  ])('refuses an unknown %s code in a case detail', (_name, field, target, code) => {
+    expect(mapCaseDetail(closedDetail()).fields[0]?.destination).toBe('title')
+    expect(() => mapCaseDetail(closedDetail(field, target))).toThrow(new ApiError(502, code))
+  })
+
+  it.each([
+    ['value', 'A Book', 'A Book'],
+    ['missing', null, 'Not set in Audiobookshelf'],
+    ['null', null, 'Not set in Audiobookshelf'],
+    ['empty', '', 'Not set in Audiobookshelf'],
+    ['unloaded', null, 'Couldn’t be read from Audiobookshelf'],
+    ['malformed', null, 'Couldn’t be read from Audiobookshelf'],
+    ['oversized', null, 'Couldn’t be read from Audiobookshelf'],
+  ])('reads a %s current value in Audiobookshelf’s terms', (state, value, shown) => {
+    expect(mapCaseDetail(closedDetail({ current: { state, value } })).fields[0]?.currentValue).toBe(
+      shown,
+    )
+  })
+
   it('uses Unicode code point bounds for readable case identity', () => {
     const astral = '📚'
     const response = (target: Record<string, unknown>) => ({
@@ -855,7 +944,7 @@ describe('ReviewApiClient', () => {
         title: 'A Book',
         library: 'Books',
         connection: 'primary',
-        media_kind: 'ebook',
+        media_kind: 'epub',
         authors: ['Ada Example'],
         ...target,
       },
@@ -881,12 +970,12 @@ describe('ReviewApiClient', () => {
       preservation_only: false,
       decision_actions: [],
       destination: 'title',
-      deterministic_disposition: 'review',
-      effect_capability: 'manual',
+      deterministic_disposition: 'propose_change',
+      effect_capability: 'unavailable',
       needs_attention: true,
       manual_hold: false,
       owner_control: null,
-      current: { value: 'A Book' },
+      current: { state: 'value', value: 'A Book' },
       proposed_values: [],
       choice_contexts: [
         {
@@ -924,7 +1013,7 @@ describe('ReviewApiClient', () => {
         title: 'A Book',
         library: 'Books',
         connection: 'primary',
-        media_kind: 'ebook',
+        media_kind: 'epub',
         authors: ['Ada Example'],
       },
       fields,
@@ -1067,13 +1156,19 @@ describe('ReviewApiClient', () => {
       source_ledger: [
         {
           provider_requests: 1,
-          lane_kind: 'identity',
+          lane_kind: 'work',
           provider: 'Hardcover',
           reason: 'Returned matching metadata for this work.',
           status: 'candidates',
         },
       ],
     }
+    expect(() =>
+      mapEvidence({
+        ...payload,
+        source_ledger: [{ ...payload.source_ledger[0], lane_kind: 'identity' }],
+      }),
+    ).toThrow(new ApiError(502, 'invalid_provider_outcome_0_lane'))
     expect(mapEvidence(payload)).toEqual({
       items: [
         {
@@ -1088,7 +1183,7 @@ describe('ReviewApiClient', () => {
       sourceLedger: [
         {
           providerRequests: 1,
-          laneKind: 'identity',
+          laneKind: 'work',
           provider: 'Hardcover',
           reason: 'Returned matching metadata for this work.',
           status: 'candidates',
@@ -1452,7 +1547,7 @@ describe('ReviewApiClient', () => {
             authors: ['Ada Example'],
             library: 'Books',
             library_display_name: 'Reading Room',
-            media_kind: 'ebook',
+            media_kind: 'epub',
             item: 'item-1',
             attention_count: 1,
             attention_state: 'needs_attention',
@@ -1469,7 +1564,7 @@ describe('ReviewApiClient', () => {
             title: 'Catalogue-only work',
             authors: ['Grace Example'],
             library: 'Books',
-            media_kind: 'ebook',
+            media_kind: 'epub',
             item: 'internal-item-2',
             attention_count: 0,
             attention_state: 'no_attention_needed',
@@ -1515,7 +1610,7 @@ describe('ReviewApiClient', () => {
       authors: ['Ada Example'],
       library: 'Books',
       libraryDisplayName: 'Reading Room',
-      mediaKind: 'ebook',
+      mediaKind: 'epub',
       attentionCount: 1,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
@@ -1530,7 +1625,7 @@ describe('ReviewApiClient', () => {
       authors: ['Grace Example'],
       library: 'Books',
       libraryDisplayName: 'Books',
-      mediaKind: 'ebook',
+      mediaKind: 'epub',
       attentionCount: 0,
       attention: 'no_attention_needed',
       detailUrl: null,
@@ -1552,7 +1647,7 @@ describe('ReviewApiClient', () => {
         reason: 'No review decision is recorded for this work.',
         fields: [
           { destination: 'title', state: 'value', value: 'Catalogue-only work' },
-          { destination: 'subtitle', state: 'missing', value: 'Unavailable' },
+          { destination: 'subtitle', state: 'missing', value: 'Not set in Audiobookshelf' },
         ],
       },
     })
@@ -1576,11 +1671,11 @@ describe('ReviewApiClient', () => {
       items: [
         {
           review_case_id: 'case-1',
-          destination: 'publication_date',
+          destination: 'publishedDate',
           title: 'A Book',
           authors: ['Ada Example'],
           library: 'Books',
-          media_kind: 'ebook',
+          media_kind: 'epub',
           item: 'internal-item-1',
           detail_url: '/review/case-1?field=publication_date',
           classification_reason: 'The available dates disagree.',
@@ -1593,12 +1688,12 @@ describe('ReviewApiClient', () => {
 
     expect(view.items[0]).toEqual({
       id: 'case-1',
-      destination: 'publication_date',
+      destination: 'publishedDate',
       title: 'A Book',
       authors: ['Ada Example'],
       library: 'Books',
       libraryDisplayName: 'Books',
-      mediaKind: 'ebook',
+      mediaKind: 'epub',
       classificationReason: 'The available dates disagree.',
       notices: ['The available dates disagree.'],
       provenance: ['Selected EPUB supports a complete date.'],
@@ -1694,7 +1789,7 @@ describe('ReviewApiClient', () => {
         {
           connection: 'primary',
           destination: null,
-          reason: 'recovery',
+          reason: 'connection_unavailable',
           scope: 'library',
           updated_at: 1,
         },
@@ -1819,6 +1914,13 @@ describe('ReviewApiClient', () => {
       mapActivity({ ...activity, events: [{ ...activity.events[0], category: 'review' }] }),
     ).toThrow(ApiError)
     expect(activity.suspensions[0]).toMatchObject({ scope: 'library', destination: null })
+    // A hold reason outside the closed set has no owner words, so it is refused.
+    expect(() =>
+      mapActivity({
+        ...activity,
+        suspensions: [{ ...activity.suspensions[0], reason: 'recovery' }],
+      }),
+    ).toThrow(new ApiError(502, 'invalid_activity_suspension_reason'))
     expect(() =>
       mapActivity({
         ...activity,
@@ -1826,7 +1928,7 @@ describe('ReviewApiClient', () => {
           {
             connection: 'primary',
             destination: null,
-            reason: 'recovery',
+            reason: 'connection_unavailable',
             scope: 'library',
             updated_at: 'later',
           },
@@ -2640,7 +2742,7 @@ describe('ReviewApiClient', () => {
       title: 'A Book',
       authors: [],
       library: 'Books',
-      media_kind: 'audiobook',
+      media_kind: 'm4b',
       item: 'item-1',
       attention_count: 0,
       attention_state: 'no_attention_needed',
@@ -2660,6 +2762,10 @@ describe('ReviewApiClient', () => {
       schema_version: 'review-library-v3',
     }
     expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_detail_kind'))
+    // `ebook` is not a format the server reports (#1286).
+    expect(() =>
+      mapLibrary({ ...page, items: [{ ...work, media_kind: 'ebook', detail_kind: 'case' }] }),
+    ).toThrow(new ApiError(502, 'invalid_media_kind'))
   })
 
   it('refuses a library document served under any token but its own', () => {
@@ -2899,11 +3005,11 @@ describe('mapReportDetail', () => {
 
 describe('mapCaseDetail media health', () => {
   const observation = {
-    bound: 'The local running time is within 90 seconds of the stated running time.',
+    bound: "A complete recording runs within 1 min 30 s of the edition's stated running time.",
     cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
-    expected: '72000 seconds stated by the matched edition',
+    expected: '20 h stated by the matched edition',
     kind: 'runtime_short_of_provider',
-    observed: '43200 seconds of local audio',
+    observed: '12 h of local audio, 8 h shorter than the matched edition',
     tracks: [],
   }
   const detail = async (media_health: unknown) => {

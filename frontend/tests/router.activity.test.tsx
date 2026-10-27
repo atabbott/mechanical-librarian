@@ -10,9 +10,17 @@ import {
   CsrfRenewedError,
   mapActivity,
 } from '../src/api/http'
-import type { ActivitySearch, ActivityView, PreparationView, ReviewHttp } from '../src/api/http'
+import type {
+  ActivitySearch,
+  ActivityView,
+  PreparationView,
+  ProviderThrottleEntry,
+  ReviewHttp,
+} from '../src/api/http'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import { activityRoute, normalizeActivitySearch } from '../src/router'
+import { formatDay } from '../src/dates'
+import { document as settingsDocument, view as settingsView } from './settingsFixtures'
 import {
   activity,
   consentOf,
@@ -104,7 +112,7 @@ describe('Activity route', () => {
     )
     renderRoute('/activity', http)
     await screen.findByText('Description advice prepared for review')
-    await user.click(screen.getByRole('button', { name: 'Details' }))
+    await user.click(screen.getByRole('button', { name: /^Details for /u }))
     expect(screen.getByText('Advised · Authored content')).toBeVisible()
     expect(screen.getByText('codex · synthetic-model')).toBeVisible()
     expect(screen.getByText(/Preparation grants no write authority/)).toBeVisible()
@@ -723,8 +731,19 @@ describe('Activity route', () => {
     ],
     [
       'withdrawn',
-      { events: [{ work_label: 'Withdrawn work', state: 'withdraw', origin: 'human' }] },
-      'Withdrawn',
+      {
+        events: [
+          {
+            work_label: 'Withdrawn work',
+            state: 'withdraw',
+            origin: 'human',
+            change: 'Withdrawn',
+          },
+        ],
+      },
+      // The server's change already says Withdrawn; the result does not
+      // repeat it (#1286).
+      'Recorded',
     ],
     [
       'completed automatic cover advice',
@@ -872,7 +891,9 @@ describe('Activity route', () => {
 
     expect(await screen.findByRole('heading', { name: 'Recovery needs attention' })).toBeVisible()
     await openActivityAuthority(user)
-    expect(screen.getAllByText(/Unexpected effect behavior/)).toHaveLength(2)
+    expect(
+      screen.getAllByText(/Writes are held because an earlier write behaved unexpectedly\./u),
+    ).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
@@ -1192,11 +1213,11 @@ describe('Activity route', () => {
     const disclosureFor = (work: string) =>
       within(
         screen.getByText(work).closest('article') ?? document.createElement('article'),
-      ).getByRole('button', { name: 'Details' })
+      ).getByRole('button', { name: /^Details for /u })
     await user.click(disclosureFor('Paper Moons over Larkspur Station'))
     expect(screen.getByText('Confirmed in Audiobookshelf')).toBeVisible()
     expect(screen.queryByRole('region', { name: /exact policy changes/ })).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Hide details' }))
+    await user.click(screen.getByRole('button', { name: /^Hide details for /u }))
     await user.click(disclosureFor('Library policy'))
     const table = screen.getByLabelText('2 exact policy changes')
     expect(table).toHaveTextContent('Title layout')
@@ -1228,16 +1249,16 @@ describe('Activity route', () => {
     // The route moves focus to its own heading on arrival. Wait for that to
     // settle before taking the keyboard, or the press lands on the heading.
     await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
-    const disclosure = screen.getByRole('button', { name: 'Details' })
+    const disclosure = screen.getByRole('button', { name: /^Details for /u })
     disclosure.focus()
     await user.keyboard('{Enter}')
     expect(disclosure).toHaveAttribute('aria-expanded', 'true')
-    expect(disclosure).toHaveAccessibleName('Hide details')
+    expect(disclosure).toHaveAccessibleName('Hide details for ISBN, Paper Moons: Larkspur')
     expect(screen.getByText('Previous value')).toBeVisible()
     disclosure.focus()
     await user.keyboard('{Enter}')
     expect(disclosure).toHaveAttribute('aria-expanded', 'false')
-    expect(disclosure).toHaveAccessibleName('Details')
+    expect(disclosure).toHaveAccessibleName('Details for ISBN, Paper Moons: Larkspur')
     expect(screen.queryByText('Previous value')).toBeNull()
   })
 
@@ -1270,7 +1291,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Recorded transitions could not be loaded.',
     )
@@ -1316,12 +1337,13 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
     const lines = [...lifecycle.querySelectorAll('li')].map((item) => item.textContent)
     expect(lines).toHaveLength(2)
-    expect(lines[0]).toMatch(/^[^·\s].*\u00a0· .*\u00a0· Cover advice failed safely$/u)
-    expect(lines[1]).toMatch(/^[^·\s].*\u00a0· .*\u00a0· Cover advice completed$/u)
+    // One recorded time, in the one format (#1286), then the state.
+    expect(lines[0]).toMatch(/^[^·\s][^·]*\u00a0· Cover advice failed safely$/u)
+    expect(lines[1]).toMatch(/^[^·\s][^·]*\u00a0· Cover advice completed$/u)
     for (const line of lines) expect(line).not.toMatch(/(?:^|[ \n])·/u)
   })
 
@@ -1362,7 +1384,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
     const lines = [...lifecycle.querySelectorAll('li')].map((item) =>
       item.textContent.split('\u00a0· ').at(-1),
@@ -1400,7 +1422,7 @@ describe('Activity route', () => {
     }
     const { queryClient } = renderRoute('/activity', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    await user.click(await screen.findByRole('button', { name: /^Details for /u }))
     const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
     await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(23))
@@ -1408,7 +1430,7 @@ describe('Activity route', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'More recorded transitions could not be loaded.',
     )
-    const disclosure = screen.getByRole('button', { name: 'Hide details' })
+    const disclosure = screen.getByRole('button', { name: /^Hide details for /u })
     disclosure.focus()
 
     current = activity({
@@ -1418,7 +1440,9 @@ describe('Activity route', () => {
     })
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Hide details' })).toHaveFocus())
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^Hide details for /u })).toHaveFocus(),
+    )
     expect(lifecycle.querySelectorAll('li')).toHaveLength(23)
     expect(screen.getByRole('alert')).toHaveTextContent(
       'More recorded transitions could not be loaded.',
@@ -1444,7 +1468,7 @@ describe('Activity route', () => {
     }
     renderRoute('/activity', http)
 
-    for (const button of await screen.findAllByRole('button', { name: 'Details' }))
+    for (const button of await screen.findAllByRole('button', { name: /^Details for /u }))
       await user.click(button)
 
     expect(http.getActivityTransitions).not.toHaveBeenCalled()
@@ -1803,12 +1827,12 @@ describe('Activity route', () => {
     // says which of its two states it is in (#636).
     expect(screen.getByText('Prepared change paused')).toBeVisible()
     expect(screen.getByText('Title · fiction')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Details' }))
+    await user.click(screen.getByRole('button', { name: /^Details for /u }))
     expect(screen.getByText('Prepared value')).toBeVisible()
     expect(screen.getByText('The current value changed after this was prepared')).toBeVisible()
     expect(screen.queryByText('Durable evidence')).toBeNull()
     expect(screen.getByText('Current waiting work · Title update')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Hide details' }))
+    await user.click(screen.getByRole('button', { name: /^Hide details for /u }))
     const pageInput = screen.getByRole('spinbutton', { name: 'Activity page number' })
     await user.clear(pageInput)
     await user.type(pageInput, '3')
@@ -1903,7 +1927,7 @@ describe('Activity route', () => {
             frames.shift()?.(0)
           })
         }
-        const inspect = screen.getByRole('button', { name: 'Details' })
+        const inspect = screen.getByRole('button', { name: /^Details for /u })
         act(() => {
           inspect.focus()
         })
@@ -2736,7 +2760,7 @@ it.each([
   )
   renderRoute('/activity', http)
   await screen.findByText('Left ISBN unchanged')
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Details' }))
+  await userEvent.setup().click(screen.getByRole('button', { name: /^Details for /u }))
   expect(screen.getByText(reason)).toBeVisible()
   expect(screen.getByText('No ISBN change was prepared at this evaluation')).toBeVisible()
   expect(screen.queryByRole('button', { name: /Apply ISBN|Retry ISBN/ })).toBeNull()
@@ -2901,7 +2925,13 @@ it.each([false, null, 'error'] as const)(
       ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
-    await user.click(screen.getByRole('button', { name: 'Retry permission check' }))
+    // A check that answered reads Check again; one that failed or could not
+    // confirm the current state reads Retry (#1286).
+    await user.click(
+      screen.getByRole('button', {
+        name: outcome === false ? 'Check again' : 'Retry permission check',
+      }),
+    )
     await waitFor(() => expect(screen.getByRole('checkbox')).toBeEnabled())
     expect(screen.getByRole('checkbox')).not.toBeChecked()
     expect(http.activityCommand).not.toHaveBeenCalled()
@@ -3018,7 +3048,7 @@ it.each([
     await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(reads + 1))
   }
   if (cause === 'same-basis retry') {
-    await user.click(screen.getByRole('button', { name: 'Retry permission check' }))
+    await user.click(screen.getByRole('button', { name: 'Check again' }))
     await waitFor(() => expect(http.getActivityPermissionReadiness).toHaveBeenCalledTimes(2))
   }
   if (cause === 'history' || cause === 'activity')
@@ -3037,13 +3067,13 @@ it.each([
   )
 })
 
-it('keeps keyboard focus on Retry while its check runs, and ignores a second press', async () => {
+it('keeps keyboard focus on Check again while its check runs, and ignores a second press', async () => {
   const { http, user } = await renderDraft()
   let finish!: (value: ReturnType<typeof permissionReadiness>) => void
   vi.mocked(http.getActivityPermissionReadiness).mockImplementationOnce(
     () => new Promise((resolve) => (finish = resolve)),
   )
-  const retry = screen.getByRole('button', { name: 'Retry permission check' })
+  const retry = screen.getByRole('button', { name: 'Check again' })
   retry.focus()
   await user.keyboard('{Enter}')
   await screen.findByText('Checking backup readiness and write permissions…')
@@ -3141,10 +3171,10 @@ it('states the requirement beside Confirm and the scope only over included desti
     ...permissionHistory,
     capabilities: permissionHistory.capabilities.map((item) => ({
       ...item,
-      state: 'insufficient_permission',
+      state: 'not_ready' as const,
       destinations: item.destinations.map((entry) => ({
         ...entry,
-        state: 'insufficient_permission',
+        state: 'insufficient_permission' as const,
       })),
     })),
   }
@@ -3174,7 +3204,7 @@ it('states the requirement beside Confirm and the scope only over included desti
   expect(screen.queryByText(scope)).toBeNull()
   await act(async () => finish(permissionReadiness(permissionHistory)))
   expect(await screen.findByText(scope)).toBeVisible()
-  await user.click(screen.getByRole('button', { name: 'Retry permission check' }))
+  await user.click(screen.getByRole('button', { name: 'Check again' }))
   await screen.findByText(
     'Permission readiness is unavailable. No permission was granted. Try again.',
   )
@@ -3243,11 +3273,11 @@ it('says so when a retry finds another basis and clears the ticks', async () => 
     ...permissionHistory,
     capabilities: permissionHistory.capabilities.map((item) => ({
       ...item,
-      destinations: item.destinations.map((entry) => ({ ...entry, state: 'not_ready' })),
+      destinations: item.destinations.map((entry) => ({ ...entry, state: 'not_ready' as const })),
     })),
   }
   vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(permissionReadiness(changed))
-  const retry = screen.getByRole('button', { name: 'Retry permission check' })
+  const retry = screen.getByRole('button', { name: 'Check again' })
   await user.click(retry)
   const review = screen.getByRole('region', { name: 'Enable guarded writes' })
   await waitFor(() =>
@@ -3308,7 +3338,11 @@ it.each([
     renderRoute('/activity', http)
     await screen.findByRole('heading', { name: 'Activity and recovery' })
     if (name === 'connection condition') await screen.findByText('Library connection is paused')
-    const entries = screen.queryAllByRole('button', { name: 'Review write permissions' })
+    // The card waits for the one Settings read that names its libraries (#1286).
+    const entries =
+      owner === 'none'
+        ? screen.queryAllByRole('button', { name: 'Review write permissions' })
+        : await screen.findAllByRole('button', { name: 'Review write permissions' })
     expect(entries).toHaveLength(owner === 'none' ? 0 : 1)
     expect(document.querySelectorAll('[data-consent-entry]')).toHaveLength(entries.length)
     for (const entry of entries) {
@@ -3401,11 +3435,11 @@ it.each([false, true])(
     // The busy check stays in the tab order, announced as unavailable, so a
     // keyboard owner who pressed it never loses focus to <body>.
     await user.tab()
-    expect(within(review).getByRole('button', { name: 'Retry permission check' })).toHaveAttribute(
+    expect(within(review).getByRole('button', { name: 'Check again' })).toHaveAttribute(
       'aria-disabled',
       'true',
     )
-    expect(within(review).getByRole('button', { name: 'Retry permission check' })).toHaveFocus()
+    expect(within(review).getByRole('button', { name: 'Check again' })).toHaveFocus()
     await user.tab()
     expect(within(review).getByRole('button', { name: 'Cancel permission review' })).toHaveFocus()
     await act(async () => finishPermissions(permissionReadiness(history)))
@@ -3415,7 +3449,7 @@ it.each([false, true])(
     await user.click(screen.getByRole('checkbox'))
     // History settling during a retry leaves the basis alone, so the retry
     // runs to completion and the ticks survive it (#1279).
-    await user.click(within(review).getByRole('button', { name: 'Retry permission check' }))
+    await user.click(within(review).getByRole('button', { name: 'Check again' }))
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['activity'] })
     })
@@ -3434,8 +3468,8 @@ it.each([false, true])(
 
 describe('Activity checks rows and filter notice (#1281)', () => {
   const key = `report_${'c'.repeat(64)}`
-  const dayOf = (seconds: number) =>
-    new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(seconds * 1000))
+  // Ledger day headings share the one date formatter (#1286).
+  const dayOf = (seconds: number) => formatDay(seconds)
   const check = (
     id: string,
     destination: string,
@@ -3518,11 +3552,18 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     expect(within(row).getByText('fiction')).toBeVisible()
     expect(within(row).getByText('No change required')).toBeVisible()
     // The sentence is the row's own text in the accessibility tree, with no
-    // label on a generic element.
+    // label on a generic element: only the disclosure button carries a name,
+    // and that name starts with its visible text (#1286).
+    expect(within(row).getByText('Checked 3 fields, no changes').closest('[aria-label]')).toBeNull()
     expect(
       within(row).getByText('Checked 3 fields, no changes').closest('[aria-hidden]'),
     ).toBeNull()
-    expect(row.querySelector('[aria-label]')).toBeNull()
+    expect([...row.querySelectorAll('[aria-label]')].map((node) => node.tagName)).toEqual([
+      'BUTTON',
+    ])
+    expect(within(row).getByRole('button', { name: /^Details for / })).toHaveAccessibleName(
+      'Details for Synthetic checked work checks',
+    )
     // The checks row leads at its newest member's place; the change and the
     // owner keep between members stay rows of their own, in order.
     const order = [...ledger().querySelectorAll(':scope > .cm-activity-event-group > article')].map(
@@ -3540,7 +3581,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
       dayOf(1786000000),
     ])
 
-    const toggle = within(row).getByRole('button', { name: 'Details' })
+    const toggle = within(row).getByRole('button', { name: /^Details for /u })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(toggle).toHaveAttribute('aria-controls', `activity-checks-${key}`)
     expect(document.getElementById(`activity-checks-${key}`)).toBeNull()
@@ -3561,15 +3602,17 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     expect(memberRows[0]?.querySelector('time')).not.toHaveTextContent(dayOf(1786000000))
 
     const isbn = memberRows[1] as HTMLElement
-    await user.click(within(isbn).getByRole('button', { name: 'Details' }))
+    await user.click(within(isbn).getByRole('button', { name: /^Details for /u }))
     expect(within(isbn).getByText('Automatic policy')).toBeVisible()
     expect(within(isbn).getByText('Title layout: Leave as it is')).toBeVisible()
-    await user.click(within(isbn).getByRole('button', { name: 'Hide details' }))
+    await user.click(within(isbn).getByRole('button', { name: /^Hide details for /u }))
     expect(within(isbn).queryByText('Automatic policy')).toBeNull()
 
     // Every durable record is reachable exactly once, as a row, a member, or
     // inside its field's Details.
-    await user.click(within(memberRows[0] as HTMLElement).getByRole('button', { name: 'Details' }))
+    await user.click(
+      within(memberRows[0] as HTMLElement).getByRole('button', { name: /^Details for /u }),
+    )
     const controls = [...ledger().querySelectorAll('[aria-controls^="activity-evidence-"]')].map(
       (control) => control.getAttribute('aria-controls')?.replace('activity-evidence-', ''),
     )
@@ -3594,7 +3637,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/activity', http)
     await screen.findByText('Checked 3 fields, no changes')
-    const toggle = within(checksRow()).getByRole('button', { name: 'Details' })
+    const toggle = within(checksRow()).getByRole('button', { name: /^Details for /u })
     await user.click(toggle)
     const list = byId(`activity-checks-${key}`)
     const fields = [...list.querySelectorAll<HTMLElement>(':scope > li > article')]
@@ -3607,18 +3650,27 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     // The field leads with what the check found; its recorded decision is not
     // a row of its own until that field's Details opens.
     expect(within(title).getByText('No change required')).toBeVisible()
-    expect(within(title).queryByText('Recorded')).toBeNull()
+    expect(within(title).queryByText('Automatic decision')).toBeNull()
     expect(
       document.querySelector('[aria-controls="activity-evidence-check-title-kept"]'),
     ).toBeNull()
 
-    const details = within(title).getByRole('button', { name: 'Details' })
+    const details = within(title).getByRole('button', { name: /^Details for /u })
     expect(details).toHaveAttribute('aria-controls', 'activity-evidence-check-title')
     await user.click(details)
     const evidence = byId('activity-evidence-check-title')
-    const paired = within(evidence).getByRole('button', { name: 'Details' })
+    const paired = within(evidence).getByRole('button', { name: /^Details for /u })
     expect(paired).toHaveAttribute('aria-controls', 'activity-evidence-check-title-kept')
-    expect(within(evidence).getByText('Recorded')).toBeVisible()
+    // The paired decision says what it is and how it relates to the check, so
+    // the field is not read as listed twice (#1286).
+    expect(within(evidence).getByText('Automatic decision')).toBeVisible()
+    expect(
+      within(evidence).getByText(
+        'This check confirmed the automatic decision below; nothing was written.',
+      ),
+    ).toBeVisible()
+    expect(paired).toHaveAccessibleName(/^Details for Title, /u)
+    expect(details).toHaveAccessibleName(/^Hide details for Title, /u)
     await user.click(paired)
     expect(paired).toHaveAttribute('aria-expanded', 'true')
     expect(
@@ -3637,7 +3689,9 @@ describe('Activity checks rows and filter notice (#1281)', () => {
 
     // A focused decision a refetch removes hands focus to its group's toggle.
     await user.click(details)
-    within(byId('activity-evidence-check-title')).getByRole('button', { name: 'Details' }).focus()
+    within(byId('activity-evidence-check-title'))
+      .getByRole('button', { name: /^Details for /u })
+      .focus()
     current = activity({ events: [checkedTitle, change, keptIsbn, keptGenres] })
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['activity'] })
@@ -3656,17 +3710,17 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     )
     renderRoute('/activity', http)
     await screen.findByText('Checked 3 fields, no changes')
-    await user.click(within(checksRow()).getByRole('button', { name: 'Details' }))
+    await user.click(within(checksRow()).getByRole('button', { name: /^Details for /u }))
     const [title] = byId(`activity-checks-${key}`).querySelectorAll<HTMLElement>(
       ':scope > li > article',
     )
     if (!title) throw new Error('Expected the Title row')
     expect(title.querySelector(':scope > b')).toHaveTextContent('No change required')
-    const details = within(title).getByRole('button', { name: 'Details' })
+    const details = within(title).getByRole('button', { name: /^Details for /u })
     expect(details).toHaveAttribute('aria-controls', 'activity-evidence-check-title')
     await user.click(details)
     const paired = byId('activity-evidence-check-title').querySelector(':scope article')
-    expect(paired?.querySelector(':scope > b')).toHaveTextContent('Recorded')
+    expect(paired?.querySelector(':scope > b')).toHaveTextContent('Automatic decision')
   })
 
   it('counts each page of a split preparation by its own members and closes on paging', async () => {
@@ -3705,11 +3759,11 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     await screen.findByText('Checked 2 fields, no changes')
     expect(screen.getByText('of 30 events').previousElementSibling).toHaveTextContent('1–25')
     expect(screen.getByText('Events')).toBeVisible()
-    await user.click(within(checksRow()).getByRole('button', { name: 'Details' }))
+    await user.click(within(checksRow()).getByRole('button', { name: /^Details for /u }))
     await user.click(screen.getByRole('button', { name: 'Next' }))
     await screen.findByText('Checked 3 fields, no changes')
     expect(screen.getByText('of 30 events').previousElementSibling).toHaveTextContent('26–30')
-    expect(within(checksRow()).getByRole('button', { name: 'Details' })).toHaveAttribute(
+    expect(within(checksRow()).getByRole('button', { name: /^Details for /u })).toHaveAttribute(
       'aria-expanded',
       'false',
     )
@@ -3721,9 +3775,11 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     let current = activity({ events: [change, ...members] })
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/activity', http)
-    await user.click(within(await waitFor(checksRow)).getByRole('button', { name: 'Details' }))
+    await user.click(
+      within(await waitFor(checksRow)).getByRole('button', { name: /^Details for /u }),
+    )
     const [, member] = within(byId(`activity-checks-${key}`)).getAllByRole('button', {
-      name: 'Details',
+      name: /^Details for /u,
     })
     if (!member) throw new Error('Expected a second member')
     member.focus()
@@ -3759,7 +3815,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     })
     const keep = await screen.findByText('Kept Secret History')
     const keepDetails = within(keep.closest('article') ?? keep).getByRole('button', {
-      name: 'Details',
+      name: /^Details for /u,
     })
     keepDetails.focus()
     current = activity({ events: [change] })
@@ -3775,9 +3831,11 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     let current = activity({ events: [change, ...members] })
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/activity', http)
-    await user.click(within(await waitFor(checksRow)).getByRole('button', { name: 'Details' }))
+    await user.click(
+      within(await waitFor(checksRow)).getByRole('button', { name: /^Details for /u }),
+    )
     const [member] = within(byId(`activity-checks-${key}`)).getAllByRole('button', {
-      name: 'Details',
+      name: /^Details for /u,
     })
     if (!member) throw new Error('Expected a member')
     member.focus()
@@ -3802,10 +3860,10 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     let current = activity({ events: [change, ...members] })
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/activity', http)
-    const toggle = within(await waitFor(checksRow)).getByRole('button', { name: 'Details' })
+    const toggle = within(await waitFor(checksRow)).getByRole('button', { name: /^Details for /u })
     await user.click(toggle)
     const [, member] = within(byId(`activity-checks-${key}`)).getAllByRole('button', {
-      name: 'Details',
+      name: /^Details for /u,
     })
     if (!member) throw new Error('Expected a second member')
     member.focus()
@@ -3824,15 +3882,15 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     const http = createHttp()
     vi.mocked(http.getActivity).mockResolvedValue(activity({ events: members }))
     renderRoute('/activity', http)
-    const toggle = within(await waitFor(checksRow)).getByRole('button', { name: 'Details' })
+    const toggle = within(await waitFor(checksRow)).getByRole('button', { name: /^Details for /u })
     toggle.focus()
     await user.keyboard('{Enter}')
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await user.tab()
     const list = byId(`activity-checks-${key}`)
-    expect(within(list).getAllByRole('button', { name: 'Details' })[0]).toHaveFocus()
+    expect(within(list).getAllByRole('button', { name: /^Details for /u })[0]).toHaveFocus()
     await user.tab()
-    expect(within(list).getAllByRole('button', { name: 'Details' })[1]).toHaveFocus()
+    expect(within(list).getAllByRole('button', { name: /^Details for /u })[1]).toHaveFocus()
   })
 
   it.each([
@@ -3990,6 +4048,261 @@ describe('Activity checks rows and filter notice (#1281)', () => {
       within(destinations)
         .getAllByRole('listitem')
         .map((item) => item.querySelector('span')?.textContent),
-    ).toEqual(['ISBN', 'Published year'])
+    ).toEqual(['ISBN', 'Publication year'])
+  })
+})
+
+describe('owner language in Activity (#1286)', () => {
+  const [shelf] = settingsDocument.libraries
+  if (!shelf) throw new Error('the settings fixture configures a library')
+  const settingsNamed = () => ({
+    ...settingsView(),
+    document: {
+      ...settingsDocument,
+      libraries: [
+        { ...shelf, name: 'fiction', display_name: 'Fiction Shelf' },
+        { ...shelf, name: 'history', display_name: 'History Room' },
+      ],
+    },
+  })
+  const libraries = (consented: readonly string[]) =>
+    activity({
+      configured_libraries: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+        prepared: { automatic: 1, human: 0, total: 1 },
+      })),
+      capabilities: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+        state: 'allowed' as const,
+        destinations: [
+          {
+            destination: 'title' as const,
+            state: 'allowed' as const,
+            consented: consented.includes(library),
+            prepared: 1,
+          },
+        ],
+      })),
+      consented_libraries: consented.map((library) => ({ connection: 'primary', library })),
+      enabled_libraries: consented.map((library) => ({ connection: 'primary', library })),
+      waiting: {
+        applying: 0,
+        awaiting_permission: 1,
+        held_for_recovery: 0,
+        retrying: 0,
+        scheduled: 0,
+      },
+    })
+
+  it('names libraries by their Settings name in consent, review and revoke', async () => {
+    const user = userEvent.setup()
+    const view = libraries(['fiction'])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getSettings: vi.fn(async () => settingsNamed()),
+      getActivity: vi.fn(async () => view),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(view)),
+    }
+    renderRoute('/activity', http)
+
+    // Partial consent says which library holds permission and which waits.
+    expect(
+      await screen.findByText(
+        'Writes are on for Fiction Shelf; History Room needs permission. Review permissions when you are ready.',
+        { exact: false },
+      ),
+    ).toBeVisible()
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    expect(
+      await screen.findByRole('list', { name: 'History Room included and excluded destinations' }),
+    ).toBeVisible()
+    expect(
+      screen.getByRole('list', { name: 'Fiction Shelf included and excluded destinations' }),
+    ).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+    await openActivityAuthority(user)
+    expect(
+      screen.getByRole('button', { name: 'Remove write permission for Fiction Shelf' }),
+    ).toBeVisible()
+    // No library slug reaches the owner.
+    for (const slug of ['fiction', 'history'])
+      expect(screen.queryByText(new RegExp(`\\b${slug}\\b`, 'u'))).toBeNull()
+  })
+
+  it('shows an already-consented library as writes enabled', async () => {
+    const user = userEvent.setup()
+    const view = libraries(['fiction'])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getSettings: vi.fn(async () => settingsNamed()),
+      getActivity: vi.fn(async () => view),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(view)),
+    }
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await screen.findByRole('list', { name: 'Fiction Shelf included and excluded destinations' })
+    const label = (name: string) => screen.getByText(name, { selector: 'strong' }).closest('label')
+    expect(label('Fiction Shelf')).toHaveTextContent('Writes enabled')
+    expect(label('Fiction Shelf')).not.toHaveTextContent('Ready for consent')
+    expect(label('History Room')).toHaveTextContent('Ready for consent')
+  })
+
+  it('says Check again after a successful check', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+    vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(
+      permissionReadiness(permissionHistory),
+    )
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry permission check' })).toBeNull()
+  })
+
+  it('states the lapse exclusion reason for a destination with nothing prepared', async () => {
+    const user = userEvent.setup()
+    const view = activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'history',
+          prepared: { automatic: 0, human: 0, total: 0 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'history',
+          state: 'not_ready',
+          destinations: [
+            { destination: 'title', state: 'not_ready', consented: false, prepared: 0 },
+          ],
+        },
+      ],
+      lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => view),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(view)),
+    }
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    const destinations = await screen.findByRole('list', {
+      name: 'history included and excluded destinations',
+    })
+    expect(destinations).toHaveTextContent(
+      'Excluded — nothing is prepared for it yet; you can give permission again once a change is prepared',
+    )
+    expect(destinations).not.toHaveTextContent('it is not ready yet')
+  })
+
+  it.each([
+    [
+      'waiting without a remedy',
+      { state: 'waiting' as const, remedy: null },
+      'A source is limited',
+      'A metadata source is limiting lookups',
+    ],
+    [
+      'needing an API key',
+      { state: 'waiting' as const, remedy: 'add_api_key' as const },
+      'Action needed',
+      'A metadata source needs attention',
+    ],
+  ])('a first provider throttle is never calm: %s', async (_name, overrides, header, heading) => {
+    const throttle: ProviderThrottleEntry = {
+      library: 'fiction',
+      adapter: 'google_books',
+      reasons: ['burst_throttled'],
+      deferred: 3,
+      next_retry_at: null,
+      ...overrides,
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity()),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v2',
+        recovery_required: false,
+        active: false,
+        actionable: false,
+        paused: false,
+        libraries: [],
+        provider_throttling: { generation: 1, retry: 'available', entries: [throttle] },
+      })),
+    }
+    renderRoute('/activity', http)
+    expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
+    expect(document.querySelector('.cm-activity-calm')).toHaveTextContent(header)
+    expect(
+      screen.getByRole('link', { name: 'Review metadata sources in Settings' }),
+    ).toHaveAttribute('href', '/settings?group=providers')
+    // The calm sentinels stay exactly as they are elsewhere.
+    for (const calm of ['No intervention needed', 'No action required'])
+      expect(screen.queryByText(calm)).toBeNull()
+  })
+
+  it('gives every disclosure in a page a distinct accessible name', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [
+            { event_id: 'isbn-a', work_label: 'First Book' },
+            { event_id: 'isbn-b', work_label: 'Second Book' },
+            {
+              event_id: 'title-a',
+              work_label: 'First Book',
+              destination: 'title',
+              field_label: 'Title',
+            },
+          ],
+        }),
+      ),
+    }
+    renderRoute('/activity', http)
+    const disclosures = await screen.findAllByRole('button', { name: /^Details for /u })
+    const names = disclosures.map((button) => button.getAttribute('aria-label'))
+    expect(names).toEqual([
+      'Details for ISBN, First Book',
+      'Details for ISBN, Second Book',
+      'Details for Title, First Book',
+    ])
+    expect(new Set(names).size).toBe(names.length)
+    // The visible text stays inside the name (WCAG 2.5.3).
+    for (const button of disclosures) expect(button).toHaveTextContent('Details')
+    const [first] = disclosures
+    if (!first) throw new Error('Expected a disclosure')
+    await user.click(first)
+    expect(first).toHaveAccessibleName('Hide details for ISBN, First Book')
+  })
+
+  it.each([
+    [1, '1 recovery item needs review'],
+    [2, '2 recovery items need review'],
+  ])('agrees the recovery verb with %i held item', async (count, summary) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+          suspensions: (['title', 'authors'] as const).slice(0, count).map((destination) => ({
+            connection: 'primary',
+            destination,
+            reason: 'unexpected_effect_behavior' as const,
+            scope: 'destination' as const,
+            updated_at: 1,
+          })),
+        }),
+      ),
+    }
+    renderRoute('/activity', http)
+    expect(await screen.findByText(summary)).toBeVisible()
   })
 })

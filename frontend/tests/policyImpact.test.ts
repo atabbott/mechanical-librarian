@@ -20,6 +20,35 @@ describe('policy impact projections', () => {
     ).toBe('fills the empty field with Title: Synthetic Journey; Subtitle: A Tale of Courage')
   })
 
+  it('reads an Ask me change as what the review would propose (#1286)', () => {
+    const field = {
+      current_value: null,
+      desired_value: 'A bounded subtitle',
+      field: 'subtitle',
+      outcome: 'projected',
+      reason: null,
+      target_state: 'missing',
+    } as const
+    expect(policyImpactDisplay(field, true).detail).toBe(
+      'would propose filling the empty field with A bounded subtitle',
+    )
+    expect(
+      policyImpactDisplay({ ...field, current_value: 'Old', desired_value: null }, true).detail,
+    ).toBe('would propose clearing Old')
+    expect(
+      policyImpactDisplay({ ...field, current_value: 'Old', desired_value: 'New' }, true).detail,
+    ).toBe('would propose Old → New')
+    // A language value reads by its name.
+    expect(
+      policyImpactDisplay({
+        ...field,
+        field: 'language_rendering',
+        current_value: 'en',
+        desired_value: 'English',
+      }).detail,
+    ).toBe('English (en) → English')
+  })
+
   it('projects bounded policy impact language without promoting transport enums', () => {
     expect(
       policyImpactDisplay({
@@ -332,22 +361,22 @@ describe('policy impact projections', () => {
       if (!guidance) throw new Error(`missing guidance: ${key}`)
       expect(guidance.admitted).toContain('already-produced exact candidate')
       expect(guidance.transformation).toContain('without')
-      expect(guidance.effect).toContain('only that exact selected')
+      expect(guidance.effect).toMatch(/^Automatic writes only the selected /)
       if (key === 'date_precision:year') {
         expect(guidance.fallback).toBe(
-          'requires a qualified original-work date for audiobooks; recording release dates do not qualify',
+          "audiobooks need a confirmed original publication date; a recording's release date is not used",
         )
       } else if (key === 'date_precision:full_date') {
         expect(guidance.fallback).toBe(
-          'audiobooks retain the supplied year, month or day precision without inventing a date; the operation must be qualified',
+          'audiobooks retain the supplied year, month or day precision without inventing a date; Automatic must support the change',
         )
       } else {
-        expect(guidance.fallback).toContain('no decision is qualified')
+        expect(guidance.fallback).toBe('makes no change when Automatic cannot decide safely')
       }
     }
     for (const [option, preferred, fallback] of [
-      ['preserve', 'an observed code', 'uses another admitted form when no code is present'],
-      ['display_name', 'an observed English name', 'uses an admitted code when no name is present'],
+      ['preserve', 'an observed code', 'uses another recorded form when no code is present'],
+      ['display_name', 'an observed English name', 'uses a recorded code when no name is present'],
     ] as const) {
       const guidance = policyRepresentationGuidance[`language_rendering:${option}`]
       if (!guidance) throw new Error(`missing language guidance: ${option}`)
@@ -356,17 +385,24 @@ describe('policy impact projections', () => {
         `keeps an equivalent current value; when filling, prefers ${preferred}`,
       )
       expect(guidance.effect).toBe('Automatic writes only a form present in the selected evidence')
-      expect(guidance.fallback).toBe(`${fallback}; undetermined values provide no authority`)
+      expect(guidance.fallback).toBe(`${fallback}; an undetermined language is never written`)
     }
-    expect(policyRepresentationGuidance['date_precision:year']?.effect).toContain(
-      'Publication date or Publication year destination value',
+    expect(policyRepresentationGuidance['date_precision:year']?.effect).toBe(
+      'Automatic writes only the selected publication date or year',
     )
-    expect(policyRepresentationGuidance['date_precision:full_date']?.effect).toContain(
-      'Publication date or Publication year destination value',
+    expect(policyRepresentationGuidance['date_precision:full_date']?.effect).toBe(
+      'Automatic writes only the selected publication date or year',
     )
     expect(policyRepresentationGuidance['publisher_preference:imprint']?.effect).toContain(
-      'no Automatic decision is qualified',
+      'Automatic does not write an imprint',
     )
+    // The owner reads plain words: none of the audit vocabulary the guidance
+    // used to speak in reaches a consequence (#1286).
+    for (const guidance of Object.values(policyRepresentationGuidance)) {
+      expect(`${guidance.effect}; ${guidance.fallback}`).not.toMatch(
+        /abstain|qualif|admitted|non-authoritative|projected|destination value/iu,
+      )
+    }
   })
 })
 

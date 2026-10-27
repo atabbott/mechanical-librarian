@@ -4,7 +4,9 @@ import type {
   ActivityLapsedConsentView,
   ActivityPermissionReadinessView,
   ActivityWaitingReasonsView,
+  DestinationState,
 } from './api/http'
+import { writeHoldReasons } from './labels'
 
 /**
  * What one `Enable writes` action would cover, read off the authoritative
@@ -87,16 +89,16 @@ const lapsedSentence = (
 /**
  * A destination is excluded for exactly one reason, and the reason is per
  * destination rather than per library: a Cover behind its own gate is named
- * with its reason and never blocks the metadata beside it.
+ * with its reason and never blocks the metadata beside it. After a lapse, a
+ * destination with nothing prepared says permission can be given again once
+ * there is (#1370, #1286).
  */
-export const destinationReason = (state: string) =>
-  ({
-    suspended: 'suspended after a failed write',
-    connection_unavailable: 'the library connection needs checking',
-    insufficient_permission: 'the connection lacks permission for it',
-    field_unavailable: 'the library does not expose it',
-    not_ready: 'it is not ready yet',
-  })[state] ?? 'it is not ready yet'
+export const destinationReason = (state: Exclude<DestinationState, 'allowed'>, lapsed = false) =>
+  state === 'not_ready'
+    ? lapsed
+      ? 'nothing is prepared for it yet; you can give permission again once a change is prepared'
+      : 'it is not ready yet'
+    : writeHoldReasons[state]
 
 export const readWriteConsent = (
   data: Pick<ActivityDisplayView, 'lapsed_consents' | 'waiting'> &
@@ -158,7 +160,7 @@ export const readWriteConsent = (
         : grants.length === 0
           ? scopes.length === 0
             ? 'No selected destination is eligible for writes right now.'
-            : `No destination is eligible yet: ${excluded ? destinationReason(excluded.state) : 'nothing is ready yet'}.`
+            : `No destination is eligible yet: ${excluded && excluded.state !== 'allowed' ? destinationReason(excluded.state, lapsed !== null) : 'nothing is ready yet'}.`
           : null
   return {
     state,

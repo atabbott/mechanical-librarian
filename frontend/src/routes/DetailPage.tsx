@@ -4,10 +4,52 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
 import { MediaHealth } from '../components/MediaHealth'
-import type { CaseDetailView, EvidenceView, HistoryValueView, HistoryView } from '../api/http'
+import type {
+  CaseDetailView,
+  EvidenceView,
+  HistoryValueView,
+  HistoryView,
+  TargetDestination,
+} from '../api/http'
 import { displayValue } from '../api/http'
-import { coverReviewerLabel, evidenceRoleLabel, fieldLabel, labelWords } from '../labels'
+import { formatWhen } from '../dates'
+import {
+  coverHistoryLabels,
+  coverNoteLabel,
+  coverReviewerLabel,
+  destinationLabel,
+  evidenceRoleLabel,
+  languageName,
+  lookupLabels,
+  mediaKindLabels,
+  shadowDispositionLabels,
+  sourceStatusLabels,
+  transitionLabels,
+  writeStateLabels,
+} from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
+
+// A recorded value, a language read by its name (#1286).
+const historyValue = (destination: TargetDestination, value: HistoryValueView | null) =>
+  value === null
+    ? 'No value is recorded.'
+    : destination === 'language' && typeof value.value === 'string'
+      ? languageName(value.value)
+      : displayValue(value.value)
+const reviewerStatusWords = {
+  completed: 'completed',
+  failed: 'failed',
+  unavailable: 'was unavailable',
+} as const
+const coverOwnerWords = {
+  accept: 'a proposed cover',
+  keep_current: 'the current cover',
+  reject: 'no cover change',
+} as const
+const coverPolicyWords = {
+  recommended: 'a cover is recommended',
+  abstained: 'no cover is recommended',
+} as const
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'description')
@@ -21,12 +63,12 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
               ? 'Applied and verified in the library.'
               : item.state === 'no_change_required'
                 ? 'No change needed; the library already had this text.'
-                : `Guarded application: ${labelWords(item.state)}.`
+                : `Guarded application: ${writeStateLabels[item.state].toLowerCase()}.`
             : item.selected
               ? item.state === 'superseded'
                 ? 'This authored selection was superseded by a later decision.'
                 : 'Selected under the existing write requirements.'
-              : `Preparation ${item.state}.`}
+              : `Advice ${writeStateLabels[item.state].toLowerCase()}.`}
         </p>
         {item.candidate ? (
           <p className="description-advice-text">{item.candidate.output.description}</p>
@@ -54,7 +96,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
             : 'Automatic policy left this field unchanged.'
     return (
       <article className="diagnostic-entry">
-        <h3>{fieldLabel(item.destination)}</h3>
+        <h3>{destinationLabel(item.destination)}</h3>
         <p>{action}</p>
         {item.category === 'owner' && item.applicationReason ? (
           <p className="diagnostic-note">{item.applicationReason}</p>
@@ -71,16 +113,10 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ) : (
           <>
             <p className="diagnostic-value">
-              <span>From</span>{' '}
-              {item.previousValue
-                ? displayValue(item.previousValue.value)
-                : 'No value is recorded.'}
+              <span>From</span> {historyValue(item.destination, item.previousValue)}
             </p>
             <p className="diagnostic-value">
-              <span>To</span>{' '}
-              {item.selectedValue
-                ? displayValue(item.selectedValue.value)
-                : 'No value is recorded.'}
+              <span>To</span> {historyValue(item.destination, item.selectedValue)}
             </p>
           </>
         )}
@@ -96,7 +132,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <ul className="diagnostic-facts" aria-label="Preview outcomes">
             {item.dispositions.map((disposition) => (
               <li key={disposition.outcome}>
-                <strong>{labelWords(disposition.outcome)}</strong>
+                <strong>{shadowDispositionLabels[disposition.outcome]}</strong>
                 <span>{String(disposition.count)}</span>
               </li>
             ))}
@@ -107,7 +143,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'transition')
     return (
       <article className="diagnostic-entry">
-        <h3>{fieldLabel(item.outcome)}</h3>
+        <h3>{transitionLabels[item.outcome]}</h3>
         <p>
           {item.outcome === 'admitted'
             ? 'This work entered the review queue.'
@@ -123,15 +159,15 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
     )
   return (
     <article className="diagnostic-entry">
-      <h3>Cover {labelWords(item.outcome)}</h3>
+      <h3>{coverHistoryLabels[item.outcome]}</h3>
       <p>
-        Visual review {labelWords(item.reviewerStatus)}
+        Visual review {reviewerStatusWords[item.reviewerStatus]}
         {item.reviewerModel ? ` by ${coverReviewerLabel(item.reviewerModel)}` : ''} across{' '}
         {String(item.candidateCount)} {item.candidateCount === 1 ? 'candidate' : 'candidates'}.
       </p>
       {item.ownerOutcome ? (
         <p>
-          Owner-confirmed choice: {labelWords(item.ownerOutcome)}.
+          Owner-confirmed choice: {coverOwnerWords[item.ownerOutcome]}.
           {item.ownerMatchUnconfirmed ? ' Match not confirmed by automated evidence.' : ''}{' '}
           Recording a choice is separate from verified application.
         </p>
@@ -140,11 +176,11 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       {item.supersedesAutomatic ? (
         <p>This strictly better confirmed cover replaced the earlier automatic choice.</p>
       ) : null}
-      {item.policyStatus ? <p>Policy outcome: {labelWords(item.policyStatus)}.</p> : null}
+      {item.policyStatus ? <p>Policy outcome: {coverPolicyWords[item.policyStatus]}.</p> : null}
       {item.policyReasons.length ? (
         <ul className="diagnostic-limitations" aria-label="Cover policy limitations">
           {item.policyReasons.map((reason) => (
-            <li key={reason}>{fieldLabel(reason)}</li>
+            <li key={reason}>{coverNoteLabel(reason)}</li>
           ))}
         </ul>
       ) : null}
@@ -167,8 +203,7 @@ function isRetention(
 function displayRetainedHistoryValue(
   item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
 ) {
-  const value = item.selectedValue ?? item.previousValue
-  return value ? displayValue(value.value) : 'No value is recorded.'
+  return historyValue(item.destination, item.selectedValue ?? item.previousValue)
 }
 
 function historyValuesMatch(previous: HistoryValueView | null, selected: HistoryValueView | null) {
@@ -225,7 +260,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
         <p className="diagnostic-authors">
           {data.authors.length ? data.authors.join(', ') : 'Author details unavailable'}
         </p>
-        <p className="diagnostic-origin">{data.subtitle}</p>
+        <p className="diagnostic-origin">
+          {data.target.libraryDisplayName ?? data.target.library} ·{' '}
+          {mediaKindLabels[data.target.mediaKind]}
+        </p>
       </header>
       <nav className="subviews" aria-label="Case diagnostics">
         <Link
@@ -269,6 +307,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
               <RecordingIdentityBasis
                 value={data.recordingIdentityBasis}
                 scope={data.audiobookReviewScope}
+                offered={data.fields.map((field) => field.destination)}
               />
               {data.mediaHealth.length ? <MediaHealth observations={data.mediaHealth} /> : null}
               <div className="diagnostic-list evidence-fields">
@@ -278,7 +317,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   )
                   return (
                     <section className="diagnostic-entry evidence-field" key={field.destination}>
-                      <h3>{fieldLabel(field.destination)}</h3>
+                      <h3>{destinationLabel(field.destination)}</h3>
                       {field.automaticWithheldReason ? (
                         <p className="automatic-withheld-reason">{field.automaticWithheldReason}</p>
                       ) : null}
@@ -324,8 +363,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                     {sourceLedger.map((source, index) => (
                       <li key={`${source.provider}-${source.laneKind}-${String(index)}`}>
                         <strong>{source.provider}</strong>
-                        <span>{fieldLabel(source.laneKind)}</span>
-                        <b>{labelWords(source.status)}</b>
+                        <span>{lookupLabels[source.laneKind]}</span>
+                        <b>{sourceStatusLabels[source.status]}</b>
                         <p>{source.reason}</p>
                         <small>
                           {String(source.providerRequests)} bounded{' '}
@@ -358,10 +397,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
               {history.data.items.map((item, index) => (
                 <div key={index}>
                   {item.occurredAt === null ? (
-                    <small>Time unavailable — lifecycle checkpoint only</small>
+                    <small>Time not recorded</small>
                   ) : (
                     <time dateTime={new Date(item.occurredAt * 1000).toISOString()}>
-                      {new Date(item.occurredAt * 1000).toLocaleString()}
+                      {formatWhen(item.occurredAt, new Date())}
                     </time>
                   )}
                   <HistoryItem item={item} />

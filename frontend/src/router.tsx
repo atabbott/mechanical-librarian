@@ -28,6 +28,7 @@ import settingsVocabulary from '../../src/mechanical_librarian/interfaces/web/se
 import { ApiError, BuildMismatchError, SessionExpiredError, refusalCopy } from './api/http'
 import type {
   ActivitySearch,
+  ScanState,
   AttentionSearch,
   AutomaticSafetyView,
   DetailSearch,
@@ -50,7 +51,9 @@ import {
   useLiveStreamState,
 } from './liveInvalidation'
 import type { LiveUpdateStream } from './liveUpdates'
-import { fieldLabel, preparationOutcomes } from './labels'
+import { formatWhen } from './dates'
+import { preparationOutcomes, scanStateLabels } from './labels'
+import { useLibraryName } from './libraryNames'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
@@ -581,16 +584,6 @@ const throttleReasonCopy: readonly (readonly [ProviderThrottleEntry['reasons'][n
     ['transient', 'It did not answer.'],
   ]
 const providerLabels: Readonly<Record<string, string>> = settingsVocabulary.provider_labels
-const retryTime = (seconds: number, now: Date) => {
-  const at = new Date(seconds * 1000)
-  // The time and its meridiem never wrap apart.
-  const time = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
-    .format(at)
-    .replace(/\s/g, '\u00a0')
-  return at.toDateString() === now.toDateString()
-    ? time
-    : `${new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).format(at)}, ${time}`
-}
 const throttleWhen = (entry: ProviderThrottleEntry, now: Date) =>
   entry.state === 'checking'
     ? 'Retrying now.'
@@ -600,7 +593,7 @@ const throttleWhen = (entry: ProviderThrottleEntry, now: Date) =>
         ? 'No automatic retry remains.'
         : entry.next_retry_at === null || entry.next_retry_at * 1000 <= now.getTime()
           ? 'Retry due now.'
-          : `Next automatic retry ${retryTime(entry.next_retry_at, now)}.`
+          : `Next automatic retry ${formatWhen(entry.next_retry_at, now)}.`
 const fileManagedRetry =
   'Settings are managed by /data/config.json: raise provider_recovery_generation by one there and restart the service.'
 const retryRefusal = (error: unknown) =>
@@ -633,6 +626,7 @@ export const ProviderThrottleNotice = () => {
   const [refusal, setRefusal] = useState('')
   const throttling = data?.provider_throttling ?? null
   const entries = throttling?.entries ?? []
+  const names = useLibraryName(http, entries.length > 0)
   const retry = useMutation({
     mutationFn: (expected: number) => http.retryProviderRecovery(expected),
     retry: false,
@@ -711,7 +705,7 @@ export const ProviderThrottleNotice = () => {
               <li key={`${entry.library}\u0000${entry.adapter}`}>
                 <span>
                   <strong>
-                    {providerLabels[entry.adapter] ?? fieldLabel(entry.adapter)} · {entry.library}:
+                    {providerLabels[entry.adapter]} · {names.name(entry.library)}:
                   </strong>{' '}
                   {reason ? `${reason[1]} ` : ''}
                   {entry.deferred.toLocaleString()} deferred{' '}
@@ -794,23 +788,9 @@ const stageLabels: Readonly<Record<string, string>> = {
   failed: 'Could not finish',
 }
 
-/**
- * What a library's scan is doing, in the words the owner reads elsewhere.
- *
- * The store state was printed raw, so an owner read `completed_with_failures`
- * and had to translate it. Anything the store adds later still reads as a
- * label through ``fieldLabel`` rather than as an identifier.
- */
-const scanStateLabels: Readonly<Record<string, string>> = {
-  queued: 'Waiting to start',
-  discovering: 'Finding your books',
-  processing: 'Preparing your books',
-  completed: 'Complete',
-  completed_with_failures: 'Complete · some books could not finish',
-}
-
 export const PreparationActivity = () => {
   const { data, queryClient, http } = usePreparation()
+  const names = useLibraryName(http, Boolean(data?.libraries.length))
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
   const popover = useRef<HTMLElement>(null)
@@ -905,11 +885,12 @@ export const PreparationActivity = () => {
           ) : null}
           {data.libraries.map((item) => (
             <article key={`${item.connection}:${item.library}`}>
-              <strong>{item.library}</strong>
+              <strong>{names.name(item.library)}</strong>
               <span>
                 {data.recovery_required
                   ? 'Last saved progress'
-                  : (scanStateLabels[item.state] ?? fieldLabel(item.state))}
+                  : // The progress mapper refuses a state outside the closed set.
+                    scanStateLabels[item.state as ScanState]}
                 {/*
                  * The run line sums only the libraries its run enrolled, so a
                  * library outside it is the one way the two totals differ.
@@ -1259,9 +1240,9 @@ const Shell = () => {
   )
 }
 
-const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
+export const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
   <section aria-busy="true" className="route-state">
-    <p className="eyebrow">Authenticated review</p>
+    <p className="eyebrow">Private workspace</p>
     <h1>Loading {title.toLowerCase()}…</h1>
   </section>
 )

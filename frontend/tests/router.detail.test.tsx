@@ -17,7 +17,7 @@ describe('Library review ownership', () => {
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(router.state.location.pathname).toBe('/review/case-1')
     expect(screen.getByRole('heading', { name: 'Evidence' })).toBeVisible()
-    expect(screen.getByText('Books · ebook')).toBeVisible()
+    expect(screen.getByText('Books · Ebook (EPUB)')).toBeVisible()
     expect(screen.queryByText('internal-item-1')).toBeNull()
     const back = screen.getByRole('link', { name: 'Back to work' })
     expect(document.querySelector('#main-content .diagnostic-route > :first-child')).toBe(back)
@@ -56,9 +56,9 @@ describe('Library review ownership', () => {
       ).toBeVisible()
       expect(within(section).getByText(/where overall runtime is unavailable/u)).toBeVisible()
       const source = within(section).getByText('Recording source')
-      expect(within(section).getByText(/Candidate reference: recording-1/u)).not.toBeVisible()
+      expect(within(section).getByText('Audnexus · recording-1')).not.toBeVisible()
       await userEvent.setup().click(source)
-      expect(within(section).getByText(/Candidate reference: recording-1/u)).toBeVisible()
+      expect(within(section).getByText('Audnexus · recording-1')).toBeVisible()
       expect(screen.queryByRole('region', { name: 'Media health' })).toBeNull()
     },
   )
@@ -71,13 +71,43 @@ describe('Library review ownership', () => {
     renderRoute('/review/case-1?subview=evidence', http)
 
     const section = await screen.findByRole('region', { name: 'Book-level evidence' })
+    // Only the fields this case offers are named (C1): this case offers Title.
     expect(
       within(section).getByText(
-        'Book-level evidence supports series, title, description and genre choices. The exact recording remains unresolved.',
+        'Book-level evidence supports title choices. The exact recording remains unresolved.',
       ),
     ).toBeVisible()
     expect(within(section).getByText(/^Your choices apply only to these fields\./u)).toBeVisible()
     expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
+  })
+
+  it('names only the offered book-level fields, in the note’s order (C1)', async () => {
+    const [title] = detail.fields
+    if (!title) throw new Error('the fixture offers a title')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        audiobookReviewScope: 'work' as const,
+        // Genres and description are offered and Series is not; ASIN is
+        // offered but is not something book-level evidence decides.
+        fields: [
+          { ...title, destination: 'genres' as const },
+          { ...title, destination: 'asin' as const },
+          title,
+          { ...title, destination: 'description' as const },
+        ],
+      })),
+    }
+    renderRoute('/review/case-1?subview=evidence', http)
+
+    const section = await screen.findByRole('region', { name: 'Book-level evidence' })
+    expect(
+      within(section).getByText(
+        'Book-level evidence supports title, description, and genre choices. The exact recording remains unresolved.',
+      ),
+    ).toBeVisible()
+    expect(within(section).queryByText(/series|ASIN/u)).toBeNull()
   })
 
   it('states media health on the case an admitted audiobook opens', async () => {
@@ -91,11 +121,11 @@ describe('Library review ownership', () => {
         mediaHealth: [
           {
             bound:
-              'The local running time is within 90 seconds of the running time the matched edition states.',
+              "A complete recording runs within 1 min 30 s of the edition's stated running time.",
             cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
-            expected: '72000 seconds stated by the matched edition',
+            expected: '20 h stated by the matched edition',
             kind: 'runtime_short_of_provider' as const,
-            observed: '43200 seconds of local audio',
+            observed: '12 h of local audio, 8 h shorter than the matched edition',
             tracks: [],
           },
         ],
@@ -104,18 +134,22 @@ describe('Library review ownership', () => {
     renderRoute('/review/case-1?subview=evidence', http)
 
     const section = await screen.findByRole('region', { name: 'Media health' })
-    expect(within(section).getByText('Runtime short of provider')).toBeVisible()
+    expect(within(section).getByText('Shorter than the edition')).toBeVisible()
     expect(
       within(section).getByText(
-        'The local running time is within 90 seconds of the running time the matched edition states.',
+        "A complete recording runs within 1 min 30 s of the edition's stated running time.",
       ),
     ).toBeVisible()
     expect(
-      within(section).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
+      within(section).getByText(
+        /12 h of local audio, 8 h shorter than the matched edition · expected 20 h/u,
+      ),
     ).toBeVisible()
     // The opaque local reference stands for what it points at rather than
     // being printed at the owner.
-    expect(within(section).getByText(/Read from local evidence, audible-product/u)).toBeVisible()
+    expect(
+      within(section).getByText(/Read from local evidence, Audible product B08G9PRS1K/u),
+    ).toBeVisible()
     expect(screen.queryByText('local_abc123')).toBeNull()
   })
 
@@ -155,7 +189,7 @@ describe('Library review ownership', () => {
         ? {
             items: [
               {
-                destinations: ['title'],
+                destinations: ['title' as const],
                 observation: 'Title: <script>Second observation</script>',
                 role: 'external_corroboration',
                 source: 'Open Library',
@@ -167,7 +201,7 @@ describe('Library review ownership', () => {
         : {
             items: [
               {
-                destinations: ['title'],
+                destinations: ['title' as const],
                 observation: 'Title: A Book',
                 role: 'local_presence',
                 source: 'This library',
@@ -177,14 +211,14 @@ describe('Library review ownership', () => {
             nextCursor: 'next-page',
             sourceLedger: [
               {
-                laneKind: 'identity',
+                laneKind: 'isbn' as const,
                 provider: 'Hardcover',
                 providerRequests: 1,
                 reason: 'Returned no matching metadata.',
                 status: 'no_match',
               },
               {
-                laneKind: 'cover',
+                laneKind: 'work' as const,
                 provider: 'Open Library',
                 providerRequests: 2,
                 reason: 'Returned more than the accepted bound, so nothing was retained.',
@@ -198,7 +232,9 @@ describe('Library review ownership', () => {
     expect(await screen.findByText('Title: A Book')).toBeVisible()
     expect(screen.getByText(/2 referenced observations are no longer available/u)).toBeVisible()
     await user.click(screen.getByText('Sources'))
-    expect(screen.getByText('no match')).toBeVisible()
+    expect(screen.getByText('No match')).toBeVisible()
+    expect(screen.getByText('ISBN lookup')).toBeVisible()
+    expect(screen.getByText('Response too large')).toBeVisible()
     expect(document.querySelector('pre')).toBeNull()
     expect(document.body).not.toHaveTextContent('evidence_')
     await user.click(screen.getByRole('button', { name: 'Load more evidence' }))
@@ -249,7 +285,7 @@ describe('Library review ownership', () => {
           category: 'owner',
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'title',
+          destination: 'title' as const,
           outcome: 'accept',
           previousValue: { kind: 'text', value: '<script>previous</script>' },
           selectedValue: { kind: 'text', value: '<script>chosen</script>' },
@@ -258,7 +294,7 @@ describe('Library review ownership', () => {
           category: 'owner',
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'language',
+          destination: 'language' as const,
           outcome: 'accept',
           previousValue: null,
           selectedValue: { kind: 'text', value: 'English' },
@@ -267,7 +303,7 @@ describe('Library review ownership', () => {
           category: 'owner',
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'publisher',
+          destination: 'publisher' as const,
           outcome: 'accept',
           previousValue: { kind: 'text', value: 'Former publisher' },
           selectedValue: null,
@@ -276,7 +312,7 @@ describe('Library review ownership', () => {
           category: 'owner',
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'title_reversal',
+          destination: 'narrators' as const,
           outcome: 'keep_current',
           previousValue: { kind: 'text', value: 'Applied candidate' },
           selectedValue: { kind: 'text', value: 'Original value' },
@@ -285,7 +321,7 @@ describe('Library review ownership', () => {
           category: 'owner',
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'subtitle',
+          destination: 'subtitle' as const,
           outcome: 'keep_current',
           previousValue: { kind: 'text', value: 'Existing subtitle' },
           selectedValue: { kind: 'text', value: 'Existing subtitle' },
@@ -294,7 +330,7 @@ describe('Library review ownership', () => {
           category: 'owner',
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'edition',
+          destination: 'publishedDate' as const,
           outcome: 'keep_current',
           previousValue: null,
           selectedValue: null,
@@ -302,7 +338,7 @@ describe('Library review ownership', () => {
         {
           category: 'automatic',
           occurredAt: 1786000000,
-          destination: 'series',
+          destination: 'series' as const,
           outcome: 'keep_current',
           previousValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] },
           selectedValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] },
@@ -311,7 +347,7 @@ describe('Library review ownership', () => {
           category: 'owner',
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'isbn',
+          destination: 'isbn' as const,
           outcome: 'reject',
           previousValue: { kind: 'text', value: '9780000000001' },
           selectedValue: null,
@@ -319,7 +355,7 @@ describe('Library review ownership', () => {
         {
           category: 'automatic',
           occurredAt: 1786000000,
-          destination: 'authors',
+          destination: 'authors' as const,
           outcome: 'candidate',
           previousValue: { kind: 'list', value: ['Old Author'] },
           selectedValue: { kind: 'list', value: ['New Author'] },
@@ -327,7 +363,7 @@ describe('Library review ownership', () => {
         {
           category: 'automatic',
           occurredAt: 1786000000,
-          destination: 'description',
+          destination: 'description' as const,
           outcome: 'candidate',
           previousValue: null,
           selectedValue: null,
@@ -335,7 +371,7 @@ describe('Library review ownership', () => {
         {
           category: 'automatic',
           occurredAt: 1786000000,
-          destination: 'genres',
+          destination: 'genres' as const,
           outcome: 'ignore',
           previousValue: { kind: 'list', value: ['Preserved genre'] },
           selectedValue: null,
@@ -343,7 +379,7 @@ describe('Library review ownership', () => {
         {
           category: 'automatic',
           occurredAt: 1786000000,
-          destination: 'tags',
+          destination: 'tags' as const,
           outcome: 'ignore',
           previousValue: null,
           selectedValue: null,
@@ -351,7 +387,10 @@ describe('Library review ownership', () => {
         {
           category: 'preview',
           occurredAt: 1786000000,
-          dispositions: [{ count: 3, outcome: 'would_accept' }],
+          dispositions: [
+            { count: 7, outcome: 'manual' },
+            { count: 1, outcome: 'unsupported' },
+          ],
         },
         {
           category: 'cover',
@@ -359,9 +398,9 @@ describe('Library review ownership', () => {
           candidateCount: 2,
           outcome: 'selected',
           ownerOutcome: 'accept',
-          policyReasons: ['credible_source'],
+          policyReasons: ['deterministic_confirmed_order'],
           policyStatus: 'recommended',
-          reviewerStatus: 'complete',
+          reviewerStatus: 'completed',
           supersedesAutomatic: false,
         },
         {
@@ -371,7 +410,7 @@ describe('Library review ownership', () => {
           candidateCount: 3,
           outcome: 'automatic_prepared',
           policyReasons: [],
-          reviewerStatus: 'complete',
+          reviewerStatus: 'completed',
           supersedesAutomatic: true,
         },
         {
@@ -392,7 +431,7 @@ describe('Library review ownership', () => {
       'datetime',
       new Date(1786000000 * 1000).toISOString(),
     )
-    expect(screen.getByText('Time unavailable — lifecycle checkpoint only')).toBeVisible()
+    expect(screen.getByText('Time not recorded')).toBeVisible()
     expect(screen.getByText('<script>previous</script>')).toBeVisible()
     expect(screen.getByText('<script>chosen</script>')).toBeVisible()
     const language = screen.getByRole('heading', { name: 'Language' }).closest('article')
@@ -422,7 +461,7 @@ describe('Library review ownership', () => {
     expect(typedIdentical).toHaveTextContent('Existing series · 2')
     expect(typedIdentical).not.toHaveTextContent('From')
     expect(typedIdentical).not.toHaveTextContent('To')
-    const rejected = screen.getByRole('heading', { name: 'Isbn' }).closest('article')
+    const rejected = screen.getByRole('heading', { name: 'ISBN' }).closest('article')
     if (!rejected) throw new Error('reject history article required')
     expect(rejected).toHaveTextContent('Owner declined the proposed change.')
     expect(rejected).toHaveTextContent('9780000000001')
@@ -436,7 +475,7 @@ describe('Library review ownership', () => {
     const retainedAbsence = screen.getByRole('heading', { name: 'Tags' }).closest('article')
     if (!retainedAbsence) throw new Error('retained absence article required')
     expect(retainedAbsence).toHaveTextContent('No value is recorded.')
-    const keptAbsence = screen.getByRole('heading', { name: 'Edition' }).closest('article')
+    const keptAbsence = screen.getByRole('heading', { name: 'Publication date' }).closest('article')
     if (!keptAbsence) throw new Error('kept absence history article required')
     expect(keptAbsence).toHaveTextContent('Retained No value is recorded.')
     expect(keptAbsence).not.toHaveTextContent('From')
@@ -450,7 +489,17 @@ describe('Library review ownership', () => {
     expect(unmatchedCandidate).toHaveTextContent('To No value is recorded.')
     expect(ignored).not.toHaveTextContent('Previous')
     expect(ignored).not.toHaveTextContent('New')
-    expect(screen.getByText(/Visual review complete across 2 candidates/u)).toBeVisible()
+    expect(screen.getByText(/Visual review completed across 2 candidates/u)).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Cover chosen' })).toBeVisible()
+    expect(
+      screen.getByText('Owner-confirmed choice: a proposed cover.', { exact: false }),
+    ).toBeVisible()
+    expect(screen.getByText('Policy outcome: a cover is recommended.')).toBeVisible()
+    expect(screen.getByText('Confirmed covers are ranked in a fixed order')).toBeVisible()
+    const preview = screen.getByRole('list', { name: 'Preview outcomes' })
+    expect(preview).toHaveTextContent('Owner review7')
+    expect(preview).toHaveTextContent('Unsupported1')
+    expect(screen.getByRole('heading', { name: 'Entered review' })).toBeVisible()
     expect(screen.getByText('Automatic policy selected this cover.')).toBeVisible()
     expect(
       screen.getByText(
@@ -540,7 +589,7 @@ describe('Library review ownership', () => {
       getEvidence: vi.fn(async (id: string) => ({
         items: [
           {
-            destinations: ['title'],
+            destinations: ['title' as const],
             observation: `${id} observation`,
             role: 'external_observation' as const,
             source: 'Synthetic source',
@@ -593,11 +642,11 @@ describe('Library review ownership', () => {
       items: [
         {
           id: 'case-1',
-          destination: 'title',
+          destination: 'title' as const,
           title: 'A Book',
           authors: [],
           library: 'Books',
-          mediaKind: 'ebook',
+          mediaKind: 'epub' as const,
           classificationReason: 'This field needs your review.',
           notices: [],
           provenance: [],
@@ -622,11 +671,11 @@ describe('Library review ownership', () => {
       items: [
         {
           id: 'case-later',
-          destination: 'authors',
+          destination: 'authors' as const,
           title: 'Later attention work',
           authors: ['Later owner'],
           library: 'Books',
-          mediaKind: 'ebook',
+          mediaKind: 'epub' as const,
           classificationReason: 'This later field needs your review.',
           notices: [],
           provenance: [],
@@ -644,7 +693,7 @@ describe('Library review ownership', () => {
         ...detail,
         id,
         title: 'Later attention work',
-        fields: [{ ...field, destination: 'authors' }],
+        fields: [{ ...field, destination: 'authors' as const }],
       })),
     }
     const { router } = renderRoute('/attention?cursor=later-page', http)
@@ -667,11 +716,11 @@ describe('Library review ownership', () => {
   it('keeps a retained Attention page visible but inert until the newer search settles', async () => {
     const item = (id: string, title: string) => ({
       id,
-      destination: 'title',
+      destination: 'title' as const,
       title,
       authors: [],
       library: 'Books',
-      mediaKind: 'ebook',
+      mediaKind: 'epub' as const,
       classificationReason: 'This field needs your review.',
       notices: [],
       provenance: [],
@@ -771,7 +820,7 @@ describe('Library review ownership', () => {
       expect(recordDecision).toHaveBeenCalledWith(
         'case-1',
         expect.objectContaining({
-          destination: 'title',
+          destination: 'title' as const,
           outcome: 'accept',
           selectedValue: field.proposedValues[0],
         }),
@@ -945,7 +994,7 @@ describe('Library review ownership', () => {
     if (!title) throw new Error('title fixture required')
     const authors = {
       ...title,
-      destination: 'authors',
+      destination: 'authors' as const,
       targetFingerprint: 'fingerprint-authors',
       manualHold: true,
     }
@@ -992,7 +1041,7 @@ describe('Library review ownership', () => {
     if (!title) throw new Error('title fixture required')
     const authors = {
       ...title,
-      destination: 'authors',
+      destination: 'authors' as const,
       targetFingerprint: 'fingerprint-authors',
       manualHold: true,
     }
@@ -1215,7 +1264,7 @@ it.each(['evidence', 'history'])(
           category: 'description' as const,
           occurredAt: 1786000000,
           outcome: 'description_advice_recorded',
-          state: 'succeeded',
+          state: 'succeeded' as const,
           engine: candidate.engine,
           model: candidate.model,
           candidate,
@@ -1225,7 +1274,7 @@ it.each(['evidence', 'history'])(
           category: 'description' as const,
           occurredAt: 1786000000,
           outcome: 'description_selected',
-          state: 'superseded',
+          state: 'superseded' as const,
           engine: candidate.engine,
           model: candidate.model,
           candidate,
@@ -1235,7 +1284,7 @@ it.each(['evidence', 'history'])(
           category: 'description' as const,
           occurredAt: 1786000000,
           outcome: 'description_application',
-          state: 'verified',
+          state: 'verified' as const,
           engine: candidate.engine,
           model: candidate.model,
           candidate,
@@ -1297,7 +1346,7 @@ it('retains unconfirmed incumbent evidence in actual mapped owner history', asyn
     }),
   )
   renderRoute('/review/case-1?lens=all&field=cover&subview=history', http)
-  expect(await screen.findByText(/Owner-confirmed choice: keep current/u)).toHaveTextContent(
+  expect(await screen.findByText(/Owner-confirmed choice: the current cover\./u)).toHaveTextContent(
     'Match not confirmed by automated evidence. Recording a choice is separate from verified application.',
   )
 })

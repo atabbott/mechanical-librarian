@@ -1,16 +1,13 @@
 import { useId } from 'react'
 
 import type { MediaHealthObservationView } from '../api/http'
-import { fieldLabel, opaqueSource } from '../labels'
+import { candidateReference, mediaHealthLabels, opaqueSource } from '../labels'
 
 // An opaque server reference is not a label an owner can read, so it stands
-// for the evidence it points at instead of being printed.
+// for the evidence it points at instead of being printed; a provider's record
+// is named by its provider.
 const citation = (value: string) =>
-  opaqueSource.test(value)
-    ? 'local evidence'
-    : value.length > 160
-      ? `${value.slice(0, 157)}…`
-      : value
+  opaqueSource.test(value) ? 'local evidence' : candidateReference(value)
 
 // What is wrong with the media itself, distinct from what the evidence says
 // about the work. Every observation names the rule it broke and what it was
@@ -33,7 +30,7 @@ export function MediaHealth({
         <ul>
           {observations.map((observation, index) => (
             <li key={`${observation.kind}:${String(index)}`}>
-              <strong>{fieldLabel(observation.kind)}</strong>
+              <strong>{mediaHealthLabels[observation.kind]}</strong>
               {observation.observed ? (
                 <span>
                   {observation.observed}
