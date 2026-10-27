@@ -4,8 +4,9 @@
 
 - Opening an Activity row of checks that changed nothing now shows one row per
   field it names, with each field's recorded decision inside that field's
-  Details. A Library search under a lens now counts that lens against its
-  whole-library total, for example "3 of 24 needing attention" (#1425).
+  Details. A Library search now reads "Found 3 of 24 works", counting the
+  selected lens against its whole-library total; screen readers hear the lens
+  named after it (#1425).
 
 - A change decided while Audiobookshelf could not be reached is now written
   once the connection is back, without another action, instead of waiting for
@@ -103,7 +104,7 @@
   requires a clean rebuild (#1285).
 
 - Library counts now come from one library-wide summary and name their unit:
-  the Attention badge counts works, Works reads "Matching: 1 of 20 works" under
+  the Attention badge counts works, Works reads "Found 1 of 20 works" under
   a search, and no count shows 0 while loading. Attention lists each work once
   with its fields as rows, preparation counts say they are for this run, and
   selecting a work no longer moves the workspace (#1284).

@@ -381,9 +381,10 @@ states.
 
 Every global count comes from one summary, the unsearched default Library read,
 and names its unit: the Attention badge counts works needing a decision, the
-Works status counts works (`Matching: m of n works` under a search; under a
-lens a search counts that lens against the lens's whole-library total, in its
-own words, as in `m of n needing attention`, #1425), and the
+Works status counts works (under a search it shows `Found m of n works`, where
+n is the library total under All and the lens's whole-library total under any
+other lens, and announces the lens after it, as in `Found m of n works needing
+attention`, #1425), and the
 write handoff and a connection notice state the works in Library. A search
 narrows only the work list and the Attention rail, never these figures, and a
 filtered completion states how many works still need a decision outside it. A

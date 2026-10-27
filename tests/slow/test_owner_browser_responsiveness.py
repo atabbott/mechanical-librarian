@@ -247,7 +247,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 const tests = {
                                     cold_sign_in_destination: () => heading('Works'),
                                     warm_sign_in_destination: () => exact('.library-works-heading>span', '2300 works'),
-                                    search: () => exact('.library-works-heading>span', 'Matching: 2070 of 2300 works'),
+                                    search: () => exact('.library-works-heading>span', 'Found 2070 of 2300 works'),
                                     negative_search: () => new URL(location.href).searchParams.get('q') === 'absent-search-term'
                                         && exact('p', 'No exact-current works match this search and lens.'),
                                     clear_search: () => !new URL(location.href).searchParams.has('q')
@@ -390,7 +390,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     ),
                                     lambda page=page: expect(
                                         page.get_by_text(
-                                            "Matching: 2070 of 2300 works", exact=True
+                                            "Found 2070 of 2300 works", exact=True
                                         )
                                     ).to_be_visible(),
                                 )

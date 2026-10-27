@@ -259,8 +259,8 @@ const preparationPassage = [
 const compactWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
-// A search under a lens counts that lens against its whole-library total, in
-// the lens's own words (#1425).
+// A search under a lens counts that lens against its whole-library total; the
+// lens link names it visually and the status names it to screen readers (#1425).
 const lensMatching = {
   all: ['all', undefined],
   needs_attention: ['attention', 'needing attention'],
@@ -4096,28 +4096,31 @@ export default function LibraryPage({
           <div className="library-works-heading">
             <h2 id="library-works-title">Works</h2>
             <span role="status" aria-live="polite" aria-busy={retained || undefined}>
-              {data
-                ? (!search.q
-                    ? workCount(data.counts.all)
-                    : lensWords === undefined
-                      ? lensTotal === undefined
-                        ? `Matching: ${workCount(data.counts.all)}`
-                        : `Matching: ${String(data.counts.all)} of ${workCount(lensTotal)}`
-                      : lensTotal === undefined
-                        ? `${String(data.counts[lensCount])} ${lensWords}`
-                        : `${String(data.counts[lensCount])} of ${String(lensTotal)} ${lensWords}`) +
-                  (search.q
-                    ? ''
-                    : summaryNotMatched === undefined
-                      ? summary.isError
-                        ? ''
-                        : ' · … not matched'
-                      : summaryNotMatched === 0
-                        ? ''
-                        : ` · ${String(summaryNotMatched)} not matched`)
-                : failed
-                  ? 'Count unavailable'
-                  : 'Loading count…'}
+              {data ? (
+                search.q ? (
+                  <>
+                    {lensTotal === undefined
+                      ? `Found ${workCount(data.counts[lensCount])}`
+                      : `Found ${String(data.counts[lensCount])} of ${workCount(lensTotal)}`}
+                    {lensWords === undefined ? null : (
+                      <span className="sr-only">{` ${lensWords}`}</span>
+                    )}
+                  </>
+                ) : (
+                  workCount(data.counts.all) +
+                  (summaryNotMatched === undefined
+                    ? summary.isError
+                      ? ''
+                      : ' · … not matched'
+                    : summaryNotMatched === 0
+                      ? ''
+                      : ` · ${String(summaryNotMatched)} not matched`)
+                )
+              ) : failed ? (
+                'Count unavailable'
+              ) : (
+                'Loading count…'
+              )}
             </span>
           </div>
           <nav className="lenses" aria-label="Library lenses">

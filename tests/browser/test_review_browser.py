@@ -3597,7 +3597,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         search = page.get_by_role("searchbox")
         search.fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
-        expect(status).to_have_text("0 of 1 needing attention")
+        expect(status).to_have_text("Found 0 of 1 work needing attention")
         expect(rail.locator("header p")).to_have_text(
             "Matching: 0 of 1 work needing a decision"
         )
@@ -3605,7 +3605,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
         search.fill("zzz-no-match")
-        expect(status).to_have_text("0 of 1 needing attention")
+        expect(status).to_have_text("Found 0 of 1 work needing attention")
         expect(badge).to_have_text("1 work")
         search.fill("")
         expect(page).not_to_have_url(re.compile(r"q="))
@@ -3619,15 +3619,30 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         search.fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
         lenses = page.get_by_role("navigation", name="Library lenses")
-        for lens, expected in (
-            ("Not matched", "0 of 1 not matched"),
-            ("No attention needed", "1 of 1 needing no attention"),
-            ("All", "Matching: 1 of 3 works"),
-            ("Needs attention", "0 of 1 needing attention"),
+        # The status shows the lens's count; its words reach screen readers only.
+        shown = (
+            "node => [...node.childNodes].filter(child =>"
+            " !child.classList?.contains('sr-only')).map(child =>"
+            " child.textContent).join('')"
+        )
+        for lens, visible, announced in (
+            ("Not matched", "Found 0 of 1 work", "Found 0 of 1 work not matched"),
+            (
+                "No attention needed",
+                "Found 1 of 1 work",
+                "Found 1 of 1 work needing no attention",
+            ),
+            ("All", "Found 1 of 3 works", "Found 1 of 3 works"),
+            (
+                "Needs attention",
+                "Found 0 of 1 work",
+                "Found 0 of 1 work needing attention",
+            ),
         ):
             lenses.get_by_role("link", name=lens, exact=True).click()
             expect(page).to_have_url(re.compile(r"q=Retained"))
-            expect(status).to_have_text(expected)
+            expect(status).to_have_text(announced)
+            assert status.evaluate(shown) == visible
             # It stays on the Works heading's line.
             heading = page.locator("#library-works-title").bounding_box()
             line = status.bounding_box()
@@ -3722,7 +3737,7 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         page.get_by_role("searchbox").fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
         expect(page.locator(".library-works-heading [role='status']")).to_have_text(
-            "Matching: 1 of 3 works"
+            "Found 1 of 3 works"
         )
         expect(page.locator(".library-work-row")).to_have_count(1)
         expect(page.locator(".library-work-row.is-terminal")).to_contain_text(
