@@ -582,7 +582,8 @@ the text it shows: markup is rendered through the providers' visible-text
 renderer, paragraphs joined by ` • `, and other text has its character
 references decoded. `restorable` records whether that text, written back, is
 stored as it was: the stored form equals the text, or the text with only `&`,
-`<` and `>` escaped. The raw stored form is never persisted. Because the field
+`<` and `>` escaped, and the text carries no `<`, `>` or character reference.
+The raw stored form is never persisted. Because the field
 is in the target, it changes target fingerprints; the review API omits it. A v57
 field held the stored form, so the exact SQLite discriminator requires a
 **clean rebuild** under ADR-0013. Prior stores are refused before mutation. No

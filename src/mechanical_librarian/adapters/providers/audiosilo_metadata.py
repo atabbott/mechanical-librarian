@@ -34,6 +34,7 @@ from mechanical_librarian.adapters.providers.sdk import (
     provider_bounds,
     provider_client_lifetime,
 )
+from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
@@ -748,6 +749,9 @@ def _duration(value: object, schema_rejections: Callable[[int], None]) -> object
 
 
 def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
+    if kind is ClaimKind.DESCRIPTION:
+        # Read once, as every description is (#1424).
+        value = stated_description(value)
     if value is None:
         return FieldState.ABSENT, None
     maximum = (

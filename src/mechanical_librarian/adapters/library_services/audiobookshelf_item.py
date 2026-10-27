@@ -29,7 +29,7 @@ from mechanical_librarian.adapters.providers.visible_text import (
     DESCRIPTION_OVERSIZED,
     carries_markup,
     decoded_description,
-    visible_description,
+    shown_description,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
@@ -80,17 +80,16 @@ def visible_stored_description(value: str) -> object:
     item read, 2.26.0, 2.36.0, 2.37.1 and 2.37.2 all store a bare `&`, `<` and
     `>` as `&amp;`, `&lt;` and `&gt;`, keep `&amp;`, quotes and `<b>`, and drop
     `<script>` with its content. Mechanical Librarian works in visible text, so
-    markup is rendered by the renderer provider descriptions use, and text
-    without markup has only its character references decoded, which keeps its
-    paragraphs exact (#1080). A value over the description bound is oversized
-    before anything reads it; one the renderer refuses, or that renders to no
-    text, is `None`.
+    the stored value is read by the one reading every provider and local
+    description passes through, and text without markup keeps its paragraphs
+    exact (#1080). The service shows an escaped tag as its literal brackets, so
+    stored text that is markup only once decoded is never rendered as if it
+    were a tag. A value over the description bound is oversized before
+    anything reads it, one that reading refuses, or that is markup only once
+    decoded, is `None`, and one that shows no text is returned as stored.
     """
-    if len(value) > MAX_DESCRIPTION_CHARACTERS:
-        return DESCRIPTION_OVERSIZED
-    if carries_markup(value):
-        return visible_description(value)
-    return decoded_description(value)
+    shown, rendered = shown_description(value)
+    return None if rendered and not carries_markup(value) else shown
 
 
 class AudiobookshelfItemReader:
@@ -438,7 +437,9 @@ def _target_field(
                 destination,
                 TargetFieldState.VALUE,
                 value,
-                restorable=raw in {value, html.escape(value, quote=False)},
+                restorable=raw in {value, html.escape(value, quote=False)}
+                and not carries_markup(value)
+                and decoded_description(value) == value,
             )
         if destination in {
             TargetDestination.AUTHORS,

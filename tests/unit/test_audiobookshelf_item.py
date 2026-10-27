@@ -1318,7 +1318,8 @@ def test_audiobook_incumbent_description_still_refuses_unsafe_text(
         ("Fish &amp; chips.", "Fish & chips."),
         ("One &lt; two and three &gt; two.", "One < two and three > two."),
         ("A <b>bold</b> claim.", "A bold claim."),
-        ("Already &amp;amp; escaped.", "Already &amp; escaped."),
+        # A reading that would decode again is refused, not read twice.
+        ("Already &amp;amp; escaped.", None),
         ("First &amp; one.\n\nSecond.", "First & one.\n\nSecond."),
         ("Before  after.", "Before  after."),
         ("Before <script>x</script> after.", None),
@@ -1351,8 +1352,7 @@ def test_a_stored_description_is_bounded_before_the_renderer_reads_it() -> None:
     bounded = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 7) + "</b>"
     oversized = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 6) + "</b>"
     with patch(
-        "mechanical_librarian.adapters.library_services.audiobookshelf_item."
-        "visible_description",
+        "mechanical_librarian.adapters.providers.visible_text.visible_description",
         wraps=visible_description,
     ) as renderer:
         assert visible_stored_description(bounded) == "x" * (

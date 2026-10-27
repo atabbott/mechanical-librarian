@@ -345,7 +345,8 @@ def _reconstruct_report(document: str) -> _ReconstructedReport:
             target_data["library"],  # type: ignore[arg-type]
             target_data["item"],  # type: ignore[arg-type]
             tuple(
-                _target_field_from_data(item) for item in _list(target_data["fields"])
+                _target_field_from_data(item, flagged=False)
+                for item in _list(target_data["fields"])
             ),
         )
         file = FileFacts(

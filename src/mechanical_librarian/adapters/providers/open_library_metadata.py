@@ -24,6 +24,7 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     transient_transport_failure,
 )
 from mechanical_librarian.adapters.providers.sdk import provider_client_lifetime
+from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -1848,6 +1849,9 @@ def _claim(
 
 
 def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
+    if kind is ClaimKind.DESCRIPTION:
+        # Read once, as every description is (#1424).
+        value = stated_description(value)
     if value is None:
         return FieldState.ABSENT, None
     maximum = (

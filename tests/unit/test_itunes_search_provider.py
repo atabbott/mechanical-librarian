@@ -32,6 +32,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    FieldState,
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
@@ -225,6 +226,45 @@ def test_a_plain_description_is_read_with_its_character_references_decoded() -> 
         claim.value for claim in _claims(candidate, ClaimKind.DESCRIPTION)
     ]
     assert () == _evidence(candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION)
+
+
+@pytest.mark.parametrize(
+    ("stated", "state", "value"),
+    (
+        ("&lt;img src=x onerror=alert(1)&gt;Hello there.", FieldState.MALFORMED, None),
+        (
+            "&lt;script&gt;alert(1)&lt;/script&gt;Hello there.",
+            FieldState.MALFORMED,
+            None,
+        ),
+        ("&lt;b&gt;Bold&lt;/b&gt; claim.", FieldState.VALID, "Bold claim."),
+        (
+            "&lt;a href=&quot;javascript:alert(1)&quot;&gt;Click&lt;/a&gt; here.",
+            FieldState.VALID,
+            "Click here.",
+        ),
+        # Text that would decode again is never read twice (#1424).
+        ("Fish &amp;amp; chips for the qualification.", FieldState.MALFORMED, None),
+    ),
+    ids=("handler", "script", "bold", "link", "double"),
+)
+def test_plain_text_carrying_markup_once_decoded_is_read_as_markup(
+    stated: str, state: FieldState, value: str | None
+) -> None:
+    # Decoding never hands a claim a tag the renderer would refuse (#1424).
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        result["description"] = stated
+    _seen, handle = _recorder(_store(document))
+    candidate = _provider(handle).observe(work_plan()).observation.candidates[0]
+
+    assert [(state, value)] == [
+        (claim.state, claim.value)
+        for claim in _claims(candidate, ClaimKind.DESCRIPTION)
+    ]
+    assert (state is FieldState.VALID) == bool(
+        _evidence(candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION)
+    )
 
 
 def test_the_stores_html_description_becomes_visible_plain_text() -> None:

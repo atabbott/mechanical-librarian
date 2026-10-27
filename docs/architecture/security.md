@@ -2038,12 +2038,21 @@ compares visible text, so another actor's edit that changes only markup, such
 as making a word bold, is not a conflict and the write replaces it; an edit that
 changes the text shown still is. Read-back renders the desired value once: a
 desired value whose rendering still carries markup, or would decode again, never
-verifies against displayed markup. Provider plain-text descriptions have their
-character references decoded by the same code, so both sides of a comparison are
-decoded exactly once and a provider stating an incumbent's own text is not a
-proposal. Keeping the current description after a verified write restores it
-only when the admitted field is `restorable`, meaning the service stores that
-text as it stored the original. Otherwise the restore is refused before any
+verifies against displayed markup. Every description is read once by the same
+function: the incumbent's, each provider's, and each local EPUB or audio
+description's. Plain text has its character references decoded once, so both
+sides of a comparison are decoded exactly once and a provider stating an
+incumbent's own text is not a proposal. Text that carries a tag once decoded is
+markup, held to the same renderer and its refusals, and a reading that would
+still carry a tag or decode again is refused, so no decoded text becomes a claim
+with a live tag and `Fish &amp;amp; chips` is never read twice. Audible,
+Audnexus, iTunes and Google Books render such text and record the
+transformation; Open Library, Hardcover, Inventaire, Audiosilo and local files
+record none, so it is unprojectable there; the incumbent keeps it as stored,
+because Audiobookshelf shows an escaped tag as its literal brackets. Keeping the
+current description after a verified write restores it only when the admitted
+field is `restorable`, meaning the service stores that text as it stored the
+original and the text carries no `<`, `>` or character reference. Otherwise the restore is refused before any
 request with `restore_unavailable`, and the owner is asked to restore the
 formatting in Audiobookshelf, because writing the rendered text would flatten
 it. The raw stored HTML is never persisted. The renderer's one new input is that

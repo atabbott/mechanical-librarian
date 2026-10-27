@@ -806,16 +806,19 @@ def test_multiline_incumbent_description_persists_and_applies(
 
 
 @pytest.mark.parametrize(
-    "stored",
+    ("stored", "restorable"),
     (
-        "Plain incumbent description.",
-        "Fish &amp; chips for the incumbent.",
-        "<p>Fish &amp; chips</p><p>for the <b>incumbent</b>.</p>",
+        ("Plain incumbent description.", True),
+        ("Fish &amp; chips for the incumbent.", True),
+        ("<p>Fish &amp; chips</p><p>for the <b>incumbent</b>.</p>", False),
+        ("&lt;b&gt;bold incumbent text.", False),
+        ("Already &amp;amp; escaped incumbent.", False),
+        ("&lt;img src=x onerror=alert(1)&gt;Incumbent.", False),
     ),
-    ids=("plain", "entity", "formatted"),
+    ids=("plain", "entity", "formatted", "escaped_tag", "double", "handler"),
 )
 def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
-    tmp_path: Path, stored: str
+    tmp_path: Path, stored: str, restorable: bool
 ) -> None:
     """Keeping the current description after a verified write restores it (#1424).
 
@@ -920,7 +923,7 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
                 occurred_at=1_000,
             )
         )
-        if stored.startswith("<p>"):
+        if not restorable:
             assert (restored.state, restored.failure) == (
                 "stale",
                 "restore_unavailable",

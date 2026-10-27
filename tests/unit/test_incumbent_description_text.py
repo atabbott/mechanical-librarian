@@ -1,6 +1,8 @@
 """Exact incumbent paragraph admission through the supported target reader."""
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
@@ -46,7 +48,6 @@ def test_incumbent_description_retains_exact_text(value: str) -> None:
             "First paragraph. • Second • paragraph.",
         ),
         ('See <a href="https://example.com/page">x</a>', "See x"),
-        ("&lt;/p&gt;", "</p>"),
         ("Fish &amp; chips", "Fish & chips"),
         # A decoded no-break space is read as the space it shows.
         ("Text&nbsp;more", "Text more"),
@@ -72,11 +73,17 @@ def test_incumbent_description_markup_is_admitted_as_its_visible_text(
     ("value", "restorable"),
     (
         ("Plain text.", True),
-        ("Fish &amp; chips &lt;3", True),
+        ("Fish &amp; chips", True),
         ("Fish & chips", True),
         ("He said &quot;yes&quot;", False),
         ("Text&nbsp;more", False),
         ("<p>Fish &amp; chips</p>", False),
+        # Written back, admitted text carrying a bracket or a reference is not
+        # the text the library showed, so it is never restored from here.
+        ("&lt;b&gt;bold text", False),
+        ("Already &amp;amp; escaped.", False),
+        ("&lt;img src=x onerror=alert(1)&gt;Hi", False),
+        ("Fish &amp; chips &lt;3", False),
     ),
 )
 def test_a_description_is_restorable_only_when_writing_its_text_keeps_it(
@@ -100,6 +107,42 @@ def test_a_description_is_restorable_only_when_writing_its_text_keeps_it(
         if field.destination is TargetDestination.TITLE
     )
     assert "restorable" not in title
+
+
+@pytest.mark.parametrize(
+    ("value", "admitted"),
+    (
+        # The library shows an escaped tag as its brackets, so it is never
+        # rendered as one.
+        ("&lt;b&gt;Bold claim.", "&lt;b&gt;Bold claim."),
+        (
+            "&lt;img src=x onerror=alert(1)&gt;Hi",
+            "&lt;img src=x onerror=alert(1)&gt;Hi",
+        ),
+        (
+            "<p>a &lt;img src=x onerror=alert(1)&gt; b</p>",
+            "<p>a &lt;img src=x onerror=alert(1)&gt; b</p>",
+        ),
+        ("Already &amp;amp; escaped.", "Already &amp;amp; escaped."),
+    ),
+    ids=("escaped_tag", "decoded", "rendered", "double"),
+)
+def test_an_incumbent_reading_that_would_carry_a_tag_or_decode_again_is_kept_as_stored(
+    value: str, admitted: str
+) -> None:
+    # The incumbent is read as every source is, once; a reading the renderer
+    # refuses never becomes text with a live tag in it (#1424).
+    snapshot = target_snapshot({"title": "Title", "description": value})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert (field.state, field.value, field.restorable) == (
+        TargetFieldState.VALUE,
+        admitted,
+        False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -368,3 +411,118 @@ def test_a_stated_description_equal_to_the_incumbent_text_keeps_it(
     assert [value.assessment for value in result.alternatives] == [
         ProposalAssessment.PRESERVES_TARGET
     ]
+
+
+@pytest.mark.parametrize(
+    "module",
+    ("open_library", "hardcover", "inventaire", "audiosilo"),
+)
+@pytest.mark.parametrize(
+    ("stated", "state", "value"),
+    (
+        ("Fish &amp; chips.", "valid", "Fish & chips."),
+        ("&lt;b&gt;Bold&lt;/b&gt; claim.", "malformed", None),
+        ("&lt;img src=x onerror=alert(1)&gt;Hi", "malformed", None),
+        ("Fish &amp;amp; chips.", "malformed", None),
+    ),
+    ids=("entity", "decoded_tag", "handler", "double"),
+)
+def test_every_provider_reads_its_description_once(
+    module: str, stated: str, state: str, value: str | None
+) -> None:
+    # Each provider's field projection is where its descriptions become
+    # claims, so each reads them the way the incumbent is read (#1424).
+    import importlib
+
+    from mechanical_librarian.domain.metadata_report import ClaimKind
+
+    provider = importlib.import_module(
+        f"mechanical_librarian.adapters.providers.{module}_metadata"
+    )
+    projected_state, projected = provider._field(ClaimKind.DESCRIPTION, stated)
+    assert (projected_state.value, projected) == (state, value)
+
+
+_DESCRIPTION_TEXT = st.lists(
+    st.sampled_from(
+        (
+            "Fish",
+            " ",
+            "\n",
+            "&",
+            "&amp;",
+            "&amp;amp;",
+            "&lt;",
+            "&gt;",
+            "&quot;",
+            "&nbsp;",
+            "&#60;",
+            "&#x3c;",
+            "<",
+            ">",
+            "<b>",
+            "</b>",
+            "<p>",
+            "</p>",
+            "<img src=x onerror=alert(1)>",
+            "&lt;img src=x onerror=alert(1)&gt;",
+            "&lt;script&gt;",
+            "<script>",
+            "/",
+            "!",
+            "?",
+            "b",
+            "img",
+            "2",
+            '"',
+            "=",
+        )
+    ),
+    max_size=12,
+).map("".join)
+
+
+@settings(max_examples=400, deadline=None)
+@given(_DESCRIPTION_TEXT)
+def test_no_reading_of_a_description_carries_a_tag_or_decodes_again(
+    value: str,
+) -> None:
+    # One reading serves the incumbent and every source, and whatever it
+    # returns as text is final: no tag the renderer would have to read and no
+    # reference left to decode (#1424).
+    import re
+
+    from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+        visible_stored_description,
+    )
+    from mechanical_librarian.adapters.providers.visible_text import (
+        UNPROJECTABLE_DESCRIPTION,
+        carries_markup,
+        decoded_description,
+        projected_description,
+        shown_description,
+        stated_description,
+    )
+
+    shown, rendered = shown_description(value)
+    # The incumbent refuses only what is markup once decoded, which the
+    # library shows as literal brackets rather than as a tag.
+    assert visible_stored_description(value) == (
+        None if rendered and not carries_markup(value) else shown
+    )
+    readings = [shown, projected_description(value)[0]]
+    if carries_markup(value):
+        # Stated markup is the field projection's to refuse, as before.
+        assert stated_description(value) is value
+    else:
+        readings.append(stated_description(value))
+    for reading in readings:
+        if type(reading) is not str:
+            assert reading is None or reading is UNPROJECTABLE_DESCRIPTION
+        elif not carries_markup(value) and decoded_description(value) is None:
+            # Text that shows nothing is the caller's to judge, as stated.
+            assert reading == value
+        else:
+            assert reading == shown
+            assert re.search(r"<[A-Za-z/!?]", reading) is None
+            assert decoded_description(reading) == reading

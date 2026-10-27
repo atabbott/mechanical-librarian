@@ -105,9 +105,10 @@ private-path, credential-shaped, or otherwise invalid non-title input remains
 shows (#1424): text carrying markup is rendered as a provider description is,
 each paragraph or line joined by ` • `, and other text keeps its exact text,
 U+2028 line separators included, with character references such as `&amp;`
-decoded and a decoded no-break or other space read as a space. A description
-also records `restorable`: whether writing its text back would store it as it
-is stored now. Text whose only defect is C1 control characters is refused by the
+decoded and a decoded no-break or other space read as a space. Text that is
+markup only once decoded, or that would decode again, is kept as stored. A
+description also records `restorable`: whether writing its text back would
+store it as it is stored now. Text whose only defect is C1 control characters is refused by the
 validator with its own reason, but the report and UI still show that field only
 as `malformed` (#1251). The report is `metadata-report-v58`. For the title
 specifically, a

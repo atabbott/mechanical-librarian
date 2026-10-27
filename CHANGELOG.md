@@ -3,11 +3,11 @@
 ## Unreleased
 
 - A description written to Audiobookshelf is now recorded as verified when the
-  service stores it escaped, such as `&` as `&amp;`, instead of reading as
-  changed by someone else. Current descriptions are read and shown as the text
-  Audiobookshelf displays, so an escaped one is no longer proposed again as its
-  own text. Keeping a formatted description after a change is refused, rather
-  than writing it back flattened. Clean rebuild required (#1424).
+  service stores it escaped, such as `&` as `&amp;`. Current, provider and local
+  file descriptions are all read as the text they show, so an escaped one is no
+  longer proposed again as its own text and escaped markup never becomes a tag.
+  Keeping a formatted description after a change is refused rather than written
+  back flattened. Clean rebuild required (#1424).
 
 - Opening an Activity row of checks that changed nothing now shows one row per
   field it names, with each field's recorded decision inside that field's

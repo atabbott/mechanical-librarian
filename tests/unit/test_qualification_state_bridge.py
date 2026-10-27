@@ -84,6 +84,9 @@ def _v26_document(
     data.pop("audio")
     data["schema_version"] = "metadata-report-v26"
     data["comparison_version"] = "closed-title-creator-publication-v4"
+    for field in data["target"]["fields"]:
+        # v26 predates the description restore flag (#1424).
+        field.pop("restorable", None)
     data["field_results"] = [
         {
             **value,
