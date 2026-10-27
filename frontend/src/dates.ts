@@ -67,3 +67,31 @@ export const formatWhen = (
   }).format(at)
   return `${date}, ${formatClock(seconds, zone)}`
 }
+
+// A recorded running time in the owner's units, as the server's media health
+// states it: whole minutes from an hour up (`12 h`, `8 h 34 min`), otherwise
+// minutes and seconds (`1 min 30 s`). Null for a value that is no running time,
+// which then reads as recorded.
+// Halves round to even, as the server's `round` does, so both read one value
+// the same way.
+const roundHalfEven = (value: number) => {
+  const floor = Math.floor(value)
+  const fraction = value - floor
+  return fraction === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(value)
+}
+export const formatRunningTime = (value: string) => {
+  const parsed = Number(value)
+  if (value.trim() === '' || !Number.isFinite(parsed) || parsed < 0) return null
+  const seconds = roundHalfEven(parsed)
+  const shown = seconds >= 3600 ? roundHalfEven(seconds / 60) * 60 : seconds
+  const hours = Math.floor(shown / 3600)
+  const minutes = Math.floor((shown % 3600) / 60)
+  const rest = shown % 60
+  return [
+    hours ? `${String(hours)} h` : '',
+    minutes ? `${String(minutes)} min` : '',
+    rest || !shown ? `${String(rest)} s` : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}

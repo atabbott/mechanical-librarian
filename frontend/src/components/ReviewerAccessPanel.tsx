@@ -69,9 +69,9 @@ const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
   host_evidence_unavailable:
     'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
   cgroup_limit_below_1_gib:
-    'The container memory limit is below 1 GiB. Increase it before using Codex.',
+    'The container memory limit is below 1 GB. Increase it before using Codex.',
   headroom_below_1_gib:
-    'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+    'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
   permission_or_profile:
     'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
   permission_or_process: 'Codex could not complete sign-in. Restart the sign-in flow.',

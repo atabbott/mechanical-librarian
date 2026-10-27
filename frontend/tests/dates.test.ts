@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatClock, formatDay, formatWhen } from '../src/dates'
+import { formatClock, formatDay, formatRunningTime, formatWhen } from '../src/dates'
 
 // The formatter's own tests fix the locale and zone; the application reads the
 // browser's (#1286).
@@ -50,5 +50,19 @@ describe('formatWhen (#1286)', () => {
     const clock = formatClock(at('2026-10-28T14:05:00Z'), { locale: 'en-US', timeZone: 'UTC' })
     expect(clock).toBe('14:05')
     expect(clock).not.toMatch(/ /u)
+  })
+
+  it('reads a recorded running time in hours and minutes', () => {
+    expect(formatRunningTime('43200.000')).toBe('12 h')
+    expect(formatRunningTime('30846.400')).toBe('8 h 34 min')
+    expect(formatRunningTime('90')).toBe('1 min 30 s')
+    expect(formatRunningTime('0.000')).toBe('0 s')
+    // An exact half minute rounds to even, as the server rounds it.
+    expect(formatRunningTime('3630')).toBe('1 h')
+    expect(formatRunningTime('3690')).toBe('1 h 2 min')
+    // Negative controls: a value that is no running time stays as recorded.
+    expect(formatRunningTime('')).toBeNull()
+    expect(formatRunningTime('unstated')).toBeNull()
+    expect(formatRunningTime('-5')).toBeNull()
   })
 })

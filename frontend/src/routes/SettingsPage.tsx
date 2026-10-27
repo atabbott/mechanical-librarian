@@ -104,14 +104,22 @@ interface NumberField {
   advanced?: boolean
 }
 const unitFactor = { seconds: 1, minutes: 60, MB: 1_048_576 } as const
-// A stored value in the field's unit: at most two decimals, or two significant
-// digits below one, so 1,024 bytes reads 0.00098 MB rather than 0.
+// A stored value in the field's unit. A whole number of KB is an exact binary
+// fraction of an MB, so it is shown exactly (64 KB is 0.0625 MB, never 0.063);
+// any other value keeps at most two decimals, or two significant digits below
+// one, so 1,000 bytes reads 0.00095 MB rather than 0.
 const shownNumber = (field: NumberField, value: number) => {
   const shown = value / unitFactor[field.unit]
+  if (field.unit === 'MB' && Number.isInteger(value / 1024)) return shown
   return Math.abs(shown) < 1 && shown !== 0
     ? Number(shown.toPrecision(2))
     : Number(shown.toFixed(2))
 }
+// Below one MB the same size in KB, which a person reads without arithmetic.
+const kilobytes = (field: NumberField, value: number) =>
+  field.unit === 'MB' && value > 0 && value < unitFactor.MB
+    ? `${(value / 1024).toLocaleString(undefined, { maximumFractionDigits: 2 })} KB`
+    : null
 const unitWord = (field: NumberField, shown: number) =>
   field.unit === 'MB' ? 'MB' : shown === 1 ? field.unit.slice(0, -1) : field.unit
 const numberFields: readonly NumberField[] = [
@@ -205,7 +213,10 @@ const shownText = (field: NumberField, value: number) =>
   shownNumber(field, value).toLocaleString(undefined, { maximumFractionDigits: 20 })
 const numberWords = (field: NumberField, value: number) => {
   if (!Number.isFinite(value)) return 'Not a number'
-  return `${shownText(field, value)} ${unitWord(field, shownNumber(field, value))}`
+  return (
+    kilobytes(field, value) ??
+    `${shownText(field, value)} ${unitWord(field, shownNumber(field, value))}`
+  )
 }
 const onOffWord = (value: boolean) => (value ? 'On' : 'Off')
 const motionWord = (value: Document['reduced_motion']) =>
@@ -227,7 +238,7 @@ const validationErrors = (
         message:
           field.maximum === undefined
             ? `${field.label} must be at least ${numberWords(field, field.minimum)}.`
-            : `${field.label} must be from ${shownText(field, field.minimum)} to ${numberWords(field, field.maximum)}.`,
+            : `${field.label} must be from ${kilobytes(field, field.minimum) ?? shownText(field, field.minimum)} to ${numberWords(field, field.maximum)}.`,
       })
   for (const connection of document.connections) {
     if (!settingsEndpointValid(connection.endpoint))
@@ -911,7 +922,12 @@ const SettingsEditor = ({
               })
             }
           />
-          <small>{field.unit}</small>
+          <small>
+            {field.unit}
+            {kilobytes(field, readNumber(draft, field.fieldId)) === null
+              ? ''
+              : ` · ${String(kilobytes(field, readNumber(draft, field.fieldId)))}`}
+          </small>
         </span>
       )}
     </FieldRow>

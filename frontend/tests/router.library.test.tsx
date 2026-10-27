@@ -1821,7 +1821,9 @@ describe('Library route', () => {
       expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything(), 'foreground')
       expect(within(evidence).getByText('B0CW1KL2QD')).toBeVisible()
       expect(within(evidence).getByText('Recorded Narrator')).toBeVisible()
-      expect(within(evidence).getByText('43200.000')).toBeVisible()
+      // A running time reads in hours and minutes, never as raw seconds (#1286).
+      expect(within(evidence).getByText('12 h')).toBeVisible()
+      expect(within(evidence).queryByText(/43200/u)).toBeNull()
       // A claim the extraction could not trust must not read as sound evidence.
       expect(within(evidence).getByText(/Unreadable/u)).toBeVisible()
       expect(within(evidence).getByText(/Embedded cover art is present/u)).toBeVisible()

@@ -100,6 +100,7 @@ import {
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
+import { formatRunningTime } from '../dates'
 
 type ReviewField = CaseDetailView['fields'][number]
 const authoredOwnerRecorded = (field: ReviewField) =>
@@ -892,7 +893,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
                 {claim.role ? ` · ${claimRole(claim.role)}` : ''}
               </dt>
               <dd>
-                {claim.value}
+                {(claim.kind === 'duration' ? formatRunningTime(claim.value) : null) ?? claim.value}
                 <small>
                   {claimBasisLabels[claim.basis]}
                   {claim.state === 'valid' ? '' : ` · ${fieldStateLabels[claim.state]}`}

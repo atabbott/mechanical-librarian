@@ -4868,7 +4868,9 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
                 expect(evidence).to_be_visible()
                 expect(evidence).to_contain_text("Recorded Narrator")
                 expect(evidence).to_contain_text("B0CW1KL2QD")
-                expect(evidence).to_contain_text("43200.000")
+                # A running time reads in hours and minutes (#1286).
+                expect(evidence).to_contain_text(re.compile(r"Running time\s*12 h"))
+                expect(evidence).not_to_contain_text("43200")
                 expect(evidence).to_contain_text("Embedded cover art is present")
                 page.get_by_text(re.compile(r"Chapters \(1\)")).click()
                 expect(evidence).to_contain_text("Chapter One")
@@ -7120,7 +7122,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 ).to_be_visible()
                 expect(
                     page.get_by_text(
-                        "Less than 1 GiB of memory headroom is available. "
+                        "Less than 1 GB of memory headroom is available. "
                         "Free memory or raise the container limit."
                     )
                 ).to_be_visible()

@@ -1020,13 +1020,13 @@ describe('owner settings route', () => {
       'host_unsupported',
       'cgroup_limit_below_1_gib',
       true,
-      'The container memory limit is below 1 GiB. Increase it before using Codex.',
+      'The container memory limit is below 1 GB. Increase it before using Codex.',
     ],
     [
       'host_unsupported',
       'headroom_below_1_gib',
       true,
-      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+      'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
     ],
   ] as const)(
     'keeps mapped unhealthy Codex state %s manageable',
@@ -1125,11 +1125,14 @@ describe('owner settings route', () => {
 
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+      'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
     )
     expect(
       screen.queryByText(/installed Codex sign-in could not be validated/u),
     ).not.toBeInTheDocument()
+    // The bound and the headroom beside it read in one unit (#1286).
+    expect(screen.getByText('Available reviewer headroom: 2 GB')).toBeVisible()
+    expect(window.document.body).not.toHaveTextContent(/GiB|MiB/u)
   })
 
   it('evicts a checked usable device result after credential clear', async () => {
@@ -1487,8 +1490,10 @@ describe('owner settings route', () => {
     expect(screen.getByRole('spinbutton', { name: 'Request timeout' })).toHaveValue(30)
     await user.click(screen.getByText('Response and file size limits'))
     expect(screen.getByRole('spinbutton', { name: 'Audiobookshelf response limit' })).toHaveValue(1)
-    // 64 KiB reads as a fraction of an MB, not as 0.
-    expect(screen.getByRole('spinbutton', { name: 'Source response limit' })).toHaveValue(0.063)
+    // 64 KiB is exactly 0.0625 MB, and the hint says 64 KB beside it.
+    const source = screen.getByRole('spinbutton', { name: 'Source response limit' })
+    expect(source).toHaveValue(0.0625)
+    expect(source.parentElement).toHaveTextContent('MB · 64 KB')
     expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveValue(256)
     expect(
       screen.getByRole('spinbutton', { name: 'Source archive limit' }).parentElement,
@@ -1556,6 +1561,43 @@ describe('owner settings route', () => {
     expect(saved?.document.limits.target_response_bytes).toBe(document.limits.target_response_bytes)
   })
 
+  it('reads a size below one MB exactly, with its KB beside it, and keeps its bytes', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let saved: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      saved = request
+      return { ...view(), document: request.document }
+    })
+    renderRoute('/settings?group=background', http)
+
+    await user.click(await screen.findByText('Response and file size limits'))
+    const source = screen.getByRole('spinbutton', { name: 'Source response limit' })
+    expect(source).toHaveValue(0.0625)
+    expect(source.parentElement).toHaveTextContent('MB · 64 KB')
+    expect(source.parentElement).not.toHaveTextContent('0.063')
+    // A whole MB needs no KB beside it.
+    expect(
+      screen.getByRole('spinbutton', { name: 'Audiobookshelf response limit' }).parentElement,
+    ).not.toHaveTextContent('KB')
+    // An edit to 0.125 MB writes exactly 128 KB, and the hint follows the edit.
+    await user.clear(source)
+    await user.type(source, '0.125')
+    expect(source.parentElement).toHaveTextContent('MB · 128 KB')
+    // The range error names the smallest size in KB rather than as a fraction.
+    await user.clear(source)
+    await user.type(source, '0.0001')
+    expect(source).toHaveAccessibleDescription(
+      /Source response limit must be from 1 KB to 256 KB\./u,
+    )
+    await user.clear(source)
+    await user.type(source, '0.125')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(saved?.document.limits.provider_response_bytes).toBe(131_072)
+  })
+
   it('states range errors in display units', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -1600,7 +1642,7 @@ describe('owner settings route', () => {
     await user.type(audio, '0.0009')
     expect(audio).toHaveAttribute('aria-invalid', 'true')
     expect(audio).toHaveAccessibleDescription(
-      /Audiobook source limit must be from 0\.00098 to 16,384 MB/,
+      /Audiobook source limit must be from 1 KB to 16,384 MB/,
     )
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
     await waitFor(() => expect(audio).toHaveFocus())
