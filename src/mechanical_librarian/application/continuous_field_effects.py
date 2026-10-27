@@ -318,10 +318,14 @@ class ContinuousGuardedApplication:
         self._schedule_cursor: tuple[int, str] | None = None
         self._schedule_generation = 0
         self._schedule_lock = threading.Lock()
-        # Libraries whose released decisions wait for a lost connection, and
-        # the plan each one last probed it through (#1402).
+        # Libraries whose decisions wait for a lost connection, and the plan
+        # each one last probed it through (#1402). A decision that met the
+        # loss before it had a plan is probed through its own item instead;
+        # its target lives only until the schedule next starts over (#1423).
         self._replans_waiting: set[tuple[str, str]] = set()
         self._replan_probe_after: dict[tuple[str, str], str] = {}
+        self._unplanned_probes: dict[tuple[str, str], dict[str, _CapabilityProbe]] = {}
+        self._unplanned_turn: set[tuple[str, str]] = set()
         self._manual_return_cursor: tuple[int, str, str] | None = None
         self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
         self._capability_lock = threading.Lock()
@@ -496,13 +500,25 @@ class ContinuousGuardedApplication:
         self._wake.set()
 
     def _restart_schedule(self) -> None:
+        # A restarted schedule reads every pending decision again and records
+        # the targets of those still waiting, so none outlives a withdrawal.
         with self._schedule_lock:
             self._schedule_generation += 1
             self._schedule_cursor = None
+            self._unplanned_probes.clear()
 
-    def _wait_for_connection(self, key: tuple[str, str]) -> None:
+    def _wait_for_connection(
+        self,
+        key: tuple[str, str],
+        unplanned: tuple[str, _CapabilityProbe, int] | None = None,
+    ) -> None:
         with self._schedule_lock:
+            # A schedule restarted during the observation reads it again.
+            if unplanned is not None and unplanned[2] != self._schedule_generation:
+                return
             self._replans_waiting.add(key)
+            if unplanned is not None:
+                self._unplanned_probes.setdefault(key, {})[unplanned[0]] = unplanned[1]
 
     def _observe_waiting_connections(self) -> None:
         """Notice, once a pass, that a lost connection answers again (#1402).
@@ -510,11 +526,14 @@ class ContinuousGuardedApplication:
         Nothing else revisits a decision a lost connection released: its plan
         is no longer ready, and the schedule cursor is already past it. Each
         library waiting on its connection is observed through one of its
-        waiting plans, rotating so that one item that keeps failing cannot hide
-        a recovery. Only an observation that did not reach the connection
-        keeps the wait: any other, even a refused item, clears the lost
-        connection and starts the schedule over, so the plan is prepared again
-        and its preclaim decides, using one of its bounded attempts.
+        waiting plans or, on alternate passes, a decision that never had one
+        (#1423), rotating within each so that one item that keeps failing
+        cannot hide a recovery.
+        Only an observation that did not reach the connection keeps the wait:
+        any other, even a refused item, clears the lost connection and starts
+        the schedule over, so the plan is prepared again and its preclaim
+        decides, using one of its bounded attempts; a decision with no plan is
+        planned for the first time and spends none.
         """
         with self._schedule_lock:
             waiting = sorted(self._replans_waiting)
@@ -526,18 +545,31 @@ class ContinuousGuardedApplication:
                     connection, ""
                 )
                 if suspension == "connection_unavailable":
-                    probe = self._repository.next_field_effect_connection_replan(
+                    replan = self._repository.next_field_effect_connection_replan(
                         connection, library, self._replan_probe_after.get(key)
                     )
+                    probe: _CapabilityProbe | None = None
+                    with self._schedule_lock:
+                        unplanned = self._unplanned_probes.get(key)
+                        if unplanned and (
+                            replan is None or key in self._unplanned_turn
+                        ):
+                            decision_id, probe = next(iter(unplanned.items()))
+                            unplanned[decision_id] = unplanned.pop(decision_id)
+                            self._unplanned_turn.discard(key)
+                        elif unplanned:
+                            self._unplanned_turn.add(key)
+                    if probe is None and replan is not None:
+                        self._replan_probe_after[key] = replan[0]
+                        probe = _CapabilityProbe(replan[1], replan[2])
                     capability = self._capabilities.get(key)
                     if probe is None or capability is None:
                         suspension = "nothing_waiting"
                     else:
-                        plan_id, work_id, destination = probe
-                        self._replan_probe_after[key] = plan_id
+                        destination = probe.destination
                         observed_at = self._clock()
                         observed = capability.observe(
-                            _CapabilityProbe(work_id, destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies.
+                            probe  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies.
                         )
                         reached = (
                             observed.category != "connection_unavailable"
@@ -574,6 +606,8 @@ class ContinuousGuardedApplication:
                         suspension = None
                 with self._schedule_lock:
                     self._replans_waiting.discard(key)
+                    self._unplanned_probes.pop(key, None)
+                    self._unplanned_turn.discard(key)
                 if suspension is None:
                     self._restart_schedule()
         finally:
@@ -691,6 +725,11 @@ class ContinuousGuardedApplication:
 
     def set_paused(self, paused: bool) -> None:
         next(iter(self._applications.values())).set_paused(paused)
+        if paused:
+            # Dropped until the next schedule; resuming wakes one, which
+            # records again whatever still waits. Waiting plans keep theirs.
+            with self._schedule_lock:
+                self._unplanned_probes.clear()
         self._announce("activity", None)
         if not paused:
             self.wake()
@@ -981,7 +1020,8 @@ class ContinuousGuardedApplication:
             # lost: the preclaim's guards then decide, staling a field refusal
             # through its own code and counting a lost connection against the
             # bound. While the connection is lost it is observed here, as any
-            # other decision is (#1402).
+            # other decision is (#1402), and a decision with no plan waits
+            # through its own item, spending no re-plan attempt (#1423).
             released = self._repository.field_effect_connection_replan(
                 decision.decision_id
             )
@@ -995,8 +1035,9 @@ class ContinuousGuardedApplication:
             ):
                 capability_digest = released.plan.capability_digest
             else:
+                probe = _CapabilityProbe(snapshot.work_id, snapshot.destination)
                 observed = capability.observe(
-                    _CapabilityProbe(snapshot.work_id, snapshot.destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies; a full FieldEffectPlan does not exist before planning.
+                    probe  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies; a full FieldEffectPlan does not exist before planning.
                 )
                 if not self._schedule_capability_ready(
                     observed.category,
@@ -1005,11 +1046,13 @@ class ContinuousGuardedApplication:
                     observed_at,
                     affected_review_case_ids,
                 ):
-                    if (
-                        released is not None
-                        and observed.category == "connection_unavailable"
-                    ):
+                    lost = observed.category == "connection_unavailable"
+                    if lost and released is not None:
                         self._wait_for_connection(key)
+                    elif lost and not observed.connection_reached:
+                        self._wait_for_connection(
+                            key, (decision.decision_id, probe, generation)
+                        )
                     self._advance_schedule_cursor(decision, generation)
                     continue
                 capability_digest = observed.digest
@@ -1067,8 +1110,9 @@ class ContinuousGuardedApplication:
                 ):
                     companion_digest = waiting.capability_digest
                 else:
+                    probe = _CapabilityProbe(snapshot.work_id, "subtitle")
                     companion_capability = capability.observe(
-                        _CapabilityProbe(snapshot.work_id, "subtitle")  # type: ignore[arg-type]  # reason: observers read work_id and destination; the paired plan does not exist until both capabilities pass.
+                        probe  # type: ignore[arg-type]  # reason: observers read work_id and destination; the paired plan does not exist until both capabilities pass.
                     )
                     if not self._schedule_capability_ready(
                         companion_capability.category,
@@ -1077,12 +1121,13 @@ class ContinuousGuardedApplication:
                         observed_at,
                         affected_review_case_ids,
                     ):
-                        if (
-                            released is not None
-                            and companion_capability.category
-                            == "connection_unavailable"
-                        ):
+                        lost = companion_capability.category == "connection_unavailable"
+                        if lost and released is not None:
                             self._wait_for_connection(key)
+                        elif lost and not companion_capability.connection_reached:
+                            self._wait_for_connection(
+                                key, (decision.decision_id, probe, generation)
+                            )
                         self._advance_schedule_cursor(decision, generation)
                         continue
                     companion_digest = companion_capability.digest

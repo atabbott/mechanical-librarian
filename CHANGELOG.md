@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A change decided while Audiobookshelf could not be reached is now written
+  once the connection is back, without another action, instead of waiting for
+  the next decision or restart. It is checked through its own book until then,
+  nothing is sent before it, and it uses none of its retries (#1423).
+
 - Works no provider matched now have their own Library lens, Not matched, with
   a count and one reason each: found but not this work, providers unavailable
   (saying it will be checked again only when a retry is scheduled), or no
