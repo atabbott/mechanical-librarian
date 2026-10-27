@@ -204,7 +204,10 @@ def test_a_long_description_is_bounded_by_the_column_that_shows_it() -> None:
 
 
 def test_a_destination_is_named_the_way_the_owner_reads_it() -> None:
-    assert destination_label("publishedYear") == "Published year"
+    # One vocabulary per field: Activity names these as the browser does (#1286).
+    assert destination_label("publishedYear") == "Publication year"
+    assert destination_label("publishedDate") == "Publication date"
+    assert destination_label("explicit") == "Explicit content"
     assert destination_label("isbn") == "ISBN"
     # An unmapped server destination is still spaced and sentence-cased rather
     # than shown as the camel-case token it arrived as.
@@ -673,6 +676,45 @@ def test_a_decision_refuses_a_report_its_own_fingerprint_does_not_name() -> None
     assert "A different work entirely" not in str(mismatched)
 
 
+def test_owner_entered_row_names_the_value_it_replaced() -> None:
+    """An owner entry names what its own write replaced, not the case's report.
+
+    The report a case is pinned to predates an earlier write on the same
+    case, so a second entry made after that write would otherwise read
+    "Not set" for a field the earlier write had filled (#1286). The value
+    the decision's plan replaced is the one its Verified row names too.
+    """
+    report = _titled("Recorded work")
+    missing = tuple(
+        TargetField(field.destination, TargetFieldState.MISSING)
+        if field.destination is TargetDestination.PUBLISHER
+        else field
+        for field in report.target.fields
+    )
+    report = _report(missing)
+    record = {
+        "source_kind": "human_decision",
+        "target_fingerprint": report.target.fingerprint,
+        "selected_value": {"kind": "text", "value": "Second Press"},
+    }
+    unplanned = _project(
+        _event(destination="publisher", state="owner_entered", record=dict(record)),
+        report,
+    )
+    planned = _project(
+        _event(
+            destination="publisher",
+            state="owner_entered",
+            record=dict(record, pre_value="First Press"),
+        ),
+        report,
+    )
+    assert unplanned["change"] == "Not set → Second Press"
+    assert planned["change"] == "First Press → Second Press"
+    assert _facts(planned)["Previous value"] == "First Press"
+    assert _facts(planned)["New value"] == "Second Press"
+
+
 def test_a_reported_series_reaches_the_row_with_its_index() -> None:
     report = _with(
         TargetDestination.SERIES,
@@ -873,7 +915,7 @@ def test_an_owner_row_keeps_its_arrow_while_absent_values_name_the_field() -> No
     assert set_change("isbn", "1", None).compact == "Removed ISBN"
     assert keep_change("asin", None).compact == "Left ASIN unset"
     assert set_change("subtitle", "A", None).compact == "Removed subtitle"
-    assert set_change("publishedYear", "1", None).compact == "Removed published year"
+    assert set_change("publishedYear", "1", None).compact == "Removed publication year"
 
 
 # Two descriptions that read alike for longer than a compact change shows.

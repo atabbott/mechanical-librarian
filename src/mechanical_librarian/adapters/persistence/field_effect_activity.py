@@ -2047,6 +2047,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 if candidate.candidate_id != authored.candidate_id:
                     raise FieldEffectError("persistence")
                 authored_records[authored.decision_id] = authored, candidate
+        # What each owner decision's own first plan replaced: an earlier write
+        # on the same case can leave it different from the pinned report, and
+        # the decision's row names the same value its Verified row does (#1286).
+        human_ids = sorted(
+            {
+                row[17]
+                for row in rows
+                if row[13] == "human_decision" and type(row[17]) is str
+            }
+        )
+        replaced: dict[str, object] = {}
+        if human_ids:
+            for decision_id, effect_document in self._connection.execute(
+                "SELECT decision_id,document FROM field_effects WHERE decision_id IN ("
+                + ",".join("?" for _ in human_ids)
+                + ") ORDER BY rowid DESC",
+                human_ids,
+            ):
+                replaced[decision_id] = FieldEffectOperation.from_json(
+                    effect_document
+                ).plan.pre_value
         projected_events: list[dict[str, object]] = []
         decision: (
             HumanDecision
@@ -2538,6 +2559,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     raise FieldEffectError("persistence")
                 durable["selected_value"] = decision.selected_value
                 durable["target_fingerprint"] = decision.target_fingerprint
+                if decision.decision_id in replaced:
+                    durable["pre_value"] = replaced[decision.decision_id]
             elif source_kind == "isbn_refusal":
                 if isbn is None:
                     raise FieldEffectError("persistence")

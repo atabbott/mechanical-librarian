@@ -108,6 +108,21 @@ def test_only_liveness_and_login_are_anonymous(
     assert denied.headers["cache-control"] == "no-store, private"
 
 
+def test_sign_in_page_speaks_the_owners_language(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    page = web.client.get("/login")
+    assert page.status_code == 200
+    assert (
+        "Sign in to see what needs your attention in your library. Nothing changes"
+        " in your library until you give write permission, and every change is"
+        " checked before it is written."
+    ) in page.text
+    # The design document's vocabulary never reaches the owner (#1286).
+    for term in ("exact-current", "exception cases", "safeguards"):
+        assert term not in page.text
+
+
 def test_settings_file_authority_transport_is_private_and_locked(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:

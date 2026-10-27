@@ -1826,3 +1826,15 @@ def test_claimed_setup_login_still_requires_canonical_origin(mode: str) -> None:
         == 200
     )
     client.close()
+
+
+def test_setup_states_a_rate_only_while_preparation_moves() -> None:
+    # A finished, blocked or dismissed run has no current rate; printing one
+    # read as "0.0 books/min" on a finished run (#1366, #1286).
+    guard = (
+        "if((visible.state==='starting'||visible.state==='running')"
+        "&&typeof visible.throughput_per_minute==='number'){"
+    )
+    assert guard in SETUP_JS
+    assert SETUP_JS.count("books/min") == 1
+    assert "if(typeof visible.throughput_per_minute==='number')" not in SETUP_JS

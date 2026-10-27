@@ -361,7 +361,14 @@ def _decision_facts(
     state: str,
     report: MetadataReport | None,
 ) -> tuple[ReadableChange, list[dict[str, str]]]:
-    current = _reported_value(_pinned_report(record, report), destination)
+    # Once planned, a decision names what its own write replaced, which an
+    # earlier write on the same case can have made differ from the pinned
+    # report (#1286); before that, the report it was made against.
+    current = (
+        record["pre_value"]
+        if "pre_value" in record
+        else _reported_value(_pinned_report(record, report), destination)
+    )
     selected = record.get("selected_value")
     chosen = {"label": "Chosen by", "value": "Library owner"}
     if state == "keep_current":
