@@ -465,6 +465,7 @@ def _server(
     author_fixture: str | None = None,
     author_destination: str = "automatic",
     isbn_title_fixture: str | None = None,
+    activity_checks_fixture: bool = False,
     description_fixture: Literal[
         "ready",
         "needs_review",
@@ -1054,6 +1055,42 @@ def _server(
             report,
             "automatic" if isbn_title_fixture in {"automatic", "conflict"} else "ask",
         )
+    elif activity_checks_fixture:
+        # One preparation's two kept fields, each scheduled to its no-change
+        # result, so every field holds a recorded decision and its check.
+        from types import SimpleNamespace
+
+        from mechanical_librarian.adapters.field_effect_authority import (
+            PersistedFieldEffectAuthority,
+        )
+        from mechanical_librarian.application.continuous_field_effects import (
+            ContinuousGuardedApplication,
+        )
+        from mechanical_librarian.application.field_effects import (
+            GuardedFieldApplication,
+        )
+        from tests.support.automatic_decisions import _automatic_decisions
+        from tests.support.automatic_no_change import _automatic_no_change_inputs
+
+        report, category, option, _ = _automatic_no_change_inputs("unproposed_isbn")
+        case_id = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+            also=(("genres", "fill_empty"),),
+        )[0].review_case_id
+        lane = (report.target.connection, report.target.library)
+        ContinuousGuardedApplication(
+            repository,
+            {lane: cast(GuardedFieldApplication, SimpleNamespace())},
+            {lane: SimpleNamespace()},
+            PersistedFieldEffectAuthority(repository),
+            (lane,),
+            lambda: 10,
+            lambda *_: None,
+        ).schedule()
     elif description_fixture is not None:
         case_id = ""  # The real description producer below owns case admission.
     elif provider_recovery:
@@ -1583,6 +1620,7 @@ def _server(
         or language_fixture is not None
         or genre_fixture is not None
         or series_fixture is not None
+        or activity_checks_fixture
     ):
         from mechanical_librarian.adapters.field_effect_authority import (
             PersistedFieldEffectAuthority,
@@ -1626,6 +1664,7 @@ def _server(
             and language_fixture is None
             and genre_fixture is None
             and series_fixture is None
+            and not activity_checks_fixture
             else None
         ),
         activity_projection=language_activity,
@@ -3536,7 +3575,8 @@ def _identity_library(
 def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
     """A search narrows Works and the rail; the badge, the handoff and every
     summary denominator keep the whole library, and no summary read carries q
-    (#1284)."""
+    (#1284). Under a lens the Works count is that lens's, in its own words
+    (#1425)."""
     with _identity_library() as (page, origin, queries):
         page.goto(f"{origin}/library?lens=needs_attention&attention=open")
         status = page.locator(".library-works-heading [role='status']")
@@ -3557,7 +3597,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         search = page.get_by_role("searchbox")
         search.fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
-        expect(status).to_have_text("Matching: 1 of 3 works")
+        expect(status).to_have_text("Matching: 0 of 1 work needing attention")
         expect(rail.locator("header p")).to_have_text(
             "Matching: 0 of 1 work needing a decision"
         )
@@ -3565,7 +3605,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
         search.fill("zzz-no-match")
-        expect(status).to_have_text("Matching: 0 of 3 works")
+        expect(status).to_have_text("Matching: 0 of 1 work needing attention")
         expect(badge).to_have_text("1 work")
         search.fill("")
         expect(page).not_to_have_url(re.compile(r"q="))
@@ -3576,6 +3616,89 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         summary = [query for query in queries if "lens=all" in query]
         assert summary, queries
         assert all("q=" not in query for query in summary), queries
+        search.fill("Retained Terminal")
+        expect(page).to_have_url(re.compile(r"q=Retained"))
+        lenses = page.get_by_role("navigation", name="Library lenses")
+        for lens, expected in (
+            ("Not matched", "Matching: 0 of 1 work not matched"),
+            ("No attention needed", "Matching: 1 of 1 work with no attention needed"),
+            ("All", "Matching: 1 of 3 works"),
+            ("Needs attention", "Matching: 0 of 1 work needing attention"),
+        ):
+            lenses.get_by_role("link", name=lens, exact=True).click()
+            expect(page).to_have_url(re.compile(r"q=Retained"))
+            expect(status).to_have_text(expected)
+        expect(badge).to_have_text("1 work")
+
+
+def test_activity_checks_open_onto_one_row_per_field() -> None:
+    """A preparation's checks open onto one row per checked field, and each
+    field's recorded decision is reached from inside that field's Details
+    (#1425)."""
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 1440, "height": 900})
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                activity_checks_fixture=True,
+            ) as (origin, _case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/activity")
+            checks = page.locator("article.is-checks")
+            expect(checks).to_have_count(1)
+            expect(checks).to_contain_text("Checked 2 fields, no changes")
+            checks.get_by_role("button", name="Details").click()
+            fields = page.locator(
+                ".cm-activity-event-group > .cm-activity-checks > li > article"
+            )
+            expect(fields).to_have_count(2)
+            expect(fields.locator(":scope > b")).to_have_text(
+                ["No change required", "No change required"]
+            )
+            expect(
+                page.locator(".cm-activity-checks").get_by_text("Recorded")
+            ).to_have_count(0)
+            for index in range(2):
+                field = fields.nth(index)
+                details = field.locator(":scope > button")
+                details.focus()
+                page.keyboard.press("Enter")
+                expect(details).to_have_attribute("aria-expanded", "true")
+                paired = field.locator(
+                    ":scope > .cm-activity-evidence > ul > li > article"
+                )
+                expect(paired).to_have_count(1)
+                expect(paired.locator(":scope > b")).to_have_text("Recorded")
+                decision = paired.locator(":scope > button")
+                page.keyboard.press("Tab")
+                expect(decision).to_be_focused()
+                page.keyboard.press("Enter")
+                expect(decision).to_have_attribute("aria-expanded", "true")
+                expect(paired.locator(".cm-activity-evidence")).to_contain_text(
+                    "Policy setting"
+                )
+                page.keyboard.press("Enter")
+                expect(paired.locator(".cm-activity-evidence")).to_have_count(0)
+                expect(decision).to_be_focused()
+                expect(details).to_have_attribute("aria-expanded", "true")
+                details.click()
+                expect(field.locator(".cm-activity-evidence")).to_have_count(0)
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
 
 
 def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> None:

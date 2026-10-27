@@ -2031,7 +2031,7 @@ describe('Library route', () => {
     const searched = within(
       (await screen.findByRole('heading', { name: 'Works' })).parentElement ?? document.body,
     ).getByRole('status')
-    await waitFor(() => expect(searched).toHaveTextContent(/^Matching: 2 of 2 works$/u))
+    await waitFor(() => expect(searched).toHaveTextContent(/^Matching: 1 of 1 work not matched$/u))
   })
 
   it('keeps an unknown lens out of the URL it reads (#1407)', () => {
@@ -10717,7 +10717,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
 
     await user.type(screen.getByRole('searchbox'), 'needle')
     await waitFor(() => expect(router.state.location.search.q).toBe('needle'))
-    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^Matching: 1 of 5 works$/u))
+    await waitFor(() =>
+      expect(worksStatus()).toHaveTextContent(/^Matching: 1 of 3 works needing attention$/u),
+    )
     expect(badge()).toHaveTextContent(/^3 works$/u)
     expect(
       within(screen.getByRole('complementary', { name: 'Attention queue' })).getByText(
@@ -10734,6 +10736,38 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       .mocked(http.getLibrary)
       .mock.calls.filter(([search]) => search.lens === 'all')
     expect(summaryCalls.map(([search]) => search)).toEqual([{ lens: 'all' }])
+  })
+
+  it.each([
+    ['all', 'Matching: 4 of 10 works'],
+    ['needs_attention', 'Matching: 1 of 3 works needing attention'],
+    ['no_attention_needed', 'Matching: 2 of 5 works with no attention needed'],
+    ['not_matched', 'Matching: 1 of 2 works not matched'],
+  ] as const)(
+    'a search under the %s lens counts and names that lens (#1425)',
+    async (lens, copy) => {
+      const http = createHttp()
+      http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) => ({
+        ...library,
+        lens: search.lens,
+        counts: search.q
+          ? { attention: 1, all: 4, clear: 2, notMatched: 1 }
+          : { attention: 3, all: 10, clear: 5, notMatched: 2 },
+      }))
+      renderRoute(`/library?lens=${lens}&q=needle`, http)
+      await waitFor(() => expect(worksStatus()).toHaveTextContent(new RegExp(`^${copy}$`, 'u')))
+    },
+  )
+
+  it('a lens search without the library summary still names its lens (#1425)', async () => {
+    const http = createHttp()
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+      search.q ? counted(1, 4) : Promise.reject(new Error('synthetic summary failure')),
+    )
+    renderRoute('/library?lens=needs_attention&q=needle', http)
+    await waitFor(() =>
+      expect(worksStatus()).toHaveTextContent(/^Matching: 1 work needing attention$/u),
+    )
   })
 
   it('V1: singular forms name one work', async () => {

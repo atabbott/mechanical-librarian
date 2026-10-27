@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Opening an Activity row of checks that changed nothing now shows one row per
+  field it names, with each field's recorded decision inside that field's
+  Details. A Library search under a lens now counts that lens, for example
+  "Matching: 3 of 24 works needing attention" (#1425).
+
 - A change decided while Audiobookshelf could not be reached is now written
   once the connection is back, without another action, instead of waiting for
   the next decision or restart. It is checked through its own book until then,

@@ -259,6 +259,13 @@ const preparationPassage = [
 const compactWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
+// A search under a lens counts that lens, in its own words (#1425).
+const lensMatching = {
+  all: ['all', ''],
+  needs_attention: ['attention', ' needing attention'],
+  no_attention_needed: ['clear', ' with no attention needed'],
+  not_matched: ['notMatched', ' not matched'],
+} as const
 
 const PreparationSummary = ({
   presentation,
@@ -2526,7 +2533,8 @@ export default function LibraryPage({
   const { http, updates, queryClient } = useReviewContext()
   // Global figures read the library summary, which carries no q (#1284).
   const summary = useQuery(librarySummaryQuery(http))
-  const summaryWorks = summary.data?.counts.all
+  const [lensCount, lensWords] = lensMatching[search.lens]
+  const lensTotal = summary.data?.counts[lensCount]
   const summaryAttention = summary.data?.counts.attention
   const summaryNotMatched = summary.data?.counts.notMatched
   const attentionTitleId = useId()
@@ -4090,9 +4098,9 @@ export default function LibraryPage({
               {data
                 ? (!search.q
                     ? workCount(data.counts.all)
-                    : summaryWorks === undefined
-                      ? `Matching: ${workCount(data.counts.all)}`
-                      : `Matching: ${String(data.counts.all)} of ${workCount(summaryWorks)}`) +
+                    : lensTotal === undefined
+                      ? `Matching: ${workCount(data.counts[lensCount])}${lensWords}`
+                      : `Matching: ${String(data.counts[lensCount])} of ${workCount(lensTotal)}${lensWords}`) +
                   (search.q
                     ? ''
                     : summaryNotMatched === undefined

@@ -2,7 +2,7 @@ import { invalidateForegroundQueries } from '../queryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AmbiguousMutationError,
   ApiError,
@@ -294,12 +294,15 @@ function ActivityEventRow({
   expanded,
   onToggle,
   day,
+  children,
 }: {
   event: ActivityEventView
   expanded: boolean
   onToggle: () => void
   /** A member recorded on another day than its checks row says so. */
   day?: string
+  /** Records shown inside this row's Details, after its own. */
+  children?: ReactNode
 }) {
   const changeId = event.change_id || event.event_id
   const advice =
@@ -389,6 +392,7 @@ function ActivityEventRow({
           {event.transition_id ? (
             <ActivityTransitions key={changeId} eventId={event.transition_id} advice={advice} />
           ) : null}
+          {children}
         </div>
       ) : null}
     </article>
@@ -1120,9 +1124,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           className="cm-activity-events"
           ref={eventsElement}
           onFocus={(event) => {
-            // A member's list is `activity-checks-{key}`; its toggle's focus
-            // key is `checks-{key}`.
-            const list = event.target.closest('.cm-activity-checks')
+            // A member's list is `activity-checks-{key}`, never a field's own
+            // inner list; its toggle's focus key is `checks-{key}`.
+            const list = event.target.closest('.cm-activity-event-group > .cm-activity-checks')
             ledgerFocus.current = {
               control: event.target,
               toggle: list ? list.id.replace(/^activity-/u, '') : undefined,
@@ -1171,7 +1175,14 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 )
               }
               const open = expandedChecks === row.key
-              const fields = new Set(row.members.map((member) => member.destination)).size
+              // One row per checked field (#1425).
+              const byField = new Map<string, ActivityEventView[]>()
+              for (const member of row.members)
+                byField.set(member.destination, [
+                  ...(byField.get(member.destination) ?? []),
+                  member,
+                ])
+              const fields = byField.size
               const sentence = `Checked ${String(fields)} ${fields === 1 ? 'field' : 'fields'}, no changes`
               return (
                 <div className="cm-activity-event-group" key={`checks-${row.key}`}>
@@ -1200,18 +1211,46 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   </article>
                   {open ? (
                     <ul className="cm-activity-checks" id={`activity-checks-${row.key}`}>
-                      {row.members.map((member) => {
-                        const changeId = member.change_id || member.event_id
-                        const expanded = expandedId === changeId
+                      {[...byField.values()].map((members) => {
+                        // A field leads with what its check found; the decision
+                        // it checked opens inside that field's Details.
+                        const member =
+                          members.find((item) => item.state !== 'recorded') ?? members[0]
+                        if (!member) return null
+                        const leadId = member.change_id || member.event_id
+                        const expanded = members.some(
+                          (item) => (item.change_id || item.event_id) === expandedId,
+                        )
                         const memberDay = dateParts(member.occurred_at).day
+                        const paired = members.filter((item) => item !== member)
                         return (
-                          <li key={changeId}>
+                          <li key={leadId}>
                             <ActivityEventRow
                               event={member}
                               expanded={expanded}
-                              onToggle={() => setExpandedId(expanded ? null : changeId)}
+                              onToggle={() => setExpandedId(expanded ? null : leadId)}
                               {...(memberDay === day ? {} : { day: memberDay })}
-                            />
+                            >
+                              {paired.length ? (
+                                <ul className="cm-activity-checks">
+                                  {paired.map((item) => {
+                                    const itemId = item.change_id || item.event_id
+                                    const itemOpen = expandedId === itemId
+                                    const itemDay = dateParts(item.occurred_at).day
+                                    return (
+                                      <li key={itemId}>
+                                        <ActivityEventRow
+                                          event={item}
+                                          expanded={itemOpen}
+                                          onToggle={() => setExpandedId(itemOpen ? leadId : itemId)}
+                                          {...(itemDay === day ? {} : { day: itemDay })}
+                                        />
+                                      </li>
+                                    )
+                                  })}
+                                </ul>
+                              ) : null}
+                            </ActivityEventRow>
                           </li>
                         )
                       })}
