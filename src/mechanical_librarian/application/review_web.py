@@ -72,6 +72,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
     TargetFacts,
+    TargetField,
     recording_variant_conflict,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -717,7 +718,7 @@ class InspectCurrentReviewCase:
             # chained.
             raise ReviewWebError("unavailable") from error
         target_fields = {
-            destination.value: value.to_data()
+            destination.value: _presented_field(value)
             for destination, value in canonical_target_fields(
                 report.target.fields
             ).items()
@@ -2147,6 +2148,17 @@ def _report_title(report: dict[str, object]) -> str:
     return "Untitled"
 
 
+def _presented_field(field: TargetField) -> dict[str, object]:
+    """One current field as review shows it, without the store's restore flag.
+
+    Whether a description can be written back is decided where a restore is
+    planned (#1424); the owner reads the value, not that flag.
+    """
+    data = field.to_data()
+    data.pop("restorable", None)
+    return data
+
+
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -3372,9 +3384,7 @@ def _library_item(
         "summary": None
         if case is not None
         else {
-            "fields": cast(
-                "list[dict[str, object]]", report.target.to_data()["fields"]
-            ),
+            "fields": [_presented_field(field) for field in report.target.fields],
             "reason": (
                 "No review decision is recorded for this work. Its current values "
                 "are shown exactly as Mechanical Librarian last read them."

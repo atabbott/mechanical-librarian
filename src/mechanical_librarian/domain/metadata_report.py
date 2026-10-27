@@ -90,7 +90,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v57"
+REPORT_SCHEMA = "metadata-report-v58"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -365,11 +365,23 @@ class TargetField:
     destination: TargetDestination
     state: TargetFieldState
     value: str | bool | tuple[str, ...] | tuple[TargetSeries, ...] | None = None
+    # Whether writing this description's value back reproduces the form the
+    # library stores it in (#1424). Only a description value can be restorable,
+    # and only a description carries the flag.
+    restorable: bool = False
 
     def __post_init__(self) -> None:
         if (
             type(self.destination) is not TargetDestination
             or type(self.state) is not TargetFieldState
+            or type(self.restorable) is not bool
+            or (
+                self.restorable
+                and (
+                    self.destination is not TargetDestination.DESCRIPTION
+                    or self.state is not TargetFieldState.VALUE
+                )
+            )
         ):
             raise ReportValueError("target field is invalid")
         if self.state is not TargetFieldState.VALUE:
@@ -436,11 +448,14 @@ class TargetField:
             ]
         elif type(self.value) is tuple:
             value = list(self.value)
-        return {
+        data: dict[str, object] = {
             "destination": self.destination.value,
             "state": self.state.value,
             "value": value,
         }
+        if self.destination is TargetDestination.DESCRIPTION:
+            data["restorable"] = self.restorable
+        return data
 
 
 @dataclass(frozen=True, slots=True)
@@ -6131,7 +6146,12 @@ def _report_from_data(value: object) -> MetadataReport:
         target["connection"],
         target["library"],
         target["item"],
-        tuple(_target_field_from_data(item) for item in _list(target["fields"])),
+        tuple(
+            _target_field_from_data(
+                item, flagged=root["schema_version"] == REPORT_SCHEMA
+            )
+            for item in _list(target["fields"])
+        ),
     )
     return MetadataReport(
         root["report_id"],
@@ -6280,8 +6300,16 @@ def _audio_chapter_from_data(value: object) -> AudioChapter:
         raise ReportValueError("audio chapter is invalid") from error
 
 
-def _target_field_from_data(value: object) -> TargetField:
-    item = _object(value, {"destination", "state", "value"})
+def _target_field_from_data(value: object, *, flagged: bool = True) -> TargetField:
+    # A report of an earlier schema is read in its own shape, without the
+    # description's restore flag, so it is refused for its schema as before.
+    described = (
+        flagged and type(value) is dict and value.get("destination") == "description"
+    )
+    item = _object(
+        value,
+        {"destination", "state", "value"} | ({"restorable"} if described else set()),
+    )
     destination = TargetDestination(item["destination"])
     state = TargetFieldState(item["state"])
     raw = item["value"]
@@ -6307,7 +6335,10 @@ def _target_field_from_data(value: object) -> TargetField:
             parsed = raw
     elif raw is not None:
         raise ReportValueError("nonvalue target field has a value")
-    return TargetField(destination, state, parsed)
+    restorable = item.get("restorable", False)
+    if type(restorable) is not bool:
+        raise ReportValueError("target field is invalid")
+    return TargetField(destination, state, parsed, restorable)
 
 
 def _field_result_from_data(value: object) -> FieldResult:

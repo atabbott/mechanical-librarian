@@ -11,10 +11,16 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from scripts.qualify_audiobookshelf_field_effect import DESCRIPTION_LANDINGS
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
     _raw_cover_authority,
+    visible_stored_description,
+)
+from mechanical_librarian.adapters.providers.visible_text import (
+    DESCRIPTION_OVERSIZED,
+    visible_description,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
@@ -39,8 +45,15 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetFieldState,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.audiobookshelf_targets import synthetic_audio_file as _audio_file
 from tests.support.audiobookshelf_targets import target_snapshot
+from tests.support.proposal_evidence import (
+    _fields,
+    _local_description,
+    _report,
+    _result,
+)
 
 
 @pytest.mark.parametrize(
@@ -1240,15 +1253,20 @@ def test_declared_cover_locations_share_exact_reader_contract(location, value, s
 
 
 @pytest.mark.parametrize(
-    "description",
+    ("description", "visible"),
     (
-        "First paragraph.\n\nSecond paragraph.",
-        " \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",
-        "<p>First paragraph.</p><p>Second<br />paragraph.</p>",
-        "First paragraph.\u2028Second paragraph.",
+        ("First paragraph.\n\nSecond paragraph.",) * 2,
+        (" \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",) * 2,
+        (
+            "<p>First paragraph.</p><p>Second<br />paragraph.</p>",
+            "First paragraph. • Second • paragraph.",
+        ),
+        ("First paragraph.\u2028Second paragraph.",) * 2,
     ),
 )
-def test_audiobook_incumbent_description_retains_paragraphs(description: str) -> None:
+def test_audiobook_incumbent_description_retains_paragraphs(
+    description: str, visible: str
+) -> None:
     snapshot = _audiobook_snapshot(
         {
             "metadata": {"title": "Recorded title", "description": description},
@@ -1262,7 +1280,7 @@ def test_audiobook_incumbent_description_retains_paragraphs(description: str) ->
     )
     assert snapshot.media_kind == "audiobook"
     assert field.state is TargetFieldState.VALUE
-    assert field.value == description
+    assert field.value == visible
     facts = TargetFacts("primary", "audiobooks", "item-1", snapshot.fields)
     assert TargetFacts.from_data(facts.to_data()) == facts
 
@@ -1292,3 +1310,126 @@ def test_audiobook_incumbent_description_still_refuses_unsafe_text(
     )
     assert snapshot.media_kind == "audiobook"
     assert (field.state, field.value) == (TargetFieldState.MALFORMED, None)
+
+
+@pytest.mark.parametrize(
+    ("stored", "visible"),
+    (
+        ("Fish &amp; chips.", "Fish & chips."),
+        ("One &lt; two and three &gt; two.", "One < two and three > two."),
+        ("A <b>bold</b> claim.", "A bold claim."),
+        # A reading that would decode again is refused, not read twice.
+        ("Already &amp;amp; escaped.", None),
+        ("First &amp; one.\n\nSecond.", "First & one.\n\nSecond."),
+        ("Before  after.", "Before  after."),
+        ("Before <script>x</script> after.", None),
+    ),
+    ids=("ampersand", "angles", "bold", "escaped", "paragraphs", "dropped", "script"),
+)
+def test_a_stored_description_reads_as_the_text_it_shows(
+    stored: str, visible: str | None
+) -> None:
+    """Character references decode, markup renders, paragraphs stay (#1424)."""
+    assert visible_stored_description(stored) == visible
+
+
+@pytest.mark.parametrize(
+    ("case", "sent", "stored", "outcome"),
+    DESCRIPTION_LANDINGS,
+    ids=[row[0] for row in DESCRIPTION_LANDINGS],
+)
+def test_each_observed_landing_reads_as_the_value_sent_unless_the_service_dropped_it(
+    case: str, sent: str, stored: str, outcome: str
+) -> None:
+    # Every pinned service's stored form, against the same reading of the value
+    # sent: equal exactly when the write is a landing (#1424).
+    assert (visible_stored_description(stored) == visible_stored_description(sent)) is (
+        outcome == "verified"
+    )
+
+
+def test_a_stored_description_is_bounded_before_the_renderer_reads_it() -> None:
+    bounded = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 7) + "</b>"
+    oversized = "<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 6) + "</b>"
+    with patch(
+        "mechanical_librarian.adapters.providers.visible_text.visible_description",
+        wraps=visible_description,
+    ) as renderer:
+        assert visible_stored_description(bounded) == "x" * (
+            MAX_DESCRIPTION_CHARACTERS - 7
+        )
+        assert visible_stored_description(oversized) is DESCRIPTION_OVERSIZED
+    assert renderer.call_count == 1
+    states = {
+        value: next(
+            (field.state, field.value)
+            for field in target_snapshot(
+                {"title": "Current title", "description": value}
+            ).fields
+            if field.destination is TargetDestination.DESCRIPTION
+        )
+        for value in (bounded, oversized, "<p>Unclosed", "<p><br /></p>")
+    }
+    # Markup the renderer refuses, or that shows no text, is admitted as stored
+    # under the incumbent grammar, so a markup-only placeholder stays one.
+    assert states == {
+        bounded: (TargetFieldState.VALUE, "x" * (MAX_DESCRIPTION_CHARACTERS - 7)),
+        oversized: (TargetFieldState.OVERSIZED, None),
+        "<p>Unclosed": (TargetFieldState.VALUE, "<p>Unclosed"),
+        "<p><br /></p>": (TargetFieldState.VALUE, "<p><br /></p>"),
+    }
+
+
+def test_an_attribute_the_service_stores_never_enters_the_report() -> None:
+    # Only rendered text is admitted, so a path inside an attribute is dropped
+    # with its markup, while one the text shows is still refused (#1424).
+    states = [
+        next(
+            (field.state, field.value)
+            for field in target_snapshot(
+                {"title": "Current title", "description": value}
+            ).fields
+            if field.destination is TargetDestination.DESCRIPTION
+        )
+        for value in (
+            '<a href="/srv/media/book.m4b">Read</a>',
+            "<p>Read /srv/media/book.m4b</p>",
+        )
+    ]
+    assert states == [
+        (TargetFieldState.VALUE, "Read"),
+        (TargetFieldState.MALFORMED, None),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("stored", "assessment", "outcome"),
+    (
+        ("Fish &amp; chips for the qualification.", "preserves_target", "keep"),
+        (
+            "Fish and chips for the qualification.",
+            "replaces_target",
+            "unresolved_choice",
+        ),
+    ),
+)
+def test_an_escaped_incumbent_is_not_proposed_again_as_its_own_text(
+    stored: str, assessment: str, outcome: str
+) -> None:
+    # The service stored `&` as `&amp;`; admitted as the text it shows, the
+    # same candidate preserves it instead of returning as a replacement, while
+    # a genuinely different incumbent still does (#1424).
+    field = next(
+        field
+        for field in target_snapshot(
+            {"title": "Current title", "description": stored}
+        ).fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    report = _report(
+        fields=_fields(description=field),
+        local_claims=(_local_description("Fish & chips for the qualification."),),
+    )
+    result = _result(evaluate_report(report), TargetDestination.DESCRIPTION)
+    assert [value.assessment.value for value in result.alternatives] == [assessment]
+    assert result.outcome.value == outcome

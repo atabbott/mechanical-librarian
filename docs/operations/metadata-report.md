@@ -101,11 +101,17 @@ check. A structurally safe target scalar, contributor/list member, series
 component, description, or collection cardinality that exceeds its fixed field
 bound is `oversized`; invalid typed syntax is never hidden by size. Unsafe,
 private-path, credential-shaped, or otherwise invalid non-title input remains
-`malformed`. An incumbent description also admits attribute-free HTML tag
-slashes (`</p>`, `<br />`) and U+2028 line separators and keeps its exact text.
-Text whose only defect is C1 control characters is refused by the validator with
-its own reason, but the report and UI still show that field only as `malformed`
-(#1251). The report is `metadata-report-v57` (#1260). For the title specifically, a
+`malformed`. An incumbent description is admitted as the text Audiobookshelf
+shows (#1424): text carrying markup is rendered as a provider description is,
+each paragraph or line joined by ` • `, and other text keeps its exact text,
+U+2028 line separators included, with character references such as `&amp;`
+decoded and a decoded no-break or other space read as a space. Text that is
+markup only once decoded, or that would decode again, is kept as stored. A
+description also records `restorable`: whether writing its text back would
+store it as it is stored now. Text whose only defect is C1 control characters is refused by the
+validator with its own reason, but the report and UI still show that field only
+as `malformed` (#1251). The report is `metadata-report-v58`. For the title
+specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
 oversized title or a missing, null, empty, unloaded, or non-string title instead

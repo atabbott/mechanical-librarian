@@ -89,6 +89,23 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Visible incumbent description successor (#1424)
+
+The current F19a, F20 and F46 records move to semantic revision 77 over base
+`0fd89004`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. Report v58
+binds the new semantics; **clean rebuild required**. An Audiobookshelf incumbent
+description is admitted, pre-read and read back as the text it shows, so an
+escaped landing verifies instead of reading as a third value. Every provider
+and local description is read once by the same function, text that is markup
+once decoded is held to the renderer or is unprojectable, and keeping a
+description whose formatting a restore would flatten is refused before any
+request. That
+changes which incumbents a description proposal preserves and which restores
+run, not what any qualified operation may do, so no operation gains or loses
+authority.
+
 ## Unplanned connection wait successor (#1423)
 
 The current F19a, F20 and F46 records move to semantic revision 76 over base

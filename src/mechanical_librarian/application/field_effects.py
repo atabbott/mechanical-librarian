@@ -60,16 +60,26 @@ class TargetObservation:
     value: object
     version: str
     subtitle_companion: TargetObservation | None = None
+    # Whether the target reads this value as the form the service stores the
+    # plan's desired value in, when that differs from the value sent (#1424).
+    # Only the desired side consults it; the pre-read stays exact.
+    desired_landed: bool = False
 
     def matches(
         self, plan: FieldEffectPlan, *, desired: bool, check_version: bool = False
     ) -> bool:
-        if self.value != (plan.desired_value if desired else plan.pre_value):
+        landed = desired and self.desired_landed
+        if not landed and self.value != (
+            plan.desired_value if desired else plan.pre_value
+        ):
             return False
         # The desired value's version is the planned shape a landed write
-        # leaves behind; the pre-value's is the version the plan captured.
+        # leaves behind, or the stored form's own when the service keeps it
+        # another way; the pre-value's is the version the plan captured.
         if check_version and self.version != (
-            field_value_version(plan.destination, plan.desired_value)
+            field_value_version(
+                plan.destination, self.value if landed else plan.desired_value
+            )
             if desired
             else plan.target_version
         ):
@@ -199,6 +209,7 @@ class FieldEffectRepository(Protocol):
     def field_effect_capability_suspension(
         self, connection: str, destination: str
     ) -> str | None: ...
+    def field_effect_restore_refused(self, plan: FieldEffectPlan) -> bool: ...
     def grant_field_effect_consent_matrix(
         self,
         connection: str,
@@ -948,6 +959,8 @@ class GuardedFieldApplication:
     ) -> FieldEffectOperation | None:
         """Evaluate current guards in their fixed order without claiming."""
         plan = operation.plan
+        if self._repository.field_effect_restore_refused(plan):
+            return self._stale(operation, "restore_unavailable")
         if not self._backup.ready(plan):
             return self._stale(operation, "backup")
         for member in (plan, plan.subtitle_plan()):

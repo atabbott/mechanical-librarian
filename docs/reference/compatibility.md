@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1424 advances the report to `metadata-report-v58`: an Audiobookshelf
+incumbent description is admitted as the text it shows, and a description
+write Audiobookshelf stored escaped or sanitised verifies when the stored form
+shows the value sent. **Clean rebuild required** for every predecessor
+application database; startup refuses v57 reports before mutation. No
+migration, adoption, conversion, import or downgrade is supplied; F19a/F20/F46
+records are displaced with their permission sets unchanged.
+
 #1407 adds the derived `provider_match_state` column to
 `metadata_report_browse_facts`, folded by its insert trigger and checked at
 open beside `provider_limited`. **Clean rebuild required** for every
@@ -144,7 +152,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v57` plus `proposal-set-v8` under
+  `metadata-report-v58` plus `proposal-set-v8` under
   `fixed-conservative-v36`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
@@ -563,3 +571,23 @@ any mutation and nothing is adopted or converted. Admission now carries a work's
 active manual hold to its successor case, without a schema change. F19a/F20/F46
 records are displaced because the decision, persistence and web modules they
 bind changed, with permission sets unchanged.
+
+## Visible incumbent descriptions (#1424)
+
+Report `metadata-report-v58` adds one persisted field: every description target
+field carries a required boolean `restorable`, and no other destination may
+carry it. Audiobookshelf stores a description as sanitised HTML, so
+`Fish & chips` is stored as `Fish &amp; chips`. An incumbent description is now
+the text it shows: markup is rendered through the providers' visible-text
+renderer, paragraphs joined by ` • `, and other text has its character
+references decoded. `restorable` records whether that text, written back, is
+stored as it was: the stored form equals the text, or the text with only `&`,
+`<` and `>` escaped, and the text carries no `<`, `>` or character reference.
+The raw stored form is never persisted. Because the field
+is in the target, it changes target fingerprints; the review API omits it. A v57
+field held the stored form, so the exact SQLite discriminator requires a
+**clean rebuild** under ADR-0013. Prior stores are refused before mutation. No
+migration, adoption or relabelling is supplied. The comparison version, the
+proposal and decision policies and the proposal, packet, outcome and review
+envelopes are unchanged.
+

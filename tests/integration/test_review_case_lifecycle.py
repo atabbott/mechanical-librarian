@@ -566,17 +566,21 @@ def test_description_advice_uses_real_persisted_admission_and_guarded_installed_
 )
 @pytest.mark.parametrize("media_kind", ("ebook", "audiobook"))
 @pytest.mark.parametrize(
-    "current",
+    ("current", "shown"),
     (
-        " \tFirst paragraph.\n\nSecond paragraph.\t ",
-        " \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",
-        " \t<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>\t ",
-        " \tFirst paragraph.\u2028Second paragraph.\t ",
+        (" \tFirst paragraph.\n\nSecond paragraph.\t ",) * 2,
+        (" \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",) * 2,
+        # Stored markup is admitted as the text it shows (#1424).
+        (
+            " \t<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>\t ",
+            "First paragraph. • Second • paragraph.",
+        ),
+        (" \tFirst paragraph.\u2028Second paragraph.\t ",) * 2,
     ),
     ids=("lf", "crlf", "markup", "line_separator"),
 )
 def test_multiline_incumbent_description_persists_and_applies(
-    tmp_path, effect, media_kind, current
+    tmp_path, effect, media_kind, current, shown
 ):
     """Real intake, current SQL/review replay and guarded owner choice for both media."""
     import httpx
@@ -679,7 +683,7 @@ def test_multiline_incumbent_description_persists_and_applies(
             for field in TargetFacts.from_data(case.target).fields
             if field.destination is TargetDestination.DESCRIPTION
         )
-        == current
+        == shown
     )
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 
@@ -690,7 +694,7 @@ def test_multiline_incumbent_description_persists_and_applies(
             for field in projected["fields"]
             if field["destination"] == "description"
         )["current"]["value"]
-        == current
+        == shown
     )
     decision = _audiobook_accept(case, "description", "paragraph-replacement-0001")
     if effect == "keep_current":
@@ -712,7 +716,7 @@ def test_multiline_incumbent_description_persists_and_applies(
     target.before_apply = lambda plan: writes.append(plan.plan_id)
     authority = FakeAuthorityCurrentness()
     consent = FakeConsentCurrentness(repository.field_effect_consent_envelope_identity)
-    version = field_value_version("description", current)
+    version = field_value_version("description", shown)
     if effect != "keep_current":
         authority.bind(
             decision,
@@ -740,7 +744,7 @@ def test_multiline_incumbent_description_persists_and_applies(
         library="ebooks",
         work_id="item-1",
         destination="description",
-        pre_value=current,
+        pre_value=shown,
         desired_value=decision.selected_value,
         target_fingerprint=case.target_fingerprint,
         target_version=version,
@@ -761,13 +765,15 @@ def test_multiline_incumbent_description_persists_and_applies(
         repository.close()
         return
     assert operation is not None
-    assert operation.plan.pre_value == current
+    assert operation.plan.pre_value == shown
     target.seed(operation.plan)
     if effect == "formatting_drift":
         drifted = (
-            current.replace("\r\n", "\n")
-            if "\r\n" in current
-            else current.replace("\n", "\r\n").replace("\u2028", "\n")
+            shown.replace("\r\n", "\n")
+            if "\r\n" in shown
+            else shown.replace("\n", "\r\n")
+            .replace("\u2028", "\n")
+            .replace(" • ", "\n")
         )
         target.drift(operation.plan, drifted)
     elif effect == "wrong_readback":
@@ -797,6 +803,154 @@ def test_multiline_incumbent_description_persists_and_applies(
     ]
     assert (audit[0]["kind"], audit[-1]["kind"]) == ("planned", "verified")
     repository.close()
+
+
+@pytest.mark.parametrize(
+    ("stored", "restorable"),
+    (
+        ("Plain incumbent description.", True),
+        ("Fish &amp; chips for the incumbent.", True),
+        ("<p>Fish &amp; chips</p><p>for the <b>incumbent</b>.</p>", False),
+        ("&lt;b&gt;bold incumbent text.", False),
+        ("Already &amp;amp; escaped incumbent.", False),
+        ("&lt;img src=x onerror=alert(1)&gt;Incumbent.", False),
+    ),
+    ids=("plain", "entity", "formatted", "escaped_tag", "double", "handler"),
+)
+def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
+    tmp_path: Path, stored: str, restorable: bool
+) -> None:
+    """Keeping the current description after a verified write restores it (#1424).
+
+    Only text that the library stores exactly as written, or with nothing but
+    a bare ampersand or angle bracket escaped, is written back. Formatting the
+    restore would flatten is refused before any request reaches the library.
+    """
+    import html
+    from types import SimpleNamespace
+
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.adapters.field_effect_runtime import (
+        PersistedEffectConsent,
+    )
+    from mechanical_librarian.domain.readable_activity import failure_reason
+    from tests.support.audiobookshelf_targets import (
+        FieldEffectTargetCase,
+        target_snapshot,
+    )
+    from tests.support.proposal_evidence import (
+        _local_description,
+        consensus_local_title,
+    )
+
+    desired = "A different description from local metadata."
+    library = FieldEffectTargetCase()
+    library.detail["media"]["metadata"]["description"] = stored
+    # Every pinned Audiobookshelf escapes a bare ampersand and angle bracket.
+    library.stored_description = lambda value: html.escape(value, quote=False)
+    snapshot = target_snapshot({"title": "Current title", "description": stored})
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-1", snapshot.fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "epub"),
+        local_claims=(
+            consensus_local_title("Candidate title"),
+            _local_description(desired),
+        ),
+        local_reasons=("opening_matter_title",),
+        providers=(),
+    )
+    repository = open_repository(tmp_path / "reviews.sqlite")
+    try:
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        repository.grant_field_effect_consents(
+            "primary", ("ebooks",), ("description",), 6
+        )
+        service = GuardedFieldApplication(
+            repository,
+            library.target,
+            FakeBackupReadiness(),
+            FakeCapabilityObserver("c" * 64),
+            PersistedFieldEffectAuthority(repository),
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            SimpleNamespace(),
+            FakeForwardReevaluation(),
+            lambda: 1001,
+        )
+
+        def applied(decision: HumanDecision) -> FieldEffectOperation:
+            repository.record_human_decision(decision)
+            source = repository.field_effect_authority_source(decision)
+            operation = service.plan(
+                decision,
+                connection="primary",
+                library="ebooks",
+                work_id="item-1",
+                destination="description",
+                pre_value=source["pre_value"],
+                desired_value=source["decision_value"],
+                target_fingerprint=case.target_fingerprint,
+                target_version=cast(str, source["target_version"]),
+                dependency_digests=cast(tuple[str, ...], source["dependency_digests"]),
+                capability_digest="c" * 64,
+                allow_corrective_keep_current=decision.outcome == "keep_current",
+            )
+            assert operation is not None
+            return service.apply(operation.plan.plan_id)
+
+        accept = _audiobook_accept(case, "description", "restore-accept-0001")
+        assert applied(accept).state == "verified"
+        assert library.detail["media"]["metadata"]["description"] == desired
+        library.requests.clear()
+        restored = applied(
+            HumanDecision.create(
+                case,
+                proposal_id=accept.proposal_id,
+                target_fingerprint=case.target_fingerprint,
+                destination="description",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="restore-keep-current-0001",
+                occurred_at=1_000,
+            )
+        )
+        if not restorable:
+            assert (restored.state, restored.failure) == (
+                "stale",
+                "restore_unavailable",
+            )
+            assert library.requests == []
+            assert library.detail["media"]["metadata"]["description"] == desired
+            assert failure_reason("restore_unavailable") == (
+                "This description has formatting that can't be restored from "
+                "here; restore it in Audiobookshelf"
+            )
+            # The refusal asks the owner to act; it is not healthy progress.
+            assert [
+                (signal["kind"], signal["field"])
+                for signal in cast(
+                    list[dict[str, object]],
+                    repository.operational_snapshot()["signals"],
+                )
+                if signal.get("work_id") == "item-1"
+            ] == [("owner_action_required", "description")]
+        else:
+            assert (restored.state, restored.failure) == ("verified", None)
+            # The library holds the bytes it held before the first write.
+            assert library.detail["media"]["metadata"]["description"] == stored
+            assert [request.method for request in library.requests].count("PATCH") == 1
+    finally:
+        repository.close()
+        library.close()
 
 
 @pytest.mark.parametrize(

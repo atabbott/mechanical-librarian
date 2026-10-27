@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageRequest,
     epub_resource_identity,
 )
+from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -271,6 +272,10 @@ def package_facts(
             EpubInspectionField.SUBTITLE,
         }:
             canonical = normalize_title(observed)
+        if canonical is not None and field is EpubInspectionField.DESCRIPTION:
+            # Read once, as every description is (#1424).
+            shown = stated_description(canonical)
+            canonical = shown if type(shown) is str else None
         state = forced_state or (
             "untyped"
             if field is EpubInspectionField.SUBJECT

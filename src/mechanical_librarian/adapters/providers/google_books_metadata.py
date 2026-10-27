@@ -28,10 +28,7 @@ from mechanical_librarian.adapters.providers.sdk import (
     provider_client_lifetime,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
-    DESCRIPTION_OVERSIZED as _DESCRIPTION_OVERSIZED,
-)
-from mechanical_librarian.adapters.providers.visible_text import (
-    visible_description as _visible_description,
+    projected_description,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
@@ -697,29 +694,14 @@ def _candidate(
         add(ClaimKind.CREATOR, None, ClaimScope.WORK, role="author")
     add(ClaimKind.PUBLISHER, info.get("publisher"), ClaimScope.EDITION)
     description = info.get("description")
-    transformed_description = _visible_description(description)
-    description_transformed = (
-        type(description) is str
-        and ("<" in description or ">" in description)
-        and type(transformed_description) is str
+    # Hostile markup is unprojectable rather than an apparent absence, and a
+    # value that is not text stays what it is for the field to judge (#1424).
+    projected, description_transformed = (
+        projected_description(description)
+        if type(description) is str
+        else (description, False)
     )
-    if description_transformed:
-        add(ClaimKind.DESCRIPTION, transformed_description, ClaimScope.WORK)
-    elif transformed_description is _DESCRIPTION_OVERSIZED:
-        add(
-            ClaimKind.DESCRIPTION,
-            "x" * (MAX_DESCRIPTION_CHARACTERS + 1),
-            ClaimScope.WORK,
-        )
-    elif type(description) is str and ("<" in description or ">" in description):
-        # Do not turn hostile markup into an apparent absence.
-        add(
-            ClaimKind.DESCRIPTION,
-            description if len(description) > MAX_DESCRIPTION_CHARACTERS else object(),
-            ClaimScope.WORK,
-        )
-    else:
-        add(ClaimKind.DESCRIPTION, description, ClaimScope.WORK)
+    add(ClaimKind.DESCRIPTION, projected, ClaimScope.WORK)
     add(ClaimKind.LANGUAGE, info.get("language"), ClaimScope.EDITION)
 
     evidence = [

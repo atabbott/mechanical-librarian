@@ -116,6 +116,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
+    FieldEffectPlan,
     decision_value_kind,
     field_value_version,
     project_decision_value,
@@ -1475,6 +1476,32 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             return tuple(pending)
         except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
             raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def field_effect_restore_refused(self, plan: FieldEffectPlan) -> bool:
+        """Whether this plan restores a description its text cannot write back.
+
+        A corrective keep-current writes the case's admitted text. Where
+        Audiobookshelf stored that text with formatting the admission rendered
+        away, writing it would replace the formatting with its visible text, so
+        the restore is refused before any request (#1424).
+        """
+        if plan.destination != "description" or plan.authority.origin != "human":
+            return False
+        outcome = self._connection.execute(
+            "SELECT json_extract(document,'$.outcome') FROM human_decisions "
+            "WHERE decision_id=?",
+            (plan.authority.decision_id,),
+        ).fetchone()
+        if outcome != ("keep_current",):
+            return False
+        case = json.loads(self.get_review_case(plan.authority.review_case_id))["case"]
+        field = next(
+            item
+            for item in case["target"]["fields"]
+            if item["destination"] == "description"
+        )
+        return field["state"] == "value" and field["restorable"] is not True
 
     @local_operation
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
@@ -4284,7 +4311,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             for connection, library, work_id, destination, state, document in rows:
                 operation = FieldEffectOperation.from_json(document)
                 failure = operation.failure
-                if failure in {"target_currentness", "third_value", "readback"}:
+                if failure in {
+                    "target_currentness",
+                    "third_value",
+                    "readback",
+                    "restore_unavailable",
+                }:
                     kind, cause = "owner_action_required", "currentness_conflict"
                     scope = "field"
                     signal_library, signal_work, signal_field = (

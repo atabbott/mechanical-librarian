@@ -116,6 +116,8 @@ _FAILURE_REASONS = {
     "owner_abandoned": "You stopped this change",
     "readback": "The change could not be confirmed after writing",
     "restart_readback": "The change could not be confirmed after a restart",
+    "restore_unavailable": "This description has formatting that can't be "
+    "restored from here; restore it in Audiobookshelf",
     "retry_exhausted": "The change was retried and then stopped safely",
     "target_changed": "The current value changed after this was prepared",
     "target_failure": "Audiobookshelf refused the change",

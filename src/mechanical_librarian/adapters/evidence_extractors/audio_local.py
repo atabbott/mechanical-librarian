@@ -13,6 +13,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.domain.audio_inspection import (
     MAX_CHAPTERS,
     MAX_DESCRIPTION_CHARACTERS,
@@ -329,6 +330,12 @@ class _Builder:
         resolved: str | None = canonical if canonical is not None else text
         if state == "oversized":
             resolved = None
+        elif field is AudioInspectionField.DESCRIPTION:
+            # Read once, as every description is (#1424).
+            shown = stated_description(text)
+            state, resolved = (
+                ("valid", shown) if type(shown) is str else ("malformed", None)
+            )
         elif field is AudioInspectionField.ASIN:
             # Every surface that can carry an ASIN arrives here, so the shape
             # is checked once.  A value that is not one is still what the file

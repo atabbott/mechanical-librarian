@@ -2018,6 +2018,53 @@ and every other projection keep the shared grammar and `_FORBIDDEN_CODEPOINTS`
 unchanged. Shadow-review packets may now carry literal markup or U+2028 in
 incumbent text, as JSON data only.
 
+Report v58 admits an Audiobookshelf incumbent description as the text it shows
+(#1424), because the service stores sanitised HTML: a bare `&`, `<` or `>` is
+stored as a character reference and `<script>` is dropped with its content. The
+adapter bounds the stored text at the description bound before anything parses
+it, as the provider path does, so an over-bound value is `oversized` unread. Text
+carrying `<` or `>` is rendered by the one provider renderer, which drops
+attributes and refuses rejected elements, event handlers and unbalanced markup;
+other text has only its character references decoded. The incumbent grammar
+above, original bounds, codepoints, paths and credentials, then checks the
+rendered text, so an attribute's path never enters the report while a path the
+text shows stays refused. Markup the renderer refuses or that shows no text is
+checked and kept as stored, as in v57. The write still sends the exact desired
+value. The pre-read and read-back read the field through the same conversion:
+the pre-read must equal the admitted text exactly, and read-back verifies only
+when the stored form shows what the desired value shows; a service that drops
+part of the value leaves a third value and is never resent. The pre-read
+compares visible text, so another actor's edit that changes only markup, such
+as making a word bold, is not a conflict and the write replaces it; an edit that
+changes the text shown still is. Read-back renders the desired value once: a
+desired value whose rendering still carries markup, or would decode again, never
+verifies against displayed markup. Every plain-text description is read once
+by the same function: the incumbent's, each provider's, and each local EPUB or
+audio description's. Its character references are decoded once, so both sides
+of a comparison are decoded exactly once and a provider stating an
+incumbent's own text is not a proposal. Text that carries a tag once decoded is
+markup, held to the same renderer and its refusals, and a reading that would
+still carry a tag or decode again is refused, so no decoded text becomes a claim
+with a live tag and `Fish &amp;amp; chips` is never read twice. Audible,
+Audnexus, iTunes and Google Books render such text and record the
+transformation; Open Library, Hardcover, Inventaire, Audiosilo and local files
+record none, so it is unprojectable there; the incumbent keeps it as stored,
+because Audiobookshelf shows an escaped tag as its literal brackets. Markup that
+Open Library, Hardcover, Inventaire, Audiosilo or a local EPUB or audio tag
+states is not read by that function and is kept as stated, as before #1424; the
+field projection refuses some of it, but slash-free markup such as
+`<img src=x onerror=alert(1)>Hi` remains a valid claim. The guard is the
+proposal policy's `_eligible_description`, which makes any description
+containing `<` or `>` ineligible, so such a claim never reaches a write. Keeping the
+current description after a verified write restores it only when the admitted
+field is `restorable`, meaning the service stores that text as it stored the
+original and the text carries no `<`, `>` or character reference. Otherwise the restore is refused before any
+request with `restore_unavailable`, and the owner is asked to restore the
+formatting in Audiobookshelf, because writing the rendered text would flatten
+it. The raw stored HTML is never persisted. The renderer's one new input is that
+bounded stored text; no request, write capability or authority is added. The report/SQL successor requires a clean rebuild, never
+migration.
+
 ## Author evidence authority
 
 Author attribution is evidence, never authority by itself (#1083). Opening and rear EPUB paths share whole-statement structural classification and the original bounded navigation selection; fragment roles never spread across a resource. Incidental credits cannot mint Authors authority, and complete-set proposal conflicts cannot be bypassed by the shadow policy. Report v46, proposal policy v28 and shadow policy v15 invalidate old admission bindings; clean rebuild required. Historical automatic documents remain historical. Consent, exact currentness, backup, optimistic preconditions, read-back and durable audit still govern every permitted effect.

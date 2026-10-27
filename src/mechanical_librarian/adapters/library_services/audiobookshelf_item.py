@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import time
@@ -23,6 +24,12 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_cover_path im
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
     normalize_ebook_location,
+)
+from mechanical_librarian.adapters.providers.visible_text import (
+    DESCRIPTION_OVERSIZED,
+    carries_markup,
+    decoded_description,
+    shown_description,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
@@ -64,6 +71,25 @@ from mechanical_librarian.domain.metadata_report import (
 
 _ASIN = re.compile(r"^[A-Za-z0-9]{10}$")
 _MISSING = object()
+
+
+def visible_stored_description(value: str) -> object:
+    """Read one stored Audiobookshelf description as the text it shows (#1424).
+
+    Audiobookshelf keeps a description as sanitised HTML. Through the supported
+    item read, 2.26.0, 2.36.0, 2.37.1 and 2.37.2 all store a bare `&`, `<` and
+    `>` as `&amp;`, `&lt;` and `&gt;`, keep `&amp;`, quotes and `<b>`, and drop
+    `<script>` with its content. Mechanical Librarian works in visible text, so
+    the stored value is read by the one reading every provider and local
+    description passes through, and text without markup keeps its paragraphs
+    exact (#1080). The service shows an escaped tag as its literal brackets, so
+    stored text that is markup only once decoded is never rendered as if it
+    were a tag. A value over the description bound is oversized before
+    anything reads it, one that reading refuses, or that is markup only once
+    decoded, is `None`, and one that shows no text is returned as stored.
+    """
+    shown, rendered = shown_description(value)
+    return None if rendered and not carries_markup(value) else shown
 
 
 class AudiobookshelfItemReader:
@@ -387,19 +413,33 @@ def _target_field(
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.DESCRIPTION:
-            value = validate_incumbent_description(
-                raw,
-                "target description",
-                max(len(raw), MAX_DESCRIPTION_CHARACTERS)
-                if type(raw) is str
-                else MAX_DESCRIPTION_CHARACTERS,
-            )
-            if len(value) > MAX_DESCRIPTION_CHARACTERS:
+            visible = visible_stored_description(raw) if type(raw) is str else raw
+            if visible is DESCRIPTION_OVERSIZED:
+                # Checked as stored, so an oversized value carrying forbidden
+                # text stays malformed rather than merely oversized.
+                validate_incumbent_description(
+                    raw, "target description", max(len(raw), MAX_DESCRIPTION_CHARACTERS)
+                )
                 return TargetField(destination, TargetFieldState.OVERSIZED)
+            # Markup the renderer will not read, or that shows no text at all,
+            # is admitted as stored, as before #1424, so a markup-only
+            # placeholder is still recognised as one (#1250).
+            value = validate_incumbent_description(
+                raw if visible is None else visible,
+                "target description",
+                MAX_DESCRIPTION_CHARACTERS,
+            )
+            # Writing the admitted text back reproduces the stored form only
+            # where Audiobookshelf stores that text itself or with just `&`,
+            # `<` and `>` escaped; anything else is formatting a restore from
+            # here would lose (#1424).
             return TargetField(
                 destination,
                 TargetFieldState.VALUE,
                 value,
+                restorable=raw in {value, html.escape(value, quote=False)}
+                and not carries_markup(value)
+                and decoded_description(value) == value,
             )
         if destination in {
             TargetDestination.AUTHORS,
@@ -622,4 +662,4 @@ def _reject_number(_: str) -> float:
     raise MetadataReportError("target response is invalid")
 
 
-__all__ = ["AudiobookshelfItemReader"]
+__all__ = ["AudiobookshelfItemReader", "visible_stored_description"]

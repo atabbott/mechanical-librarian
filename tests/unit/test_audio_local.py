@@ -1222,3 +1222,34 @@ def test_an_oversized_prefix_and_a_whole_value_are_two_observations() -> None:
         for value in interpretation.facts
         if value.field is AudioInspectionField.DESCRIPTION
     ) == [("oversized", True), ("valid", False)]
+
+
+@pytest.mark.parametrize(
+    ("stated", "canonical", "state"),
+    (
+        ("Fish &amp; chips.", "Fish & chips.", "valid"),
+        ("&lt;img src=x onerror=alert(1)&gt;Hi", None, "malformed"),
+        ("Fish &amp;amp; chips.", None, "malformed"),
+    ),
+    ids=("entity", "decoded_tag", "double"),
+)
+def test_a_description_tag_is_read_once_like_every_description(
+    stated: str, canonical: str | None, state: str
+) -> None:
+    # The file's words are kept as observed; the text it shows is read the
+    # way every description is, and what would need rendering is unread (#1424).
+    interpretation = _read(
+        _probe(),
+        sidecars=(
+            AudioSidecar(
+                AudioEvidenceSurface.SIDECAR_AUDIOBOOKSHELF,
+                "metadata.json",
+                json.dumps({"description": stated}),
+            ),
+        ),
+    )
+
+    assert [
+        (observed, value, fact_state)
+        for observed, value, fact_state, _ in _descriptions(interpretation)
+    ] == [(stated, canonical, state)]

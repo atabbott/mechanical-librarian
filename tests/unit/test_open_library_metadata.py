@@ -1112,6 +1112,93 @@ def test_optional_detail_failures_are_local_and_diagnosed_once(
         }
 
 
+@pytest.mark.parametrize(
+    ("stated", "state", "value"),
+    (
+        (
+            "Fish &amp; chips for the qualification.",
+            FieldState.VALID,
+            "Fish & chips for the qualification.",
+        ),
+        # Open Library records no rendering, so text that would need one once
+        # decoded, or that would decode again, is unprojectable.
+        ("&lt;b&gt;Bold&lt;/b&gt; claim.", FieldState.MALFORMED, None),
+        ("Fish &amp;amp; chips.", FieldState.MALFORMED, None),
+        # Markup the provider states is refused by the projection, as before.
+        ("<b>Stated</b> markup.", FieldState.MALFORMED, None),
+    ),
+    ids=("entity", "decoded_tag", "double", "stated_markup"),
+)
+def test_a_work_description_is_read_once_like_every_description(
+    stated: str, state: FieldState, value: str | None
+) -> None:
+    from mechanical_librarian.domain.proposal_set import (
+        ProposalAssessment,
+        evaluate_report,
+    )
+    from tests.support.audiobookshelf_targets import target_snapshot
+    from tests.support.proposal_evidence import (
+        _fields,
+        _local_description,
+        _report,
+        _result,
+    )
+
+    work = _work()
+    work["description"] = {"type": "/type/text", "value": stated}
+    values = {
+        "/search.json": _search("/books/OL1M"),
+        "/books/OL1M.json": _edition("/books/OL1M"),
+        "/works/OL5W.json": work,
+    }
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
+    description = next(
+        claim
+        for claim in observation.candidates[0].claims
+        if claim.kind is ClaimKind.DESCRIPTION
+    )
+    assert (description.state, description.value) == (state, value)
+    if value is None:
+        return
+    # The same text stored with its references is the text it already shows.
+    field = next(
+        field
+        for field in target_snapshot(
+            {"title": "Current title", "description": stated}
+        ).fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(description=field),
+                local_claims=(_local_description(value),),
+            )
+        ),
+        TargetDestination.DESCRIPTION,
+    )
+    assert [value.assessment for value in result.alternatives] == [
+        ProposalAssessment.PRESERVES_TARGET
+    ]
+
+
 _OPTIONAL_PROVENANCE_CASES: tuple[
     tuple[
         str,

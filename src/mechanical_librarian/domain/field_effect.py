@@ -61,6 +61,7 @@ FIELD_EFFECT_FAILURES = frozenset(
         "owner_abandoned",
         "readback",
         "restart_readback",
+        "restore_unavailable",
         "retry_exhausted",
         "target_changed",
         "target_failure",

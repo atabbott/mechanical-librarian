@@ -266,7 +266,11 @@ def test_a_work_with_no_review_case_projects_its_current_values_and_reason() -> 
     assert type(summary) is dict
     assert summary["state"] == "no_decision_recorded"
     assert "No review decision is recorded" in str(summary["reason"])
-    assert summary["fields"] == report.target.to_data()["fields"]
+    # The review surface omits only the store's restore flag (#1424).
+    assert summary["fields"] == [
+        {key: value for key, value in field.items() if key != "restorable"}
+        for field in report.target.to_data()["fields"]
+    ]
     # A work that does have a case is opened through its decision surface, so
     # the row carries no second projection of the same values.
     case = ReviewCase.create(evaluate_report(report), report)

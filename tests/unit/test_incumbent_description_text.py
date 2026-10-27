@@ -1,11 +1,15 @@
 """Exact incumbent paragraph admission through the supported target reader."""
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
+    ReportValueError,
     TargetDestination,
     TargetFacts,
+    TargetField,
     TargetFieldState,
 )
 from tests.support.audiobookshelf_targets import target_snapshot
@@ -20,9 +24,7 @@ from tests.support.audiobookshelf_targets import target_snapshot
         "\r\n\tText\t\r\n",
         "\n \tText\t \n",
         "Text\u2028",
-        "<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>",
         "First paragraph.\u2028Second paragraph.",
-        'See <a href="https://example.com/page">x</a>',
     ),
 )
 def test_incumbent_description_retains_exact_text(value: str) -> None:
@@ -36,6 +38,164 @@ def test_incumbent_description_retains_exact_text(value: str) -> None:
     assert field.value == value
     facts = TargetFacts("primary", "ebooks", "item-1", snapshot.fields)
     assert TargetFacts.from_data(facts.to_data()) == facts
+
+
+@pytest.mark.parametrize(
+    ("value", "visible"),
+    (
+        (
+            "<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>",
+            "First paragraph. • Second • paragraph.",
+        ),
+        ('See <a href="https://example.com/page">x</a>', "See x"),
+        ("Fish &amp; chips", "Fish & chips"),
+        # A decoded no-break space is read as the space it shows.
+        ("Text&nbsp;more", "Text more"),
+        ("&nbsp;Text", " Text"),
+    ),
+)
+def test_incumbent_description_markup_is_admitted_as_its_visible_text(
+    value: str, visible: str
+) -> None:
+    # Audiobookshelf stores HTML; the incumbent is the text it shows (#1424).
+    snapshot = target_snapshot({"title": "Title", "description": value})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert (field.state, field.value) == (TargetFieldState.VALUE, visible)
+    facts = TargetFacts("primary", "ebooks", "item-1", snapshot.fields)
+    assert TargetFacts.from_data(facts.to_data()) == facts
+
+
+@pytest.mark.parametrize(
+    ("value", "restorable"),
+    (
+        ("Plain text.", True),
+        ("Fish &amp; chips", True),
+        ("Fish & chips", True),
+        ("He said &quot;yes&quot;", False),
+        ("Text&nbsp;more", False),
+        ("<p>Fish &amp; chips</p>", False),
+        # Written back, admitted text carrying a bracket or a reference is not
+        # the text the library showed, so it is never restored from here.
+        ("&lt;b&gt;bold text", False),
+        ("Already &amp;amp; escaped.", False),
+        ("&lt;img src=x onerror=alert(1)&gt;Hi", False),
+        ("Fish &amp; chips &lt;3", False),
+    ),
+)
+def test_a_description_is_restorable_only_when_writing_its_text_keeps_it(
+    value: str, restorable: bool
+) -> None:
+    # The library escapes only a bare ampersand and angle bracket, so only a
+    # value stored as its text, or with just those escaped, survives a write
+    # of that text unchanged (#1424).
+    snapshot = target_snapshot({"title": "Title", "description": value})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert (field.state, field.restorable) == (TargetFieldState.VALUE, restorable)
+    facts = TargetFacts("primary", "ebooks", "item-1", snapshot.fields)
+    assert TargetFacts.from_data(facts.to_data()) == facts
+    title = next(
+        field.to_data()
+        for field in snapshot.fields
+        if field.destination is TargetDestination.TITLE
+    )
+    assert "restorable" not in title
+
+
+@pytest.mark.parametrize(
+    ("value", "admitted"),
+    (
+        # The library shows an escaped tag as its brackets, so it is never
+        # rendered as one.
+        ("&lt;b&gt;Bold claim.", "&lt;b&gt;Bold claim."),
+        (
+            "&lt;img src=x onerror=alert(1)&gt;Hi",
+            "&lt;img src=x onerror=alert(1)&gt;Hi",
+        ),
+        (
+            "<p>a &lt;img src=x onerror=alert(1)&gt; b</p>",
+            "<p>a &lt;img src=x onerror=alert(1)&gt; b</p>",
+        ),
+        ("Already &amp;amp; escaped.", "Already &amp;amp; escaped."),
+    ),
+    ids=("escaped_tag", "decoded", "rendered", "double"),
+)
+def test_an_incumbent_reading_that_would_carry_a_tag_or_decode_again_is_kept_as_stored(
+    value: str, admitted: str
+) -> None:
+    # The incumbent is read as every source is, once; a reading the renderer
+    # refuses never becomes text with a live tag in it (#1424).
+    snapshot = target_snapshot({"title": "Title", "description": value})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert (field.state, field.value, field.restorable) == (
+        TargetFieldState.VALUE,
+        admitted,
+        False,
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        lambda: TargetField(
+            TargetDestination.TITLE, TargetFieldState.VALUE, "x", restorable=True
+        ),
+        lambda: TargetField(
+            TargetDestination.DESCRIPTION, TargetFieldState.EMPTY, restorable=True
+        ),
+        lambda: TargetField(
+            TargetDestination.DESCRIPTION,
+            TargetFieldState.VALUE,
+            "x",
+            restorable=1,  # type: ignore[arg-type]
+        ),
+    ),
+    ids=("title", "empty", "integer"),
+)
+def test_only_a_description_value_can_be_restorable(field) -> None:
+    with pytest.raises(ReportValueError, match="target field is invalid"):
+        field()
+
+
+@pytest.mark.parametrize(
+    ("destination", "data"),
+    (
+        ("description", {"state": "value", "value": "x"}),
+        ("description", {"state": "value", "value": "x", "restorable": 1}),
+        ("title", {"state": "value", "value": "x", "restorable": False}),
+    ),
+    ids=("absent", "integer", "title"),
+)
+def test_a_persisted_restorable_flag_is_exactly_where_it_belongs(
+    destination: str, data: dict[str, object]
+) -> None:
+    facts = TargetFacts(
+        "primary",
+        "ebooks",
+        "item-1",
+        target_snapshot({"title": "Title", "description": "x"}).fields,
+    ).to_data()
+    fields = facts["fields"]
+    assert type(fields) is list
+    index = next(
+        position
+        for position, value in enumerate(fields)
+        if value["destination"] == destination
+    )
+    fields[index] = {"destination": destination, **data}
+    with pytest.raises(ReportValueError):
+        TargetFacts.from_data(facts)
 
 
 def test_incumbent_description_comparison_is_not_source_identity() -> None:
@@ -74,7 +234,7 @@ def test_incumbent_line_separator_and_markup_compare_as_text() -> None:
         "Text api_key=synthetic",
         "<p>Read /srv/media/b.m4b</p>",
         "</p>/srv/media",
-        "&lt;/p&gt;",
+        "&lt;/p&gt;/srv/media",
         " \t\\private\t ",
         " \tsecret: synthetic\t ",
         "\u00a0",
@@ -189,3 +349,180 @@ def test_report_valid_multibyte_description_cannot_exceed_effect_byte_bound() ->
     assert validate_incumbent_description(value, "description", 16384) == value
     with pytest.raises(FieldEffectError, match="invalid_value"):
         validate_effect_value("description", value)
+
+
+@pytest.mark.parametrize(
+    ("stored", "stated"),
+    (
+        (
+            "Fish &amp; chips for the qualification.",
+            "Fish &amp; chips for the qualification.",
+        ),
+        (
+            "He said &quot;yes&quot; to the qualification.",
+            "He said &quot;yes&quot; to the qualification.",
+        ),
+        (
+            "Fish &amp; chips for the qualification.",
+            "Fish & chips for the qualification.",
+        ),
+        # The qualification's pre-escaped landing, read back as admitted.
+        ("Already &amp; escaped.", "Already &amp; escaped."),
+    ),
+    ids=("entity", "quotes", "decoded", "pre_escaped"),
+)
+def test_a_stated_description_equal_to_the_incumbent_text_keeps_it(
+    stored: str, stated: str
+) -> None:
+    # Both sides are decoded exactly once, so a provider that states the
+    # same text with its character references is not a proposal (#1424).
+    from mechanical_librarian.adapters.providers.visible_text import (
+        projected_description,
+    )
+    from mechanical_librarian.domain.proposal_set import (
+        ProposalAssessment,
+        ProposalOutcome,
+        evaluate_report,
+    )
+    from tests.support.proposal_evidence import (
+        _fields,
+        _local_description,
+        _report,
+        _result,
+    )
+
+    field = next(
+        field
+        for field in target_snapshot({"title": "Title", "description": stored}).fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    candidate, transformed = projected_description(stated)
+    assert type(candidate) is str and transformed is False
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(description=field),
+                local_claims=(_local_description(candidate),),
+            )
+        ),
+        TargetDestination.DESCRIPTION,
+    )
+    assert result.outcome is ProposalOutcome.KEEP
+    assert [value.assessment for value in result.alternatives] == [
+        ProposalAssessment.PRESERVES_TARGET
+    ]
+
+
+@pytest.mark.parametrize(
+    "module",
+    ("open_library", "hardcover", "inventaire", "audiosilo"),
+)
+@pytest.mark.parametrize(
+    ("stated", "state", "value"),
+    (
+        ("Fish &amp; chips.", "valid", "Fish & chips."),
+        ("&lt;b&gt;Bold&lt;/b&gt; claim.", "malformed", None),
+        ("&lt;img src=x onerror=alert(1)&gt;Hi", "malformed", None),
+        ("Fish &amp;amp; chips.", "malformed", None),
+    ),
+    ids=("entity", "decoded_tag", "handler", "double"),
+)
+def test_every_provider_reads_its_description_once(
+    module: str, stated: str, state: str, value: str | None
+) -> None:
+    # Each provider's field projection is where its descriptions become
+    # claims, so each reads them the way the incumbent is read (#1424).
+    import importlib
+
+    from mechanical_librarian.domain.metadata_report import ClaimKind
+
+    provider = importlib.import_module(
+        f"mechanical_librarian.adapters.providers.{module}_metadata"
+    )
+    projected_state, projected = provider._field(ClaimKind.DESCRIPTION, stated)
+    assert (projected_state.value, projected) == (state, value)
+
+
+_DESCRIPTION_TEXT = st.lists(
+    st.sampled_from(
+        (
+            "Fish",
+            " ",
+            "\n",
+            "&",
+            "&amp;",
+            "&amp;amp;",
+            "&lt;",
+            "&gt;",
+            "&quot;",
+            "&nbsp;",
+            "&#60;",
+            "&#x3c;",
+            "<",
+            ">",
+            "<b>",
+            "</b>",
+            "<p>",
+            "</p>",
+            "<img src=x onerror=alert(1)>",
+            "&lt;img src=x onerror=alert(1)&gt;",
+            "&lt;script&gt;",
+            "<script>",
+            "/",
+            "!",
+            "?",
+            "b",
+            "img",
+            "2",
+            '"',
+            "=",
+        )
+    ),
+    max_size=12,
+).map("".join)
+
+
+@settings(max_examples=400, deadline=None)
+@given(_DESCRIPTION_TEXT)
+def test_no_reading_of_a_description_carries_a_tag_or_decodes_again(
+    value: str,
+) -> None:
+    # One reading serves the incumbent and every source, and whatever it
+    # returns as text is final: no tag the renderer would have to read and no
+    # reference left to decode (#1424).
+    import re
+
+    from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+        visible_stored_description,
+    )
+    from mechanical_librarian.adapters.providers.visible_text import (
+        UNPROJECTABLE_DESCRIPTION,
+        carries_markup,
+        decoded_description,
+        projected_description,
+        shown_description,
+        stated_description,
+    )
+
+    shown, rendered = shown_description(value)
+    # The incumbent refuses only what is markup once decoded, which the
+    # library shows as literal brackets rather than as a tag.
+    assert visible_stored_description(value) == (
+        None if rendered and not carries_markup(value) else shown
+    )
+    readings = [shown, projected_description(value)[0]]
+    if carries_markup(value):
+        # Stated markup is the field projection's to refuse, as before.
+        assert stated_description(value) is value
+    else:
+        readings.append(stated_description(value))
+    for reading in readings:
+        if type(reading) is not str:
+            assert reading is None or reading is UNPROJECTABLE_DESCRIPTION
+        elif not carries_markup(value) and decoded_description(value) is None:
+            # Text that shows nothing is the caller's to judge, as stated.
+            assert reading == value
+        else:
+            assert reading == shown
+            assert re.search(r"<[A-Za-z/!?]", reading) is None
+            assert decoded_description(reading) == reading

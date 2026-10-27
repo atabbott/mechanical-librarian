@@ -3113,3 +3113,28 @@ def test_inspector_process_failures_reap_child_and_close_pipes(
     assert process.stdin is not None and process.stdin.closed
     assert process.stdout is not None and process.stdout.closed
     assert process.stderr is not None and process.stderr.closed
+
+
+@pytest.mark.parametrize(
+    ("stated", "canonical", "state"),
+    (
+        ("Fish &amp;amp; chips.", "Fish & chips.", "valid"),
+        ("&amp;lt;img src=x onerror=alert(1)&amp;gt;Hi", None, "malformed"),
+        ("Fish &amp;amp;amp; chips.", None, "malformed"),
+    ),
+    ids=("entity", "decoded_tag", "double"),
+)
+def test_package_facts_read_a_description_once_like_every_description(
+    stated: str, canonical: str | None, state: str
+) -> None:
+    # The package text keeps its references as observed; the text it shows is
+    # read the way every description is (#1424).
+    package = EPUB3_PACKAGE.replace(
+        b"</metadata>",
+        f"<dc:description>{stated}</dc:description></metadata>".encode(),
+    )
+    assert [
+        (fact.canonical_value, fact.state)
+        for fact in _package_facts(package)
+        if fact.field.value == "description"
+    ] == [(canonical, state)]
