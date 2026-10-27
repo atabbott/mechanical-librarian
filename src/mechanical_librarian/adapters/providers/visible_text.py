@@ -11,11 +11,13 @@ a rejected element, an inline event handler, and an empty rendering all return
 the report may state.  An over-bound rendering returns `DESCRIPTION_OVERSIZED`
 so the caller records what the provider said without projecting it.
 
-Every description is read once, through `shown_description`: the incumbent's,
-each provider's and each local file's (#1424). Plain text has its character
-references decoded once. Text that carries a tag once decoded is markup, held
-to the same renderer and its refusals as stated markup, and a reading that
-would still carry a tag or decode again is refused rather than shown.
+Every plain-text description is read once, through `shown_description`: the
+incumbent's, each provider's and each local file's (#1424). Its character
+references are decoded once. Text that carries a tag once decoded is markup,
+held to the same renderer and its refusals as stated markup, and a reading that
+would still carry a tag or decode again is refused rather than shown. Markup a
+source states without recording a rendering is kept as stated; see
+`stated_description`.
 """
 
 from __future__ import annotations
@@ -243,10 +245,14 @@ def projected_description(
 def stated_description(value: object) -> object:
     """Project one description from a source that records no rendering.
 
-    Markup the source states is left for its field projection to refuse, as
-    before #1424. Plain text is read through `shown_description`; text that
-    would need rendering once decoded is unprojectable, because this source
-    has no transformation to record it with.
+    Markup the source states is kept as stated, as before #1424. The field
+    projection refuses some of it, but slash-free markup such as
+    `<img src=x onerror=alert(1)>Hi` remains a valid claim; the guard is the
+    proposal policy's `_eligible_description`, which makes any description
+    carrying `<` or `>` ineligible, so it never reaches a write. Plain text is
+    read through `shown_description`; text that would need rendering once
+    decoded is unprojectable, because this source has no transformation to
+    record it with.
     """
     if type(value) is not str or carries_markup(value):
         return value
