@@ -213,6 +213,20 @@ def test_an_itunes_candidate_can_never_carry_a_duration_or_a_narrator() -> None:
         assert () == _claims(candidate, ClaimKind.ASIN)
 
 
+def test_a_plain_description_is_read_with_its_character_references_decoded() -> None:
+    """Both sides of a description comparison are decoded exactly once (#1424)."""
+    document = copy.deepcopy(payload("itunes_search"))
+    for result in document["results"]:
+        result["description"] = "Fish &amp; chips&nbsp;for &quot;tea&quot;."
+    _seen, handle = _recorder(_store(document))
+    candidate = _provider(handle).observe(work_plan()).observation.candidates[0]
+
+    assert ['Fish & chips for "tea".'] == [
+        claim.value for claim in _claims(candidate, ClaimKind.DESCRIPTION)
+    ]
+    assert () == _evidence(candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION)
+
+
 def test_the_stores_html_description_becomes_visible_plain_text() -> None:
     _seen, handle = _recorder()
     candidate = next(

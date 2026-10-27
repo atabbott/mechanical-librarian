@@ -166,7 +166,14 @@ def _automatic_no_change_inputs(
         return (
             _proposal_report(
                 fields=tuple(
-                    TargetField(value.destination, TargetFieldState.VALUE, current)
+                    TargetField(
+                        value.destination,
+                        TargetFieldState.VALUE,
+                        current,
+                        # A plain current description is stored as its text,
+                        # so keeping it can write it back (#1424).
+                        restorable=destination == "description",
+                    )
                     if value.destination.value == destination
                     else value
                     for value in base.target.fields

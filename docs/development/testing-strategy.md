@@ -614,7 +614,7 @@ complete-library scale, browser, or semantic qualification.
 
 Audiobookshelf write qualification uses synthetic disposable libraries and API
 keys only. It proves one metadata and tags PATCH and one digest-verified
-multipart cover upload at the two supported service images, including read-back,
+multipart cover upload at each pinned service image, including read-back,
 refusal, and ambiguous-response reconciliation. Provider evidence is supplied by
 a bounded in-process HTTP fake derived from each request's local title and
 author evidence; the qualifier never contacts a production provider or library

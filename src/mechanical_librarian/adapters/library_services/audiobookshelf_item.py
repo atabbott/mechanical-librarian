@@ -28,6 +28,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_locatio
 from mechanical_librarian.adapters.providers.visible_text import (
     DESCRIPTION_OVERSIZED,
     carries_markup,
+    decoded_description,
     visible_description,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
@@ -89,7 +90,7 @@ def visible_stored_description(value: str) -> object:
         return DESCRIPTION_OVERSIZED
     if carries_markup(value):
         return visible_description(value)
-    return html.unescape(value)
+    return decoded_description(value)
 
 
 class AudiobookshelfItemReader:
@@ -429,10 +430,15 @@ def _target_field(
                 "target description",
                 MAX_DESCRIPTION_CHARACTERS,
             )
+            # Writing the admitted text back reproduces the stored form only
+            # where Audiobookshelf stores that text itself or with just `&`,
+            # `<` and `>` escaped; anything else is formatting a restore from
+            # here would lose (#1424).
             return TargetField(
                 destination,
                 TargetFieldState.VALUE,
                 value,
+                restorable=raw in {value, html.escape(value, quote=False)},
             )
         if destination in {
             TargetDestination.AUTHORS,

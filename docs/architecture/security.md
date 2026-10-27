@@ -2033,9 +2033,21 @@ checked and kept as stored, as in v57. The write still sends the exact desired
 value. The pre-read and read-back read the field through the same conversion:
 the pre-read must equal the admitted text exactly, and read-back verifies only
 when the stored form shows what the desired value shows; a service that drops
-part of the value leaves a third value and is never resent. The renderer's one
-new input is that bounded stored text; no request, write capability or
-authority is added. The report/SQL successor requires a clean rebuild, never
+part of the value leaves a third value and is never resent. The pre-read
+compares visible text, so another actor's edit that changes only markup, such
+as making a word bold, is not a conflict and the write replaces it; an edit that
+changes the text shown still is. Read-back renders the desired value once: a
+desired value whose rendering still carries markup, or would decode again, never
+verifies against displayed markup. Provider plain-text descriptions have their
+character references decoded by the same code, so both sides of a comparison are
+decoded exactly once and a provider stating an incumbent's own text is not a
+proposal. Keeping the current description after a verified write restores it
+only when the admitted field is `restorable`, meaning the service stores that
+text as it stored the original. Otherwise the restore is refused before any
+request with `restore_unavailable`, and the owner is asked to restore the
+formatting in Audiobookshelf, because writing the rendered text would flatten
+it. The raw stored HTML is never persisted. The renderer's one new input is that
+bounded stored text; no request, write capability or authority is added. The report/SQL successor requires a clean rebuild, never
 migration.
 
 ## Author evidence authority

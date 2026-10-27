@@ -1053,6 +1053,28 @@ def test_another_description_the_service_holds_is_still_a_third_value(
 
 
 @pytest.mark.parametrize(
+    "desired",
+    (
+        "A &amp;lt;b&amp;gt;bold&amp;lt;/b&amp;gt; claim.",
+        "A &lt;b&gt;bold&lt;/b&gt; claim.",
+    ),
+    ids=("double_escaped", "escaped"),
+)
+def test_escaped_markup_text_does_not_verify_against_displayed_markup(
+    case: _Case, desired: str
+) -> None:
+    # The desired text is rendered once; text that still names a tag, or that
+    # would decode again, is not what a displayed bold element shows (#1424).
+    case.stored_description = lambda _value: "A <b>bold</b> claim."
+    service, repository = _guarded(case, "escaped-markup")
+    plan = _description_plan(case, repository, desired)
+    assert service.apply(plan.plan_id).state == "reconciling"
+    result = service.reconcile(plan.plan_id)
+    assert (result.state, result.failure) == ("stale", "third_value")
+    repository.close()
+
+
+@pytest.mark.parametrize(
     ("name", "sent"),
     [
         (name, sent)

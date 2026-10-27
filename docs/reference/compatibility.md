@@ -574,13 +574,19 @@ bind changed, with permission sets unchanged.
 
 ## Visible incumbent descriptions (#1424)
 
-Report `metadata-report-v58` adds no field. Audiobookshelf stores a description
-as sanitised HTML, so `Fish & chips` is stored as `Fish &amp; chips`. An
-incumbent description is now the text it shows: markup is rendered through the
-providers' visible-text renderer, paragraphs joined by ` • `, and other text has
-its character references decoded. A v57 field held the stored form, so the
-exact SQLite discriminator requires a **clean rebuild** under ADR-0013. Prior
-stores are refused before mutation. No migration, adoption or relabelling is
-supplied. The comparison version, the proposal and decision policies and the
-proposal, packet, outcome and review envelopes are unchanged.
+Report `metadata-report-v58` adds one persisted field: every description target
+field carries a required boolean `restorable`, and no other destination may
+carry it. Audiobookshelf stores a description as sanitised HTML, so
+`Fish & chips` is stored as `Fish &amp; chips`. An incumbent description is now
+the text it shows: markup is rendered through the providers' visible-text
+renderer, paragraphs joined by ` • `, and other text has its character
+references decoded. `restorable` records whether that text, written back, is
+stored as it was: the stored form equals the text, or the text with only `&`,
+`<` and `>` escaped. The raw stored form is never persisted. Because the field
+is in the target, it changes target fingerprints; the review API omits it. A v57
+field held the stored form, so the exact SQLite discriminator requires a
+**clean rebuild** under ADR-0013. Prior stores are refused before mutation. No
+migration, adoption or relabelling is supplied. The comparison version, the
+proposal and decision policies and the proposal, packet, outcome and review
+envelopes are unchanged.
 

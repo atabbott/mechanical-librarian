@@ -209,6 +209,7 @@ class FieldEffectRepository(Protocol):
     def field_effect_capability_suspension(
         self, connection: str, destination: str
     ) -> str | None: ...
+    def field_effect_restore_refused(self, plan: FieldEffectPlan) -> bool: ...
     def grant_field_effect_consent_matrix(
         self,
         connection: str,
@@ -958,6 +959,8 @@ class GuardedFieldApplication:
     ) -> FieldEffectOperation | None:
         """Evaluate current guards in their fixed order without claiming."""
         plan = operation.plan
+        if self._repository.field_effect_restore_refused(plan):
+            return self._stale(operation, "restore_unavailable")
         if not self._backup.ready(plan):
             return self._stale(operation, "backup")
         for member in (plan, plan.subtitle_plan()):

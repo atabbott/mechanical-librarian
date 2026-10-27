@@ -530,6 +530,22 @@ def test_a_series_statement_becomes_a_name_and_a_sequence() -> None:
     )
 
 
+def test_a_plain_summary_is_read_with_its_character_references_decoded() -> None:
+    """Both sides of a description comparison are decoded exactly once (#1424)."""
+    document = copy.deepcopy(payload("audible_lookup"))
+    del document["product"]["short_description"]
+    document["product"]["publisher_summary"] = (
+        "Fish &amp; chips&nbsp;for &quot;tea&quot;."
+    )
+    _seen, handle = _recorder(default=_json(document))
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
+
+    assert ['Fish & chips for "tea".'] == [
+        claim.value for claim in _claims(candidate, ClaimKind.DESCRIPTION)
+    ]
+    assert () == _evidence(candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION)
+
+
 def test_a_markup_summary_projects_as_visible_plain_text() -> None:
     """The publisher summary is HTML, and the shared renderer reads it.
 

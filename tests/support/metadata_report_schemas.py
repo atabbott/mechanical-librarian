@@ -237,8 +237,9 @@ def retained_report_as_current(document: str) -> MetadataReport:
     producer kept no cause or depth. v57 changed which audiobook products a
     band-corroborated lane admits and added no field. v58 changed what an
     Audiobookshelf incumbent description admits, the visible text rather than
-    the stored markup, and added no field. Nothing is migrated: the copy is
-    never written back.
+    the stored markup, and added each description's `restorable` flag: false
+    here, so no relabelled copy can authorise a restore it was never read for.
+    Nothing is migrated: the copy is never written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -256,6 +257,9 @@ def retained_report_as_current(document: str) -> MetadataReport:
                 )
                 assert outcome is not None
                 lane["dispatch"] = ProviderLaneDispatch(outcome).to_data()
+    for field in data["target"]["fields"]:
+        if field["destination"] == "description":
+            field["restorable"] = False
     if data.get("audio") is not None:
         data["audio"]["discovery_titles"] = []
     data.pop("report_id")

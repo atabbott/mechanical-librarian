@@ -31,6 +31,9 @@ from mechanical_librarian.adapters.providers.visible_text import (
     DESCRIPTION_OVERSIZED as _DESCRIPTION_OVERSIZED,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
+    decoded_description,
+)
+from mechanical_librarian.adapters.providers.visible_text import (
     visible_description as _visible_description,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -716,6 +719,13 @@ def _candidate(
         add(
             ClaimKind.DESCRIPTION,
             description if len(description) > MAX_DESCRIPTION_CHARACTERS else object(),
+            ClaimScope.WORK,
+        )
+    elif type(description) is str:
+        # Plain text shows its character references decoded (#1424).
+        add(
+            ClaimKind.DESCRIPTION,
+            decoded_description(description) or description,
             ClaimScope.WORK,
         )
     else:

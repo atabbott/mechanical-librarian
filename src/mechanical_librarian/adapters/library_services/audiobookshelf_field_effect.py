@@ -18,6 +18,10 @@ import httpx
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     visible_stored_description,
 )
+from mechanical_librarian.adapters.providers.visible_text import (
+    carries_markup,
+    decoded_description,
+)
 from mechanical_librarian.application.field_effects import (
     CapabilityObservation,
     CoverArtifactReader,
@@ -138,14 +142,21 @@ class AudiobookshelfFieldEffectTarget:
         companion = plan.subtitle_plan()
         subtitle = None if companion is None else self._observation(client, detail, companion)
         # A description lands as the HTML Audiobookshelf stores, which this
-        # read shows as visible text; the desired one is read the same way
-        # (#1424). Markup the renderer refuses, such as a script the service
-        # drops, never reads as landed.
+        # read shows as visible text; the desired one is rendered once the same
+        # way (#1424). It counts only when that one rendering is final text,
+        # with no markup or character reference left, so already-visible text
+        # never matches by being decoded a second time, and markup the renderer
+        # refuses, such as a script the service drops, never reads as landed.
+        shown = (
+            visible_stored_description(plan.desired_value)
+            if plan.destination == "description" and type(plan.desired_value) is str
+            else None
+        )
         landed = (
-            plan.destination == "description"
-            and type(plan.desired_value) is str
-            and type(value) is str
-            and visible_stored_description(plan.desired_value) == value
+            type(shown) is str
+            and shown == value
+            and not carries_markup(shown)
+            and decoded_description(shown) == shown
         )
         return TargetObservation(value, field_value_version(plan.destination, value), subtitle, landed)
 

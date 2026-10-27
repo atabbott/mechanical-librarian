@@ -352,6 +352,44 @@ class _HostileEncodedStream(httpx.SyncByteStream):
         yield self._payload
 
 
+def test_a_plain_description_is_read_with_its_character_references_decoded() -> None:
+    """Both sides of a description comparison are decoded exactly once (#1424)."""
+    volume = _volume()
+    info = volume["volumeInfo"]
+    assert type(info) is dict
+    info["description"] = "Fish &amp; chips&nbsp;for &quot;tea&quot;."
+    candidate = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
+                )
+            ),
+            65_536,
+        )
+        .observe(
+            MetadataLookup(
+                ProviderQueryKind.WORK,
+                (),
+                title="Example Book",
+                authors=("Ada Example",),
+            )
+        )
+        .observation.candidates[0]
+    )
+    assert ['Fish & chips for "tea".'] == [
+        c.value for c in candidate.claims if c.kind is ClaimKind.DESCRIPTION
+    ]
+    assert ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION not in {
+        e.kind for e in candidate.evidence
+    }
+
+
 def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
     volume = _volume()
     info = volume["volumeInfo"]

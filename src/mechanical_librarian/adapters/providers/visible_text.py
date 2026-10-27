@@ -14,6 +14,8 @@ so the caller records what the provider said without projecting it.
 
 from __future__ import annotations
 
+import html
+import re
 from html.parser import HTMLParser
 
 from mechanical_librarian.domain.metadata_report import MAX_DESCRIPTION_CHARACTERS
@@ -133,6 +135,35 @@ def visible_description(value: object) -> object:
     return rendered if parser.safe and not parser.open_tags and rendered else None
 
 
+# The character references `html.unescape` reads, so each is decoded on its own.
+_CHARACTER_REFERENCE = re.compile(
+    r"&(#[0-9]+;?|#[xX][0-9a-fA-F]+;?|[^\t\n\f <&#;]{1,32};?)"
+)
+
+
+def _decoded_reference(match: re.Match[str]) -> str:
+    # A reference to a no-break or other space reads as the space it shows, as
+    # rendered markup's whitespace does; a line feed stays a line.
+    return "".join(
+        " " if character.isspace() and character != "\n" else character
+        for character in html.unescape(match.group(0))
+    )
+
+
+def decoded_description(value: str) -> str | None:
+    """Decode the character references in one plain-text description, once.
+
+    Plain text has no markup to render, but `Fish &amp; chips` still shows as
+    `Fish & chips` (#1424). Its lines and other characters are kept exactly.
+    Text over the description bound is never read, and it and text that shows
+    nothing once decoded are `None`, so the caller keeps them as stated.
+    """
+    if len(value) > MAX_DESCRIPTION_CHARACTERS:
+        return None
+    decoded = _CHARACTER_REFERENCE.sub(_decoded_reference, value)
+    return decoded if decoded.strip() else None
+
+
 def carries_markup(value: object) -> bool:
     """Whether one provider value states markup this renderer would read."""
     return type(value) is str and ("<" in value or ">" in value)
@@ -165,7 +196,7 @@ def projected_description(
                 return UNPROJECTABLE_DESCRIPTION, False
             continue
         if not carries_markup(value):
-            return value, False
+            return decoded_description(value) or value, False
         rendered = visible_description(value)
         if type(rendered) is str:
             return rendered, True
@@ -180,6 +211,7 @@ __all__ = [
     "HTML_VISIBLE_TEXT_VERSION",
     "UNPROJECTABLE_DESCRIPTION",
     "carries_markup",
+    "decoded_description",
     "projected_description",
     "visible_description",
 ]

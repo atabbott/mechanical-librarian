@@ -150,6 +150,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectError,
     FieldEffectOperation,
+    FieldEffectPlan,
 )
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
@@ -995,6 +996,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
         return self._field_effect_activity.field_effect_dependencies_current(digests)
+
+    def field_effect_restore_refused(self, plan: FieldEffectPlan) -> bool:
+        return self._field_effect_activity.field_effect_restore_refused(plan)
 
     def field_effect_backup_ready(self, *, fresh: bool = False) -> bool:
         return self._field_effect_activity.field_effect_backup_ready(fresh=fresh)
