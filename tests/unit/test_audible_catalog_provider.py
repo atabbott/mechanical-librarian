@@ -2856,7 +2856,7 @@ def test_an_ebook_lookup_never_admits_band_first() -> None:
     assert ProviderStatus.NO_MATCH is qualified.status
 
 
-def test_a_band_admitted_report_is_v57_and_a_v56_relabel_is_refused() -> None:
+def test_a_band_admitted_report_is_current_and_a_v56_relabel_is_refused() -> None:
     plan = _band_plan()
     observation, _asked = _band_observation(
         lambda _title: [_band_product("B000000001", "Plain Work")], plan
@@ -2867,6 +2867,6 @@ def test_a_band_admitted_report_is_v57_and_a_v56_relabel_is_refused() -> None:
     previous.pop("report_id")
     previous["report_id"] = d.report_content_address(previous)
 
-    assert "metadata-report-v57" == report.schema_version
+    assert "metadata-report-v58" == report.schema_version
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(d.canonical_json(previous))

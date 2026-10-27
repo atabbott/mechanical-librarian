@@ -15,6 +15,9 @@ from urllib.parse import quote
 
 import httpx
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    visible_stored_description,
+)
 from mechanical_librarian.application.field_effects import (
     CapabilityObservation,
     CoverArtifactReader,
@@ -134,7 +137,17 @@ class AudiobookshelfFieldEffectTarget:
         value = self._value(client, detail, plan)
         companion = plan.subtitle_plan()
         subtitle = None if companion is None else self._observation(client, detail, companion)
-        return TargetObservation(value, field_value_version(plan.destination, value), subtitle)
+        # A description lands as the HTML Audiobookshelf stores, which this
+        # read shows as visible text; the desired one is read the same way
+        # (#1424). Markup the renderer refuses, such as a script the service
+        # drops, never reads as landed.
+        landed = (
+            plan.destination == "description"
+            and type(plan.desired_value) is str
+            and type(value) is str
+            and visible_stored_description(plan.desired_value) == value
+        )
+        return TargetObservation(value, field_value_version(plan.destination, value), subtitle, landed)
 
     def read_cover_bytes(self, plan: FieldEffectPlan) -> bytes | None:
         """Read the exact pre-write cover for private recovery composition."""
@@ -339,6 +352,13 @@ class AudiobookshelfFieldEffectTarget:
             if type(value) is not list or any(type(item) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
             return value or None
+        if plan.destination == "description" and type(value) is str:
+            # The same text the catalogue admits, so the pre-read compares like
+            # with like (#1424): visible text, or the stored value where the
+            # renderer reads none. An oversized value stays as stored; the
+            # catalogue never admitted it, so it can match no plan.
+            visible = visible_stored_description(value)
+            return visible if type(visible) is str else value
         return value
 
 

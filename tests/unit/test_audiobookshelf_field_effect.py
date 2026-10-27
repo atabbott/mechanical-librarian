@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from scripts.qualify_audiobookshelf_field_effect import DESCRIPTION_LANDINGS
 
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
@@ -33,6 +34,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
     field_value_version,
 )
+from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
+    TargetDestination,
+)
 
 if TYPE_CHECKING:
     # Imported for the `cast` below only, which is a runtime no-op.
@@ -40,6 +45,7 @@ if TYPE_CHECKING:
 
 from tests.support.audiobookshelf_targets import SYNTHETIC_COVER_PNG as _PNG
 from tests.support.audiobookshelf_targets import FieldEffectTargetCase as _Case
+from tests.support.audiobookshelf_targets import target_snapshot
 
 
 @pytest.fixture
@@ -962,3 +968,161 @@ def test_only_an_answered_identity_check_reaches_the_connection(
                 "title", "connection_unavailable", update, update
             ).digest
         )
+
+
+# Each value sent, and the form every pinned Audiobookshelf stores it in (#1424).
+_STORED = {sent: stored for _, sent, stored, _ in DESCRIPTION_LANDINGS}
+
+
+def _guarded(case: _Case, name: str):
+    root = Path(case.directory.name) / name
+    root.mkdir()
+    os.chmod(root, 0o700)
+    repository = open_repository(root / "effects.sqlite")
+    current = type("Current", (), {"current": lambda self, value: True})()
+    ticks = iter(range(10, 100))
+    service = GuardedFieldApplication(
+        repository,
+        case.target,
+        FakeBackupReadiness(),
+        FakeCapabilityObserver("e" * 64),
+        current,
+        FakeDependencyCurrentness(),
+        current,
+        PrivateCoverRecoveryStore(root / "recovery", lambda _: b""),
+        FakeForwardReevaluation(),
+        lambda: next(ticks),
+    )
+    return service, repository
+
+
+def _description_plan(case: _Case, repository, desired: str) -> FieldEffectPlan:
+    case.detail["media"]["metadata"]["description"] = "Earlier description."
+    plan = _plan(
+        "description",
+        "Earlier description.",
+        desired,
+        envelope_identity=repository.field_effect_consent_envelope_identity("books"),
+    )
+    repository.record_field_effect(FieldEffectOperation(plan, updated_at=1))
+    return plan
+
+
+@pytest.mark.parametrize("readback", ("verification", "reconciliation"))
+@pytest.mark.parametrize(
+    ("name", "sent", "stored", "outcome"),
+    DESCRIPTION_LANDINGS,
+    ids=[row[0] for row in DESCRIPTION_LANDINGS],
+)
+def test_a_description_resolves_as_the_service_stored_it(
+    case: _Case, name: str, sent: str, stored: str, outcome: str, readback: str
+) -> None:
+    def keep(value: str) -> str:
+        # A lost read-back sends the landing through reconciliation instead.
+        case.fail_read_once = readback == "reconciliation"
+        return _STORED[value]
+
+    case.stored_description = keep
+    service, repository = _guarded(case, name + "-" + readback)
+    plan = _description_plan(case, repository, sent)
+    applied = service.apply(plan.plan_id)
+    if outcome == "verified" and readback == "verification":
+        # The landing is confirmed by its own read-back, not by reconciling it.
+        assert applied.state == "verified"
+    else:
+        assert applied.state == "reconciling"
+        applied = service.reconcile(plan.plan_id)
+    assert case.detail["media"]["metadata"]["description"] == stored
+    assert (applied.state, applied.failure) == (
+        ("verified", None) if outcome == "verified" else ("stale", "third_value")
+    )
+    assert [request.method for request in case.requests].count("PATCH") == 1
+    repository.close()
+
+
+def test_another_description_the_service_holds_is_still_a_third_value(
+    case: _Case,
+) -> None:
+    case.stored_description = lambda _value: "Fish &amp; chips, and peas."
+    service, repository = _guarded(case, "drift")
+    plan = _description_plan(case, repository, "Fish & chips.")
+    assert service.apply(plan.plan_id).state == "reconciling"
+    result = service.reconcile(plan.plan_id)
+    assert (result.state, result.failure) == ("stale", "third_value")
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    ("name", "sent"),
+    [
+        (name, sent)
+        for name, sent, stored, outcome in DESCRIPTION_LANDINGS
+        if outcome == "verified" and stored != sent
+    ],
+)
+def test_an_escaped_landing_whose_confirmation_was_lost_is_verified_unsent(
+    case: _Case, name: str, sent: str
+) -> None:
+    def keep(value: str) -> str:
+        case.fail_read_once = True
+        return _STORED[value]
+
+    case.stored_description = keep
+    service, repository = _guarded(case, name)
+    plan = _description_plan(case, repository, sent)
+    assert service.apply(plan.plan_id).state == "reconciling"
+    case.fail_read_once = True
+    unknown = service.reconcile(plan.plan_id)
+    assert (unknown.state, unknown.failure) == ("retryable", "target_failure")
+    # The next pre-read shows the stored form of the desired value, so the
+    # retry records the landing instead of a change it did not make (#1402).
+    verified = service.apply(plan.plan_id)
+    assert (verified.state, verified.failure) == ("verified", None)
+    assert [request.method for request in case.requests].count("PATCH") == 1
+    repository.close()
+
+
+def test_an_escaped_incumbent_pre_read_matches_its_admitted_text_exactly(
+    case: _Case,
+) -> None:
+    stored = "Fish &amp; chips for the qualification."
+    admitted = next(
+        field
+        for field in target_snapshot(
+            {"title": "Current title", "description": stored}
+        ).fields
+        if field.destination is TargetDestination.DESCRIPTION
+    ).value
+    assert admitted == "Fish & chips for the qualification."
+    case.detail["media"]["metadata"]["description"] = stored
+    plan = _plan("description", admitted, "Selected description.")
+    assert plan.target_version == field_value_version("description", admitted)
+    assert case.target.apply(plan).outcome == "accepted"
+    # Another actor's edit between the catalogue read and the claim is still a
+    # conflict once both sides are read as text: no request is sent.
+    case.requests.clear()
+    case.detail["media"]["metadata"]["description"] = stored.replace(".", "!")
+    assert case.target.apply(plan).outcome == "conflict"
+    assert not any(request.method == "PATCH" for request in case.requests)
+
+
+@pytest.mark.parametrize(
+    ("stored", "read"),
+    (
+        ("<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 7) + "</b>", None),
+        ("<b>" + "x" * (MAX_DESCRIPTION_CHARACTERS - 6) + "</b>", "stored"),
+        ("<p>Unclosed", "stored"),
+    ),
+    ids=("bounded", "oversized", "refused"),
+)
+def test_a_description_read_is_bounded_before_it_is_rendered(
+    case: _Case, stored: str, read: str | None
+) -> None:
+    # A bounded value reads as its text; one the catalogue would call
+    # oversized or malformed stays as stored, so it can match no plan.
+    case.detail["media"]["metadata"]["description"] = stored
+    observed = case.target.read(_plan("description", None, "Selected."))
+    assert observed.value == (
+        stored if read == "stored" else "x" * (MAX_DESCRIPTION_CHARACTERS - 7)
+    )
+    assert observed.version == field_value_version("description", observed.value)

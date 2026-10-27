@@ -208,3 +208,10 @@ consent. Consents are canonical owner authority rather than reconstructible
 derived objects, so the adoption branch does not apply. Every earlier
 application database holding a consent is rejected before mutation and needs a
 clean rebuild; no adoption is supplied.
+
+Issue #1424 also takes the clean-rebuild branch. `metadata-report-v58` adds no
+field, but an Audiobookshelf incumbent description is now admitted as the text
+it shows, its markup rendered and its character references decoded, where a v57
+report kept the stored form, so a v57 document cannot be read as current. Every
+earlier application database is rejected before mutation and needs a clean
+rebuild; no adoption is supplied.

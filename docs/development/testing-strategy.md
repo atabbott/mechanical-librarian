@@ -631,7 +631,10 @@ it; a destination whose shape the service rejects is recorded as
 `audiobookshelf-field-effect-v3` aggregate receipt adds an
 `installed_continuous` lifecycle summary and that `audiobook` section to the
 image digests and field outcomes, never credentials, user tokens, passwords,
-source metadata, or image bytes:
+source metadata, or image bytes. Its `description_landings` section writes seven
+synthetic descriptions on the audiobook, pins the raw form the service stores
+for each, and records that each verifies with one request, except a `<script>`
+the service drops, which reads as a third value and is never resent (#1424):
 
 ```bash
 uv run python scripts/qualify_audiobookshelf_field_effect.py \

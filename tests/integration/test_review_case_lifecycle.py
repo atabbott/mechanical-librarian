@@ -566,17 +566,21 @@ def test_description_advice_uses_real_persisted_admission_and_guarded_installed_
 )
 @pytest.mark.parametrize("media_kind", ("ebook", "audiobook"))
 @pytest.mark.parametrize(
-    "current",
+    ("current", "shown"),
     (
-        " \tFirst paragraph.\n\nSecond paragraph.\t ",
-        " \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",
-        " \t<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>\t ",
-        " \tFirst paragraph.\u2028Second paragraph.\t ",
+        (" \tFirst paragraph.\n\nSecond paragraph.\t ",) * 2,
+        (" \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",) * 2,
+        # Stored markup is admitted as the text it shows (#1424).
+        (
+            " \t<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>\t ",
+            "First paragraph. • Second • paragraph.",
+        ),
+        (" \tFirst paragraph.\u2028Second paragraph.\t ",) * 2,
     ),
     ids=("lf", "crlf", "markup", "line_separator"),
 )
 def test_multiline_incumbent_description_persists_and_applies(
-    tmp_path, effect, media_kind, current
+    tmp_path, effect, media_kind, current, shown
 ):
     """Real intake, current SQL/review replay and guarded owner choice for both media."""
     import httpx
@@ -679,7 +683,7 @@ def test_multiline_incumbent_description_persists_and_applies(
             for field in TargetFacts.from_data(case.target).fields
             if field.destination is TargetDestination.DESCRIPTION
         )
-        == current
+        == shown
     )
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 
@@ -690,7 +694,7 @@ def test_multiline_incumbent_description_persists_and_applies(
             for field in projected["fields"]
             if field["destination"] == "description"
         )["current"]["value"]
-        == current
+        == shown
     )
     decision = _audiobook_accept(case, "description", "paragraph-replacement-0001")
     if effect == "keep_current":
@@ -712,7 +716,7 @@ def test_multiline_incumbent_description_persists_and_applies(
     target.before_apply = lambda plan: writes.append(plan.plan_id)
     authority = FakeAuthorityCurrentness()
     consent = FakeConsentCurrentness(repository.field_effect_consent_envelope_identity)
-    version = field_value_version("description", current)
+    version = field_value_version("description", shown)
     if effect != "keep_current":
         authority.bind(
             decision,
@@ -740,7 +744,7 @@ def test_multiline_incumbent_description_persists_and_applies(
         library="ebooks",
         work_id="item-1",
         destination="description",
-        pre_value=current,
+        pre_value=shown,
         desired_value=decision.selected_value,
         target_fingerprint=case.target_fingerprint,
         target_version=version,
@@ -761,13 +765,15 @@ def test_multiline_incumbent_description_persists_and_applies(
         repository.close()
         return
     assert operation is not None
-    assert operation.plan.pre_value == current
+    assert operation.plan.pre_value == shown
     target.seed(operation.plan)
     if effect == "formatting_drift":
         drifted = (
-            current.replace("\r\n", "\n")
-            if "\r\n" in current
-            else current.replace("\n", "\r\n").replace("\u2028", "\n")
+            shown.replace("\r\n", "\n")
+            if "\r\n" in shown
+            else shown.replace("\n", "\r\n")
+            .replace("\u2028", "\n")
+            .replace(" • ", "\n")
         )
         target.drift(operation.plan, drifted)
     elif effect == "wrong_readback":

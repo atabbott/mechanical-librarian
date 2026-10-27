@@ -678,6 +678,121 @@ def _audiobook(path: Path) -> None:
     )
 
 
+# What every pinned Audiobookshelf stores for each description shape, as its
+# supported item read returns it, and the guarded outcome the write reaches
+# (#1424). The service keeps a description as sanitised HTML: a dropped script
+# is not what was sent, so it stays a third value.
+DESCRIPTION_LANDINGS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "plain",
+        "Plain qualification description.",
+        "Plain qualification description.",
+        "verified",
+    ),
+    (
+        "ampersand",
+        "Fish & chips for the qualification.",
+        "Fish &amp; chips for the qualification.",
+        "verified",
+    ),
+    (
+        "angle_brackets",
+        "One < two and three > two.",
+        "One &lt; two and three &gt; two.",
+        "verified",
+    ),
+    (
+        "bold_markup",
+        "A <b>bold</b> qualification claim.",
+        "A <b>bold</b> qualification claim.",
+        "verified",
+    ),
+    (
+        "script_markup",
+        "Before <script>x</script> after.",
+        "Before  after.",
+        "third_value",
+    ),
+    ("pre_escaped", "Already &amp; escaped.", "Already &amp; escaped.", "verified"),
+    ("quotes", "She said \"yes\" and 'no'.", "She said \"yes\" and 'no'.", "verified"),
+)
+
+
+def _description_landings(
+    open_service,
+    target,
+    capabilities,
+    writes: list[str],
+    base: str,
+    token: str,
+    item: str,
+    clock,
+) -> list[dict[str, object]]:
+    """Pin each description landing at the HTTP read and the guarded outcome.
+
+    Every shape is one production write through its own repository, so each
+    plan owns its decision. The stored form is read raw from the service's
+    item, and the outcome is what the guarded path records for it (#1424).
+    """
+    rows: list[dict[str, object]] = []
+    for case, sent, stored, expected in DESCRIPTION_LANDINGS:
+        service, repository = open_service(case)
+        try:
+            placeholder = type(
+                "Plan",
+                (),
+                {
+                    "work_id": item,
+                    "destination": "description",
+                    "desired_value": None,
+                    "subtitle_plan": lambda _self: None,
+                },
+            )()
+            before = target.read(placeholder)
+            plan = _plan(
+                repository,
+                item=item,
+                destination="description",
+                value=before.value,
+                desired=sent,
+                observation=before,
+                capabilities=capabilities,
+                clock=clock(),
+            )
+            write_count = len(writes)
+            operation = service.apply(plan.plan_id)
+            if operation.state == "reconciling":
+                operation = service.reconcile(plan.plan_id)
+            request_count = len(writes) - write_count
+            detail = _mapping(
+                _request("GET", base, "/api/items/" + item, token=token),
+                "item_detail_invalid",
+            )
+            media = _mapping(detail.get("media"), "item_detail_invalid")
+            metadata = _mapping(media.get("metadata"), "item_detail_invalid")
+            outcome = (
+                operation.state if operation.failure is None else str(operation.failure)
+            )
+            if (
+                metadata.get("description") != stored
+                or request_count != 1
+                or outcome != expected
+                or repository.get_field_effect(plan.plan_id) != operation
+            ):
+                raise QualificationError("description_landing_invalid_" + case)
+        finally:
+            repository.close()
+        rows.append(
+            {
+                "case": case,
+                "state": operation.state,
+                "failure": operation.failure or "none",
+                "request_count": request_count,
+            }
+        )
+    return rows
+
+
 def _field_unavailable_row(destination: str, failure: str) -> dict[str, object]:
     """Record one destination the service disabled, and only that destination."""
     return {
@@ -954,6 +1069,7 @@ def _apply(
         {
             "work_id": item,
             "destination": destination,
+            "desired_value": None,
             "subtitle_plan": lambda _self: None,
         },
     )()
@@ -3480,6 +3596,37 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             for row in cast("list[dict[str, object]]", audiobook["outcomes"])
         ):
             raise QualificationError("audiobook_outcome_state_invalid")
+
+        def description_service(case: str):
+            description_repository = open_repository(
+                root / ("effects-description-" + case + ".sqlite")
+            )
+            return (
+                GuardedFieldApplication(
+                    description_repository,
+                    gamma_target,
+                    FakeBackupReadiness(),
+                    gamma_capabilities,
+                    current,
+                    FakeDependencyCurrentness(),
+                    current,
+                    recovery,
+                    FakeForwardReevaluation(),
+                    clock,
+                ),
+                description_repository,
+            )
+
+        description_landings = _description_landings(
+            description_service,
+            gamma_target,
+            gamma_capabilities,
+            writes,
+            base,
+            writer_key,
+            audiobook_item,
+            clock,
+        )
         gamma_repository.close()
         beta_repository.close()
         reseeded_beta = _mapping(
@@ -3580,6 +3727,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             "real_automatic_adapter": real_automatic_adapter,
             "adapter_canary": adapter_outcomes,
             "audiobook": audiobook,
+            "description_landings": description_landings,
             "outcomes": installed_outcomes,
         }
     finally:

@@ -20,9 +20,7 @@ from tests.support.audiobookshelf_targets import target_snapshot
         "\r\n\tText\t\r\n",
         "\n \tText\t \n",
         "Text\u2028",
-        "<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>",
         "First paragraph.\u2028Second paragraph.",
-        'See <a href="https://example.com/page">x</a>',
     ),
 )
 def test_incumbent_description_retains_exact_text(value: str) -> None:
@@ -34,6 +32,32 @@ def test_incumbent_description_retains_exact_text(value: str) -> None:
     )
     assert field.state is TargetFieldState.VALUE
     assert field.value == value
+    facts = TargetFacts("primary", "ebooks", "item-1", snapshot.fields)
+    assert TargetFacts.from_data(facts.to_data()) == facts
+
+
+@pytest.mark.parametrize(
+    ("value", "visible"),
+    (
+        (
+            "<p>First paragraph.</p>\n<p>Second<br />paragraph.</p>",
+            "First paragraph. • Second • paragraph.",
+        ),
+        ('See <a href="https://example.com/page">x</a>', "See x"),
+        ("&lt;/p&gt;", "</p>"),
+    ),
+)
+def test_incumbent_description_markup_is_admitted_as_its_visible_text(
+    value: str, visible: str
+) -> None:
+    # Audiobookshelf stores HTML; the incumbent is the text it shows (#1424).
+    snapshot = target_snapshot({"title": "Title", "description": value})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert (field.state, field.value) == (TargetFieldState.VALUE, visible)
     facts = TargetFacts("primary", "ebooks", "item-1", snapshot.fields)
     assert TargetFacts.from_data(facts.to_data()) == facts
 
@@ -74,7 +98,7 @@ def test_incumbent_line_separator_and_markup_compare_as_text() -> None:
         "Text api_key=synthetic",
         "<p>Read /srv/media/b.m4b</p>",
         "</p>/srv/media",
-        "&lt;/p&gt;",
+        "&lt;/p&gt;/srv/media",
         " \t\\private\t ",
         " \tsecret: synthetic\t ",
         "\u00a0",

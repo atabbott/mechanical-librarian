@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import re
 import time
@@ -23,6 +24,11 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_cover_path im
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
     normalize_ebook_location,
+)
+from mechanical_librarian.adapters.providers.visible_text import (
+    DESCRIPTION_OVERSIZED,
+    carries_markup,
+    visible_description,
 )
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
@@ -64,6 +70,26 @@ from mechanical_librarian.domain.metadata_report import (
 
 _ASIN = re.compile(r"^[A-Za-z0-9]{10}$")
 _MISSING = object()
+
+
+def visible_stored_description(value: str) -> object:
+    """Read one stored Audiobookshelf description as the text it shows (#1424).
+
+    Audiobookshelf keeps a description as sanitised HTML. Through the supported
+    item read, 2.26.0, 2.36.0, 2.37.1 and 2.37.2 all store a bare `&`, `<` and
+    `>` as `&amp;`, `&lt;` and `&gt;`, keep `&amp;`, quotes and `<b>`, and drop
+    `<script>` with its content. Mechanical Librarian works in visible text, so
+    markup is rendered by the renderer provider descriptions use, and text
+    without markup has only its character references decoded, which keeps its
+    paragraphs exact (#1080). A value over the description bound is oversized
+    before anything reads it; one the renderer refuses, or that renders to no
+    text, is `None`.
+    """
+    if len(value) > MAX_DESCRIPTION_CHARACTERS:
+        return DESCRIPTION_OVERSIZED
+    if carries_markup(value):
+        return visible_description(value)
+    return html.unescape(value)
 
 
 class AudiobookshelfItemReader:
@@ -387,15 +413,22 @@ def _target_field(
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.DESCRIPTION:
-            value = validate_incumbent_description(
-                raw,
-                "target description",
-                max(len(raw), MAX_DESCRIPTION_CHARACTERS)
-                if type(raw) is str
-                else MAX_DESCRIPTION_CHARACTERS,
-            )
-            if len(value) > MAX_DESCRIPTION_CHARACTERS:
+            visible = visible_stored_description(raw) if type(raw) is str else raw
+            if visible is DESCRIPTION_OVERSIZED:
+                # Checked as stored, so an oversized value carrying forbidden
+                # text stays malformed rather than merely oversized.
+                validate_incumbent_description(
+                    raw, "target description", max(len(raw), MAX_DESCRIPTION_CHARACTERS)
+                )
                 return TargetField(destination, TargetFieldState.OVERSIZED)
+            # Markup the renderer will not read, or that shows no text at all,
+            # is admitted as stored, as before #1424, so a markup-only
+            # placeholder is still recognised as one (#1250).
+            value = validate_incumbent_description(
+                raw if visible is None else visible,
+                "target description",
+                MAX_DESCRIPTION_CHARACTERS,
+            )
             return TargetField(
                 destination,
                 TargetFieldState.VALUE,
@@ -622,4 +655,4 @@ def _reject_number(_: str) -> float:
     raise MetadataReportError("target response is invalid")
 
 
-__all__ = ["AudiobookshelfItemReader"]
+__all__ = ["AudiobookshelfItemReader", "visible_stored_description"]

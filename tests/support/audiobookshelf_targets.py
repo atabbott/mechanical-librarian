@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -92,6 +93,9 @@ class FieldEffectTargetCase:
         self.write_status = 200
         self.paired_mode = "normal"
         self.fail_read_once = False
+        # How the service stores a description it accepts; identity unless a
+        # test supplies the form a real service was observed to keep (#1424).
+        self.stored_description: Callable[[str], str] = lambda value: value
 
         def handle(request: httpx.Request) -> httpx.Response:
             self.requests.append(request)
@@ -136,6 +140,12 @@ class FieldEffectTargetCase:
                         if self.paired_mode == "read_failure":
                             self.fail_read_once = True
                     else:
+                        if "description" in metadata:
+                            metadata = {
+                                "description": self.stored_description(
+                                    metadata["description"]
+                                )
+                            }
                         self.detail["media"]["metadata"].update(metadata)
                 self.detail["updatedAt"] = 8
                 return httpx.Response(self.write_status, json={"updated": True})

@@ -2018,6 +2018,26 @@ and every other projection keep the shared grammar and `_FORBIDDEN_CODEPOINTS`
 unchanged. Shadow-review packets may now carry literal markup or U+2028 in
 incumbent text, as JSON data only.
 
+Report v58 admits an Audiobookshelf incumbent description as the text it shows
+(#1424), because the service stores sanitised HTML: a bare `&`, `<` or `>` is
+stored as a character reference and `<script>` is dropped with its content. The
+adapter bounds the stored text at the description bound before anything parses
+it, as the provider path does, so an over-bound value is `oversized` unread. Text
+carrying `<` or `>` is rendered by the one provider renderer, which drops
+attributes and refuses rejected elements, event handlers and unbalanced markup;
+other text has only its character references decoded. The incumbent grammar
+above, original bounds, codepoints, paths and credentials, then checks the
+rendered text, so an attribute's path never enters the report while a path the
+text shows stays refused. Markup the renderer refuses or that shows no text is
+checked and kept as stored, as in v57. The write still sends the exact desired
+value. The pre-read and read-back read the field through the same conversion:
+the pre-read must equal the admitted text exactly, and read-back verifies only
+when the stored form shows what the desired value shows; a service that drops
+part of the value leaves a third value and is never resent. The renderer's one
+new input is that bounded stored text; no request, write capability or
+authority is added. The report/SQL successor requires a clean rebuild, never
+migration.
+
 ## Author evidence authority
 
 Author attribution is evidence, never authority by itself (#1083). Opening and rear EPUB paths share whole-statement structural classification and the original bounded navigation selection; fragment roles never spread across a resource. Incidental credits cannot mint Authors authority, and complete-set proposal conflicts cannot be bypassed by the shadow policy. Report v46, proposal policy v28 and shadow policy v15 invalidate old admission bindings; clean rebuild required. Historical automatic documents remain historical. Consent, exact currentness, backup, optimistic preconditions, read-back and durable audit still govern every permitted effect.

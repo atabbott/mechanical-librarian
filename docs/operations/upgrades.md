@@ -1,5 +1,12 @@
 # Upgrades and compatibility
 
+#1424 advances the report to `metadata-report-v58`: an Audiobookshelf
+incumbent description is admitted as the text it shows rather than its stored,
+HTML-escaped form. **Clean rebuild required** for every predecessor application
+database; startup refuses v57 reports before mutation. No migration, adoption,
+conversion, import or downgrade is supplied; F19a/F20/F46 records are displaced
+with their permission sets unchanged.
+
 #1370 moves each field-effect consent to `field-effect-consent-state-v2`, which
 records its closed basis: the owner's grant, or the policy activation that
 carried it. **Clean rebuild required** for every application database holding a
@@ -136,7 +143,7 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v57`, `proposal-set-v8` under
+The current build uses `metadata-report-v58`, `proposal-set-v8` under
 `fixed-conservative-v36`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
 and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**

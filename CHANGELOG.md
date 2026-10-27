@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- A description written to Audiobookshelf is now recorded as verified when the
+  service stores it escaped, such as `&` as `&amp;`, instead of reading as
+  changed by someone else. Current descriptions are read and shown as the text
+  Audiobookshelf displays, so an escaped one is no longer proposed again as its
+  own text. Clean rebuild required (#1424).
+
 - Opening an Activity row of checks that changed nothing now shows one row per
   field it names, with each field's recorded decision inside that field's
   Details. A Library search now reads "Found 3 of 24 works", counting the
