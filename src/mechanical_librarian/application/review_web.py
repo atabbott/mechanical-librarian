@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import re
 import secrets
 import threading
@@ -32,6 +33,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.audio_health import (
     derive_audio_health,
+    hours_minutes,
     media_unreadable_observation,
 )
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
@@ -2521,6 +2523,12 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         },
     ).get(fact.get("kind"), "Metadata")
     value = fact.get("value", fact.get("observed"))
+    if (
+        fact.get("kind") == "duration"
+        and (seconds := _duration_seconds(value)) is not None
+    ):
+        # A running time reads in hours and minutes, never as raw seconds (#1286).
+        return f"{kind}: {hours_minutes(seconds)}"
     if type(value) in {str, int, float}:
         text = _choice_text(cast("str | int | float", value))
         # A local record can carry its own label ("ISBN: 978…"); it is named
@@ -2529,6 +2537,17 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
             text = text[len(kind) + 1 :].strip() or text
         return f"{kind}: {text}"
     return f"{kind} observation retained."
+
+
+def _duration_seconds(value: object) -> int | None:
+    """Whole seconds from a recorded running time, or None when unreadable."""
+    if type(value) not in {str, int, float}:
+        return None
+    try:
+        seconds = float(cast("str | int | float", value))
+    except ValueError:
+        return None
+    return round(seconds) if math.isfinite(seconds) and seconds >= 0 else None
 
 
 def _choice_text(value: str | int | float) -> str:

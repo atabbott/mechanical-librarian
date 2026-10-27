@@ -800,15 +800,15 @@ def test_runtime_reads_in_hours_and_minutes_and_states_the_difference() -> None:
     30,846 s against 31,680 s is 834 s apart, far outside the 90 s band: it
     is stated, and the difference is the one between the two times as shown.
     """
-    from mechanical_librarian.domain.audio_health import _hours_minutes, _shown_seconds
+    from mechanical_librarian.domain.audio_health import _shown_seconds, hours_minutes
 
-    assert _hours_minutes(30_846) == "8 h 34 min"
-    assert _hours_minutes(31_680) == "8 h 48 min"
-    assert _hours_minutes(_shown_seconds(31_680) - _shown_seconds(30_846)) == "14 min"
-    assert _hours_minutes(90) == "1 min 30 s"
-    assert _hours_minutes(45) == "45 s"
-    assert _hours_minutes(0) == "0 s"
-    assert _hours_minutes(7_200) == "2 h"
+    assert hours_minutes(30_846) == "8 h 34 min"
+    assert hours_minutes(31_680) == "8 h 48 min"
+    assert hours_minutes(_shown_seconds(31_680) - _shown_seconds(30_846)) == "14 min"
+    assert hours_minutes(90) == "1 min 30 s"
+    assert hours_minutes(45) == "45 s"
+    assert hours_minutes(0) == "0 s"
+    assert hours_minutes(7_200) == "2 h"
     assert AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER] == (
         "A complete recording runs within 1 min 30 s of the edition's stated "
         "running time."

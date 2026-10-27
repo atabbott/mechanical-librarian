@@ -95,7 +95,7 @@ def _shown_seconds(seconds: int) -> int:
     return round(seconds / 60) * 60 if seconds >= 3600 else seconds
 
 
-def _hours_minutes(seconds: int) -> str:
+def hours_minutes(seconds: int) -> str:
     """A running time in the owner's units: `8 h 34 min`, `1 min 30 s` (#1286)."""
     shown = _shown_seconds(seconds)
     hours, rest = divmod(shown, 3600)
@@ -115,7 +115,7 @@ def _hours_minutes(seconds: int) -> str:
 AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
     AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER: (
         "A complete recording runs within "
-        f"{_hours_minutes(RUNTIME_BAND_TIGHT_SECONDS)} of the edition's stated "
+        f"{hours_minutes(RUNTIME_BAND_TIGHT_SECONDS)} of the edition's stated "
         "running time."
     ),
     AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH: (
@@ -354,14 +354,14 @@ def _runtime_observations(
                     # The difference is the one between the two times as
                     # shown, so the three figures agree on the page.
                     observed=(
-                        f"{_hours_minutes(local)} of local audio, "
-                        + _hours_minutes(
+                        f"{hours_minutes(local)} of local audio, "
+                        + hours_minutes(
                             _shown_seconds(provider) - _shown_seconds(local)
                         )
                         + " shorter than the matched edition"
                     ),
                     expected=(
-                        f"{_hours_minutes(provider)} stated by the matched edition"
+                        f"{hours_minutes(provider)} stated by the matched edition"
                     ),
                 )
             )
@@ -379,7 +379,7 @@ def _runtime_observations(
                 AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER,
                 (*references, observation.candidate),
                 observed=(
-                    None if local is None else f"{_hours_minutes(local)} of local audio"
+                    None if local is None else f"{hours_minutes(local)} of local audio"
                 ),
                 expected=(
                     "a longer running time stated by this edition, which "
@@ -434,9 +434,9 @@ def _chapter_observations(
             cut = first_divergent_chapter(local, evidence.chapters.durations_seconds)
             if cut is not None:
                 ordinal, ran, stated_ordinal, stated_seconds = cut
-                observed += f"; chapter {ordinal} runs {_hours_minutes(ran)}"
+                observed += f"; chapter {ordinal} runs {hours_minutes(ran)}"
                 expected += (
-                    f"; chapter {stated_ordinal} runs {_hours_minutes(stated_seconds)}"
+                    f"; chapter {stated_ordinal} runs {hours_minutes(stated_seconds)}"
                 )
                 # The two ordinals differ when the alignment skipped an end
                 # chapter on one side, which a publisher's branded intro

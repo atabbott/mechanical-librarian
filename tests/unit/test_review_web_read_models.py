@@ -2327,7 +2327,7 @@ def test_case_detail_reports_write_consent_it_never_asked_the_read_model_for(
     ("kind", "value", "expected"),
     (
         ("contributor", "Recorded Narrator", "Narration credit: Recorded Narrator"),
-        ("duration", "43200.000", "Running time: 43200.000"),
+        ("duration", "43200.000", "Running time: 12 h"),
         ("performance_type", "unabridged", "Performance: unabridged"),
     ),
 )
@@ -3559,6 +3559,27 @@ def test_choice_observation_never_repeats_its_label() -> None:
     assert observed("ASIN: B08G9PRS1K") == "ISBN: ASIN: B08G9PRS1K"
     # A value that is only the label keeps it rather than reading empty.
     assert observed("ISBN:") == "ISBN: ISBN:"
+
+
+def test_choice_observation_reads_a_running_time_in_hours_and_minutes() -> None:
+    """A recorded running time never reaches the owner as raw seconds (#1286)."""
+    from mechanical_librarian.application.review_web import _choice_observation
+
+    def observed(value: object) -> str:
+        return _choice_observation(
+            {
+                "source": "local",
+                "fact": json.dumps({"kind": "duration", "value": value}),
+            }
+        )
+
+    assert observed("43200.000") == "Running time: 12 h"
+    assert observed("30846.400") == "Running time: 8 h 34 min"
+    assert observed(90) == "Running time: 1 min 30 s"
+    assert observed("0.000") == "Running time: 0 s"
+    # Negative controls: an unreadable or negative value is not a running time.
+    assert observed("unstated") == "Running time: unstated"
+    assert observed(-5) == "Running time: -5"
 
 
 @pytest.mark.parametrize(
