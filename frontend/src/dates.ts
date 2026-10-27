@@ -1,7 +1,9 @@
-// The one way a recorded time reads (#1286). A time within the hour either
-// side is relative (`now`, `5 minutes ago`, `in 5 minutes`); one later or
-// earlier the same day is its clock time; any other day adds the weekday and
-// date, and the year when it is not this year: `Tue 28 Oct, 14:05`. Times are epoch seconds,
+// The one way a recorded time reads (#1286). A time in the past hour is
+// relative (`now`, `5 minutes ago`), and the page re-reads it as it ages
+// (`RecordedTime`); a time still ahead is never relative, so it cannot turn
+// false while the page stays open; any other time the same day is its clock
+// time; any other day adds the weekday and date, and the year when it is not
+// this year: `Tue 28 Oct, 14:05`. Times are epoch seconds,
 // as every response states them. `zone` exists for the formatter's own tests,
 // which fix the locale and time zone; the application reads the browser's.
 export interface DateZone {
@@ -49,12 +51,12 @@ export const formatWhen = (
   { dayShown = false, ...zone }: DateZone & { readonly dayShown?: boolean } = {},
 ) => {
   const at = new Date(seconds * 1000)
-  const difference = (at.getTime() - now.getTime()) / 1000
-  if (Math.abs(difference) < 3600) {
+  const elapsed = (now.getTime() - at.getTime()) / 1000
+  if (elapsed >= 0 && elapsed < 3600) {
     const relative = new Intl.RelativeTimeFormat(zone.locale, { numeric: 'auto' })
-    return Math.abs(difference) < 60
+    return elapsed < 60
       ? relative.format(0, 'second')
-      : relative.format(Math.round(difference / 60), 'minute')
+      : relative.format(-Math.round(elapsed / 60), 'minute')
   }
   if (dayShown || dayKey(at, zone) === dayKey(now, zone)) return formatClock(seconds, zone)
   const sameYear = dayKey(at, zone).slice(0, 4) === dayKey(now, zone).slice(0, 4)
@@ -68,10 +70,25 @@ export const formatWhen = (
   return `${date}, ${formatClock(seconds, zone)}`
 }
 
-// A recorded running time in the owner's units, as the server's media health
-// states it: whole minutes from an hour up (`12 h`, `8 h 34 min`), otherwise
-// minutes and seconds (`1 min 30 s`). Null for a value that is no running time,
-// which then reads as recorded.
+// How long, in milliseconds from `now`, until `formatWhen` reads `seconds`
+// differently in the browser's own zone: when a time ahead arrives, when a
+// recent time's minute count moves (each whole minute rounds, so it moves at
+// every half minute past the first), when it leaves the hour, and at the next
+// local midnight, when today's clock time becomes another day's.
+export const nextChange = (seconds: number, now: Date) => {
+  const elapsed = now.getTime() - seconds * 1000
+  const midnight = new Date(now)
+  midnight.setHours(24, 0, 0, 0)
+  const untilMidnight = midnight.getTime() - now.getTime()
+  if (elapsed < 0) return Math.min(-elapsed, untilMidnight)
+  if (elapsed >= 3_600_000) return untilMidnight
+  const next =
+    elapsed < 60_000
+      ? 60_000
+      : Math.min(3_600_000, (Math.floor((elapsed - 30_000) / 60_000) + 1) * 60_000 + 30_000)
+  return Math.min(next - elapsed, untilMidnight)
+}
+
 // Halves round to even, as the server's `round` does, so both read one value
 // the same way.
 const roundHalfEven = (value: number) => {
@@ -79,6 +96,10 @@ const roundHalfEven = (value: number) => {
   const fraction = value - floor
   return fraction === 0.5 ? (floor % 2 === 0 ? floor : floor + 1) : Math.round(value)
 }
+// A recorded running time in the owner's units, as the server's media health
+// states it: whole minutes from an hour up (`12 h`, `8 h 34 min`), otherwise
+// minutes and seconds (`1 min 30 s`). Null for a value that is no running time,
+// which then reads as recorded.
 export const formatRunningTime = (value: string) => {
   const parsed = Number(value)
   if (value.trim() === '' || !Number.isFinite(parsed) || parsed < 0) return null

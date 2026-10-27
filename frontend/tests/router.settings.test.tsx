@@ -368,6 +368,11 @@ describe('owner settings route', () => {
       expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Discard all' })).not.toBeInTheDocument()
     }
+    // The locked view reads a size as the editable field does (#1286 X13).
+    await user.click(screen.getByRole('button', { name: /Background work/ }))
+    await user.click(screen.getByText('Response and file size limits'))
+    expect(screen.getByText('0.0625 MB (64 KB)')).toBeVisible()
+    expect(screen.getByText('8,192 MB (8 GB)')).toBeVisible()
   })
 
   it('owns group navigation in the URL and restores it with browser history', async () => {
@@ -1493,7 +1498,20 @@ describe('owner settings route', () => {
     // 64 KiB is exactly 0.0625 MB, and the hint says 64 KB beside it.
     const source = screen.getByRole('spinbutton', { name: 'Source response limit' })
     expect(source).toHaveValue(0.0625)
-    expect(source.parentElement).toHaveTextContent('MB · 64 KB')
+    expect(source.parentElement).toHaveTextContent('MB (64 KB)')
+    // The unit beside each number is announced with it, not only seen.
+    const spinbuttons = screen.getAllByRole('spinbutton')
+    expect(spinbuttons.length).toBeGreaterThan(3)
+    for (const input of spinbuttons) {
+      const unit = input.parentElement?.querySelector('small')
+      expect(unit?.textContent).toMatch(/^(MB|seconds|minutes)/u)
+      expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(unit?.id)
+      expect(input).toHaveAccessibleDescription(
+        expect.stringMatching(
+          new RegExp(`^${(unit?.textContent ?? '').replace(/[()]/gu, '\\$&')} `, 'u'),
+        ),
+      )
+    }
     expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveValue(256)
     expect(
       screen.getByRole('spinbutton', { name: 'Source archive limit' }).parentElement,
@@ -1575,7 +1593,7 @@ describe('owner settings route', () => {
     await user.click(await screen.findByText('Response and file size limits'))
     const source = screen.getByRole('spinbutton', { name: 'Source response limit' })
     expect(source).toHaveValue(0.0625)
-    expect(source.parentElement).toHaveTextContent('MB · 64 KB')
+    expect(source.parentElement).toHaveTextContent('MB (64 KB)')
     expect(source.parentElement).not.toHaveTextContent('0.063')
     // A whole MB needs no KB beside it.
     expect(
@@ -1584,13 +1602,19 @@ describe('owner settings route', () => {
     // An edit to 0.125 MB writes exactly 128 KB, and the hint follows the edit.
     await user.clear(source)
     await user.type(source, '0.125')
-    expect(source.parentElement).toHaveTextContent('MB · 128 KB')
-    // The range error names the smallest size in KB rather than as a fraction.
+    expect(source.parentElement).toHaveTextContent('MB (128 KB)')
+    // The range error reads in the field's own unit, its exact MB reading back
+    // to 1,024 bytes, with the KB beside it.
     await user.clear(source)
     await user.type(source, '0.0001')
     expect(source).toHaveAccessibleDescription(
-      /Source response limit must be from 1 KB to 256 KB\./u,
+      /Source response limit must be from 0\.000977 MB \(1 KB\) to 0\.25 MB \(256 KB\)\./u,
     )
+    // What the field shows is what it saves: 0.123 MB stays 0.123, never 0.12.
+    await user.clear(source)
+    await user.type(source, '0.123')
+    expect(source).toHaveValue(0.123)
+    expect(source.parentElement).toHaveTextContent('MB (125.952 KB)')
     await user.clear(source)
     await user.type(source, '0.125')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
@@ -1642,11 +1666,27 @@ describe('owner settings route', () => {
     await user.type(audio, '0.0009')
     expect(audio).toHaveAttribute('aria-invalid', 'true')
     expect(audio).toHaveAccessibleDescription(
-      /Audiobook source limit must be from 1 KB to 16,384 MB/,
+      /Audiobook source limit must be from 0\.000977 MB \(1 KB\) to 16,384 MB \(16 GB\)\./u,
     )
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
     await waitFor(() => expect(audio).toHaveFocus())
     expect(http.writeSettings).not.toHaveBeenCalled()
+
+    // A GB aside stops at two decimals; the MB value beside it stays exact.
+    await user.clear(audio)
+    await user.type(audio, '1025.3115')
+    expect(audio).toHaveValue(1025.3115)
+    expect(audio.parentElement).toHaveTextContent('MB (1 GB)')
+    await user.clear(audio)
+    await user.type(audio, '1536.5')
+    expect(audio.parentElement).toHaveTextContent('MB (1.5 GB)')
+    expect(audio).toHaveAccessibleDescription(/^MB \(1\.5 GB\) /u)
+    await user.clear(audio)
+    await user.type(audio, '2047.99')
+    expect(audio.parentElement).toHaveTextContent(/MB \(2 GB\)$/u)
+    await user.clear(audio)
+    await user.type(audio, '1100.123')
+    expect(audio.parentElement).toHaveTextContent(/MB \(1\.07 GB\)$/u)
 
     await user.clear(audio)
     await user.type(audio, '16385')

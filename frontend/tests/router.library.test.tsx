@@ -1720,6 +1720,14 @@ describe('Library route', () => {
             state: 'malformed',
             value: 'B0XXXXXXXX',
           },
+          {
+            basis: 'path',
+            excerpt: '7200',
+            kind: 'duration',
+            role: null,
+            state: 'malformed',
+            value: '7200',
+          },
         ],
         evidenceTruncated: false,
         item: 'item-9',
@@ -1824,8 +1832,12 @@ describe('Library route', () => {
       // A running time reads in hours and minutes, never as raw seconds (#1286).
       expect(within(evidence).getByText('12 h')).toBeVisible()
       expect(within(evidence).queryByText(/43200/u)).toBeNull()
+      // A running time the extraction could not trust is no running time: it
+      // keeps its recorded text rather than reading as `2 h` (#1286 C5).
+      expect(within(evidence).getByText('7200')).toBeVisible()
+      expect(within(evidence).queryByText('2 h')).toBeNull()
       // A claim the extraction could not trust must not read as sound evidence.
-      expect(within(evidence).getByText(/Unreadable/u)).toBeVisible()
+      expect(within(evidence).getAllByText(/Unreadable/u)).toHaveLength(2)
       expect(within(evidence).getByText(/Embedded cover art is present/u)).toBeVisible()
       // What is wrong with the media, stated as its own section: the observation,
       // the rule it broke, and what it was read from -- with the opaque local
@@ -8309,6 +8321,48 @@ describe('Library route', () => {
     expect(within(rail).getByRole('button', { name: /^Title/u })).toHaveFocus()
   })
 
+  it('names the same book-level fields as Detail, whether or not empty fields are shown (#1286 O2)', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        audiobookReviewScope: 'work' as const,
+        // The fields router.detail's note test offers: Series as context, and
+        // Series again empty with nothing proposed, are never named.
+        fields: [
+          { ...titleField, destination: 'genres' as const },
+          titleField,
+          { ...titleField, destination: 'description' as const },
+          { ...titleField, destination: 'series' as const, inventoryRole: 'contextual' as const },
+          {
+            ...titleField,
+            destination: 'series' as const,
+            currentRaw: null,
+            proposedValues: [],
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all&preview=case-1', http)
+    const note =
+      'Book-level evidence supports title, description, and genre choices. The exact recording remains unresolved.'
+    const context = await screen.findByRole('region', { name: 'Whole-work context' })
+    expect(within(context).getByText(note)).toBeVisible()
+    const rail = screen.getByRole('navigation', { name: 'Review fields' })
+    await userEvent
+      .setup()
+      .click(within(rail).getByRole('button', { name: 'Show 1 additional field' }))
+    expect(within(rail).getByRole('button', { name: /^Series/u })).toBeVisible()
+    expect(
+      within(screen.getByRole('region', { name: 'Whole-work context' })).getByText(note),
+    ).toBeVisible()
+    expect(
+      within(screen.getByRole('region', { name: 'Whole-work context' })).queryByText(/series/u),
+    ).toBeNull()
+  })
+
   it('synchronously reveals and selects an additional field named in the URL', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
@@ -9039,21 +9093,24 @@ describe('Library route', () => {
 
   it('names which library holds permission when only some do, and says readiness once (#1286)', async () => {
     const view = activity({
-      configured_libraries: ['fiction', 'history'].map((name) => ({
+      configured_libraries: ['fiction', 'history', 'research'].map((name) => ({
         connection: 'primary',
         library: name,
         prepared: { automatic: 1, human: 0, total: 1 },
       })),
-      capabilities: ['fiction', 'history'].map((name) => ({
+      // Research shelf is held for an unexpected write: it cannot be given
+      // permission, so it is never said to need it (#1286 X12).
+      capabilities: ['fiction', 'history', 'research'].map((name) => ({
         connection: 'primary',
         library: name,
-        state: 'allowed' as const,
+        state: name === 'research' ? ('not_ready' as const) : ('allowed' as const),
         destinations: [
           {
             consented: name === 'fiction',
             destination: 'title' as const,
             prepared: 1,
-            state: 'allowed' as const,
+            state:
+              name === 'research' ? ('unexpected_effect_behavior' as const) : ('allowed' as const),
           },
         ],
       })),
@@ -9074,10 +9131,15 @@ describe('Library route', () => {
         ...named,
         document: {
           ...named.document,
-          libraries: ['fiction', 'history'].map((name) => ({
+          libraries: ['fiction', 'history', 'research'].map((name) => ({
             ...shelf,
             name,
-            display_name: name === 'fiction' ? 'Fiction Shelf' : 'History Room',
+            display_name:
+              name === 'fiction'
+                ? 'Fiction Shelf'
+                : name === 'history'
+                  ? 'History Room'
+                  : 'Research Shelf',
           })),
         },
       })),
@@ -9087,12 +9149,15 @@ describe('Library route', () => {
     renderRoute('/library?lens=all', http)
 
     const heading = await screen.findByRole('heading', {
-      name: '5 works are in Library. Writes are on for Fiction Shelf; History Room needs permission.',
+      name: '5 works are in Library. Writes are on for Fiction Shelf; History Room needs permission; writes to Research Shelf are held.',
     })
     const notice = heading.closest('section')
     if (!notice) throw new Error('the handoff notice is a section')
-    // Readiness is said once: the blocked reason, not a second sentence too.
-    expect(notice).toHaveTextContent('Open permission review to check current readiness.')
+    // Readiness is said once, in one sentence that is also the instruction.
+    expect(notice).toHaveTextContent(
+      'Open permission review in Activity to check current readiness.',
+    )
+    expect(notice).not.toHaveTextContent('Review current write permissions')
     expect(notice).not.toHaveTextContent('Readiness is checked when you open the review.')
     expect(within(notice).getAllByText(/readiness/iu)).toHaveLength(1)
   })
@@ -10512,6 +10577,70 @@ it('counts linked corroborating authorities once and keeps observations separate
   expect(http.recordDecision).not.toHaveBeenCalled()
 })
 
+it('names a language observation as Detail does, in choice evidence and recorded observations (#1286 L1)', async () => {
+  const user = userEvent.setup()
+  const field = detail.fields[0]
+  if (!field) throw new Error('title field required')
+  const http = createHttp()
+  http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+    ...detail,
+    fields: [
+      {
+        ...field,
+        destination: 'language' as const,
+        choiceContexts: [
+          {
+            alternativeId: null,
+            selection: 'current',
+            limitations: [],
+            rationale: 'Retained current language.',
+            recommendation: 'no_recommendation',
+            recommendationReason: 'No recommendation.',
+            evidence: [
+              {
+                source: 'Local library record',
+                observation: 'Language: pt-BR',
+                role: 'local_presence',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }))
+  http.getEvidence = vi.fn<ReviewHttp['getEvidence']>(async () => ({
+    items: [
+      {
+        destinations: ['language'],
+        observation: 'Language: zh-Hant. Retained for review only; not an eligible choice.',
+        role: 'external_observation',
+        source: 'Open Library',
+      },
+      {
+        destinations: ['language'],
+        observation: 'Language: UND. Undetermined language; not an eligible choice.',
+        role: 'local_presence',
+        source: 'Local metadata',
+      },
+    ],
+    missingLineageCount: 0,
+    sourceLedger: [],
+  }))
+  renderRoute('/library?lens=all&preview=case-1&field=language', http)
+  await user.click(await screen.findByRole('button', { name: /^Evidence for Current value:/u }))
+  expect(screen.getByText('Language: Brazilian Portuguese (pt-BR)')).toBeVisible()
+  expect(screen.queryByText('Language: pt-BR')).toBeNull()
+  const region = await screen.findByRole('region', { name: 'Recorded observations' })
+  expect(
+    await within(region).findByText(
+      'Language: Traditional Chinese (zh-Hant). Retained for review only; not an eligible choice.',
+    ),
+  ).toBeVisible()
+  expect(
+    within(region).getByText('Language: UND. Undetermined language; not an eligible choice.'),
+  ).toBeVisible()
+})
+
 describe('library provider throttling notice (#1282)', () => {
   const noon = new Date(2026, 9, 23, 12, 0)
   const seconds = (date: Date) => Math.floor(date.getTime() / 1000)
@@ -10691,9 +10820,8 @@ describe('library provider throttling notice (#1282)', () => {
       vi.useRealTimers()
       Object.assign(globalThis, real)
     })
-    // A wait within the hour reads relative to now (#1286); the fake clock
-    // advances with real time, so the minute count is not fixed.
-    const relative = /Next automatic retry in \d+ minutes?\./u
+    // A wait ahead reads as its clock time, never relative, so it stays true
+    // while the page is open (#1286); each item names its own wait.
     const soon = new Date(noon.getTime() + 90_000)
     const later = new Date(noon.getTime() + 600_000)
     let current = throttled([
@@ -10703,7 +10831,8 @@ describe('library provider throttling notice (#1282)', () => {
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/library?lens=all', http)
     const items = await within(await notice()).findAllByRole('listitem')
-    expect(items[0]).toHaveTextContent(relative)
+    expect(items[0]).toHaveTextContent(`Next automatic retry ${clock(soon)}.`)
+    expect(items[1]).toHaveTextContent(`Next automatic retry ${clock(later)}.`)
     // One timer, to the earliest wait still ahead; the query cache's own
     // five-minute collection timers are the only other long ones.
     const timers = () => scheduled.filter(([delay]) => delay > 60_000 && delay !== 300_000)
@@ -10711,7 +10840,7 @@ describe('library provider throttling notice (#1282)', () => {
     const reads = vi.mocked(http.getPreparation).mock.calls.length
     await act(() => vi.advanceTimersByTimeAsync(91_000))
     expect(items[0]).toHaveTextContent('214 deferred lookups. Retry due now.')
-    expect(items[1]).toHaveTextContent(relative)
+    expect(items[1]).toHaveTextContent(`Next automatic retry ${clock(later)}.`)
     expect(vi.mocked(http.getPreparation).mock.calls.length).toBe(reads)
     // The next timer runs to the next wait; a change replaces it.
     const [, second] = timers().at(-1) ?? []
@@ -11361,6 +11490,56 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       'Write permission for history lapsed because it was given under a policy that is no longer active. Review current write permissions in Activity.',
     )
     expect(screen.getByRole('link', { name: 'Review write permissions' })).toBeVisible()
+  })
+
+  it('reads a lapse beside a consented but suspended library as off, naming it held (#1286 L2)', async () => {
+    const view = activity({
+      configured_libraries: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+      })),
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'not_ready',
+          destinations: [
+            {
+              consented: true,
+              destination: 'title' as const,
+              prepared: 0,
+              state: 'unexpected_effect_behavior',
+            },
+          ],
+        },
+        {
+          connection: 'primary',
+          library: 'history',
+          state: 'allowed',
+          destinations: [
+            { consented: false, destination: 'title' as const, prepared: 0, state: 'allowed' },
+          ],
+        },
+      ],
+      lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getLibrary: vi.fn(async () => counted(0, 5)),
+    }
+    renderRoute('/library?lens=all', http)
+
+    // Permission kept for a library whose every destination is suspended
+    // writes nothing, so the lapse beside it does not read as writes enabled.
+    const heading = await screen.findByRole('heading', {
+      name: '5 works are in Library. Writes are off; writes to fiction are held.',
+    })
+    const notice = heading.closest('.cm-library-handoff')
+    expect(notice).not.toHaveTextContent('Writes are enabled')
+    expect(notice).toHaveTextContent(
+      'Write permission for history lapsed because it was given under a policy that is no longer active.',
+    )
   })
 
   it('announces a lapse once, by its Settings name (#1370)', async () => {

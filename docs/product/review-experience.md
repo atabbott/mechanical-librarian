@@ -789,11 +789,14 @@ source and media family has a typed owner label, and a code outside the family
 the server promises is refused at the boundary rather than sentence-cased; a
 family the server leaves open reads as one neutral sentence. Acronyms stay in
 capitals (ISBN, ASIN), languages read by name with their tag ("English (en)"),
-running times in hours and minutes, sizes in MB (1,048,576 bytes) and polling
-and session lifetimes in minutes, saved back as exact bytes and seconds. Times
-use one format: relative within the hour, the clock time the same day, and the
-weekday and date otherwise. The one labelled exception is the Policy page's
-"Technical detail" disclosure, which keeps rule codes for audit (#1286).
+running times in hours and minutes, sizes in MB (1,048,576 bytes) with the KB
+beside a size under one MB, and polling and session lifetimes in minutes, saved
+back as exact bytes and seconds and shown as exactly what is saved. Times use
+one format: relative within the past hour and re-read as they age, the clock
+time the same day, and the weekday and date otherwise; a time still ahead is
+never relative, so nothing on screen turns false while the page stays open.
+The one labelled exception is the Policy page's "Technical detail" disclosure,
+which keeps rule codes for audit (#1286).
 
 Controls retain 44-pixel targets, visible focus and semantic status announcements; long
 owner values wrap without document overflow at 320 pixels and 200% text.

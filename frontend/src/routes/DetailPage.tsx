@@ -12,7 +12,8 @@ import type {
   TargetDestination,
 } from '../api/http'
 import { displayValue } from '../api/http'
-import { formatWhen } from '../dates'
+import { railOffers } from '../reviewChoiceCounts'
+import { RecordedTime } from '../components/RecordedTime'
 import {
   coverHistoryLabels,
   coverNoteLabel,
@@ -20,6 +21,7 @@ import {
   destinationLabel,
   evidenceRoleLabel,
   languageName,
+  observationText,
   lookupLabels,
   mediaKindLabels,
   shadowDispositionLabels,
@@ -307,7 +309,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
               <RecordingIdentityBasis
                 value={data.recordingIdentityBasis}
                 scope={data.audiobookReviewScope}
-                offered={data.fields.map((field) => field.destination)}
+                offered={data.fields.filter(railOffers).map((field) => field.destination)}
               />
               {data.mediaHealth.length ? <MediaHealth observations={data.mediaHealth} /> : null}
               <div className="diagnostic-list evidence-fields">
@@ -325,7 +327,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         <ul className="evidence-values">
                           {fieldObservations.map((item, index) => (
                             <li key={`${item.source}-${String(index)}-${item.observation}`}>
-                              <p>{item.observation}</p>
+                              <p>{observationText(item.observation)}</p>
                               <small>
                                 {item.source} · {evidenceRoleLabel(item.role)}
                               </small>
@@ -400,7 +402,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                     <small>Time not recorded</small>
                   ) : (
                     <time dateTime={new Date(item.occurredAt * 1000).toISOString()}>
-                      {formatWhen(item.occurredAt, new Date())}
+                      <RecordedTime seconds={item.occurredAt} />
                     </time>
                   )}
                   <HistoryItem item={item} />

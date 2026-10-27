@@ -33,6 +33,7 @@ import {
   destinationPhrase,
   fieldStateLabels,
   languageName,
+  observationText,
   lookupLabels,
   mediaHealthLabels,
   mediaKindLabels,
@@ -169,5 +170,33 @@ describe('owner labels (#1286)', () => {
     ['', ''],
   ])('renders the language value %j through Intl.DisplayNames as %j', (value, shown) => {
     expect(languageName(value)).toBe(shown)
+  })
+
+  // One language tag reads one way on every page, region and script included
+  // (#1286 L1); the server's observation text stays literal.
+  it.each([
+    ['Language: en', 'Language: English (en)'],
+    ['Language: pt-BR', 'Language: Brazilian Portuguese (pt-BR)'],
+    ['Language: en-GB', 'Language: British English (en-GB)'],
+    ['Language: zh-Hant', 'Language: Traditional Chinese (zh-Hant)'],
+    [
+      'Language: fr. Retained for review only; not an eligible choice.',
+      'Language: French (fr). Retained for review only; not an eligible choice.',
+    ],
+    // Undetermined keeps its tag; the observation already says so.
+    ['Language: und', 'Language: und'],
+    [
+      'Language: UND. Undetermined language; not an eligible choice.',
+      'Language: UND. Undetermined language; not an eligible choice.',
+    ],
+    // Not a tag, or not a language observation: shown as it is.
+    ['Language: English', 'Language: English'],
+    ['Language: not a tag', 'Language: not a tag'],
+    ['Title: en', 'Title: en'],
+  ])('reads the observation %j as %j', (text, shown) => {
+    expect(observationText(text)).toBe(shown)
+    // The page names the tag exactly as the field value beside it does.
+    const tag = /^Language: ([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)(?=\.|$)/u.exec(text)?.[1]
+    if (tag && !/^und$/iu.test(tag)) expect(shown).toContain(languageName(tag))
   })
 })

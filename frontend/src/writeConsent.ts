@@ -53,6 +53,69 @@ export interface WriteConsentOffer {
 export const libraryList = (names: readonly string[]) =>
   new Intl.ListFormat('en', { type: 'conjunction' }).format(names)
 
+/**
+ * Writes are enabled for a destination only while it holds permission and is
+ * not suspended. Consent and capability are independent: a current consent
+ * survives a later suspension, and a suspended destination's writes are held
+ * whatever its consent says (#1286). A consented destination not yet checked
+ * (`not_ready`, nothing to probe it with) is not held: its permission stands
+ * and every write is checked before it starts.
+ */
+export const writesEnabled = (entry: { consented: boolean; state: DestinationState }) =>
+  entry.consented && (entry.state === 'allowed' || entry.state === 'not_ready')
+
+/**
+ * A library is held when it has destinations and none of them can be written
+ * or given permission: each is suspended or unavailable here, consented or
+ * not. Activity's review and the writes-off sentence say so in the same words
+ * (#1286).
+ */
+export const libraryWritesHeld = (destinations: readonly { state: DestinationState }[]) =>
+  destinations.length > 0 &&
+  destinations.every((entry) => entry.state !== 'allowed' && entry.state !== 'not_ready')
+
+/**
+ * Beside a library that holds permission, which of the others can be given it
+ * and which are held: a library whose every destination is held (an
+ * unexpected write, a missing field, an unusable connection) cannot be given
+ * permission, so it is said to be held rather than to need permission
+ * (#1286). Writes are on for a library holding permission only while one of
+ * its consented destinations is still allowed; one whose consented
+ * destinations are all suspended is not said to have writes on. With no
+ * library writing, writes are off, and a held library beside a kept
+ * permission is still named as held.
+ */
+export const writesOffSentence = (
+  data: Pick<ActivityPermissionReadinessView, 'capabilities' | 'configured_libraries'>,
+  holding: readonly string[],
+  libraryName: (name: string) => string,
+) => {
+  const destinations = (library: string) =>
+    data.capabilities.find((item) => item.library === library)?.destinations ?? []
+  const on = holding.filter((library) => destinations(library).some(writesEnabled))
+  const others = data.configured_libraries
+    .map((item) => item.library)
+    .filter((library) => !on.includes(library))
+  const held = others.filter((library) => libraryWritesHeld(destinations(library)))
+  if (!on.length)
+    return holding.length && held.length
+      ? `Writes are off; writes to ${libraryList(held.map(libraryName))} are held.`
+      : 'Writes are off.'
+  if (!others.length) return 'Writes are off.'
+  const waiting = others.filter((library) => !held.includes(library))
+  return [
+    `Writes are on for ${libraryList(on.map(libraryName))}`,
+    ...(waiting.length
+      ? [
+          `${libraryList(waiting.map(libraryName))} ${waiting.length === 1 ? 'needs' : 'need'} permission`,
+        ]
+      : []),
+    ...(held.length ? [`writes to ${libraryList(held.map(libraryName))} are held`] : []),
+  ]
+    .join('; ')
+    .concat('.')
+}
+
 const lapseReason = (reason: ActivityLapsedConsentView['reason'], libraries: number) =>
   ({
     destinations_changed:
@@ -135,9 +198,11 @@ export const readWriteConsent = (
   // that came from a response would keep claiming success after the queue had
   // moved on, and the queue is the only thing that knows whether a prepared
   // change is still waiting on permission. An empty queue is complete only
-  // while some library still holds permission or none ever lapsed (#1370).
+  // while some library can still write or none ever lapsed (#1370): a
+  // permission whose destinations are all suspended writes nothing, so a lapse
+  // beside it reads as off, not as writes enabled (#1286).
   const lapsed = lapsedSentence(data.lapsed_consents, options.libraryName ?? ((name) => name))
-  const held = data.capabilities.some((item) => item.destinations.some((entry) => entry.consented))
+  const held = data.capabilities.some((item) => item.destinations.some(writesEnabled))
   const state: WriteConsentState = options.enabling
     ? 'enabling'
     : reasons.applying > 0
@@ -150,11 +215,11 @@ export const readWriteConsent = (
             ? 'off'
             : 'complete'
   const excluded = scopes[0]?.excluded[0]
+  // Unchecked readiness blocks nothing yet: each surface's own one sentence
+  // sends the owner to the review that checks it (#1286).
   const blocked =
     data.backup_ready === null
-      ? state === 'off' || state === 'enabling'
-        ? 'Open permission review to check current readiness.'
-        : null
+      ? null
       : !data.backup_ready
         ? 'Backup readiness has not been confirmed, so writes cannot be enabled yet.'
         : grants.length === 0

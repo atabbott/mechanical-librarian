@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatClock, formatDay, formatRunningTime, formatWhen } from '../src/dates'
+import { formatClock, formatDay, formatRunningTime, formatWhen, nextChange } from '../src/dates'
 
 // The formatter's own tests fix the locale and zone; the application reads the
 // browser's (#1286).
@@ -10,14 +10,40 @@ const now = new Date('2026-10-28T14:05:00Z')
 
 describe('formatWhen (#1286)', () => {
   it.each([
-    ['2026-10-28T14:05:20Z', 'now'],
+    ['2026-10-28T14:05:00Z', 'now'],
     ['2026-10-28T14:04:50Z', 'now'],
+    ['2026-10-28T14:03:30Z', '2 minutes ago'],
     ['2026-10-28T14:00:00Z', '5 minutes ago'],
-    ['2026-10-28T14:10:00Z', 'in 5 minutes'],
     ['2026-10-28T13:06:00Z', '59 minutes ago'],
-    ['2026-10-28T14:06:00Z', 'in 1 minute'],
-  ])('reads %s, within the hour either side, relative to now as %j', (iso, shown) => {
+  ])('reads %s, within the past hour, relative to now as %j', (iso, shown) => {
     expect(formatWhen(at(iso), now, zone)).toBe(shown)
+  })
+
+  it('never reads a time still ahead relative to now, so it cannot turn false (#1286 C3)', () => {
+    expect(formatWhen(at('2026-10-28T14:05:20Z'), now, zone)).toBe('14:05')
+    expect(formatWhen(at('2026-10-28T14:10:00Z'), now, zone)).toBe('14:10')
+    expect(formatWhen(at('2026-10-29T08:00:00Z'), now, zone)).toBe('Thu 29 Oct, 8:00')
+  })
+
+  it('says when a reading next changes, so a page re-reads it as it ages (#1286 C3)', () => {
+    const local = new Date(2026, 9, 28, 14, 5, 0)
+    const ago = (milliseconds: number) => (local.getTime() - milliseconds) / 1000
+    // `now` until a minute, then each rounded minute moves at its half minute.
+    expect(nextChange(ago(10_000), local)).toBe(50_000)
+    expect(nextChange(ago(60_000), local)).toBe(30_000)
+    expect(nextChange(ago(90_000), local)).toBe(60_000)
+    expect(nextChange(ago(3_590_000), local)).toBe(10_000)
+    // A time ahead changes when it arrives; an older one at local midnight.
+    expect(nextChange(ago(-120_000), local)).toBe(120_000)
+    expect(nextChange(ago(7_200_000), local)).toBe(
+      new Date(2026, 9, 29).getTime() - local.getTime(),
+    )
+    for (const elapsed of [10_000, 60_000, 90_000, 3_590_000]) {
+      const before = formatWhen(ago(elapsed), local)
+      const changeAt = new Date(local.getTime() + nextChange(ago(elapsed), local))
+      expect(formatWhen(ago(elapsed), new Date(changeAt.getTime() - 1))).toBe(before)
+      expect(formatWhen(ago(elapsed), changeAt)).not.toBe(before)
+    }
   })
 
   it('reads a time earlier or later the same day as its clock time', () => {

@@ -20,6 +20,31 @@ describe('policy impact projections', () => {
     ).toBe('fills the empty field with Title: Synthetic Journey; Subtitle: A Tale of Courage')
   })
 
+  it('reads a list or series as Activity does, never as raw JSON (#1286 X6)', () => {
+    const series = policyImpactDisplay({
+      current_value: [{ name: 'Old order', sequence: '1' }],
+      desired_value: [
+        { name: 'Reading order', sequence: '2' },
+        { name: 'Companion set', sequence: null },
+      ],
+      field: 'series',
+      outcome: 'projected',
+      reason: null,
+      target_state: 'value',
+    }).detail
+    expect(series).toBe('Old order (1) → Reading order (2), Companion set')
+    const genres = policyImpactDisplay({
+      current_value: ['Fantasy'],
+      desired_value: ['Fantasy', 'Adventure'],
+      field: 'genres',
+      outcome: 'projected',
+      reason: null,
+      target_state: 'value',
+    }).detail
+    expect(genres).toBe('Fantasy → Fantasy, Adventure')
+    expect(`${series} ${genres}`).not.toMatch(/[[\]{}"]/u)
+  })
+
   it('reads an Ask me change as what the review would propose (#1286)', () => {
     const field = {
       current_value: null,

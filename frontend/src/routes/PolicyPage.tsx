@@ -13,6 +13,7 @@ import {
   policyAutomaticQualification,
   refusalCopy,
   sessionRefreshedCopy,
+  TARGET_DESTINATIONS,
 } from '../api/http'
 import type {
   PolicyActivationView,
@@ -175,7 +176,7 @@ const fields: readonly FieldDefinition[] = [
     optionLabels: {
       primary_narrative: 'Primary narrative',
       source_order: 'First source membership',
-      all_qualified: 'All qualified memberships',
+      all_qualified: 'All supported memberships',
       add_qualified: 'Add supported memberships',
       replace_qualified: 'Replace with supported memberships',
     },
@@ -236,11 +237,11 @@ const fields: readonly FieldDefinition[] = [
     key: 'asin',
     label: 'ASIN',
     meaning:
-      'Use an ASIN associated with the audiobook recording, or select an admitted ebook manifestation.',
+      'Use an ASIN associated with the audiobook recording, or the ASIN of a confirmed ebook edition.',
     options: ['preserve_exact', 'ebook_manifestation'],
     optionLabels: {
       preserve_exact: 'Preserve exact ASIN',
-      ebook_manifestation: 'Ebook manifestation',
+      ebook_manifestation: 'Ebook edition ASIN',
     },
     chapter: 'curation',
   },
@@ -534,12 +535,41 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
   },
 ]
 
-const readableCategory = (key: string) =>
-  fields.find((field) => field.key === key)?.label ?? 'Another policy field'
+// A suspension category is a policy field or, for a provider-consensus
+// title, the destination itself: `Recover Title suspension` (#1286).
+const readableCategory = (key: string) => {
+  const destination = TARGET_DESTINATIONS.find((candidate) => candidate === key)
+  return (
+    fields.find((field) => field.key === key)?.label ??
+    (destination ? destinationLabel(destination) : 'Another policy field')
+  )
+}
 // A language value reads by its name, `English (en)` (#1286).
-const previewValue = (value: unknown, language = false) => {
+// A preview value as Activity states one: a list joined, a series as
+// `Name (sequence)`, never as raw JSON (#1286).
+const previewValue = (value: unknown, language = false): string => {
   if (value === null || value === undefined || value === '') return 'empty'
   if (typeof value === 'string') return language ? languageName(value) : value
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'number') return value.toLocaleString()
+  if (Array.isArray(value)) {
+    if (!value.length) return 'empty'
+    if (value.every((item) => typeof item === 'string'))
+      return value.map((item) => (language ? languageName(item) : item)).join(', ')
+    const series = value.map((item: unknown) =>
+      typeof item === 'object' &&
+      item !== null &&
+      'name' in item &&
+      typeof item.name === 'string' &&
+      (!('sequence' in item) || item.sequence === null || typeof item.sequence === 'string')
+        ? 'sequence' in item && typeof item.sequence === 'string' && item.sequence
+          ? `${item.name} (${item.sequence})`
+          : item.name
+        : null,
+    )
+    if (series.every((item) => item !== null)) return series.join(', ')
+    return 'a value this preview cannot show'
+  }
   if (
     typeof value === 'object' &&
     Object.keys(value).length === 2 &&
@@ -549,7 +579,7 @@ const previewValue = (value: unknown, language = false) => {
     typeof value.subtitle === 'string'
   )
     return `Title: ${value.title}; Subtitle: ${value.subtitle}`
-  return JSON.stringify(value)
+  return 'a value this preview cannot show'
 }
 
 interface PolicyPreviewField {
@@ -1348,9 +1378,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Review the unchanged preview before making this draft active.'
         : stage === 'preview'
-          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} material ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the bounded sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved; activate to keep it — reloading starts from the active policy.`
+          ? `Validated across all chapters${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'change' : 'changes'} in the sample` : ''}${changedChapterLabels.length ? ` · draft changes in ${changedChapterLabels.join(', ')}` : ''} · draft saved; activate to keep it — reloading starts from the active policy.`
           : stage === 'validating'
-            ? 'Checking every chapter, Automatic qualification, and exact library scope.'
+            ? 'Checking every chapter, where Automatic may decide, and which libraries the policy covers.'
             : draftDisplay.changed
               ? `Changes in ${changedChapterLabels.join(', ')} · validation always checks and saves the complete draft.`
               : 'Change any field to create a new draft — validation always covers the whole policy.'
@@ -1426,7 +1456,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   disabled={command.isPending || shadow.posture !== 'preview'}
                   onClick={() => void runAuxiliary('shadow/confirm-automatic')}
                 >
-                  Activate qualified Automatic
+                  Turn on Automatic
                 </button>
                 <button
                   disabled={command.isPending}
@@ -1531,9 +1561,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       {field.key === 'series' ? (
                         <p>
                           One provider can supply enough backing; corroboration strengthens the
-                          evidence. Qualification measures these rules against checked books.
-                          Numbering is supplied by the provider and is not independently verified
-                          for each book.
+                          evidence. These rules are measured against checked books before Automatic
+                          is offered. Numbering is supplied by the provider and is not independently
+                          verified for each book.
                         </p>
                       ) : null}
                       <ul>
@@ -1774,7 +1804,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             {unchangedRows.length ? (
               <details className="cm-policy-projected-context">
                 <summary>
-                  Unchanged outcomes and projected library context ({unchangedRows.length})
+                  Unchanged outcomes and current library context ({unchangedRows.length})
                 </summary>
                 <p>
                   These compare the draft with retained library values. They do not count as effects
@@ -1941,8 +1971,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <li>
                   <span />
                   <div>
-                    <strong>Automatic qualification</strong>
-                    <small>Every Automatic representation is admitted</small>
+                    <strong>Automatic checks</strong>
+                    <small>Every Automatic choice has passed its checks</small>
                   </div>
                 </li>
                 <li>

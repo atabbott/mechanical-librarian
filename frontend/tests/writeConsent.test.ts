@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import { mapActivity, mapActivityConsent } from '../src/api/http'
 import type { ActivityCapabilityView, DestinationState, TargetDestination } from '../src/api/http'
-import { consentBasis, destinationReason, readWriteConsent } from '../src/writeConsent'
+import {
+  consentBasis,
+  destinationReason,
+  libraryWritesHeld,
+  readWriteConsent,
+  writesEnabled,
+  writesOffSentence,
+} from '../src/writeConsent'
 import currentActivity from './descriptionAdviceActivityFixture.json'
 import { activity } from './fixtures'
 
@@ -191,7 +198,8 @@ it('does not offer readiness, a destination or a count from unchecked history', 
   expect(offer.grants).toEqual([])
   expect(offer.scopes).toEqual([])
   expect(offer.changes).toBe(0)
-  expect(offer.blocked).toBe('Open permission review to check current readiness.')
+  // Unchecked readiness is no block; each surface says once to check it (#1286).
+  expect(offer.blocked).toBeNull()
   const enabled = readWriteConsent({
     ...unchecked,
     waiting: { ...unchecked.waiting, awaiting_permission: 0, scheduled: 5 },
@@ -390,4 +398,67 @@ it('explains an exclusion after a lapse by what is prepared, not readiness (#128
   const offer = readWriteConsent({ ...lapsed, backup_ready: true })
   expect(offer.state).toBe('off')
   expect(offer.scopes).toEqual([])
+})
+
+describe('consent outlives a suspension (#1286 B1)', () => {
+  const destination = (
+    name: TargetDestination,
+    state: DestinationState,
+    consented: boolean,
+  ): ActivityCapabilityView['destinations'][number] => ({
+    destination: name,
+    state,
+    consented,
+    prepared: 1,
+  })
+  const library = (name: string, destinations: ActivityCapabilityView['destinations']) => ({
+    capability: {
+      connection: 'primary',
+      library: name,
+      state: 'partially_allowed' as const,
+      destinations,
+    },
+    configured: { connection: 'primary', library: name, prepared: null },
+  })
+
+  it('enables writes only for a consented destination that is not suspended', () => {
+    expect(writesEnabled(destination('title', 'allowed', true))).toBe(true)
+    expect(writesEnabled(destination('title', 'unexpected_effect_behavior', true))).toBe(false)
+    expect(writesEnabled(destination('title', 'field_unavailable', true))).toBe(false)
+    // Not yet checked is not held: the permission stands.
+    expect(writesEnabled(destination('title', 'not_ready', true))).toBe(true)
+    expect(writesEnabled(destination('title', 'allowed', false))).toBe(false)
+  })
+
+  it('holds a library whose consented destinations are all suspended', () => {
+    expect(libraryWritesHeld([destination('title', 'unexpected_effect_behavior', true)])).toBe(true)
+    expect(
+      libraryWritesHeld([
+        destination('title', 'unexpected_effect_behavior', true),
+        destination('genres', 'allowed', false),
+      ]),
+    ).toBe(false)
+  })
+
+  it('never says writes are on for a library whose consented writes are all held', () => {
+    const fiction = library('fiction', [
+      destination('title', 'allowed', true),
+      destination('genres', 'unexpected_effect_behavior', true),
+    ])
+    const research = library('research', [destination('title', 'unexpected_effect_behavior', true)])
+    const history = library('history', [destination('title', 'allowed', false)])
+    const all = [fiction, research, history]
+    const data = {
+      capabilities: all.map((item) => item.capability),
+      configured_libraries: all.map((item) => item.configured),
+    }
+    // Both fiction and research hold permission; only fiction still writes.
+    expect(writesOffSentence(data, ['fiction', 'research'], (name) => name)).toBe(
+      'Writes are on for fiction; history needs permission; writes to research are held.',
+    )
+    // With no library writing, writes are off and the held one is named (#1286 L2).
+    expect(writesOffSentence(data, ['research'], (name) => name)).toBe(
+      'Writes are off; writes to research are held.',
+    )
+  })
 })

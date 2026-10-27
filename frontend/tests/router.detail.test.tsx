@@ -63,6 +63,58 @@ describe('Library review ownership', () => {
     },
   )
 
+  it('names a language observation by its language, region and script included (#1286 X7, L1)', async () => {
+    const [title] = detail.fields
+    if (!title) throw new Error('the fixture offers a title')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...title, destination: 'language' as const }],
+      })),
+      getEvidence: vi.fn(async () => ({
+        items: [
+          {
+            destinations: ['language' as const],
+            observation: 'Language: en',
+            role: 'local_presence' as const,
+            source: 'Local library record',
+          },
+          {
+            destinations: ['language' as const],
+            observation: 'Language: pt-BR',
+            role: 'external_observation' as const,
+            source: 'Open Library',
+          },
+          {
+            destinations: ['language' as const],
+            observation: 'Language: French (fr). Retained for review only; not an eligible choice.',
+            role: 'local_presence' as const,
+            source: 'Local metadata',
+          },
+          {
+            destinations: ['language' as const],
+            observation: 'Language: UND. Undetermined language; not an eligible choice.',
+            role: 'local_presence' as const,
+            source: 'Local metadata',
+          },
+        ],
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
+    }
+    renderRoute('/review/case-1?subview=evidence', http)
+    expect(await screen.findByText('Language: English (en)')).toBeVisible()
+    expect(screen.getByText('Language: Brazilian Portuguese (pt-BR)')).toBeVisible()
+    expect(screen.queryByText('Language: en')).toBeNull()
+    expect(
+      screen.getByText('Language: French (fr). Retained for review only; not an eligible choice.'),
+    ).toBeVisible()
+    expect(
+      screen.getByText('Language: UND. Undetermined language; not an eligible choice.'),
+    ).toBeVisible()
+  })
+
   it('states which fields book-level evidence supports for an unresolved recording', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
@@ -90,12 +142,21 @@ describe('Library review ownership', () => {
         ...detail,
         audiobookReviewScope: 'work' as const,
         // Genres and description are offered and Series is not; ASIN is
-        // offered but is not something book-level evidence decides.
+        // offered but is not something book-level evidence decides. A field
+        // the rail does not offer -- context only, or empty with nothing
+        // proposed -- is not named either (#1286 X3).
         fields: [
           { ...title, destination: 'genres' as const },
           { ...title, destination: 'asin' as const },
           title,
           { ...title, destination: 'description' as const },
+          { ...title, destination: 'series' as const, inventoryRole: 'contextual' as const },
+          {
+            ...title,
+            destination: 'series' as const,
+            currentRaw: null,
+            proposedValues: [],
+          },
         ],
       })),
     }

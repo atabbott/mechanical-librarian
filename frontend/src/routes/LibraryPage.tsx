@@ -67,6 +67,7 @@ import {
   evidenceRoleLabel,
   fieldStateLabels,
   languageName,
+  observationText,
   lookupLabels,
   materialReasonLabel,
   mediaKindLabels,
@@ -98,7 +99,7 @@ import {
   writtenRefusal,
 } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
-import { ownerChoiceCount } from '../reviewChoiceCounts'
+import { emptyUnproposed, ownerChoiceCount, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
 import { formatRunningTime } from '../dates'
 
@@ -893,7 +894,11 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
                 {claim.role ? ` · ${claimRole(claim.role)}` : ''}
               </dt>
               <dd>
-                {(claim.kind === 'duration' ? formatRunningTime(claim.value) : null) ?? claim.value}
+                {/* Only a valid running time reads in hours and minutes; any
+                    other claim keeps its recorded text. */}
+                {(claim.kind === 'duration' && claim.state === 'valid'
+                  ? formatRunningTime(claim.value)
+                  : null) ?? claim.value}
                 <small>
                   {claimBasisLabels[claim.basis]}
                   {claim.state === 'valid' ? '' : ` · ${fieldStateLabels[claim.state]}`}
@@ -1016,7 +1021,7 @@ function ChoiceEvidencePanel({
             <li key={`${row.source}:${row.observation}:${String(index)}`}>
               <strong>{row.source}</strong>
               <span>{evidenceRoleLabel(row.role)}</span>
-              <p>{row.observation}</p>
+              <p>{observationText(row.observation)}</p>
             </li>
           ))}
         </ul>
@@ -1115,7 +1120,7 @@ function RecordedFieldObservations({
         <ul className="evidence-values">
           {observations.map((item, index) => (
             <li key={`${item.source}:${item.observation}:${String(index)}`}>
-              <p>{item.observation}</p>
+              <p>{observationText(item.observation)}</p>
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
               </small>
@@ -3287,7 +3292,6 @@ export default function LibraryPage({
     (reading && !failed && pendingIdentity !== null && pendingIdentity.id === search.preview
       ? pendingIdentity.identity
       : undefined)
-  const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
   const visibleFields = detail.data?.fields.filter(primaryField) ?? []
   const currentActionableDestinations = visibleFields.map((field) => field.destination)
   const frozenDestinations =
@@ -3295,11 +3299,6 @@ export default function LibraryPage({
   const railFields = frozenDestinations
     .map((destination) => visibleFields.find((field) => field.destination === destination))
     .filter((field): field is ReviewField => field !== undefined)
-  const emptyUnproposed = (field: ReviewField) =>
-    (field.currentRaw === null ||
-      field.currentRaw === '' ||
-      (Array.isArray(field.currentRaw) && field.currentRaw.length === 0)) &&
-    field.proposedValues.length === 0
   const urlSelected = visibleFields.find((field) => field.destination === search.field)
   const revealEmptyFields =
     shownEmptyFields[selectedReviewCaseId] === true ||
@@ -5226,7 +5225,9 @@ export default function LibraryPage({
                   <RecordingIdentityBasis
                     value={detail.data.recordingIdentityBasis}
                     scope={detail.data.audiobookReviewScope}
-                    offered={detail.data.fields.map((field) => field.destination)}
+                    offered={detail.data.fields
+                      .filter(railOffers)
+                      .map((field) => field.destination)}
                   />
                 </section>
               ) : null}

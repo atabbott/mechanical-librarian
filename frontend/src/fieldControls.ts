@@ -4,6 +4,7 @@
 export const controlId = (fieldId: string) => `settings-${fieldId.replaceAll('.', '-')}`
 export const descriptionId = (fieldId: string) => `${controlId(fieldId)}-description`
 export const errorId = (fieldId: string) => `${controlId(fieldId)}-error`
+export const unitId = (fieldId: string) => `${controlId(fieldId)}-unit`
 
 export interface Segment<Value extends string> {
   value: Value

@@ -421,6 +421,19 @@ export const languageName = (value: string) => {
   }
 }
 
+// A retained language observation names its language as the field value
+// beside it does: the server states `Language: pt-BR` and every page reads
+// `Language: Brazilian Portuguese (pt-BR)`, region and script included
+// (#1286). The server's `Language:` prefix is what marks one. An undetermined
+// language keeps its tag, since the observation already says it is
+// undetermined, and text that is not a tag is shown as it is.
+export const observationText = (text: string) =>
+  text.replace(
+    /^Language: ([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)(?=\.|$)/u,
+    (match, code: string) =>
+      code.toLowerCase() === 'und' ? match : `Language: ${languageName(code)}`,
+  )
+
 // One vocabulary for every preparation count, in the masthead and the run line
 // alike (#1366); a count not yet known reads as an ellipsis, never 0. Only the
 // ready count stands at zero, so a quiet run is not a wall of zeros (#641).

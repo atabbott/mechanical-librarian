@@ -3669,10 +3669,16 @@ describe('Activity checks rows and filter notice (#1281)', () => {
         'This check confirmed the automatic decision below; nothing was written.',
       ),
     ).toBeVisible()
-    expect(paired).toHaveAccessibleName(/^Details for Title, /u)
+    expect(paired).toHaveAccessibleName(/^Details for Title, .*, automatic decision$/u)
     expect(details).toHaveAccessibleName(/^Hide details for Title, /u)
     await user.click(paired)
     expect(paired).toHaveAttribute('aria-expanded', 'true')
+    // Both open, the field and its decision still name apart (#1286 X4).
+    expect(paired).toHaveAccessibleName(/^Hide details for Title, .*, automatic decision$/u)
+    const opened = screen
+      .getAllByRole('button', { name: /details for /iu })
+      .map((button) => button.getAttribute('aria-label'))
+    expect(new Set(opened).size).toBe(opened.length)
     expect(
       within(byId('activity-evidence-check-title-kept')).getByText('Title layout: Leave as it is'),
     ).toBeVisible()
@@ -4131,6 +4137,69 @@ describe('owner language in Activity (#1286)', () => {
       expect(screen.queryByText(new RegExp(`\\b${slug}\\b`, 'u'))).toBeNull()
   })
 
+  it('says readiness once, and names a held library as held, not as needing permission (#1286 X11, X12)', async () => {
+    const user = userEvent.setup()
+    const base = libraries(['fiction'])
+    const view = {
+      ...base,
+      configured_libraries: [
+        ...base.configured_libraries,
+        {
+          connection: 'primary',
+          library: 'research',
+          prepared: { automatic: 1, human: 0, total: 1 },
+        },
+      ],
+      capabilities: [
+        ...base.capabilities,
+        {
+          connection: 'primary',
+          library: 'research',
+          state: 'not_ready' as const,
+          destinations: [
+            {
+              destination: 'title' as const,
+              state: 'unexpected_effect_behavior' as const,
+              consented: false,
+              prepared: 1,
+            },
+          ],
+        },
+      ],
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getSettings: vi.fn(async () => ({
+        ...settingsNamed(),
+        document: {
+          ...settingsNamed().document,
+          libraries: [
+            ...settingsNamed().document.libraries,
+            { ...shelf, name: 'research', display_name: 'Research Shelf' },
+          ],
+        },
+      })),
+      getActivity: vi.fn(async () => view),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(view)),
+    }
+    renderRoute('/activity', http)
+    const heading = await screen.findByText(
+      'Writes are on for Fiction Shelf; History Room needs permission; writes to Research Shelf are held.',
+      { exact: false },
+    )
+    expect(heading).not.toHaveTextContent(/Research Shelf needs/u)
+    const card = heading.closest('section')
+    if (!card) throw new Error('the consent card is a section')
+    expect(within(card).getAllByText(/readiness/iu)).toHaveLength(1)
+    // The review says the same: the held library is held, not waiting.
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    await screen.findByRole('list', { name: 'Research Shelf included and excluded destinations' })
+    const label = (name: string) => screen.getByText(name, { selector: 'strong' }).closest('label')
+    expect(label('Research Shelf')).toHaveTextContent('1 prepared · Writes held')
+    expect(label('Research Shelf')).not.toHaveTextContent('Not ready yet')
+    expect(label('History Room')).toHaveTextContent('Ready for consent')
+  })
+
   it('shows an already-consented library as writes enabled', async () => {
     const user = userEvent.setup()
     const view = libraries(['fiction'])
@@ -4147,6 +4216,129 @@ describe('owner language in Activity (#1286)', () => {
     expect(label('Fiction Shelf')).toHaveTextContent('Writes enabled')
     expect(label('Fiction Shelf')).not.toHaveTextContent('Ready for consent')
     expect(label('History Room')).toHaveTextContent('Ready for consent')
+  })
+
+  it('reads a library as writes enabled once every destination that can be is consented (#1286 X8)', async () => {
+    const user = userEvent.setup()
+    const base = libraries(['fiction'])
+    const view = {
+      ...base,
+      capabilities: base.capabilities.map((item) =>
+        item.library === 'fiction'
+          ? {
+              ...item,
+              state: 'partially_allowed' as const,
+              destinations: [
+                {
+                  destination: 'title' as const,
+                  state: 'allowed' as const,
+                  consented: true,
+                  prepared: 2,
+                },
+                {
+                  destination: 'genres' as const,
+                  state: 'allowed' as const,
+                  consented: true,
+                  prepared: 1,
+                },
+                {
+                  destination: 'cover' as const,
+                  state: 'field_unavailable' as const,
+                  consented: false,
+                  prepared: 0,
+                },
+              ],
+            }
+          : item,
+      ),
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getSettings: vi.fn(async () => settingsNamed()),
+      getActivity: vi.fn(async () => view),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(view)),
+    }
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    const list = await screen.findByRole('list', {
+      name: 'Fiction Shelf included and excluded destinations',
+    })
+    const label = screen.getByText('Fiction Shelf', { selector: 'strong' }).closest('label')
+    expect(label).toHaveTextContent('Writes enabled')
+    expect(label).not.toHaveTextContent('Some destinations are ready')
+    expect(within(list).getAllByText(/^Writes enabled · \d+ prepared$/u)).toHaveLength(2)
+    expect(within(list).queryByText(/^Included/u)).toBeNull()
+    expect(within(list).getByText(/^Excluded — /u)).toBeVisible()
+  })
+
+  it('never reads a consented but suspended destination as writes enabled (#1286 B1)', async () => {
+    const user = userEvent.setup()
+    const base = libraries(['fiction', 'history'])
+    // Consent outlives a later suspension: Fiction keeps one writable
+    // destination beside a consented one now held, and History's only
+    // consented destination is held.
+    const view = {
+      ...base,
+      capabilities: base.capabilities.map((item) =>
+        item.library === 'fiction'
+          ? {
+              ...item,
+              state: 'partially_allowed' as const,
+              destinations: [
+                {
+                  destination: 'title' as const,
+                  state: 'allowed' as const,
+                  consented: true,
+                  prepared: 2,
+                },
+                {
+                  destination: 'genres' as const,
+                  state: 'unexpected_effect_behavior' as const,
+                  consented: true,
+                  prepared: 1,
+                },
+              ],
+            }
+          : {
+              ...item,
+              state: 'not_ready' as const,
+              destinations: [
+                {
+                  destination: 'title' as const,
+                  state: 'unexpected_effect_behavior' as const,
+                  consented: true,
+                  prepared: 1,
+                },
+              ],
+            },
+      ),
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getSettings: vi.fn(async () => settingsNamed()),
+      getActivity: vi.fn(async () => view),
+      getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(view)),
+    }
+    renderRoute('/activity', http)
+    await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+    const fiction = await screen.findByRole('list', {
+      name: 'Fiction Shelf included and excluded destinations',
+    })
+    const history = screen.getByRole('list', {
+      name: 'History Room included and excluded destinations',
+    })
+    expect(within(fiction).getAllByText(/^Writes enabled · \d+ prepared$/u)).toHaveLength(1)
+    expect(
+      within(fiction).getByText('Writes held — an earlier write behaved unexpectedly'),
+    ).toBeVisible()
+    expect(within(history).queryByText(/Writes enabled/u)).toBeNull()
+    expect(
+      within(history).getByText('Writes held — an earlier write behaved unexpectedly'),
+    ).toBeVisible()
+    const label = (name: string) => screen.getByText(name, { selector: 'strong' }).closest('label')
+    expect(label('Fiction Shelf')).toHaveTextContent('Writes enabled')
+    expect(label('History Room')).toHaveTextContent('1 prepared · Writes held')
+    expect(label('History Room')).not.toHaveTextContent('Writes enabled')
   })
 
   it('says Check again after a successful check', async () => {

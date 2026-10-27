@@ -26,10 +26,18 @@ import type {
 import { activityOutcome, ledgerRows } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
+import { RecordedTime } from '../components/RecordedTime'
 import { formatDay, formatWhen } from '../dates'
 import { destinationLabel, destinationPhrase, writeHoldReasons, writeStateLabels } from '../labels'
 import { useLibraryName } from '../libraryNames'
-import { consentBasis, destinationReason, libraryList, readWriteConsent } from '../writeConsent'
+import {
+  consentBasis,
+  destinationReason,
+  readWriteConsent,
+  libraryWritesHeld,
+  writesEnabled,
+  writesOffSentence,
+} from '../writeConsent'
 import {
   activityRoute,
   normalizeActivitySearch,
@@ -139,7 +147,7 @@ const locationIdentity = (location: { href: string; state: { __TSR_key?: string 
 const dayHeading = (value: number | null) =>
   value === null ? 'Date not recorded' : formatDay(value)
 const rowTime = (value: number | null) =>
-  value === null ? '—' : formatWhen(value, new Date(), { dayShown: true })
+  value === null ? '—' : <RecordedTime seconds={value} dayShown />
 function PageJump({
   page,
   pageCount,
@@ -244,7 +252,9 @@ function ActivityTransitions({
       {events.map((transition) => (
         // One flow; the no-break space keeps each separator off a line start.
         <li key={transition.event_id}>
-          <time>{formatWhen(transition.occurred_at, new Date())}</time>
+          <time>
+            <RecordedTime seconds={transition.occurred_at} />
+          </time>
           &nbsp;· {stateLabel(transition.state, advice, transition.failure)}
         </li>
       ))}
@@ -335,7 +345,7 @@ function ActivityEventRow({
         data-activity-focus={`details-${changeId}`}
         aria-expanded={expanded}
         aria-controls={`activity-evidence-${event.event_id}`}
-        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}`}
+        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}${result ? `, ${result.toLowerCase()}` : ''}`}
         onClick={onToggle}
       >
         {expanded ? 'Hide details' : 'Details'}
@@ -963,13 +973,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const offer = consent.scopes
   // Beside a library that holds permission, writes are off only for the ones
   // still waiting, so the heading says which is which (#1286).
-  const waitingNames = data.configured_libraries
-    .map((item) => item.library)
-    .filter((library) => !enabled.some((held) => held.library === library))
-  const writesOff =
-    enabled.length && waitingNames.length
-      ? `Writes are on for ${libraryList(enabled.map((item) => names.name(item.library)))}; ${libraryList(waitingNames.map(names.name))} ${waitingNames.length === 1 ? 'needs' : 'need'} permission.`
-      : 'Writes are off.'
+  const writesOff = writesOffSentence(
+    permission ? { ...data, ...permission } : data,
+    enabled.map((item) => item.library),
+    names.name,
+  )
   const offeredChanges = consent.changes
   const consentState = consent.state
   const consentBlocked = consent.blocked
@@ -1528,8 +1536,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             const name = library.library
             const state = capability(name)?.state ?? 'not_ready'
             const destinations = capability(name)?.destinations ?? []
+            // Consented once nothing is left to grant: every destination that
+            // can be given permission holds it. One that can never be written
+            // here (a field the service lacks, a hold) does not keep the
+            // library reading as partly ready. Consent outlives a later
+            // suspension, so only a consented destination that is still
+            // allowed has writes enabled (#1286).
             const consented =
-              destinations.length > 0 && destinations.every((destination) => destination.consented)
+              destinations.some(writesEnabled) &&
+              !destinations.some(
+                (destination) => destination.state === 'allowed' && !destination.consented,
+              )
             const displayName = names.name(name)
             const disabled = !selectableNames.has(name)
             return (
@@ -1544,9 +1561,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   <strong>{displayName}</strong>
                   <small>
                     {preparedCount(library)} prepared ·{' '}
-                    {permission?.backup_ready === true
-                      ? capabilityLabel(state, consented)
-                      : 'Readiness unconfirmed'}
+                    {permission?.backup_ready !== true
+                      ? 'Readiness unconfirmed'
+                      : libraryWritesHeld(destinations)
+                        ? 'Writes held'
+                        : capabilityLabel(state, consented)}
                   </small>
                 </label>
                 <ul aria-label={`${displayName} included and excluded destinations`}>
@@ -1554,9 +1573,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     <li key={entry.destination}>
                       <span>{destinationLabel(entry.destination)}</span>
                       <small>
-                        {entry.state === 'allowed'
-                          ? `Included · ${String(entry.prepared)} prepared`
-                          : `Excluded — ${destinationReason(entry.state, consent.lapsed !== null)}`}
+                        {writesEnabled(entry)
+                          ? `Writes enabled · ${String(entry.prepared)} prepared`
+                          : entry.state === 'allowed'
+                            ? `Included · ${String(entry.prepared)} prepared`
+                            : `${entry.consented ? 'Writes held' : 'Excluded'} — ${destinationReason(entry.state, consent.lapsed !== null)}`}
                       </small>
                     </li>
                   ))}

@@ -42,7 +42,7 @@ describe('Policy route', () => {
     expect(within(series).getByText(/not independently verified for each book/u)).toBeVisible()
     expect(within(series).getByText('Primary narrative:')).toBeVisible()
     expect(within(series).getByText('First source membership:')).toBeVisible()
-    expect(within(series).getByText('All qualified memberships:')).toBeVisible()
+    expect(within(series).getByText('All supported memberships:')).toBeVisible()
     expect(within(series).getByText('Add supported memberships:')).toBeVisible()
     expect(within(series).getByText('Replace with supported memberships:')).toBeVisible()
     expect(within(series).getByText(/with only its first membership/u)).toBeVisible()
@@ -274,7 +274,7 @@ describe('Policy route', () => {
     // The record qualified one option, so the other one this field offers is
     // still the owner's.
     await user.click(within(asin).getByRole('combobox', { name: 'ASIN representation' }))
-    await user.click(screen.getByRole('option', { name: 'Ebook manifestation' }))
+    await user.click(screen.getByRole('option', { name: 'Ebook edition ASIN' }))
     expect(within(asin).getByText('Automatic not supported')).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Identity How a work/ }))
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
@@ -846,11 +846,11 @@ describe('Policy route', () => {
       await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Show 1 more outcome' })).toBeNull()
-    expect(screen.getByText('Unchanged outcomes and projected library context (8)')).toBeVisible()
+    expect(screen.getByText('Unchanged outcomes and current library context (8)')).toBeVisible()
     expect(
       screen.getByText('Ebooks: 1 sampled work · Audiobooks: 2 sampled works · 1 changed field'),
     ).toBeVisible()
-    await user.click(screen.getByText('Unchanged outcomes and projected library context (8)'))
+    await user.click(screen.getByText('Unchanged outcomes and current library context (8)'))
     expect(
       screen.queryByText(/Complete recording cast/, { selector: '.cm-policy-projected-context p' }),
     ).toBeNull()
@@ -965,7 +965,14 @@ describe('Policy route', () => {
     expect(screen.getByText(/New one/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText(/New two/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText('2 sampled works with changes')).toBeVisible()
-    expect(screen.getByText(/16 material changes in the bounded sample/)).toBeVisible()
+    expect(screen.getByText(/16 changes in the sample/)).toBeVisible()
+    // No design-document term reaches the owner on Policy (#1286 X5); only
+    // the Technical detail disclosure quotes the server's own codes.
+    const owner = document.body.cloneNode(true) as HTMLElement
+    for (const code of owner.querySelectorAll('code')) code.remove()
+    expect(owner.textContent).not.toMatch(
+      /qualified|admitted|projected|bounded|manifestation|abstain/iu,
+    )
     expect(screen.getByLabelText('2 sampled works with changes')).toHaveTextContent('2')
   })
 
@@ -1255,9 +1262,9 @@ describe('Policy route', () => {
         /^Not previewed\.This rule takes effect on the next preparation\.$/u,
       )
     expect(screen.getByText(example.title)).toBeVisible()
-    const material = screen.queryByText(/material changes? in the bounded sample/u)
+    const material = screen.queryByText(/\d+ changes? in the sample/u)
     if (example.rows.some((row) => row.endsWith('Policy change')))
-      expect(material).toHaveTextContent(`${String(example.cases.length)} material change`)
+      expect(material).toHaveTextContent(`${String(example.cases.length)} change`)
     else expect(material).toBeNull()
     const preview = document.querySelector<HTMLElement>('.cm-policy-preview')
     if (!preview) throw new Error('preview not shown')
@@ -1777,6 +1784,27 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   expect(summary).toHaveFocus()
   expect(screen.getByRole('button', { name: /Recover .*publisher.* suspension/iu })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
+})
+
+it('names a provider-consensus title suspension by its destination (#1286)', async () => {
+  const user = userEvent.setup()
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getAutomaticSafety: vi.fn(async () => ({
+      paused: true,
+      global_suspension: null,
+      category_suspensions: { title: 'target_changed', not_a_category: 'other_failure' },
+    })),
+  }
+  renderRoute('/policy', http)
+  await screen.findByRole('heading', { name: 'Library policy' })
+  const summary = screen.getByText('Safety').closest('summary')
+  if (!summary) throw new Error('Safety summary missing')
+  await user.click(summary)
+  expect(screen.getByRole('button', { name: 'Recover Title suspension' })).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: 'Recover Another policy field suspension' }),
+  ).toBeVisible()
 })
 
 it.each([

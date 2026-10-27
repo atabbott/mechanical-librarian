@@ -654,6 +654,15 @@ describe('ReviewApiClient', () => {
     ]
     for (const [label, overrides] of invalid)
       expect(() => mapCoverConsideration(payload(overrides)), label).toThrow(ApiError)
+    // A cover's sources name closed kinds; one outside them is refused (#1286 C6).
+    expect(
+      mapCoverConsideration(
+        payload({ candidates: [candidate({ source_kinds: ['open_library'] })] }),
+      )?.candidates[0]?.sourceKinds,
+    ).toEqual(['open_library'])
+    expect(() =>
+      mapCoverConsideration(payload({ candidates: [candidate({ source_kinds: ['scraped'] })] })),
+    ).toThrow(new ApiError(502, 'invalid_cover_source_kind'))
   })
   it('maps only the fixed unavailable reviewer-contract reasons', () => {
     const payload = (reviewer_unavailable_reason: unknown) => ({
@@ -1448,6 +1457,24 @@ describe('ReviewApiClient', () => {
       },
     ])
       expect(() => mapHistory(invalid)).toThrow(ApiError)
+    // Every closed history code is refused by name outside its set (#1286 C6).
+    const [human, automatic, transition] = payload.items
+    const preview = {
+      kind: 'shadow_preview_recorded',
+      occurred_at: 4,
+      dispositions: { abstention: 1 },
+    }
+    expect(mapHistory({ ...payload, items: [preview] }).items[0]).toMatchObject({
+      category: 'preview',
+      dispositions: [{ count: 1, outcome: 'abstention' }],
+    })
+    for (const [item, code] of [
+      [{ ...human, outcome: 'approve' }, 'invalid_history_item_0_outcome'],
+      [{ ...automatic, outcome: 'accept' }, 'invalid_history_item_0_outcome'],
+      [{ ...preview, dispositions: { approve: 1 } }, 'invalid_history_item_0_disposition_name'],
+      [{ ...transition, kind: 'invented' }, 'invalid_history_item_0_kind'],
+    ] as const)
+      expect(() => mapHistory({ ...payload, items: [item] })).toThrow(new ApiError(502, code))
   })
 
   it('accepts domain-bounded history values by Unicode code points', () => {
@@ -1921,6 +1948,23 @@ describe('ReviewApiClient', () => {
         suspensions: [{ ...activity.suspensions[0], reason: 'recovery' }],
       }),
     ).toThrow(new ApiError(502, 'invalid_activity_suspension_reason'))
+    // A library's write state and each destination's state are closed sets
+    // too; a code outside either has no owner words (#1286 C6).
+    const [capability] = activity.capabilities
+    expect(() =>
+      mapActivity({ ...activity, capabilities: [{ ...capability, state: 'partial' }] }),
+    ).toThrow(new ApiError(502, 'invalid_activity_state'))
+    expect(() =>
+      mapActivity({
+        ...activity,
+        capabilities: [
+          {
+            ...capability,
+            destinations: [{ ...capability?.destinations[0], state: 'writable' }],
+          },
+        ],
+      }),
+    ).toThrow(new ApiError(502, 'invalid_activity_destination_state'))
     expect(() =>
       mapActivity({
         ...activity,
@@ -2766,6 +2810,39 @@ describe('ReviewApiClient', () => {
     expect(() =>
       mapLibrary({ ...page, items: [{ ...work, media_kind: 'ebook', detail_kind: 'case' }] }),
     ).toThrow(new ApiError(502, 'invalid_media_kind'))
+    // A stopped preparation names its stage and status from closed sets, and
+    // a code outside either is refused rather than shown raw (#1286 C6).
+    const stopped = (preparation: Record<string, unknown>) => ({
+      ...page,
+      items: [
+        {
+          ...work,
+          detail_kind: 'case',
+          preparation: {
+            attempt: 1,
+            diagnostic_reference: 'diagnostic-1',
+            media_health: [],
+            provider: 'none',
+            reason: 'The file could not be read.',
+            recovery: 'Replace the file.',
+            recovery_attempt: 0,
+            stage: 'extraction',
+            status: 'unreadable_media',
+            ...preparation,
+          },
+        },
+      ],
+    })
+    expect(mapLibrary(stopped({})).works[0]?.preparation).toMatchObject({
+      stage: 'extraction',
+      status: 'unreadable_media',
+    })
+    expect(() => mapLibrary(stopped({ stage: 'reading' }))).toThrow(
+      new ApiError(502, 'invalid_preparation_stage'),
+    )
+    expect(() => mapLibrary(stopped({ status: 'broken' }))).toThrow(
+      new ApiError(502, 'invalid_preparation_status'),
+    )
   })
 
   it('refuses a library document served under any token but its own', () => {
@@ -2866,6 +2943,32 @@ describe('mapReportDetail', () => {
     recording_identity_basis: null,
     title: 'Recorded work',
     ...overrides,
+  })
+
+  it('refuses an evidence kind, basis or state, or a cover surface, outside its closed set (#1286 C6)', () => {
+    const claim = {
+      basis: 'sidecar',
+      excerpt: 'Recorded Narrator',
+      kind: 'contributor',
+      role: 'narrator',
+      state: 'valid',
+      value: 'Recorded Narrator',
+    }
+    const mapped = mapReportDetail(
+      detail({ evidence: [claim], embedded_cover: { present: true, surface: 'mp4_ilst' } }),
+    )
+    expect(mapped.evidence[0]).toMatchObject({ kind: 'contributor', basis: 'sidecar' })
+    for (const [override, code] of [
+      [{ kind: 'narrator' }, 'invalid_report_evidence_kind'],
+      [{ basis: 'filename' }, 'invalid_report_evidence_basis'],
+      [{ state: 'broken' }, 'invalid_report_evidence_state'],
+    ] as const)
+      expect(() => mapReportDetail(detail({ evidence: [{ ...claim, ...override }] }))).toThrow(
+        new ApiError(502, code),
+      )
+    expect(() =>
+      mapReportDetail(detail({ embedded_cover: { present: true, surface: 'apic' } })),
+    ).toThrow(new ApiError(502, 'invalid_report_cover_surface'))
   })
 
   it('requires a closed nullable recording basis and maps its attribution', () => {
@@ -3429,6 +3532,12 @@ describe('preparation scan identity', () => {
 
   it('retains an active scan beside a library that has never been requested', () => {
     expect(mapPreparation(envelope).libraries).toEqual([active, idle])
+  })
+
+  it('refuses a scan state outside the closed set (#1286 C6)', () => {
+    expect(() =>
+      mapPreparation({ ...envelope, libraries: [active, { ...idle, state: 'paused' }] }),
+    ).toThrow(new ApiError(502, 'invalid_preparation_state'))
   })
 
   it.each([
