@@ -2541,8 +2541,10 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
         stated["bound"]
         == (AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER])
     )
-    assert stated["observed"] == "58244 seconds of local audio"
-    assert stated["expected"] == "72000 seconds stated by the matched edition"
+    assert stated["observed"] == (
+        "16 h 11 min of local audio, 3 h 49 min shorter than the matched edition"
+    )
+    assert stated["expected"] == "20 h stated by the matched edition"
     assert stated["cited"][-1] == "audible-product-B08G9PRS1K"
     assert stated["tracks"] == []
 
@@ -3269,8 +3271,12 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
                 "external_observation",
                 (claim.kind.value,),
                 f"{claim.kind.value.upper()}: {fact}. Retained for review only; "
-                f"not an eligible choice. Scope: {claim.scope.value}; "
-                f"state: {claim.state.value}; applicability: {claim.applicability}.",
+                "not an eligible choice."
+                + (
+                    " Edition-level detail."
+                    if claim.scope is ClaimScope.EDITION
+                    else ""
+                ),
             )
         ] += 1
         assert all(reference not in item["observation"] for item in observations)
@@ -3297,7 +3303,10 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         } == {"9781250077004", "9780593135204"}
         assert {fact.reference for fact in report.identifier_evidence} <= set(claims)
     if shape == "malformed":
-        assert any("state: malformed" in item["observation"] for item in observations)
+        assert any(
+            "No valid identifier retained" in item["observation"]
+            for item in observations
+        )
     with TestClient(app, base_url="https://review.test") as client:
         assert (
             client.post(
@@ -3464,10 +3473,10 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
     assert evidence["destinations"] == ["narrators"]
     assert evidence["observation"] == (
         "Narrator: Ray Porter. Retained for review only; not an eligible choice. "
-        "Recording variant conflicts with this item. "
-        f"Scope: {claim.scope.value}; state: {claim.state.value}; "
-        f"applicability: {claim.applicability}."
+        "Recording variant conflicts with this item."
+        + (" Edition-level detail." if claim.scope is ClaimScope.EDITION else "")
     )
+    assert "Scope:" not in evidence["observation"]
     assert claim.reference not in _review_unselectable_evidence(
         reopened, {claim.reference}
     )
@@ -3529,6 +3538,27 @@ def test_identifier_relationship_preserves_actual_claim_value() -> None:
         assert _choice_evidence(retained)["observation"] == f"ISBN: {expected}"
         changed = {**retained, "fact": json.dumps({**fact, "value": "9780593135204"})}
         assert _choice_evidence(changed)["observation"] == "ISBN: 9780593135204"
+
+
+def test_choice_observation_never_repeats_its_label() -> None:
+    """A local record that carries its own label is named once (#1286)."""
+    from mechanical_librarian.application.review_web import _choice_observation
+
+    def observed(value: str) -> str:
+        return _choice_observation(
+            {
+                "source": "local",
+                "fact": json.dumps({"kind": "isbn", "observed": value}),
+            }
+        )
+
+    assert observed("ISBN: 9780593135204") == "ISBN: 9780593135204"
+    assert observed("isbn:9780593135204") == "ISBN: 9780593135204"
+    # Negative controls: a bare value, and a label that is not the kind.
+    assert observed("9780593135204") == "ISBN: 9780593135204"
+    assert observed("ASIN: B08G9PRS1K") == "ISBN: ASIN: B08G9PRS1K"
+    # A value that is only the label keeps it rather than reading empty.
+    assert observed("ISBN:") == "ISBN: ISBN:"
 
 
 @pytest.mark.parametrize(

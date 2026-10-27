@@ -68,6 +68,7 @@ from mechanical_librarian.domain.human_decision import (
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     FieldState,
     MetadataReport,
     TargetDestination,
@@ -2521,7 +2522,12 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
     ).get(fact.get("kind"), "Metadata")
     value = fact.get("value", fact.get("observed"))
     if type(value) in {str, int, float}:
-        return f"{kind}: {_choice_text(cast('str | int | float', value))}"
+        text = _choice_text(cast("str | int | float", value))
+        # A local record can carry its own label ("ISBN: 978…"); it is named
+        # once (#1286).
+        if text.casefold().startswith(kind.casefold() + ":"):
+            text = text[len(kind) + 1 :].strip() or text
+        return f"{kind}: {text}"
     return f"{kind} observation retained."
 
 
@@ -2647,9 +2653,12 @@ def _review_unselectable_evidence(
                         "observation": (
                             f"{label}: {value}. Retained for review only; "
                             f"not an eligible choice. {reason}"
-                            f"Scope: {claim.scope.value}; state: {claim.state.value}; "
-                            f"applicability: {claim.applicability}."
-                        ),
+                            + (
+                                "Edition-level detail."
+                                if claim.scope is ClaimScope.EDITION
+                                else ""
+                            )
+                        ).strip(),
                     },
                 )
     return observations

@@ -90,15 +90,33 @@ class AudioHealthKind(StrEnum):
     MEDIA_UNREADABLE = "media_unreadable"
 
 
+def _shown_seconds(seconds: int) -> int:
+    """The seconds a running time reads as: whole minutes from an hour up."""
+    return round(seconds / 60) * 60 if seconds >= 3600 else seconds
+
+
+def _hours_minutes(seconds: int) -> str:
+    """A running time in the owner's units: `8 h 34 min`, `1 min 30 s` (#1286)."""
+    shown = _shown_seconds(seconds)
+    hours, rest = divmod(shown, 3600)
+    minutes, remainder = divmod(rest, 60)
+    parts = (
+        ((f"{hours} h",) if hours else ())
+        + ((f"{minutes} min",) if minutes else ())
+        + ((f"{remainder} s",) if remainder or not shown else ())
+    )
+    return " ".join(parts)
+
+
 # The one bound each kind violates, in the owner's words. Held in one table
 # because a kind without a stated bound is an accusation without a rule, and a
 # projection that composed its own wording would drift from the rule the
 # derivation actually applied.
 AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
     AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER: (
-        "The local running time is within "
-        f"{RUNTIME_BAND_TIGHT_SECONDS} seconds of the running time the "
-        "matched edition states."
+        "A complete recording runs within "
+        f"{_hours_minutes(RUNTIME_BAND_TIGHT_SECONDS)} of the edition's stated "
+        "running time."
     ),
     AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH: (
         "The embedded chapter durations align with the matched edition's, "
@@ -333,8 +351,18 @@ def _runtime_observations(
                 AudioHealthObservation(
                     AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER,
                     (*references, candidate.identity),
-                    observed=f"{local} seconds of local audio",
-                    expected=f"{provider} seconds stated by the matched edition",
+                    # The difference is the one between the two times as
+                    # shown, so the three figures agree on the page.
+                    observed=(
+                        f"{_hours_minutes(local)} of local audio, "
+                        + _hours_minutes(
+                            _shown_seconds(provider) - _shown_seconds(local)
+                        )
+                        + " shorter than the matched edition"
+                    ),
+                    expected=(
+                        f"{_hours_minutes(provider)} stated by the matched edition"
+                    ),
                 )
             )
     for observation in audio.observations:
@@ -350,7 +378,9 @@ def _runtime_observations(
             AudioHealthObservation(
                 AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER,
                 (*references, observation.candidate),
-                observed=(None if local is None else f"{local} seconds of local audio"),
+                observed=(
+                    None if local is None else f"{_hours_minutes(local)} of local audio"
+                ),
                 expected=(
                     "a longer running time stated by this edition, which "
                     "publication did not retain"
@@ -404,8 +434,10 @@ def _chapter_observations(
             cut = first_divergent_chapter(local, evidence.chapters.durations_seconds)
             if cut is not None:
                 ordinal, ran, stated_ordinal, stated_seconds = cut
-                observed += f"; chapter {ordinal} runs {ran} s"
-                expected += f"; chapter {stated_ordinal} runs {stated_seconds} s"
+                observed += f"; chapter {ordinal} runs {_hours_minutes(ran)}"
+                expected += (
+                    f"; chapter {stated_ordinal} runs {_hours_minutes(stated_seconds)}"
+                )
                 # The two ordinals differ when the alignment skipped an end
                 # chapter on one side, which a publisher's branded intro
                 # routinely causes. The side that was skipped says so, because

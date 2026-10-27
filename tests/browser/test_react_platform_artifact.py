@@ -1124,7 +1124,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 # and the change has the row the action used to occupy (#636).
                 assert (
                     compact_row.get_by_role(
-                        "button", name="Details", exact=True
+                        "button", name=re.compile(r"^Details for ")
                     ).evaluate("node => getComputedStyle(node).gridRow")
                     == "1"
                 )
@@ -1137,7 +1137,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert title_box["height"] <= 36, compact_geometry
                 assert row_box["height"] <= 182, compact_geometry
                 page.set_viewport_size({"width": 1440, "height": 900})
-                inspect = page.get_by_role("button", name="Details", exact=True).first
+                inspect = page.get_by_role(
+                    "button", name=re.compile(r"^Details for ")
+                ).first
                 stage[0] = "activity:desktop-media-state"
                 page.wait_for_function(
                     """() => {
@@ -1268,7 +1270,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 page.get_by_role("button", name="Owner choices").click()
                 page.get_by_role("button", name="All").click()
                 inspect_control = page.get_by_role(
-                    "button", name="Details", exact=True
+                    "button", name=re.compile(r"^Details for ")
                 ).first
                 inspect_control.wait_for()
                 expect(inspect_control).to_be_visible()
@@ -1432,7 +1434,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-5&field=isbn"
         )
-        recorded_isbn = page.get_by_role("region", name="Isbn recorded choices")
+        recorded_isbn = page.get_by_role("region", name="ISBN recorded choices")
         recorded_isbn.get_by_text(
             "Deterministic identity evidence bound this ISBN to this file's work.",
             exact=True,
@@ -2489,9 +2491,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "Draft matches the active policy", exact=True
         ).wait_for()
         page.locator(".cm-policy-mode summary").click()
-        page.get_by_text("Outcomes remain non-authoritative.", exact=True).wait_for()
         page.get_by_text(
-            "2 recent non-authoritative outcome sets.", exact=True
+            "Preview records what Automatic would do; nothing is decided or written.",
+            exact=True,
+        ).wait_for()
+        page.get_by_text(
+            "2 recent preview results; none was decided or written.", exact=True
         ).wait_for()
         page.get_by_role(
             "heading", name="Activation completed with failures"
@@ -2911,7 +2916,7 @@ _TIME_TOGETHER = """(sweep) => {
   const check = (span) => {
     const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
     for (let text = walker.nextNode(); text; text = walker.nextNode())
-      for (const match of text.data.matchAll(/\\d{1,2}[:.]\\d{2}\\s*[AaPp]\\.?\\s?[Mm]\\.?/g)) {
+      for (const match of text.data.matchAll(/\\d{1,2}[:.]\\d{2}(?:\\s*[AaPp]\\.?\\s?[Mm]\\.?)?/g)) {
         times += 1;
         const range = document.createRange();
         range.setStart(text, match.index);
@@ -2927,7 +2932,7 @@ _TIME_TOGETHER = """(sweep) => {
     const item = span.closest('li');
     // Narrower than the time itself, any break is the only way to fit it.
     const floor = Math.max(0, ...[...span.textContent.matchAll(
-      /\\d{1,2}[:.]\\d{2}\\s*[AaPp]\\.?\\s?[Mm]\\.?/g)].map(match => {
+      /\\d{1,2}[:.]\\d{2}(?:\\s*[AaPp]\\.?\\s?[Mm]\\.?)?/g)].map(match => {
       const probe = document.createElement('span');
       probe.style.whiteSpace = 'nowrap';
       probe.textContent = match[0];

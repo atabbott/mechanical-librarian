@@ -3152,11 +3152,11 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
                 page.get_by_role("heading", name="History").wait_for()
                 selected_history = page.get_by_role(
-                    "heading", name="Cover selected"
+                    "heading", name="Cover chosen"
                 ).locator("..")
                 selected_history.get_by_text("Visual review", exact=False).wait_for()
                 selected_history.get_by_text(
-                    "Owner-confirmed choice: accept.", exact=False
+                    "Owner-confirmed choice: a proposed cover.", exact=False
                 ).wait_for()
                 assert "candidate" in selected_history.inner_text().lower()
                 for identifier in (
@@ -3248,11 +3248,11 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                 page.get_by_role("heading", name="Review complete").wait_for()
 
                 page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
-                selected = page.get_by_role("heading", name="Cover selected").locator(
+                selected = page.get_by_role("heading", name="Cover chosen").locator(
                     ".."
                 )
                 selected.get_by_text(
-                    "Owner-confirmed choice: accept.", exact=False
+                    "Owner-confirmed choice: a proposed cover.", exact=False
                 ).wait_for()
                 assert page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
@@ -3701,7 +3701,7 @@ def test_activity_checks_open_onto_one_row_per_field() -> None:
                     ":scope > .cm-activity-evidence > ul > li > article"
                 )
                 expect(paired).to_have_count(1)
-                expect(paired.locator(":scope > b")).to_have_text("Recorded")
+                expect(paired.locator(":scope > b")).to_have_text("Automatic decision")
                 decision = paired.locator(":scope > button")
                 page.keyboard.press("Tab")
                 expect(decision).to_be_focused()
@@ -4876,10 +4876,10 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
                 # observation, the rule it broke, and what it was read from.
                 health = page.get_by_role("region", name="Media health")
                 expect(health).to_be_visible()
-                expect(health).to_contain_text("Runtime short of provider")
-                expect(health).to_contain_text("43200 seconds of local audio")
-                expect(health).to_contain_text("within 90 seconds")
-                expect(health).to_contain_text("audible-product-B08G9PRS1K")
+                expect(health).to_contain_text("Shorter than the edition")
+                expect(health).to_contain_text("12 h of local audio, 8 h shorter")
+                expect(health).to_contain_text("within 1 min 30 s")
+                expect(health).to_contain_text("Audible product B08G9PRS1K")
             browser.close()
         assert errors == []
 
@@ -4955,7 +4955,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                         "where overall runtime is unavailable."
                     )
                     basis.get_by_text("Recording source").click()
-                    expect(basis).to_contain_text("audible-product-B08G9PRS1K")
+                    expect(basis).to_contain_text("Audible product B08G9PRS1K")
                     source = basis.locator("summary")
                     desktop_bounds = source.bounding_box()
                     assert desktop_bounds is not None and desktop_bounds["height"] < 44
@@ -4992,7 +4992,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                 expect(rail.first).to_be_visible()
                 labels = [label.splitlines()[0] for label in rail.all_inner_texts()]
                 assert "Narrators" in labels
-                assert "Asin" in labels
+                assert "ASIN" in labels
                 # The case page agrees with its row: both fills are optional
                 # choices, so nothing is counted as needing review (#1249).
                 expect(
@@ -5001,7 +5001,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     )
                 ).to_have_text("0")
                 expect(page.get_by_text(re.compile("^0 remaining"))).to_be_visible()
-                for name in ("Asin", "Narrators"):
+                for name in ("ASIN", "Narrators"):
                     button = page.get_by_role(
                         "button", name=re.compile(f"^{name}")
                     ).first
@@ -5015,7 +5015,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     # The compact layout offers the same optional choices.
                     page.set_viewport_size({"width": 390, "height": 844})
 
-                page.get_by_role("button", name=re.compile("^Asin")).first.click()
+                page.get_by_role("button", name=re.compile("^ASIN")).first.click()
                 canvas = page.locator(".decision-canvas")
                 expect(canvas).to_be_visible()
                 expect(canvas).not_to_contain_text(
@@ -5132,7 +5132,7 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 expect(row).to_be_visible()
                 row.click()
 
-                page.get_by_role("button", name=re.compile("^Asin")).first.click()
+                page.get_by_role("button", name=re.compile("^ASIN")).first.click()
                 choice = page.locator(".direct-choice").first
                 expect(choice).to_be_visible()
                 expect(choice).to_contain_text("B08G9PRS1K")
@@ -7976,7 +7976,9 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                 if state == "no_alternatives":
                     expect(adviser).to_contain_text("contained Codex")
                 else:
-                    expect(adviser).to_contain_text("model_unavailable")
+                    expect(adviser).to_contain_text(
+                        "Advisory availability: model unavailable."
+                    )
                     expect(adviser).to_contain_text(
                         "Price and text capability metadata must be available"
                     )
@@ -7990,7 +7992,7 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                         ).click()
                     assert refreshed.value.status == 200
                     expect(adviser).to_contain_text(
-                        "Selected: synthetic/description-b. Advisory availability: usable."
+                        "Selected: synthetic/description-b. Advisory availability: ready to use."
                     )
                     prices = adviser.locator("dt").filter(
                         has_text=re.compile(r"^Prices in USD$")
@@ -8330,7 +8332,10 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
 
 @pytest.mark.parametrize("audio", (False, True))
 @pytest.mark.parametrize(
-    "option,expected", (("display_name", "English"), ("preserve", "en"))
+    # A tag reads by name beside the tag itself, so it never reads like the
+    # name the display-name option writes (#1286).
+    "option,expected",
+    (("display_name", "English"), ("preserve", "English (en)")),
 )
 def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
     audio, option, expected
@@ -8381,7 +8386,10 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             page.get_by_role("article").filter(has_text="Automatic choice").get_by_role(
                 "button", name="Details"
             ).click()
-            expect(page.get_by_text(expected, exact=True)).to_be_visible()
+            # Activity's change text is the value as written (#1286).
+            expect(
+                page.get_by_text("en" if option == "preserve" else expected, exact=True)
+            ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
 
@@ -9092,7 +9100,7 @@ def test_same_name_series_owner_journey(media, destination):
                 ) as recorded:
                     choice.press("Space")
                 assert 200 == recorded.value.status
-                following = "asin" if media == "audiobook" else "isbn"
+                following = "ASIN" if media == "audiobook" else "ISBN"
                 expect(
                     page.get_by_role(
                         "heading",
@@ -9237,7 +9245,7 @@ def test_audiobook_work_series_title_owner_journey():
             expect(
                 page.get_by_role("region", name="Book-level evidence")
             ).to_contain_text(
-                "Book-level evidence supports series, title, description and genre "
+                "Book-level evidence supports series, title, description, and genre "
                 "choices. The exact recording remains unresolved."
             )
             series = page.get_by_role(
@@ -9385,7 +9393,7 @@ def test_audiobook_synopsis_owner_journey(destination):
                     expect(
                         page.get_by_role(
                             "heading",
-                            name="Which asin should this work use?",
+                            name="Which ASIN should this work use?",
                             exact=True,
                         )
                     ).to_be_visible()
@@ -9566,7 +9574,7 @@ def test_ebook_isbn_owner_journey(destination):
                 page.reload()
                 expect(choice).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
-            expect(page.get_by_role("heading", name="Isbn", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="ISBN", exact=True)).to_be_visible()
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text(f"To {selected}", exact=True)).to_be_visible()
@@ -10476,8 +10484,10 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     popover = page.get_by_role("region", name="Background activity")
                     rows = {
                         library: popover.locator("article").filter(
+                            # The popover names a library as Settings does (#1286).
                             has=page.locator(
-                                "strong", has_text=re.compile(f"^{library}$")
+                                "strong",
+                                has_text=re.compile(f"^Owner room {library}$"),
                             )
                         )
                         for library in ("books-0", "books-1")

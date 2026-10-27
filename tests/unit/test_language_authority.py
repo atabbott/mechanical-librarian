@@ -252,9 +252,12 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                         "external_observation",
                         ("language",),
                         f"Language: {claim.value}. Retained for review only; "
-                        "not an eligible choice. Undetermined language. "
-                        f"Scope: {claim.scope.value}; state: {claim.state.value}; "
-                        f"applicability: {claim.applicability}.",
+                        "not an eligible choice. Undetermined language."
+                        + (
+                            " Edition-level detail."
+                            if claim.scope is ClaimScope.EDITION
+                            else ""
+                        ),
                     )
                 ] += 1
                 assert all(

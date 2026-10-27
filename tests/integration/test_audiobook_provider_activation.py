@@ -1534,10 +1534,10 @@ def test_recording_collision_cannot_add_owner_choices(
                         assert "Recording timing" not in retained[0]["observation"]
                     assert claim.reference not in retained[0]["observation"]
                     assert other.identity not in retained[0]["observation"]
-                    assert (
-                        f"Scope: {claim.scope.value}; state: {claim.state.value}"
-                        in retained[0]["observation"]
-                    )
+                    # Internal scope, state and applicability codes are not
+                    # owner words (#1286).
+                    assert "Scope:" not in retained[0]["observation"]
+                    assert "applicability" not in retained[0]["observation"]
             if not permitted:
                 from types import SimpleNamespace
 
