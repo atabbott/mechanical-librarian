@@ -784,6 +784,17 @@ Copy must orient the owner, explain a real consequence or limitation, resolve
 ambiguity or status, or give a useful next or recovery action. Otherwise it is
 omitted; human, concise, non-technical wording is the default.
 
+The owner never reads a code as words. Every closed field, state, reason,
+source and media family has a typed owner label, and a code outside the family
+the server promises is refused at the boundary rather than sentence-cased; a
+family the server leaves open reads as one neutral sentence. Acronyms stay in
+capitals (ISBN, ASIN), languages read by name with their tag ("English (en)"),
+running times in hours and minutes, sizes in MB (1,048,576 bytes) and polling
+and session lifetimes in minutes, saved back as exact bytes and seconds. Times
+use one format: relative within the hour, the clock time the same day, and the
+weekday and date otherwise. The one labelled exception is the Policy page's
+"Technical detail" disclosure, which keeps rule codes for audit (#1286).
+
 Controls retain 44-pixel targets, visible focus and semantic status announcements; long
 owner values wrap without document overflow at 320 pixels and 200% text.
 

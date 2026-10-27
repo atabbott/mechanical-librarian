@@ -365,7 +365,7 @@ does not survive publication.
 
 | Observation | Cited | Bound |
 | --- | --- | --- |
-| `runtime_short_of_provider` | the local `DURATION` claim references and the candidate identity | the local running time is within 90 seconds of the running time the matched edition states |
+| `runtime_short_of_provider` | the local `DURATION` claim references and the candidate identity | a complete recording runs within 1 min 30 s of the edition's stated running time |
 | `chapter_structure_mismatch` | the chapter composition kind and the candidate identity | the embedded chapter durations align with the matched edition's, allowing one skipped chapter at each end |
 | `track_sequence_gap` | each track ordinal and the sequence that track declared | the declared track sequence runs without a hole |
 | `track_sequence_disorder` | each track ordinal and the sequence that track declared | the declared track sequence rises with the file order |

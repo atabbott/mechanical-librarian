@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Labels, states and reasons now read in plain words everywhere; running times
+  in hours and minutes with the real difference; languages by name; Settings
+  sizes in MB and polling in minutes; one date format with relative times. A
+  first provider throttle is no longer reported as calm, and an owner-entered
+  change names the value it replaced (#1286).
+
 - A description written to Audiobookshelf is now recorded as verified when the
   service stores it escaped, such as `&` as `&amp;`. Current, provider and local
   file descriptions are all read as the text they show, so an escaped one is no
