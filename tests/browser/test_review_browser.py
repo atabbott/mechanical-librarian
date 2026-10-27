@@ -3597,7 +3597,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         search = page.get_by_role("searchbox")
         search.fill("Retained Terminal")
         expect(page).to_have_url(re.compile(r"q=Retained"))
-        expect(status).to_have_text("Matching: 0 of 1 work needing attention")
+        expect(status).to_have_text("0 of 1 needing attention")
         expect(rail.locator("header p")).to_have_text(
             "Matching: 0 of 1 work needing a decision"
         )
@@ -3605,7 +3605,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
         search.fill("zzz-no-match")
-        expect(status).to_have_text("Matching: 0 of 1 work needing attention")
+        expect(status).to_have_text("0 of 1 needing attention")
         expect(badge).to_have_text("1 work")
         search.fill("")
         expect(page).not_to_have_url(re.compile(r"q="))
@@ -3620,14 +3620,18 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(page).to_have_url(re.compile(r"q=Retained"))
         lenses = page.get_by_role("navigation", name="Library lenses")
         for lens, expected in (
-            ("Not matched", "Matching: 0 of 1 work not matched"),
-            ("No attention needed", "Matching: 1 of 1 work with no attention needed"),
+            ("Not matched", "0 of 1 not matched"),
+            ("No attention needed", "1 of 1 needing no attention"),
             ("All", "Matching: 1 of 3 works"),
-            ("Needs attention", "Matching: 0 of 1 work needing attention"),
+            ("Needs attention", "0 of 1 needing attention"),
         ):
             lenses.get_by_role("link", name=lens, exact=True).click()
             expect(page).to_have_url(re.compile(r"q=Retained"))
             expect(status).to_have_text(expected)
+            # It stays on the Works heading's line.
+            heading = page.locator("#library-works-title").bounding_box()
+            line = status.bounding_box()
+            assert heading and line and line["y"] < heading["y"] + heading["height"]
         expect(badge).to_have_text("1 work")
 
 

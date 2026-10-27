@@ -3648,6 +3648,27 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     await waitFor(() => expect(toggle).toHaveFocus())
   })
 
+  it('leads a field with its check even when its decision is listed first (#1425)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({ events: [keptTitle, checkedTitle, keptIsbn, keptGenres] }),
+    )
+    renderRoute('/activity', http)
+    await screen.findByText('Checked 3 fields, no changes')
+    await user.click(within(checksRow()).getByRole('button', { name: 'Details' }))
+    const [title] = byId(`activity-checks-${key}`).querySelectorAll<HTMLElement>(
+      ':scope > li > article',
+    )
+    if (!title) throw new Error('Expected the Title row')
+    expect(title.querySelector(':scope > b')).toHaveTextContent('No change required')
+    const details = within(title).getByRole('button', { name: 'Details' })
+    expect(details).toHaveAttribute('aria-controls', 'activity-evidence-check-title')
+    await user.click(details)
+    const paired = byId('activity-evidence-check-title').querySelector(':scope article')
+    expect(paired?.querySelector(':scope > b')).toHaveTextContent('Recorded')
+  })
+
   it('counts each page of a split preparation by its own members and closes on paging', async () => {
     const user = userEvent.setup()
     const others = (page: number, count: number) =>

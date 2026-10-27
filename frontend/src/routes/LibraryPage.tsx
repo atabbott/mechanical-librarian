@@ -259,12 +259,13 @@ const preparationPassage = [
 const compactWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
-// A search under a lens counts that lens, in its own words (#1425).
+// A search under a lens counts that lens against its whole-library total, in
+// the lens's own words (#1425).
 const lensMatching = {
-  all: ['all', ''],
-  needs_attention: ['attention', ' needing attention'],
-  no_attention_needed: ['clear', ' with no attention needed'],
-  not_matched: ['notMatched', ' not matched'],
+  all: ['all', undefined],
+  needs_attention: ['attention', 'needing attention'],
+  no_attention_needed: ['clear', 'needing no attention'],
+  not_matched: ['notMatched', 'not matched'],
 } as const
 
 const PreparationSummary = ({
@@ -4098,9 +4099,13 @@ export default function LibraryPage({
               {data
                 ? (!search.q
                     ? workCount(data.counts.all)
-                    : lensTotal === undefined
-                      ? `Matching: ${workCount(data.counts[lensCount])}${lensWords}`
-                      : `Matching: ${String(data.counts[lensCount])} of ${workCount(lensTotal)}${lensWords}`) +
+                    : lensWords === undefined
+                      ? lensTotal === undefined
+                        ? `Matching: ${workCount(data.counts.all)}`
+                        : `Matching: ${String(data.counts.all)} of ${workCount(lensTotal)}`
+                      : lensTotal === undefined
+                        ? `${String(data.counts[lensCount])} ${lensWords}`
+                        : `${String(data.counts[lensCount])} of ${String(lensTotal)} ${lensWords}`) +
                   (search.q
                     ? ''
                     : summaryNotMatched === undefined
