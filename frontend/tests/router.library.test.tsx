@@ -2031,7 +2031,7 @@ describe('Library route', () => {
     const searched = within(
       (await screen.findByRole('heading', { name: 'Works' })).parentElement ?? document.body,
     ).getByRole('status')
-    await waitFor(() => expect(searched).toHaveTextContent(/^Matching: 2 of 2 works$/u))
+    await waitFor(() => expect(searched).toHaveTextContent(/^Found 1 of 1 work not matched$/u))
   })
 
   it('keeps an unknown lens out of the URL it reads (#1407)', () => {
@@ -2493,7 +2493,7 @@ describe('Library route', () => {
       const rail = screen.getByLabelText('Attention queue')
       await waitFor(() => expect(rail).toHaveAttribute('aria-busy', 'true'))
       // The works read has settled, but the route is not loaded while its rail is retained.
-      expect(screen.getByText('Matching: 1 of 1 work')).not.toHaveAttribute('aria-busy')
+      expect(screen.getByText('Found 1 of 1 work')).not.toHaveAttribute('aria-busy')
       const announced = document.querySelector('.navigation-status')
       expect(announced).toHaveTextContent('Loading Library')
       expect(row).toBeVisible()
@@ -10664,6 +10664,12 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
   })
   const badge = () => document.querySelector('.attention-toggle strong')
   const worksStatus = () => document.querySelector('.library-works-heading [role="status"]')
+  // What the status shows, without the lens words it gives screen readers only.
+  const shownStatus = () =>
+    [...(worksStatus()?.childNodes ?? [])]
+      .filter((node) => !(node instanceof Element && node.classList.contains('sr-only')))
+      .map((node) => node.textContent)
+      .join('')
   const railItem = (
     id: string,
     destination: string,
@@ -10717,7 +10723,10 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
 
     await user.type(screen.getByRole('searchbox'), 'needle')
     await waitFor(() => expect(router.state.location.search.q).toBe('needle'))
-    await waitFor(() => expect(worksStatus()).toHaveTextContent(/^Matching: 1 of 5 works$/u))
+    await waitFor(() =>
+      expect(worksStatus()).toHaveTextContent(/^Found 1 of 3 works needing attention$/u),
+    )
+    expect(shownStatus()).toBe('Found 1 of 3 works')
     expect(badge()).toHaveTextContent(/^3 works$/u)
     expect(
       within(screen.getByRole('complementary', { name: 'Attention queue' })).getByText(
@@ -10734,6 +10743,42 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       .mocked(http.getLibrary)
       .mock.calls.filter(([search]) => search.lens === 'all')
     expect(summaryCalls.map(([search]) => search)).toEqual([{ lens: 'all' }])
+  })
+
+  it.each([
+    ['all', 'Found 4 of 10 works', 'Found 4 of 10 works'],
+    ['needs_attention', 'Found 1 of 3 works', 'Found 1 of 3 works needing attention'],
+    ['no_attention_needed', 'Found 2 of 5 works', 'Found 2 of 5 works needing no attention'],
+    ['not_matched', 'Found 1 of 2 works', 'Found 1 of 2 works not matched'],
+  ] as const)(
+    'a search under the %s lens counts that lens and names it to screen readers (#1425)',
+    async (lens, shown, announced) => {
+      const http = createHttp()
+      http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) => ({
+        ...library,
+        lens: search.lens,
+        counts: search.q
+          ? { attention: 1, all: 4, clear: 2, notMatched: 1 }
+          : { attention: 3, all: 10, clear: 5, notMatched: 2 },
+      }))
+      renderRoute(`/library?lens=${lens}&q=needle`, http)
+      await waitFor(() =>
+        expect(worksStatus()).toHaveTextContent(new RegExp(`^${announced}$`, 'u')),
+      )
+      expect(shownStatus()).toBe(shown)
+    },
+  )
+
+  it('a lens search without the library summary still names its lens (#1425)', async () => {
+    const http = createHttp()
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+      search.q ? counted(1, 4) : Promise.reject(new Error('synthetic summary failure')),
+    )
+    renderRoute('/library?lens=needs_attention&q=needle', http)
+    await waitFor(() =>
+      expect(worksStatus()).toHaveTextContent(/^Found 1 work needing attention$/u),
+    )
+    expect(shownStatus()).toBe('Found 1 work')
   })
 
   it('V1: singular forms name one work', async () => {

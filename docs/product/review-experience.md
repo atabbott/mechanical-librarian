@@ -381,7 +381,10 @@ states.
 
 Every global count comes from one summary, the unsearched default Library read,
 and names its unit: the Attention badge counts works needing a decision, the
-Works status counts works (`Matching: m of n works` under a search), and the
+Works status counts works (under a search it shows `Found m of n works`, where
+n is the library total under All and the lens's whole-library total under any
+other lens, and announces the lens after it, as in `Found m of n works needing
+attention`, #1425), and the
 write handoff and a connection notice state the works in Library. A search
 narrows only the work list and the Attention rail, never these figures, and a
 filtered completion states how many works still need a decision outside it. A
@@ -899,8 +902,9 @@ inspection discloses the ordered lifecycle without replacing, rewriting, or
 loading the complete append-only audit stream. Search, filters, date bounds,
 totals, and pagination operate on those rows server-side. On each page, the
 automatic checks one preparation made with no change to write are gathered into
-one row: "Checked N fields, no changes". It opens onto each check with its own
-details. An automatic choice names its field and value, as in "Set series to
+one row: "Checked N fields, no changes". It opens onto one row per field, with
+that field's recorded decision inside the field's own details (#1425). An
+automatic choice names its field and value, as in "Set series to
 Earthsea Cycle (1)". An address naming an unknown filter
 shows every event and says so until the next filter, search, range, page-size
 or page change (#1281).

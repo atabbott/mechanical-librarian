@@ -939,7 +939,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
    under one left rule and keep the ordinary row grid. An empty filter notice
    takes no space, but stays mounted for what it will announce (#1281). */
 .cm-activity-event-group article.is-checks .cm-activity-change,.cm-activity-event-group article.is-checks .cm-activity-change > span { overflow:visible; text-overflow:clip; white-space:normal; }.cm-activity-event-group article.is-checks .cm-activity-change { color:var(--soft); font-weight:650; }
-.cm-activity-checks { margin:0; padding:0; list-style:none; }.cm-activity-checks > li { margin-left:1.25rem; border-left:2px solid var(--line-strong); }.cm-activity-checks article { padding-left:1rem; }
+.cm-activity-checks { margin:0; padding:0; list-style:none; }.cm-activity-evidence .cm-activity-checks { contain:inline-size; }.cm-activity-evidence .cm-activity-checks > li { margin-left:0; }.cm-activity-checks > li { margin-left:1.25rem; border-left:2px solid var(--line-strong); }.cm-activity-checks article { padding-left:1rem; }
 .cm-activity-day { display:block; font-size:.68rem; white-space:normal; }.cm-activity-filter-notice { margin:0; padding-inline:1.25rem; color:var(--ink); font-size:.8rem; }.cm-activity-filter-notice:not(:empty) { padding-block:.6rem; border-bottom:1px solid var(--line); background:var(--notice-soft); }
 /* Medium desktop keeps all six columns and the whole disclosure label: the
    two flexible columns give way, the fixed ones do not, so the action never

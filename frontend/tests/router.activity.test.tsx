@@ -3552,21 +3552,24 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     expect(list).toHaveClass('cm-activity-checks')
     expect(list.previousElementSibling).toBe(row)
     expect(row.contains(list)).toBe(false)
+    // One row per checked field (#1425).
     const memberRows = [...list.querySelectorAll(':scope > li > article')]
     expect(
       memberRows.map((article) => article.querySelector('.cm-activity-change')?.textContent),
-    ).toEqual(['Kept Secret History', 'Kept Secret History', 'Left ISBN unchanged', 'Kept Mystery'])
-    expect(memberRows[3]?.querySelector('time')).toHaveTextContent(dayOf(1785800000))
+    ).toEqual(['Kept Secret History', 'Left ISBN unchanged', 'Kept Mystery'])
+    expect(memberRows[2]?.querySelector('time')).toHaveTextContent(dayOf(1785800000))
     expect(memberRows[0]?.querySelector('time')).not.toHaveTextContent(dayOf(1786000000))
 
-    const isbn = memberRows[2] as HTMLElement
+    const isbn = memberRows[1] as HTMLElement
     await user.click(within(isbn).getByRole('button', { name: 'Details' }))
     expect(within(isbn).getByText('Automatic policy')).toBeVisible()
     expect(within(isbn).getByText('Title layout: Leave as it is')).toBeVisible()
     await user.click(within(isbn).getByRole('button', { name: 'Hide details' }))
     expect(within(isbn).queryByText('Automatic policy')).toBeNull()
 
-    // Every durable record is reachable exactly once, as a row or a member.
+    // Every durable record is reachable exactly once, as a row, a member, or
+    // inside its field's Details.
+    await user.click(within(memberRows[0] as HTMLElement).getByRole('button', { name: 'Details' }))
     const controls = [...ledger().querySelectorAll('[aria-controls^="activity-evidence-"]')].map(
       (control) => control.getAttribute('aria-controls')?.replace('activity-evidence-', ''),
     )
@@ -3583,6 +3586,87 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     expect(toggle).toHaveFocus()
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(document.getElementById(`activity-checks-${key}`)).toBeNull()
+  })
+
+  it('opens onto one row per field, its paired decision inside that row’s Details (#1425)', async () => {
+    const user = userEvent.setup()
+    let current = activity({ events: [checkedTitle, change, keptTitle, keptIsbn, keptGenres] })
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/activity', http)
+    await screen.findByText('Checked 3 fields, no changes')
+    const toggle = within(checksRow()).getByRole('button', { name: 'Details' })
+    await user.click(toggle)
+    const list = byId(`activity-checks-${key}`)
+    const fields = [...list.querySelectorAll<HTMLElement>(':scope > li > article')]
+    expect(fields).toHaveLength(3)
+    expect(fields.map((row) => row.querySelector('.cm-activity-work > span')?.textContent)).toEqual(
+      ['Title · fiction', 'ISBN · fiction', 'Genres · fiction'],
+    )
+    const [title] = fields
+    if (!title) throw new Error('Expected the Title row')
+    // The field leads with what the check found; its recorded decision is not
+    // a row of its own until that field's Details opens.
+    expect(within(title).getByText('No change required')).toBeVisible()
+    expect(within(title).queryByText('Recorded')).toBeNull()
+    expect(
+      document.querySelector('[aria-controls="activity-evidence-check-title-kept"]'),
+    ).toBeNull()
+
+    const details = within(title).getByRole('button', { name: 'Details' })
+    expect(details).toHaveAttribute('aria-controls', 'activity-evidence-check-title')
+    await user.click(details)
+    const evidence = byId('activity-evidence-check-title')
+    const paired = within(evidence).getByRole('button', { name: 'Details' })
+    expect(paired).toHaveAttribute('aria-controls', 'activity-evidence-check-title-kept')
+    expect(within(evidence).getByText('Recorded')).toBeVisible()
+    await user.click(paired)
+    expect(paired).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      within(byId('activity-evidence-check-title-kept')).getByText('Title layout: Leave as it is'),
+    ).toBeVisible()
+    // Opening the decision keeps its field open; closing it returns to the field.
+    expect(details).toHaveAttribute('aria-expanded', 'true')
+    await user.click(paired)
+    expect(document.getElementById('activity-evidence-check-title-kept')).toBeNull()
+    expect(paired).toHaveFocus()
+    expect(byId('activity-evidence-check-title')).toBeVisible()
+    await user.click(details)
+    expect(details).toHaveAttribute('aria-expanded', 'false')
+    expect(document.getElementById('activity-evidence-check-title')).toBeNull()
+    expect(screen.getAllByText('Checked 3 fields, no changes')).toHaveLength(1)
+
+    // A focused decision a refetch removes hands focus to its group's toggle.
+    await user.click(details)
+    within(byId('activity-evidence-check-title')).getByRole('button', { name: 'Details' }).focus()
+    current = activity({ events: [checkedTitle, change, keptIsbn, keptGenres] })
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() =>
+      expect(within(byId('activity-evidence-check-title')).queryByRole('button')).toBeNull(),
+    )
+    await waitFor(() => expect(toggle).toHaveFocus())
+  })
+
+  it('leads a field with its check even when its decision is listed first (#1425)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({ events: [keptTitle, checkedTitle, keptIsbn, keptGenres] }),
+    )
+    renderRoute('/activity', http)
+    await screen.findByText('Checked 3 fields, no changes')
+    await user.click(within(checksRow()).getByRole('button', { name: 'Details' }))
+    const [title] = byId(`activity-checks-${key}`).querySelectorAll<HTMLElement>(
+      ':scope > li > article',
+    )
+    if (!title) throw new Error('Expected the Title row')
+    expect(title.querySelector(':scope > b')).toHaveTextContent('No change required')
+    const details = within(title).getByRole('button', { name: 'Details' })
+    expect(details).toHaveAttribute('aria-controls', 'activity-evidence-check-title')
+    await user.click(details)
+    const paired = byId('activity-evidence-check-title').querySelector(':scope article')
+    expect(paired?.querySelector(':scope > b')).toHaveTextContent('Recorded')
   })
 
   it('counts each page of a split preparation by its own members and closes on paging', async () => {
@@ -3726,7 +3810,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     if (!member) throw new Error('Expected a second member')
     member.focus()
 
-    current = activity({ events: [change, checkedTitle, keptIsbn, keptGenres] })
+    current = activity({ events: [change, checkedTitle, keptTitle, keptGenres] })
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['activity'] })
     })
