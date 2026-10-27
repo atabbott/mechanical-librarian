@@ -23,6 +23,7 @@ from mechanical_librarian.domain.audio_health import (
     AudioHealthKind,
     AudioHealthObservation,
     derive_audio_health,
+    hours_minutes,
     media_unreadable_observation,
 )
 from mechanical_librarian.domain.audio_inspection import (
@@ -491,6 +492,31 @@ def test_a_diverging_cut_is_named_under_the_alignment_the_gate_would_choose() ->
     assert stated.expected == (
         "5 chapters stated by the matched edition; chapter 3 runs 5 min"
     )
+
+
+def test_an_hour_long_chapter_cut_keeps_its_seconds() -> None:
+    """Chapters are compared within seconds, so a cut reads to the second.
+
+    3,700 s and 3,725 s both round to "1 h 2 min"; stated that way, the two
+    sides of a mismatch would read the same and contradict it (#1286).
+    """
+    stated_seconds = (3_725, 3_660, 3_540)
+    report = _corroborated_report(
+        chapters=_running_chapters((3_700, 3_700, 3_700)),
+        provider_chapters=ProviderChapterStructure(
+            len(stated_seconds), sum(stated_seconds), stated_seconds, False
+        ),
+    )
+
+    (stated,) = derive_audio_health(report)
+
+    assert stated.kind is AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH
+    assert stated.observed == "3 embedded chapters; chapter 1 runs 1 h 1 min 40 s"
+    assert stated.expected == (
+        "3 chapters stated by the matched edition; chapter 1 runs 1 h 2 min 5 s"
+    )
+    # Control: the running time itself still reads in whole minutes.
+    assert hours_minutes(3_700) == "1 h 2 min"
 
 
 def test_an_incomplete_vector_states_nothing() -> None:

@@ -370,12 +370,12 @@
                 "source": "Local library record"
               },
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               }
@@ -390,12 +390,12 @@
             "alternative_id": "alternative_6edf6cc99c073bb07d4bf641be960738da82833e49f56883f3ac69291c8e9349",
             "evidence": [
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               }
@@ -964,13 +964,13 @@
       },
       {
         "destinations": ["authors"],
-        "observation": "Metadata: Example Author",
+        "observation": "Author: Example Author",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["authors"],
-        "observation": "Metadata: Example Author",
+        "observation": "Author: Example Author",
         "role": "external_corroboration",
         "source": "Audnexus"
       },

@@ -12,11 +12,12 @@ import secrets
 import threading
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
+from types import MappingProxyType
 from typing import Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
@@ -2498,6 +2499,35 @@ def _choice_is_local(evidence: dict[str, str | None]) -> bool:
     )
 
 
+_OBSERVATION_KINDS: Mapping[str, str] = MappingProxyType(
+    {
+        ClaimKind.TITLE: "Title",
+        ClaimKind.SUBTITLE: "Subtitle",
+        ClaimKind.CREATOR: "Author",
+        ClaimKind.CONTRIBUTOR: "Contributor",
+        ClaimKind.SERIES: "Series membership",
+        ClaimKind.SERIES_SEQUENCE: "Series position",
+        ClaimKind.ISBN: "ISBN",
+        ClaimKind.ASIN: "ASIN",
+        ClaimKind.PUBLICATION_DATE: "Publication date",
+        ClaimKind.DATE_EVENT: "Dated event",
+        ClaimKind.CONTEXTUAL_CREDIT: "Other credit",
+        ClaimKind.PUBLISHER: "Publisher",
+        ClaimKind.DESCRIPTION: "Description",
+        ClaimKind.LANGUAGE: "Language",
+        ClaimKind.SUBJECT: "Subject",
+        ClaimKind.IMPRINT: "Imprint",
+        ClaimKind.GENRE: "Genre",
+        ClaimKind.TAG: "Tag",
+        ClaimKind.DURATION: "Running time",
+        ClaimKind.PERFORMANCE_TYPE: "Performance",
+        ClaimKind.ADULT_PRODUCT: "Adult content",
+        # A provider's author list reads as the Library's Author.
+        "authors": "Author",
+    }
+)
+
+
 def _choice_observation(evidence: dict[str, str | None]) -> str:
     try:
         fact = json.loads(evidence["fact"] or "{}")
@@ -2507,21 +2537,15 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         return "The retained observation has no readable value."
     if evidence["source"] == "identifier" and "relation" in fact:
         return "Identifier relationship retained; no value observation is available."
-    kind = cast(
-        "dict[object, str]",
-        {
-            "authors": "Contributors",
-            "contributor": "Narration credit",
-            "description": "Description",
-            "duration": "Running time",
-            "isbn": "ISBN",
-            "asin": "ASIN",
-            "performance_type": "Performance",
-            "publication_date": "Publication date",
-            "series": "Series membership",
-            "title": "Title",
-        },
-    ).get(fact.get("kind"), "Metadata")
+    # Every claim kind is named as the Library's recorded evidence names it
+    # (#1286); a narrator's credit keeps its own name.
+    claim_kind = fact.get("kind")
+    if claim_kind == "contributor" and fact.get("role") in {None, "narrator"}:
+        kind = "Narration credit"
+    elif type(claim_kind) is str:
+        kind = _OBSERVATION_KINDS.get(claim_kind, "Metadata")
+    else:
+        kind = "Metadata"
     value = fact.get("value", fact.get("observed"))
     if (
         fact.get("kind") == "duration"

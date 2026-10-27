@@ -2329,6 +2329,10 @@ def test_case_detail_reports_write_consent_it_never_asked_the_read_model_for(
         ("contributor", "Recorded Narrator", "Narration credit: Recorded Narrator"),
         ("duration", "43200.000", "Running time: 12 h"),
         ("performance_type", "unabridged", "Performance: unabridged"),
+        # Named as the Library names them, never as "Metadata" (#1286 X7).
+        ("creator", "Ada Example", "Author: Ada Example"),
+        ("language", "en", "Language: en"),
+        ("authors", "Ada Example", "Author: Ada Example"),
     ),
 )
 def test_audio_observations_are_labelled_for_the_owner(
@@ -2344,6 +2348,24 @@ def test_audio_observations_are_labelled_for_the_owner(
         )
         == expected
     )
+
+
+def test_every_claim_kind_is_named_as_the_library_names_it() -> None:
+    """No claim kind reads as the bare word "Metadata" on the evidence page."""
+    named = {
+        kind: _choice_observation(
+            {
+                "fact": json.dumps(
+                    {"kind": kind.value, "role": "translator", "value": "x"}
+                ),
+                "provider": None,
+                "source": "local_claim",
+            }
+        )
+        for kind in ClaimKind
+    }
+    assert not [kind for kind, text in named.items() if text.startswith("Metadata")]
+    assert named[ClaimKind.CONTRIBUTOR] == "Contributor: x"
 
 
 def _recorded_audiobook() -> MetadataReport:

@@ -195,10 +195,11 @@ def policy_option_label(option: str, category: str) -> str:
     if category == "language_rendering" and option == "preserve":
         return "Preserve supported form"
     named = {
-        "all_qualified": "All qualified memberships",
+        "all_qualified": "All supported memberships",
         "ask": "Ask me",
         "automatic": "Automatic",
         "canonical": "Canonical form",
+        "ebook_manifestation": "Ebook edition ASIN",
         "fill_empty": "Fill when empty",
         "ignore": "Skip it",
         "preserve": "Leave as it is",

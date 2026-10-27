@@ -95,9 +95,13 @@ def _shown_seconds(seconds: int) -> int:
     return round(seconds / 60) * 60 if seconds >= 3600 else seconds
 
 
-def hours_minutes(seconds: int) -> str:
-    """A running time in the owner's units: `8 h 34 min`, `1 min 30 s` (#1286)."""
-    shown = _shown_seconds(seconds)
+def hours_minutes(seconds: int, *, exact: bool = False) -> str:
+    """A running time in the owner's units: `8 h 34 min`, `1 min 30 s` (#1286).
+
+    From an hour up it reads in whole minutes, unless ``exact``: a chapter cut
+    is compared within seconds, so it keeps every second it was measured in.
+    """
+    shown = seconds if exact else _shown_seconds(seconds)
     hours, rest = divmod(shown, 3600)
     minutes, remainder = divmod(rest, 60)
     parts = (
@@ -434,9 +438,13 @@ def _chapter_observations(
             cut = first_divergent_chapter(local, evidence.chapters.durations_seconds)
             if cut is not None:
                 ordinal, ran, stated_ordinal, stated_seconds = cut
-                observed += f"; chapter {ordinal} runs {hours_minutes(ran)}"
+                # Chapters are compared within seconds, so both cuts keep
+                # theirs: rounded to minutes, two different cuts could read
+                # the same and contradict the mismatch they prove (#1286).
+                observed += f"; chapter {ordinal} runs {hours_minutes(ran, exact=True)}"
                 expected += (
-                    f"; chapter {stated_ordinal} runs {hours_minutes(stated_seconds)}"
+                    f"; chapter {stated_ordinal} runs "
+                    f"{hours_minutes(stated_seconds, exact=True)}"
                 )
                 # The two ordinals differ when the alignment skipped an end
                 # chapter on one side, which a publisher's branded intro

@@ -282,7 +282,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 genres = next(
                     field for field in fields if field["destination"] == "genres"
                 )
-                genres["current"] = {"kind": "synthetic", "value": ["Updated genre"]}
+                genres["current"] = {
+                    "kind": "synthetic",
+                    "state": "value",
+                    "value": ["Updated genre"],
+                }
             if path == "/api/v1/review-preparation" and connection_state != "paused":
                 preparation = cast("dict[str, object]", payload)
                 conditions = cast("list[dict[str, object]]", preparation["connections"])
@@ -303,7 +307,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 fields[0] = {
                     **fields[0],
                     "destination": "description",
-                    "current": {"kind": "synthetic", "value": description},
+                    "current": {
+                        "kind": "synthetic",
+                        "state": "value",
+                        "value": description,
+                    },
                     "proposed_values": [
                         {"kind": "synthetic", "value": description + "Alternative."}
                     ],
@@ -1229,7 +1237,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 page.get_by_role("heading", name="Enable guarded writes").wait_for()
                 page.locator(".activity-consent-library").filter(
                     has_text="Household ebooks"
-                ).get_by_text("5 prepared · Some destinations are ready").wait_for()
+                ).get_by_text("5 prepared · Writes enabled").wait_for()
                 spoken = (
                     page.locator(".activity-consent-library")
                     .filter(has_text="Spoken stories")
@@ -1268,7 +1276,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page.get_by_role("option", name="50 per page").click()
                     expect(page_size).to_be_focused()
                 page.get_by_role("button", name="Owner choices").click()
-                page.get_by_role("button", name="All").click()
+                # Exact: a row's Details name carries its work title (#1286).
+                page.get_by_role("button", name="All", exact=True).click()
                 inspect_control = page.get_by_role(
                     "button", name=re.compile(r"^Details for ")
                 ).first
@@ -1428,7 +1437,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(unavailable_evidence).to_have_attribute("aria-expanded", "true")
                 expect(unavailable_evidence).to_have_text("Hide evidence")
                 comparison.get_by_text("Local presence", exact=True).wait_for()
-                comparison.get_by_text("Preview unavailable", exact=True).wait_for()
+                comparison.get_by_text(
+                    "Preview unavailable for this retained cover.", exact=True
+                ).wait_for()
 
         stage[0] = "library:automatic-isbn-identity-evidence"
         page.goto(
@@ -1627,7 +1638,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".library-work-row").first.get_by_text(
             "Mara Venn", exact=False
         ).wait_for()
-        page.get_by_text("Household ebooks · Epub", exact=True).first.wait_for()
+        page.get_by_text("Household ebooks · Ebook (EPUB)", exact=True).first.wait_for()
         assert (
             "synthetic-item-1"
             not in page.locator(".library-work-row").first.inner_text()
@@ -2039,7 +2050,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         assert page.get_by_role("heading", name=_HOSTILE).count() == 1
         diagnostic_text = route.inner_text()
-        assert "Household ebooks · epub" in diagnostic_text
+        assert "Household ebooks · Ebook (EPUB)" in diagnostic_text
         assert "internal-case-1" not in diagnostic_text
         assert "evidence-" not in diagnostic_text
         assert "candidate-" not in diagnostic_text
@@ -2133,7 +2144,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert history_text.count("Mara Venn, Ivo North") == 1
         assert "Retained" in history_text
         assert "This read-only preview recorded no decision authority." in history_text
-        assert "Cover automatic prepared" in history_text
+        assert "Cover choices prepared" in history_text
         for identifier in (
             "decision-owner-internal",
             "event-owner-internal",
@@ -2525,7 +2536,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         projected_context = page.locator(".cm-policy-projected-context")
         assert projected_context.evaluate("node => node.open") is False
         projected_context.get_by_text(
-            "Unchanged outcomes and projected library context (2)", exact=True
+            "Unchanged outcomes and current library context (2)", exact=True
         ).click()
         assert projected_context.evaluate("node => node.open") is True
         expect(
@@ -2538,7 +2549,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "No policy change. Tag handling is off.", exact=False
         ).wait_for()
         projected_context.get_by_text(
-            "Unchanged outcomes and projected library context (2)", exact=True
+            "Unchanged outcomes and current library context (2)", exact=True
         ).click()
         assert projected_context.evaluate("node => node.open") is False
         page.get_by_role("button", name="Sign out").click()

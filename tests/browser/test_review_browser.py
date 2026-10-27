@@ -8379,6 +8379,10 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
                 "Undetermined language; not an eligible choice", exact=False
             ).wait_for()
             expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
+            # The page names the language beside its tag, as Library does (#1286 L1).
+            expect(
+                page.get_by_text("Language: English (en)", exact=True).first
+            ).to_be_visible()
             page.get_by_role("link", name="History", exact=True).click()
             expect(page.get_by_text(f"To {expected}", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
@@ -8517,16 +8521,12 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 ).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             if destination == "ignore":
-                expect(
-                    page.get_by_text("Metadata: Fantasy", exact=False)
-                ).to_have_count(0)
+                expect(page.get_by_text("Genre: Fantasy", exact=False)).to_have_count(0)
                 expect(
                     page.get_by_role("heading", name="Genres", exact=True)
                 ).to_be_visible()
             else:
-                expect(
-                    page.get_by_text("Metadata: Fantasy", exact=False)
-                ).to_be_visible()
+                expect(page.get_by_text("Genre: Fantasy", exact=False)).to_be_visible()
             if destination != "ignore":
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text("To Fantasy", exact=True)).to_be_visible()
@@ -9171,6 +9171,14 @@ def test_audiobook_work_owner_journey():
             expect(
                 page.get_by_role("region", name="Book-level evidence")
             ).to_contain_text("The exact recording remains unresolved.")
+            # The note names only what the rail offers here, Description and
+            # Genres, never every field the case carries (#1286 X3).
+            expect(
+                page.get_by_role("region", name="Book-level evidence")
+            ).to_contain_text(
+                "Book-level evidence supports description and genre choices. "
+                "The exact recording remains unresolved."
+            )
             # A title the evidence only restates is no choice: the case shows
             # the same rows as before #1253.
             for field in ("Title", "Series"):

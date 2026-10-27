@@ -399,7 +399,9 @@ def _field(
         "destination": destination,
         "decision_actions": decision_actions,
         "deterministic_disposition": disposition,
-        "effect_capability": "unavailable",
+        # A producer suspension reason: the cohort's fields are guarded from
+        # external update (#1286).
+        "effect_capability": "insufficient_permission",
         "editable": editable
         if editable is not None
         else (
@@ -881,7 +883,12 @@ def _case(case_id: str) -> dict[str, object]:
                                     "observation": "Local library cover retained.",
                                 }
                             ],
-                            "limitations": ["preview_unavailable"]
+                            # The producer's own sentence for an unavailable
+                            # incumbent preview (cover_consideration), never a
+                            # code the owner would read raw (#1286).
+                            "limitations": [
+                                "Preview unavailable for this retained cover."
+                            ]
                             if case_id == "case-3"
                             else [],
                             "rationale": "Keep the cover currently held by the local library.",

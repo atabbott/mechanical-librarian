@@ -361,9 +361,10 @@ def _decision_facts(
     state: str,
     report: MetadataReport | None,
 ) -> tuple[ReadableChange, list[dict[str, str]]]:
-    # Once planned, a decision names what its own write replaced, which an
-    # earlier write on the same case can have made differ from the pinned
-    # report (#1286); before that, the report it was made against.
+    # Once planned, a decision that chose a value names what its own write
+    # replaced, which an earlier write on the same case can have made differ
+    # from the pinned report (#1286); otherwise, the report it was made
+    # against. Only accept and owner-entered rows carry ``pre_value``.
     current = (
         record["pre_value"]
         if "pre_value" in record
