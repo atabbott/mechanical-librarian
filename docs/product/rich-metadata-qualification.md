@@ -89,6 +89,16 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Unplanned connection wait successor (#1423)
+
+The current F19a, F20 and F46 records move to semantic revision 76 over base
+`22436ab9`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. The
+revision follows the guarded scheduler holding a decision that met a lost
+connection before it had a plan until the connection is reached. It changes
+when a decision is planned, and no operation gains or loses automatic authority.
+
 ## Not matched lens successor (#1407)
 
 The current F19a, F20 and F46 records move to semantic revision 75 over base

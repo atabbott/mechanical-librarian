@@ -10,7 +10,7 @@ and nothing here ever sends again a write whose outcome is unknown.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
 
@@ -20,6 +20,7 @@ import pytest
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
 from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
     AudiobookshelfFieldEffectCapabilities,
 )
@@ -77,6 +78,34 @@ def _kinds(effects: _EffectEnvironment, plan_id: str) -> list[tuple[str, object]
             json.loads, effects.repository.field_effect_event_documents(plan_id)
         )
     ]
+
+
+def _plans(effects: _EffectEnvironment) -> list[tuple[str, str, str | None]]:
+    return sorted(
+        (operation.plan.destination, operation.state, operation.failure)
+        for operation in map(
+            effects.repository.get_field_effect,
+            (
+                row[0]
+                for row in effects.repository._connection.execute(
+                    "SELECT plan_id FROM field_effects"
+                )
+            ),
+        )
+    )
+
+
+def _probes(capabilities: FakeCapabilityObserver) -> list[str]:
+    """Count every capability observation, the connection probe's included."""
+    observed: list[str] = []
+    observe = capabilities.observe
+
+    def counted(plan):
+        observed.append(plan.destination)
+        return observe(plan)
+
+    capabilities.observe = counted  # type: ignore[method-assign]  # reason: the observer is the probe traffic counted here.
+    return observed
 
 
 def test_connection_stale_is_planned_again_with_its_own_identity(
@@ -385,7 +414,7 @@ def test_a_superseded_stranded_claim_sends_nothing_in_production(
 
 
 def _description_and_tags_lane(
-    effects: _EffectEnvironment,
+    effects: _EffectEnvironment, *, reachable: bool = True
 ) -> tuple[list[AutomaticDecision], ContinuousGuardedApplication]:
     report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
     decisions = [
@@ -425,7 +454,9 @@ def _description_and_tags_lane(
         effects.clock,
         lambda *_: None,
     )
-    assert lane.schedule() == 2
+    if not reachable:
+        effects.capabilities.category = "connection_unavailable"
+    assert lane.schedule() == (2 if reachable else 0)
     return decisions, lane
 
 
@@ -472,6 +503,26 @@ def test_an_outage_across_passes_then_recovery_verifies_each_write_once(
     assert effects.repository.pending_field_effect_decision_documents(100) == ()
 
 
+def _answered_by(
+    effects: _EffectEnvironment, handle: Callable[[httpx.Request], httpx.Response]
+) -> None:
+    """Observe through the real adapter, which decides whether the connection
+    was reached; the fake keeps the digest these plans were made against."""
+    service_side = AudiobookshelfFieldEffectCapabilities(
+        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
+        endpoint="https://abs.example.invalid",
+        library_id="library-1",
+    )
+
+    def observe(plan: FieldEffectPlan) -> CapabilityObservation:
+        answered = service_side.result(plan)
+        return CapabilityObservation(
+            answered.category, effects.capabilities.digest, answered.connection_reached
+        )
+
+    effects.capabilities.observe = observe  # type: ignore[method-assign]  # reason: the observer is the failing service under test.
+
+
 @pytest.mark.parametrize("status", (500, 503))
 def test_a_server_failing_every_item_keeps_each_waiting_decision_waiting(
     effects: _EffectEnvironment, status: int
@@ -494,35 +545,13 @@ def test_a_server_failing_every_item_keeps_each_waiting_decision_waiting(
             )
         return httpx.Response(status)
 
-    service_side = AudiobookshelfFieldEffectCapabilities(
-        client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
-        endpoint="https://abs.example.invalid",
-        library_id="library-1",
-    )
-
-    def observe(plan: FieldEffectPlan) -> CapabilityObservation:
-        # The real adapter decides whether the connection was reached; the
-        # fake keeps the digest these plans were made against.
-        answered = service_side.result(plan)
-        return CapabilityObservation(
-            answered.category, effects.capabilities.digest, answered.connection_reached
-        )
-
-    effects.capabilities.observe = observe  # type: ignore[method-assign]  # reason: the observer is the failing service under test.
+    _answered_by(effects, handle)
     for _ in range(8):
         lane._run_until_idle()
-    assert sorted(
-        (operation.plan.destination, operation.state, operation.failure)
-        for operation in map(
-            effects.repository.get_field_effect,
-            (
-                row[0]
-                for row in effects.repository._connection.execute(
-                    "SELECT plan_id FROM field_effects"
-                )
-            ),
-        )
-    ) == [("description", "stale", "connection"), ("tags", "stale", "connection")]
+    assert _plans(effects) == [
+        ("description", "stale", "connection"),
+        ("tags", "stale", "connection"),
+    ]
     assert [
         effects.repository.field_effect_connection_stales(decision.decision_id)
         for decision in decisions
@@ -748,14 +777,7 @@ def test_a_lone_waiting_plan_ends_once_the_service_answers(
     decision, _, operation, lane = _automatic_tags_lane(effects)
     plan_id = operation.plan.plan_id
     sent = _sent(effects)
-    observed: list[str] = []
-    observe = effects.capabilities.observe
-
-    def counted(plan):
-        observed.append(plan.destination)
-        return observe(plan)
-
-    effects.capabilities.observe = counted  # type: ignore[method-assign]  # reason: the observer is the probe traffic counted here.
+    observed = _probes(effects.capabilities)
     effects.capabilities.category = "connection_unavailable"
     lane._run_until_idle()
     assert effects.repository.get_field_effect(plan_id).failure == "connection"
@@ -807,3 +829,373 @@ def test_a_stopped_connection_stale_signals_as_a_capability_stale_did(
         "list[dict[str, object]]", effects.repository.operational_snapshot()["signals"]
     )
     assert [(value["kind"], value["cause"]) for value in signals] == [signal]
+
+
+def _recovered(
+    effects: _EffectEnvironment,
+    lane: ContinuousGuardedApplication,
+    decisions: list[AutomaticDecision],
+    sent: list[str],
+) -> None:
+    """One pass after the connection answers plans, writes and verifies each
+    decision exactly once, with no wake and no re-plan attempt spent."""
+    lane._run_until_idle()
+    assert _plans(effects) == sorted(
+        (decision.destination, "verified", None) for decision in decisions
+    )
+    assert len(set(sent)) == len(sent) == len(decisions)
+    assert [
+        effects.repository.field_effect_connection_stales(decision.decision_id)
+        for decision in decisions
+    ] == [0] * len(decisions)
+    assert effects.repository.field_effect_capability_suspension("primary", "") is None
+
+
+def test_a_decision_scheduled_while_unreachable_is_planned_once_it_answers(
+    effects: _EffectEnvironment,
+) -> None:
+    """A decision that met a lost connection before it had a plan waits on its
+    library and is probed through its own item, once a pass (#1423)."""
+    decisions, lane = _description_and_tags_lane(effects, reachable=False)
+    sent = _sent(effects)
+    probes = _probes(effects.capabilities)
+    for _ in range(4):
+        lane._run_until_idle()
+    assert _plans(effects) == []
+    assert len(probes) == 4
+    assert sent == []
+    effects.capabilities.category = "allowed"
+    _recovered(effects, lane, decisions, sent)
+    for operation in map(effects.repository.get_field_effect, sent):
+        assert [kind for kind, _ in _kinds(effects, operation.plan.plan_id)] == [
+            "planned",
+            "claimed",
+            "applying",
+            "verified",
+        ]
+    # The probe target is released with the wait.
+    traffic = len(probes)
+    for _ in range(3):
+        lane._run_until_idle()
+    assert len(probes) == traffic
+    assert len(sent) == 2
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ("transport", "key_rejected", "inactive", 500, 503, 408, 429, "malformed"),
+)
+def test_a_decision_with_no_plan_waits_while_the_connection_is_not_reached(
+    effects: _EffectEnvironment, answer: str | int
+) -> None:
+    """Only a reached connection ends the wait; nothing is planned or sent
+    before it, and the probe stays one observation a pass (#1423)."""
+    decisions, lane = _description_and_tags_lane(effects, reachable=False)
+    sent = _sent(effects)
+    fake = effects.capabilities.observe
+    user = {
+        "isActive": answer != "inactive",
+        "permissions": {"update": True, "upload": True, "accessAllLibraries": True},
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if answer == "transport":
+            raise httpx.ConnectError("lost", request=request)
+        if request.url.path == "/api/me":
+            if answer == "key_rejected":
+                return httpx.Response(401)
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, json=user
+            )
+        if answer == "malformed":
+            return httpx.Response(
+                200, headers={"content-type": "application/json"}, content=b"{"
+            )
+        # An inactive account's definite refusal still answers for no book.
+        return httpx.Response(404 if answer == "inactive" else cast(int, answer))
+
+    _answered_by(effects, handle)
+    probes = _probes(effects.capabilities)
+    for _ in range(8):
+        lane._run_until_idle()
+    assert _plans(effects) == []
+    assert sent == []
+    assert len(probes) == 8
+    assert (
+        effects.repository.field_effect_capability_suspension("primary", "")
+        == "connection_unavailable"
+    )
+    effects.capabilities.observe = fake  # type: ignore[method-assign]  # reason: the service answers again through the fake.
+    effects.capabilities.category = "allowed"
+    _recovered(effects, lane, decisions, sent)
+
+
+@pytest.mark.parametrize("withdrawn", ("consent", "paused"))
+def test_a_withdrawn_waiting_decision_drops_its_probe_target(
+    effects: _EffectEnvironment, withdrawn: str
+) -> None:
+    """Revoking a waiting decision's consent drops its probe target, and
+    pausing drops every target until the next schedule; nothing is planned
+    for a decision without consent (#1423)."""
+    decisions, lane = _description_and_tags_lane(effects, reachable=False)
+    description, _ = sorted(decisions, key=lambda value: value.destination)
+    sent = _sent(effects)
+    probes = _probes(effects.capabilities)
+    lane._run_until_idle()
+    if withdrawn == "paused":
+        lane.set_paused(True)
+        for _ in range(3):
+            lane._run_until_idle()
+        assert len(probes) == 1
+        # Resuming wakes the schedule, which finds both still waiting.
+        lane.set_paused(False)
+        lane._run_until_idle()
+        effects.capabilities.category = "allowed"
+        _recovered(effects, lane, decisions, sent)
+        return
+    consent = effects.repository.current_field_effect_consent(
+        "primary", "ebooks", "tags"
+    )
+    effects.repository.revoke_field_effect_consent(consent.consent_id, effects.clock())
+    # Revoking consent wakes the schedule, as `revoke` does.
+    lane.wake()
+    del probes[:]
+    for _ in range(3):
+        lane._run_until_idle()
+    assert set(probes) == {"description"}
+    effects.capabilities.category = "allowed"
+    _recovered(effects, lane, [description], sent)
+
+
+def test_a_withdrawn_owner_decision_drops_its_probe_target(
+    owner: OwnerStore,
+) -> None:
+    """An owner decision recorded while Audiobookshelf is unreachable is
+    written once it answers; one withdrawn while it waits is not (#1423)."""
+    owner.publish(genre_report())
+    context = ("primary", "ebooks")
+    capability = FakeCapabilityObserver(CAPABILITY)
+    capability.category = "connection_unavailable"
+    owner.repository.grant_field_effect_consents(
+        "primary", ("ebooks",), ("title", "genres"), owner.clock()
+    )
+    authority = PersistedFieldEffectAuthority(owner.repository)
+    lane = ContinuousGuardedApplication(
+        owner.repository,
+        {context: owner.service},
+        {context: capability},
+        authority,
+        (context,),
+        owner.clock,
+        lambda *_: None,
+    )
+    kept = owner.decide(
+        "owner_entered", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    owner.decide("owner_entered", {"kind": "text", "value": "The Silent Orchard"})
+    owner.consent.allow(connection="primary", library="ebooks", destination="genres")
+    snapshot = authority.resolve(kept)
+    key = (*context, snapshot.work_id, "genres")
+    owner.target._values[key] = snapshot.pre_value
+    owner.target._versions[key] = snapshot.target_version
+    observed = _probes(capability)
+    # Recording an owner decision wakes the schedule.
+    lane.wake()
+    lane._run_until_idle()
+    assert sorted(observed) == ["genres", "title"]
+    owner.decide("withdraw")
+    lane.wake()
+    del observed[:]
+    for _ in range(3):
+        lane._run_until_idle()
+    assert set(observed) == {"genres"}
+    assert owner.patches == []
+    capability.category = "allowed"
+    lane._run_until_idle()
+    ((plan_id, destination, state),) = owner.repository._connection.execute(
+        "SELECT plan_id,destination,state FROM field_effects"
+    ).fetchall()
+    assert (destination, state) == ("genres", "verified")
+    assert owner.patches == [plan_id]
+
+
+def test_a_decision_whose_item_was_refused_is_not_held_waiting(
+    effects: _EffectEnvironment,
+) -> None:
+    """An item the reachable service refused, a 404 included, has answered, so
+    its decision is not probed every pass for a connection that is not lost
+    (#1423)."""
+    effects.capabilities.connection_reached = True
+    _, lane = _description_and_tags_lane(effects, reachable=False)
+    probes = _probes(effects.capabilities)
+    for _ in range(3):
+        lane._run_until_idle()
+    assert probes == []
+    assert _plans(effects) == []
+
+
+def test_a_failing_waiting_plan_does_not_hide_an_unplanned_recovery(
+    effects: _EffectEnvironment,
+) -> None:
+    """The library's probe alternates between a waiting plan and a decision
+    that never had one, so a plan whose item keeps failing cannot hide the
+    connection the other decision reaches; each recovered write goes once."""
+    decisions, lane = _description_and_tags_lane(effects, reachable=False)
+    sent = _sent(effects)
+    effects.capabilities.category = "allowed"
+    lane.wake()
+    assert lane.schedule(1) == 1
+    ((failing, _, _),) = _plans(effects)
+    (answering,) = (
+        value.destination for value in decisions if value.destination != failing
+    )
+    effects.capabilities.category = "connection_unavailable"
+    lane._run_until_idle()
+    assert _plans(effects) == [(failing, "stale", "connection")]
+    fake = effects.capabilities.observe
+
+    def observe(plan: FieldEffectPlan) -> CapabilityObservation:
+        if plan.destination == failing:
+            return CapabilityObservation(
+                "connection_unavailable", effects.capabilities.digest, False
+            )
+        return fake(plan)
+
+    effects.capabilities.observe = observe  # type: ignore[method-assign]  # reason: the waiting plan's item keeps failing while the other answers.
+    effects.capabilities.category = "allowed"
+    for _ in range(4):
+        lane._run_until_idle()
+    assert _plans(effects) == sorted(
+        [(failing, "stale", "connection"), (answering, "verified", None)]
+    )
+    ((plan_id, _, _),) = effects.repository._connection.execute(
+        "SELECT plan_id,destination,state FROM field_effects WHERE destination=?",
+        (answering,),
+    ).fetchall()
+    assert sent == [plan_id]
+    # Once the other item answers, the connection counts as reached, so the
+    # failing plan spends its bounded re-plans as #1402 defines; the decision
+    # that never had a plan spends none.
+    assert {
+        value.destination: effects.repository.field_effect_connection_stales(
+            value.decision_id
+        )
+        for value in decisions
+    } == {failing: 3, answering: 0}
+
+
+def test_a_withdrawn_waiting_plan_leaves_the_unplanned_decision_its_probe(
+    owner: OwnerStore,
+) -> None:
+    """Once the library's only waiting plan is withdrawn, an owner decision
+    that never had a plan still holds the wait and is written once the
+    connection is reached (#1423)."""
+    owner.publish(genre_report())
+    context = ("primary", "ebooks")
+    capability = FakeCapabilityObserver(CAPABILITY)
+    owner.repository.grant_field_effect_consents(
+        "primary", ("ebooks",), ("title", "genres"), owner.clock()
+    )
+    authority = PersistedFieldEffectAuthority(owner.repository)
+    lane = ContinuousGuardedApplication(
+        owner.repository,
+        {context: owner.service},
+        {context: capability},
+        authority,
+        (context,),
+        owner.clock,
+        lambda *_: None,
+    )
+    for destination in ("title", "genres"):
+        owner.consent.allow(
+            connection="primary", library="ebooks", destination=destination
+        )
+    owner.decide(
+        "owner_entered", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    # The pre-read loses the connection: the genres plan waits on it.
+    owner.target.unavailable_scope_next = "connection"
+    lane.wake()
+    lane._run_until_idle()
+    ((genres_plan, state, failure),) = owner.repository._connection.execute(
+        "SELECT plan_id,state,json_extract(document,'$.failure') FROM field_effects"
+    ).fetchall()
+    assert (state, failure) == ("stale", "connection")
+    capability.category = "connection_unavailable"
+    kept = owner.decide(
+        "owner_entered", {"kind": "text", "value": "The Silent Orchard"}
+    )
+    snapshot = authority.resolve(kept)
+    key = (*context, snapshot.work_id, "title")
+    owner.target._values[key] = snapshot.pre_value
+    owner.target._versions[key] = snapshot.target_version
+    lane.wake()
+    lane._run_until_idle()
+    owner.decide("withdraw", destination="genres")
+    lane.wake()
+    for _ in range(3):
+        lane._run_until_idle()
+    assert owner.repository.get_field_effect(genres_plan).state == "superseded"
+    capability.category = "allowed"
+    lane._run_until_idle()
+    rows = owner.repository._connection.execute(
+        "SELECT plan_id,destination,state FROM field_effects ORDER BY destination"
+    ).fetchall()
+    ((title_plan, _, _),) = [row for row in rows if row[1] == "title"]
+    assert [row[1:] for row in rows] == [
+        ("genres", "superseded"),
+        ("title", "verified"),
+    ]
+    assert owner.patches == [title_plan]
+
+
+def test_a_wake_during_a_decision_observation_keeps_its_target_out(
+    effects: _EffectEnvironment,
+) -> None:
+    """A withdrawal that wakes the schedule while a decision is being observed
+    leaves no target from the abandoned schedule behind (#1423)."""
+    _, lane = _description_and_tags_lane(effects, reachable=False)
+    lane.wake()
+    fake = effects.capabilities.observe
+    revoked: list[str] = []
+
+    def observe(plan: FieldEffectPlan) -> CapabilityObservation:
+        if plan.destination == "tags" and not revoked:
+            consent = effects.repository.current_field_effect_consent(
+                "primary", "ebooks", "tags"
+            )
+            revoked.append(consent.consent_id)
+            effects.repository.revoke_field_effect_consent(
+                consent.consent_id, effects.clock()
+            )
+            lane.wake()
+        return fake(plan)
+
+    effects.capabilities.observe = observe  # type: ignore[method-assign]  # reason: the revocation lands while the observation is in flight.
+    lane._run_until_idle()
+    assert revoked
+    probes = _probes(effects.capabilities)
+    for _ in range(4):
+        lane._run_until_idle()
+    assert probes == ["description"] * 4
+
+
+def test_a_restart_schedules_a_waiting_decision_from_the_start(
+    effects: _EffectEnvironment,
+) -> None:
+    """The probe target is in memory: a restarted lane's first schedule reads
+    every pending decision again, as it did before #1423."""
+    decisions, lane = _description_and_tags_lane(effects, reachable=False)
+    lane._run_until_idle()
+    sent = _sent(effects)
+    effects.capabilities.category = "allowed"
+    restarted = ContinuousGuardedApplication(
+        effects.repository,
+        dict(lane._applications),
+        dict(lane._capabilities),
+        lane._authority,
+        lane._libraries,
+        effects.clock,
+        lambda *_: None,
+    )
+    _recovered(effects, restarted, decisions, sent)

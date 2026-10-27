@@ -78,7 +78,12 @@ to the state the stale interrupted with its attempt, claim token, and whole
 history, and every guard runs again in order. A withdrawn permission or field
 then stales through its own code. The third such re-plan of one decision is the
 last: the next connection stale is `connection_exhausted` and terminal, so a
-missing item stops instead of waiting forever. A retry whose earlier outcome was unknown is never sent again: when its
+missing item stops instead of waiting forever. A decision that met the lost
+connection before it had a plan waits the same way: its library's probe
+alternates between its waiting plans and that decision's own item, and once the
+connection is reached the decision is planned for the first time through every
+guard, spending no re-plan attempt (#1423).
+A retry whose earlier outcome was unknown is never sent again: when its
 pre-read shows the desired value at the desired version it is `verified` with no
 request. Cover plans keep `capability` and stay terminal.
 

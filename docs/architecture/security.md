@@ -1722,6 +1722,10 @@ untouched. The re-plan reuses the waiting
 plan's `capability_digest`, so it re-enters the full guard order, where the
 preclaim checks a fresh observation against that digest and current consent and
 authority. The stale after the last is terminal, and covers stay terminal.
+A decision that met the lost connection before it had a plan waits on the same
+probe, which alternates with any waiting plan and observes that decision's own
+item, and it is planned for the first time through every guard, with no attempt
+spent and no request before it (#1423).
 Withdrawn authority or consent supersedes a retry or a waiting connection stale
 without a request, and a
 superseded or abandoned plan whose history reached `applying` is never planned
