@@ -1770,6 +1770,7 @@ def _installed_continuous_qualification(
                         continue
                     selected_value = field["proposed_values"][0]
                     consideration_id = None
+                    cover_confirmation = None
                     if field["destination"] == "cover":
                         prepared = client.post(
                             f"/api/v1/review-cases/{case_id}/cover-considerations/retry",
@@ -1822,6 +1823,18 @@ def _installed_continuous_qualification(
                             raise QualificationError(
                                 "installed_cover_preparation_invalid"
                             )
+                        # The owner's explicit confirmation, shaped exactly as
+                        # the browser sends it: a cover decision without one is
+                        # refused as `invalid_choice` since #1123.
+                        cover_confirmation = {
+                            "expected_selection_id": field.get(
+                                "current_cover_selection_id"
+                            ),
+                            "confirm_unverified_match": selected_cover.get(
+                                "match_state"
+                            )
+                            == "match_not_confirmed",
+                        }
                     payload = {
                         "destination": field["destination"],
                         "outcome": "accept",
@@ -1831,6 +1844,7 @@ def _installed_continuous_qualification(
                     }
                     if consideration_id is not None:
                         payload["consideration_id"] = consideration_id
+                        payload["cover_confirmation"] = cover_confirmation
                     decided = client.post(
                         f"/api/v1/review-cases/{case_id}/decisions",
                         headers={
