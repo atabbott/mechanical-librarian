@@ -55,15 +55,19 @@ leaves the saved revision and active runtime unchanged. The private
 after activation; deploy-managed TLS, origin, proxy, mount, and listener values
 still require an operator restart.
 
-Settings shows a Cover evidence switch for the two audiobook sources that state
-a cover asset of their own, `audible_catalog` and `itunes_search`. The control
-is unreachable while the provider is disabled and is forced off when the owner
-disables one. Both the settings contract and the configuration boundary refuse
-the pair outright, so `cover_enabled` can never be true for a provider that is
-off. `audnexus` and `audiosilo` restate Audible's art and carry no switch, and
-Hardcover, Open Library and Inventaire keep exactly the controls they had.
-Guided setup still records `cover_enabled: false` for Audible and iTunes, so
-their covers start off and become evidence only when the owner turns them on.
+Settings shows a Cover evidence switch for the two audiobook-set providers
+that state a cover asset of their own, `audible_catalog` and `itunes_search`.
+Audible's switch makes its art an audiobook cover source. No audiobook is
+dispatched to iTunes (#1254, #1247), so its switch supplies no audiobook cover:
+on an ebook it lets the artwork of a matching iTunes audiobook listing be
+offered as a cover alternative. The control is unreachable while the provider is
+disabled and is forced off when the owner disables one. Both the settings
+contract and the configuration boundary refuse the pair outright, so
+`cover_enabled` can never be true for a provider that is off. `audnexus` and
+`audiosilo` restate Audible's art and carry no switch, and Hardcover, Open
+Library and Inventaire keep exactly the controls they had. Guided setup still
+records `cover_enabled: false` for Audible and iTunes, so their covers start off
+and become evidence only when the owner turns them on.
 Setup, Settings and the review surfaces state one canonical name per provider,
 from one table every one of them reads. The instance `name` remains the owner's
 own identifier and never becomes a display label, so field ids,

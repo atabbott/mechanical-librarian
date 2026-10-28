@@ -47,6 +47,7 @@ from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
     GenerateMetadataReport,
     InspectionResult,
+    ItemInspectionError,
     MetadataDiscoveryPlan,
     MetadataLookup,
     MetadataReportError,
@@ -2427,6 +2428,38 @@ def test_the_audio_ceiling_binds_the_audio_path_and_not_the_epub_one() -> None:
 
     assert audio_inspector.ceilings == [4_096]
     assert inspector.ceilings == [1_024]
+
+
+def test_an_audio_inspection_without_facts_is_refused_before_any_dispatch() -> None:
+    """An audiobook is planned from its facts, so none fails the item closed.
+
+    Before #1303 the audio path tested ``facts is not None`` and planned the
+    item without them, which the result's type says cannot happen. A result
+    that states no facts is now an inspection failure: no provider is asked,
+    nothing is published and the repository is released.
+    """
+    recording = TargetFile("a" * 64, "book.m4b", "m4b")
+    repository = FakeReportRepository()
+    plans: list[MetadataDiscoveryPlan] = []
+    audio_inspector = FakeAudioInspector(audio_result())
+    audio_inspector.result = replace(audio_result(), audio=None)
+    service = _audiobook_service(
+        FakeTarget(
+            [
+                TargetSnapshot("audiobook", "Recorded title", (recording,)),
+                TargetSnapshot("audiobook", "Recorded title", (recording,)),
+            ]
+        ),
+        repository,
+        audio_inspector,
+        plans=plans,
+    )
+
+    with pytest.raises(ItemInspectionError):
+        service.run("item-1", 0)
+    assert plans == []
+    assert repository.values == {}
+    assert repository.closed
 
 
 def test_initial_failure_passes_exact_partial_descriptors_to_cover_observer():

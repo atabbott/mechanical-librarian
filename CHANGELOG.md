@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Setup and Settings now describe iTunes as what it is since audiobooks stopped
+  being sent to it: a check of an ebook's title and author against iTunes
+  audiobook listings. An audiobook inspection that states no recording facts
+  now fails that item instead of being planned without them (#1303).
+
 - Setup and sign-in failures now say what went wrong: an unresolvable name, a
   refused connection, an unverified certificate, a timeout or a rejected key,
   naming the address and one remedy. Setup suggests providers per library and

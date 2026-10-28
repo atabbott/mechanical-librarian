@@ -2550,6 +2550,14 @@ class GenerateMetadataReport:
                             initial.files,
                             self._limits.audio_source_bytes,
                         )
+                        # An audiobook is planned from its facts, so a result
+                        # that states none is no inspection at all. Refuse it
+                        # here rather than plan the item blind (#1303).
+                        if (
+                            type(audio) is not AudioInspectionResult
+                            or type(audio.audio) is not AudioFacts
+                        ):
+                            raise ItemInspectionError("EPUB inspection failed")
                     else:
                         local = self._inspector.inspect(
                             self._mount,
@@ -2962,17 +2970,15 @@ class GenerateMetadataReport:
                 or {"no_local_audio_claims"}
             )
         )
-        facts = audio.audio
-        if facts is not None:
-            # Composition holds no target, so the drops that need one -- the
-            # asserted title, authors and recorded series -- land here, on the
-            # same persisted field the plan and its replay read (#1255).
-            facts = replace(
-                facts,
-                discovery_titles=surviving_discovery_titles(
-                    facts.discovery_titles, initial.fields
-                ),
-            )
+        # Composition holds no target, so the drops that need one -- the
+        # asserted title, authors and recorded series -- land here, on the
+        # same persisted field the plan and its replay read (#1255).
+        facts = replace(
+            audio.audio,
+            discovery_titles=surviving_discovery_titles(
+                audio.audio.discovery_titles, initial.fields
+            ),
+        )
         plan = audiobook_discovery_plan(initial, combined_claims, audio=facts)
         cover_aggregate_deadline = time.monotonic() + 60.0
         try:
