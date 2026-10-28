@@ -815,6 +815,16 @@ def audiobook_discovery_plan(
     title collapses to a series name the target records (#1255).
     """
     context = metadata_lookup(target, ())
+    if audio is not None:
+        # The plan keeps only the discovery titles a lane may ask, so every
+        # lookup it hands out reads the alternative title the lane asks
+        # (#1255), and a carried lookup re-verifies against it (#1316).
+        audio = replace(
+            audio,
+            discovery_titles=surviving_discovery_titles(
+                audio.discovery_titles, target.fields
+            ),
+        )
     canonical_asins = sorted(_local_identifier_asins(local_claims))
     if len(canonical_asins) > MAX_ASIN_DISCOVERY_LANES:
         return MetadataDiscoveryPlan(
@@ -1940,8 +1950,10 @@ def _identifier_lane_candidates(
 def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:
     """The alternative discovery-lane title a carried lookup may admit against.
 
-    It is the title the item's alternative WORK lane asks (#1255): the first
-    discovery title that survives the target's own title, authors and series.
+    It is the title the item's alternative WORK lane asks (#1255). The plan
+    every lookup comes from keeps only the discovery titles that survive the
+    target's own title, authors, series names and earlier entries
+    (`surviving_discovery_titles`), and the lane asks the first of them.
     """
     if lookup.audio is None:
         return ()

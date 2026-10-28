@@ -70,26 +70,34 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
    unknown on either side passes. An edition first matched on the item's
    alternative discovery title (#1255, a path leaf or title tag) states that
    title, not the target's. So the carried lookup's product is also admitted
-   against the alternative WORK lane's title. As on that lane, such a product
+   against the title the alternative WORK lane asks: the first discovery title
+   that survives the target's own title, authors, series names and earlier
+   entries. The plan keeps only those surviving titles, so the lane and the
+   carried lookup read one list. A path leaf that repeats the target title, or
+   names a series or an author, is never admitted against. As on that lane,
+   such a product
    is kept only as the recording the tight band corroborates, and otherwise
    keeps only its identifier. An ASIN-only stub has no title to admit, so it
    is refused.
 5. **Carrying again.** A carried ASIN that any audiobook authority's lookup
    verified is carried again. When none verified it, it is carried again
    unverified if at least one carried lookup ended in a recovery-eligible
-   status or a disabled provider, or if no carried lookup was made. Only when
-   every carried lookup answered and none verified it is it refuted: it is
-   dropped, that report cannot admit it again, and the search may admit a
-   different edition.
+   status, or if no carried lookup answered (none was made, or every one was
+   to a disabled provider). A disabled provider answers nothing, so it can
+   neither keep nor refute a carry. Once at least one carried lookup answered,
+   none verified it and none failed recoverably, it is refuted: it is dropped,
+   that report cannot admit it again, and the search may admit a different
+   edition.
 6. **Precedence (pending owner confirmation).** At the ASIN destination a
    verified carried edition is the ASIN proposed. A tight product naming
    another ASIN whose narrator cast is not disjoint from the carried product's
    is withheld as the same recording relisted; a narrator-disjoint one is still
    offered. Search still runs and still feeds every other field. The owner's
    value is never outranked: a product naming the target's own ASIN is never
-   withheld. When the report admitted that ASIN as a product whose narrator
-   cast is not disjoint from the carried product's, the owner's edition stands
-   and the carried products are withheld instead. The rule lives in one
+   withheld. When the report admitted that ASIN as a separate product whose
+   narrator cast is not disjoint from the carried product's, the owner's
+   edition stands and the carried products are withheld instead. Whatever the
+   casts, clause 1 then stops carrying the other edition. The rule lives in one
    function, `carried_asin_precedence`, so the owner's decision can change it
    in one place.
 7. **Sibling ASINs.** At the proposal layer only, with no admission change and

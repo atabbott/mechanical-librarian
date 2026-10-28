@@ -709,6 +709,47 @@ def test_a_carried_edition_first_matched_on_the_path_leaf_re_verifies() -> None:
     assert admitted_recording_asin(plain) is None
 
 
+def test_the_carried_lookup_admits_against_the_title_the_alternative_lane_asks() -> (
+    None
+):
+    """The path leaf repeats the target title, so the lane asks the tag title.
+
+    The carried lookup re-verifies against that same surviving title, never
+    against the path leaf the lane dropped (#1255, #1316).
+    """
+    tag = "The Tag Title"
+    audio = replace(
+        single_track_audio_facts(_DIGEST),
+        discovery_titles=(
+            AudioDiscoveryTitle("path_leaf", _TITLE),
+            AudioDiscoveryTitle("title_tag", tag),
+        ),
+    )
+    (alternative,) = (
+        lane
+        for lane in _plan(_claims(carried=None), audio=audio).lanes
+        if lane.title_basis is not None
+    )
+    assert ("title_tag", tag) == (alternative.title_basis, alternative.title)
+    product = _candidate("audible", (_CARRIED,), title=tag)
+    first_claims = _claims(carried=None)
+    first = _report(
+        first_claims,
+        (_catalogue(first_claims, search=(product,), audio=audio),),
+        audio=audio,
+    )
+    assert _CARRIED == admitted_recording_asin(first)
+
+    claims = _claims()
+    second = _report(
+        claims, (_catalogue(claims, carried=(product,), audio=audio),), audio=audio
+    )
+
+    (carried,) = second.providers[0].candidates
+    assert ClaimKind.TITLE in {value.kind for value in carried.claims}
+    assert _CARRIED == admitted_recording_asin(second)
+
+
 def test_a_loose_alternative_title_product_stays_a_stub() -> None:
     audio = _leaf_audio()
     claims = _claims()
@@ -725,15 +766,18 @@ def _silo_carried(
     claims: tuple[LocalClaim, ...],
     candidates: tuple[ProviderCandidate, ...] = (),
     status: ProviderStatus = ProviderStatus.CANDIDATES,
+    *,
+    provider: str = "silo",
+    authority: str = "audiosilo",
 ) -> ProviderObservation:
-    """AudioSilo answering the carried ASIN it was fed in phase two."""
+    """A per-ASIN provider answering the carried ASIN it was fed in phase two."""
     feed = audiobook_asin_feed_plan(_snapshot(), _plan(claims), ())
     assert feed is not None
     lane = next(value for value in feed.lanes if value.canonical_asin == _CARRIED)
     return provider_observation(
-        "silo",
-        (_lane_result(feed, lane, "silo", "audiosilo", candidates, status),),
-        authority="audiosilo",
+        provider,
+        (_lane_result(feed, lane, provider, authority, candidates, status),),
+        authority=authority,
     )
 
 
@@ -768,6 +812,42 @@ def test_a_carried_edition_refuted_at_audible_is_kept_while_another_lookup_waits
     assert _CARRIED == admitted_recording_asin(waiting)
     assert _CARRIED == admitted_recording_asin(verified)
     assert admitted_recording_asin(refuted) is None
+
+
+def test_a_carried_edition_every_answering_authority_refuses_is_refuted() -> None:
+    claims = _claims()
+    report = _report(
+        claims,
+        (
+            _catalogue(
+                claims,
+                carried=(_candidate("audible", (_CARRIED,), duration="57000.000"),),
+            ),
+            _silo_carried(claims, status=ProviderStatus.NO_MATCH),
+            _silo_carried(
+                claims,
+                status=ProviderStatus.NO_MATCH,
+                provider="enrichment",
+                authority="audnexus",
+            ),
+        ),
+    )
+
+    assert admitted_recording_asin(report) is None
+
+
+def test_a_disabled_carried_lane_does_not_keep_a_refused_edition() -> None:
+    """A disabled provider answers nothing, so it cannot keep a carry alive."""
+    claims = _claims()
+    report = _report(
+        claims,
+        (
+            _catalogue(claims, carried=ProviderStatus.DISABLED),
+            _silo_carried(claims, status=ProviderStatus.NO_MATCH),
+        ),
+    )
+
+    assert admitted_recording_asin(report) is None
 
 
 # -- the ASIN destination ------------------------------------------------------

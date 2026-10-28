@@ -1452,9 +1452,10 @@ def admitted_recording_asin(report: MetadataReport) -> str | None:
     An ASIN this report itself carried is kept while any audiobook
     authority's lookup of it verified it, and kept again unverified while at
     least one of those lookups failed in a way a later one may not (a
-    recovery-eligible status, or a disabled provider) or none was made. Only
-    when every carried lookup answered and none verified it is it refuted: it
-    is dropped, and this report cannot admit it again.
+    recovery-eligible status) or none answered (none was made, or every one
+    was disabled). Once one answered, none verified it and none failed
+    recoverably, it is refuted: it is dropped, and this report cannot admit
+    it again.
 
     The owner's value is never displaced: when the target already records an
     ASIN this report admitted as a distinct product, no other edition is
@@ -1494,15 +1495,18 @@ def _carried_or_admitted_asin(
         asin = cast("str", carried.canonical)
         if _verified_carried_candidates(report):
             return asin
-        # Verified nowhere: one carried lane that failed in a way a later
-        # lookup may not, or no carried lane at all, leaves the question open.
-        # Only when every carried lane answered, and none admitted it, is the
-        # carried edition refuted.
-        lanes = _carried_lanes(report, carried)
-        if not lanes or any(
-            lane.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
-            or lane.status is ProviderStatus.DISABLED
-            for _observation, lane in lanes
+        # Verified nowhere: a carried lane that failed in a way a later lookup
+        # may not, or no carried lane that answered at all, leaves the question
+        # open. A disabled provider answers nothing, so it neither keeps nor
+        # refutes. Once a lane answered, none verified and none failed
+        # recoverably, the carried edition is refuted.
+        statuses = tuple(
+            lane.status
+            for _observation, lane in _carried_lanes(report, carried)
+            if lane.status is not ProviderStatus.DISABLED
+        )
+        if not statuses or any(
+            status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES for status in statuses
         ):
             return asin
         refuted = asin
