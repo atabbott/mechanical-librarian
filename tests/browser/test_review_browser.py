@@ -4443,8 +4443,8 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 # asked for its image until it nears the viewport.
                 frames = page.locator(".library-cover-image")
                 assert 0 < len(requested) < frames.count(), requested
-                for frame in frames.all():
-                    frame.scroll_into_view_if_needed()
+                for cover_frame in frames.all():
+                    cover_frame.scroll_into_view_if_needed()
                 page.wait_for_function(
                     "() => document.querySelectorAll('.library-cover-image img')"
                     ".length === 0"
