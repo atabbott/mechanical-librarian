@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -105,3 +106,21 @@ def test_both_carry_the_vendored_inter_face_and_its_licence(
     for file in ("inter-latin-wght-normal.woff2", "inter-latin-ext-wght-normal.woff2"):
         assert any(name.endswith(f"/frontend/src/fonts/{file}") for name in sdist_names)
     assert any(name.endswith("/LICENSES/Inter-OFL-1.1.txt") for name in sdist_names)
+
+
+def test_container_build_stage_copies_every_licence_file_before_the_sync() -> None:
+    # setuptools only warns when a license-files pattern matches nothing, so
+    # an image built without a licence would ship its wheel silently short.
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    stage = (ROOT / "Dockerfile").read_text().split(" AS build\n", 1)[1]
+    stage = stage.split("\nFROM ", 1)[0].split("uv sync", 1)[0]
+    copied = {
+        source.rstrip("/")
+        for line in stage.splitlines()
+        if line.startswith("COPY ") and not line.startswith("COPY --from=")
+        for source in line.split()[1:-1]
+    }
+    for entry in project["license-files"]:
+        parts = Path(entry).parts
+        prefixes = {"/".join(parts[: count + 1]) for count in range(len(parts))}
+        assert prefixes & copied, entry

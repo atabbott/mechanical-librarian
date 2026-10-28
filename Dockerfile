@@ -117,6 +117,7 @@ FROM python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf657
 COPY --from=ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml setup.py uv.lock README.md LICENSE ./
+COPY LICENSES ./LICENSES
 COPY scripts/build_frontend.py ./scripts/build_frontend.py
 COPY scripts/verify_contained_reviewer_tool_inventory.py ./scripts/verify_contained_reviewer_tool_inventory.py
 COPY scripts/generate_contained_reviewer_profile.py ./scripts/generate_contained_reviewer_profile.py
