@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import random
@@ -19,11 +18,15 @@ from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
-    bounded_attempt_elapsed,
     bounded_retry_after,
-    transient_transport_failure,
 )
-from mechanical_librarian.adapters.providers.sdk import provider_client_lifetime
+from mechanical_librarian.adapters.providers.sdk import (
+    BoundedProviderSession,
+    ProviderClocks,
+    ProviderResponseFacts,
+    provider_bounds,
+    provider_client_lifetime,
+)
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.failure_diagnostics import (
     provider_attempt_diagnostics,
@@ -43,9 +46,6 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
 )
 from mechanical_librarian.application.provider_evidence import (
-    ProviderAttemptRecord,
-    ProviderIncompleteCause,
-    ProviderIncompleteCauseRecord,
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -95,7 +95,6 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family,
     normalize_date_value,
     normalize_title,
-    provider_access_time,
     validate_observed_title,
 )
 from mechanical_librarian.domain.work_identity import (
@@ -166,38 +165,44 @@ class HardcoverMetadataProvider:
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
-        if (
-            type(maximum_bytes) is not int
-            or isinstance(maximum_bytes, bool)
-            or maximum_bytes < 1
-        ):
-            raise ValueError("provider response bound is invalid")
-        if (
-            type(timeout_seconds) not in {int, float}
-            or isinstance(timeout_seconds, bool)
-            or not 0 < timeout_seconds <= 60
-        ):
-            raise ValueError("provider timeout is invalid")
-        self._name, self._client = name, client
-        self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
-        self._remaining_response_bytes = min(
-            self._maximum_bytes * 9, MAX_AGGREGATE_RESPONSE_BYTES
+        bounds = provider_bounds(
+            # Clamp only a value the bounds will accept; anything else reaches
+            # them unchanged and is refused there.
+            min(maximum_bytes, MAX_RESPONSE_BYTES)
+            if type(maximum_bytes) is int
+            else maximum_bytes,
+            timeout_seconds,
+            attempts_per_request=_MAX_ATTEMPTS_PER_QUERY,
+            attempts_per_observation=_MAX_ATTEMPTS_PER_OBSERVATION,
+            aggregate_multiple=9,
+            aggregate_ceiling_bytes=MAX_AGGREGATE_RESPONSE_BYTES,
         )
-        self._timeout_seconds = float(timeout_seconds)
-        self._pacer = pacer
-        self._clock = clock
-        self._wall_clock = wall_clock
-        self._sleep = sleep
-        self._jitter = jitter
-        self._attempt_count = 0
-        self._attempt_records: list[ProviderAttemptRecord] = []
-        self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
-        self._accessed_at: str | None = None
+        self._name, self._client = name, client
+        self._session = BoundedProviderSession(
+            name,
+            client,
+            bounds,
+            _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT),
+            pacer=pacer,
+            clocks=ProviderClocks(clock, wall_clock, sleep, jitter),
+            name_response_failures=True,
+            refuse_empty_success=True,
+        )
         self._called = False
         self._schema_rejections = 0
         self._optional_rejections = _OptionalRejections()
-        self._ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
         self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+
+    # The response budget is the session's own state.  It stays readable and
+    # settable under its adapter-local name so a caller can position an
+    # observation at the bound without reaching past the adapter.
+    @property
+    def _remaining_response_bytes(self) -> int:
+        return self._session.remaining_response_bytes
+
+    @_remaining_response_bytes.setter
+    def _remaining_response_bytes(self, value: int) -> None:
+        self._session.remaining_response_bytes = value
 
     def observe(
         self,
@@ -214,9 +219,9 @@ class HardcoverMetadataProvider:
             snapshot = ProviderFailureSnapshot(
                 self._cover_descriptors,
                 ProviderOperationalEvidence(
-                    self._accessed_at,
-                    tuple(self._attempt_records),
-                    tuple(self._incomplete_causes),
+                    self._session.accessed_at,
+                    self._session.attempt_records,
+                    self._session.incomplete_causes,
                 ),
             )
         except BaseException:
@@ -260,7 +265,7 @@ class HardcoverMetadataProvider:
                 authors=plan.authors,
                 projection=projection,
             )
-            self._ledger = ledger
+            self._session.ledger = ledger
             with provider_client_lifetime(self._client):
                 value, _ = ledger.resolve(
                     kind=plan.kind.value,
@@ -302,7 +307,7 @@ class HardcoverMetadataProvider:
                     _ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _WORK_QUERY
                 ),
             )
-        self._ledger = ledger
+        self._session.ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         with provider_client_lifetime(self._client):
             for lane in provider_discovery_lane_order(served):
@@ -326,8 +331,8 @@ class HardcoverMetadataProvider:
                     work_title=plan.work_title,
                     work_authors=plan.work_authors,
                 )
-                attempts_before = len(self._attempt_records)
-                incomplete_causes_before = len(self._incomplete_causes)
+                attempts_before = len(self._session.attempt_records)
+                incomplete_causes_before = len(self._session.incomplete_causes)
                 physical, _replayed = ledger.resolve(
                     kind=lookup.kind.value,
                     matched_family=lookup.matched_family,
@@ -342,11 +347,11 @@ class HardcoverMetadataProvider:
                 )
                 observation = qualify_provider_observation(physical, lookup)
                 diagnostics = provider_attempt_diagnostics(
-                    tuple(self._attempt_records[attempts_before:]),
+                    self._session.attempt_records[attempts_before:],
                     status=observation.status.value,
-                    incomplete_causes=tuple(
-                        self._incomplete_causes[incomplete_causes_before:]
-                    ),
+                    incomplete_causes=self._session.incomplete_causes[
+                        incomplete_causes_before:
+                    ],
                 )
                 results.append(
                     ProviderLaneResult(
@@ -517,7 +522,7 @@ class HardcoverMetadataProvider:
                 references,
                 candidates,
                 lookup.kind,
-                accessed_at=self._accessed_at,
+                accessed_at=self._session.accessed_at,
                 diagnostics=self._schema_diagnostics(),
                 edition_enrichment_overflow=edition_enrichment_overflow,
                 dispatch_lineage=(
@@ -548,7 +553,7 @@ class HardcoverMetadataProvider:
             return result(error.status)
         try:
             if _has_graphql_errors(payload):
-                self._mark_response_attempt("provider_declared_error")
+                self._session.mark_response_attempt("provider_declared_error")
                 return result(ProviderStatus.UNAVAILABLE)
             work_only = (
                 lookup.kind is ProviderQueryKind.WORK and lookup.audio is not None
@@ -559,7 +564,7 @@ class HardcoverMetadataProvider:
                 else _parse_edition_enrichment_overflow(payload, self._name)
             )
             if overflow is not None:
-                self._mark_response_attempt("candidate_limit_exceeded")
+                self._session.mark_response_attempt("candidate_limit_exceeded")
                 return result(
                     ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
                     edition_enrichment_overflow=overflow,
@@ -589,7 +594,7 @@ class HardcoverMetadataProvider:
                 ):
                     return result(ProviderStatus.MALFORMED)
         except _CandidateLimit:
-            self._mark_response_attempt("candidate_limit_exceeded")
+            self._session.mark_response_attempt("candidate_limit_exceeded")
             return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         except (
             ValueError,
@@ -598,7 +603,7 @@ class HardcoverMetadataProvider:
             RecursionError,
             json.JSONDecodeError,
         ):
-            self._mark_response_attempt("response_malformed")
+            self._session.mark_response_attempt("response_malformed")
             return result(ProviderStatus.MALFORMED)
         try:
             self._cover_descriptors = _parse_cover_descriptors(
@@ -651,282 +656,56 @@ class HardcoverMetadataProvider:
         deadline: float | None,
         query_retry: bool = False,
     ) -> bytes:
-        for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
-            started = self._clock()
-            attempts_before_dispatch = self._attempt_count
-            try:
-                payload = self._request_once(
-                    body,
-                    deadline=deadline,
-                    is_retry=query_retry or retry_index > 0,
-                )
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                if self._attempt_count != attempts_before_dispatch:
-                    self._record_attempt(
-                        started,
-                        category="cancellation",
-                        delay=None,
-                        outcome="cancelled",
-                    )
-                raise
-            except ProviderFailure as error:
-                if self._attempt_count == attempts_before_dispatch:
-                    raise
-                can_retry = (
-                    error.retryable
-                    and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
-                    and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
-                    and self._ledger.allows_retry(
-                        self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION
-                    )
-                )
-                delay = (
-                    error.retry_after
-                    if error.retry_after is not None
-                    else self._retry_delay(retry_index)
-                    if can_retry
-                    else None
-                )
-                if (
-                    can_retry
-                    and delay is not None
-                    and not self._delay_fits(delay, deadline=deadline)
-                ):
-                    can_retry = False
-                if not can_retry or delay is None:
-                    self._record_attempt(
-                        started,
-                        category=error.category,
-                        delay=delay,
-                        outcome=("exhausted" if error.retryable else "terminal"),
-                    )
-                    raise
-                try:
-                    self._sleep(delay)
-                except (asyncio.CancelledError, KeyboardInterrupt):
-                    self._record_attempt(
-                        started,
-                        category="cancellation",
-                        delay=delay,
-                        outcome="cancelled",
-                    )
-                    raise
-                if deadline is not None and self._clock() >= deadline:
-                    self._record_attempt(
-                        started,
-                        category=error.category,
-                        delay=delay,
-                        outcome="deadline_exhausted",
-                    )
-                    raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
-                self._record_attempt(
-                    started,
-                    category=error.category,
-                    delay=delay,
-                    outcome="retry",
-                )
-                continue
-            self._record_attempt(
-                started,
-                category="none",
-                delay=None,
-                outcome="response_received",
-            )
-            return payload
-        raise ProviderFailure(ProviderStatus.UNAVAILABLE)
-
-    def _request_once(
-        self, body: dict[str, object], *, deadline: float | None, is_retry: bool
-    ) -> bytes:
-        if self._remaining_response_bytes <= 0:
-            raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
-        if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
-            raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
-        if self._pacer is not None and not self._pacer.wait(deadline=deadline):
-            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-        remaining = self._timeout_seconds
-        if deadline is not None:
-            remaining = min(remaining, deadline - self._clock())
-        if remaining <= 0:
-            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-        try:
-            if deadline is not None and self._clock() >= deadline:
-                raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-            if self._accessed_at is None:
-                self._accessed_at = provider_access_time(self._wall_clock())
-            self._ledger.dispatch(retry=is_retry)
-            self._attempt_count += 1
-            with self._client.stream(
-                "POST",
-                HARDCOVER_URL,
-                content=canonical_json(body).encode(),
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "Accept-Encoding": "identity",
-                },
-                timeout=remaining,
-            ) as response:
-                retry_after = bounded_retry_after(
-                    response.headers.get("retry-after"),
-                    now=self._wall_clock(),
-                )
-                identity_encoding = response.headers.get(
-                    "content-encoding", "identity"
-                ).strip().lower() in {"", "identity"}
-                if response.is_stream_consumed and not identity_encoding:
-                    raise ProviderFailure(
-                        ProviderStatus.MALFORMED,
-                        category="response_malformed",
-                    )
-                payload = _body(
-                    response,
-                    min(
-                        self._maximum_bytes,
-                        self._remaining_response_bytes,
-                    ),
-                    deadline=deadline,
-                    clock=self._clock,
-                    consume=self._consume_response_bytes,
-                    allow_empty=response.status_code != 200,
-                )
-                if not identity_encoding:
-                    raise ProviderFailure(
-                        ProviderStatus.MALFORMED,
-                        category="response_malformed",
-                    )
-                if response.status_code == 401:
-                    raise ProviderFailure(
-                        ProviderStatus.AUTHENTICATION,
-                        category="http_401",
-                    )
-                if response.status_code == 403:
-                    raise ProviderFailure(
-                        ProviderStatus.AUTHORIZATION,
-                        category="http_403",
-                    )
-                if response.status_code == 429:
-                    throttle = _hardcover_throttle(
-                        response.headers, now=self._wall_clock()
-                    )
-                    category, delay = (
-                        ("http_429", retry_after) if throttle is None else throttle
-                    )
-                    raise ProviderFailure(
-                        ProviderStatus.RATE_LIMITED,
-                        category=category,
-                        retryable=delay is not None,
-                        retry_after=delay,
-                    )
-                if response.status_code in {500, 502, 503, 504}:
-                    raise ProviderFailure(
-                        ProviderStatus.UNAVAILABLE,
-                        category=f"http_{response.status_code}",
-                        retryable=True,
-                        retry_after=(
-                            retry_after if response.status_code == 503 else None
-                        ),
-                    )
-                if response.status_code != 200:
-                    raise ProviderFailure(
-                        ProviderStatus.UNAVAILABLE,
-                        category="http_other",
-                    )
-                if (
-                    response.headers.get("content-type", "")
-                    .split(";", 1)[0]
-                    .strip()
-                    .lower()
-                    != "application/json"
-                ):
-                    raise ProviderFailure(
-                        ProviderStatus.MALFORMED,
-                        category="response_malformed",
-                    )
-                return payload
-        except _DeadlineExpired:
-            raise ProviderFailure(
-                ProviderStatus.UNAVAILABLE,
-                category="deadline",
-            ) from None
-        except _ResponseOversized:
-            self._remaining_response_bytes = 0
-            raise ProviderFailure(
-                ProviderStatus.OVERSIZED,
-                category="response_oversized",
-            ) from None
-        except ProviderFailure:
-            raise
-        except httpx.HTTPError as error:
-            transport_category = transient_transport_failure(error)
-            if transport_category is not None:
-                raise ProviderFailure(
-                    ProviderStatus.UNAVAILABLE,
-                    category=transport_category,
-                    retryable=True,
-                ) from None
-            raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
-        except (OSError, ValueError):
-            raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
-
-    def _consume_response_bytes(self, amount: int) -> None:
-        self._remaining_response_bytes -= amount
-        if self._remaining_response_bytes < 0:
-            self._remaining_response_bytes = 0
-            raise _ResponseOversized
-
-    def _incomplete(self, cause: ProviderIncompleteCause) -> ProviderFailure:
-        self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
-        return ProviderFailure(ProviderStatus.INCOMPLETE)
-
-    def _retry_delay(self, retry_index: int) -> float:
-        jitter = self._jitter()
-        if (
-            type(jitter) not in {int, float}
-            or isinstance(jitter, bool)
-            or not 0.0 <= float(jitter) < 1.0
-        ):
-            jitter = 0.0
-        return min(float(2**retry_index) + float(jitter), 16.0)
-
-    def _delay_fits(self, delay: float, *, deadline: float | None) -> bool:
-        if deadline is None:
-            return True
-        return self._clock() + delay < deadline
-
-    def _record_attempt(
-        self,
-        started: float,
-        *,
-        category: str,
-        delay: float | None,
-        outcome: str,
-    ) -> None:
-        self._attempt_records.append(
-            ProviderAttemptRecord(
-                provider=self._name,
-                ordinal=self._attempt_count,
-                category=category,
-                delay_seconds=delay,
-                elapsed_seconds=bounded_attempt_elapsed(started, self._clock()),
-                outcome=outcome,
-            )
+        return self._session.request(
+            HARDCOVER_URL,
+            method="POST",
+            content=canonical_json(body).encode(),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Accept-Encoding": "identity",
+            },
+            deadline=deadline,
+            query_retry=query_retry,
+            classify=_classify,
+            read=_raw,
         )
 
-    def _mark_response_attempt(self, category: str) -> None:
-        if not self._attempt_records:
-            return
-        prior = self._attempt_records[-1]
-        if prior.outcome != "response_received":
-            return
-        self._attempt_records[-1] = ProviderAttemptRecord(
-            provider=prior.provider,
-            ordinal=prior.ordinal,
+
+def _classify(facts: ProviderResponseFacts) -> ProviderFailure:
+    """Map Hardcover's non-success statuses; the session owns 503."""
+    if facts.status_code == 401:
+        return ProviderFailure(ProviderStatus.AUTHENTICATION, category="http_401")
+    if facts.status_code == 403:
+        return ProviderFailure(ProviderStatus.AUTHORIZATION, category="http_403")
+    if facts.status_code == 429:
+        throttle = _hardcover_throttle(facts.headers, now=facts.now)
+        category, delay = (
+            (
+                "http_429",
+                bounded_retry_after(facts.headers.get("retry-after"), now=facts.now),
+            )
+            if throttle is None
+            else throttle
+        )
+        return ProviderFailure(
+            ProviderStatus.RATE_LIMITED,
             category=category,
-            delay_seconds=None,
-            elapsed_seconds=prior.elapsed_seconds,
-            outcome="terminal",
+            retryable=delay is not None,
+            retry_after=delay,
         )
+    if facts.status_code in {500, 502, 504}:
+        return ProviderFailure(
+            ProviderStatus.UNAVAILABLE,
+            category=f"http_{facts.status_code}",
+            retryable=True,
+        )
+    return ProviderFailure(ProviderStatus.UNAVAILABLE, category="http_other")
+
+
+def _raw(payload: bytes) -> bytes:
+    """Hand the success body to the GraphQL envelope parser unread."""
+    return payload
 
 
 def _hardcover_throttle(
@@ -1012,43 +791,6 @@ def _reset_delay(value: str | None, *, now: float) -> int | None:
     ):
         return None
     return math.ceil(reset - now)
-
-
-def _body(
-    response: httpx.Response,
-    maximum: int,
-    *,
-    deadline: float | None = None,
-    clock: Callable[[], float] = time.monotonic,
-    consume: Callable[[int], None] = lambda _: None,
-    allow_empty: bool = False,
-) -> bytes:
-    length = response.headers.get("content-length")
-    if length is not None:
-        try:
-            declared = int(length)
-        except ValueError:
-            raise ValueError("provider response length is invalid") from None
-        if declared < 0:
-            raise ValueError("provider response length is invalid")
-        if declared > maximum:
-            raise _ResponseOversized
-    chunks: list[bytes] = []
-    size = 0
-    raw_chunks = (
-        (response.content,) if response.is_stream_consumed else response.iter_raw()
-    )
-    for chunk in raw_chunks:
-        consume(len(chunk))
-        size += len(chunk)
-        if size > maximum:
-            raise _ResponseOversized
-        chunks.append(chunk)
-        if deadline is not None and clock() >= deadline:
-            raise _DeadlineExpired
-    if not chunks and not allow_empty:
-        raise ValueError("provider response empty")
-    return b"".join(chunks)
 
 
 def _has_graphql_errors(payload: bytes) -> bool:
@@ -2683,14 +2425,6 @@ def _reject_number(_: str) -> float:
 
 
 class _CandidateLimit(ValueError):
-    pass
-
-
-class _ResponseOversized(ValueError):
-    pass
-
-
-class _DeadlineExpired(Exception):
     pass
 
 

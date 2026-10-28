@@ -71,6 +71,7 @@ def _session(
     pacer: ProviderRequestPacer | None = None,
     ledger: _DiscoveryRequestLedger | None = None,
     accept_content_types: tuple[str, ...] = ("application/json",),
+    name_response_failures: bool = False,
 ) -> BoundedProviderSession:
     return BoundedProviderSession(
         "provider",
@@ -80,6 +81,7 @@ def _session(
         pacer=pacer,
         clocks=clocks,
         accept_content_types=accept_content_types,
+        name_response_failures=name_response_failures,
     )
 
 
@@ -641,3 +643,215 @@ def test_decode_json_keeps_exact_numbers_and_rejects_ambiguity() -> None:
         decode_json(b'{"a": 1, "a": 2}')
     with pytest.raises(ValueError, match="number"):
         decode_json(b'{"a": Infinity}')
+
+
+def test_a_raw_request_sends_its_body_and_records_what_read_refuses() -> None:
+    seen: list[tuple[str, bytes, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.content, request.url.query.decode()))
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, content=b"[1]"
+        )
+
+    def refuse(_: bytes) -> bytes:
+        raise ProviderFailure(ProviderStatus.UNAVAILABLE)
+
+    session = _session(handler, clocks=_quiet_clocks())
+
+    def post(read: Callable[[bytes], bytes]) -> bytes:
+        return session.request(
+            _URL,
+            method="POST",
+            content=b'{"query":"{}"}',
+            headers={**_HEADERS, "Content-Type": "application/json"},
+            deadline=None,
+            classify=_unclassified,
+            read=read,
+        )
+
+    assert b"[1]" == post(lambda payload: payload)
+    with pytest.raises(ProviderFailure) as failure:
+        post(refuse)
+
+    assert ProviderStatus.UNAVAILABLE == failure.value.status
+    assert [("POST", b'{"query":"{}"}', "")] * 2 == seen
+    assert [
+        ("none", "response_received"),
+        ("provider_failure", "terminal"),
+    ] == [(record.category, record.outcome) for record in session.attempt_records]
+
+
+def test_an_observation_retry_budget_caps_retries_across_requests() -> None:
+    dispatches = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal dispatches
+        dispatches += 1
+        return _json({"error": True}, 503)
+
+    session = _session(
+        handler,
+        bounds=provider_bounds(
+            65_536,
+            5.0,
+            attempts_per_request=2,
+            attempts_per_observation=9,
+            aggregate_multiple=9,
+            aggregate_ceiling_bytes=2_097_152,
+            retries_per_observation=1,
+        ),
+        clocks=_quiet_clocks(),
+    )
+    for _ in range(2):
+        with pytest.raises(ProviderFailure):
+            _request(session)
+    # A query retry the budget no longer covers is refused before dispatch.
+    with pytest.raises(ProviderFailure) as refused:
+        _request(session, query_retry=True)
+
+    assert ProviderStatus.UNAVAILABLE == refused.value.status
+    assert 3 == dispatches
+    assert 1 == session.retry_count
+    assert ["retry", "exhausted", "exhausted"] == [
+        record.outcome for record in session.attempt_records
+    ]
+
+
+class _ClockedStream(httpx.SyncByteStream):
+    """One body whose delivery takes the clock to the request's deadline."""
+
+    now = 0.0
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def __iter__(self):
+        _ClockedStream.now = 1.0
+        yield self._payload
+
+
+@pytest.mark.parametrize(
+    ("respond", "deadline", "status", "category", "unnamed"),
+    (
+        (
+            lambda: httpx.Response(
+                200, headers={"content-type": "text/html"}, content=b"{}"
+            ),
+            None,
+            ProviderStatus.MALFORMED,
+            "response_malformed",
+            "response_malformed",
+        ),
+        (
+            lambda: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                content=b"x" * 2_048,
+            ),
+            None,
+            ProviderStatus.OVERSIZED,
+            "response_oversized",
+            "response_oversized",
+        ),
+        (
+            lambda: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                stream=_ClockedStream(b"{}"),
+            ),
+            1.0,
+            ProviderStatus.UNAVAILABLE,
+            "deadline",
+            "provider_failure",
+        ),
+    ),
+    ids=("media_type", "oversized", "deadline_while_reading"),
+)
+def test_a_session_that_names_response_failures_records_their_category(
+    respond: Callable[[], httpx.Response],
+    deadline: float | None,
+    status: ProviderStatus,
+    category: str,
+    unnamed: str,
+) -> None:
+    # Malformed and oversized bodies are always named (#1308); only a deadline
+    # reached while reading needs the session to opt in.
+    def outcomes(named: bool) -> tuple[ProviderStatus, list[str]]:
+        _ClockedStream.now = 0.0
+        session = _session(
+            lambda _: respond(),
+            bounds=_bounds(1_024),
+            clocks=_quiet_clocks(clock=lambda: _ClockedStream.now),
+            name_response_failures=named,
+        )
+        with pytest.raises(ProviderFailure) as failure:
+            _request(session, deadline=deadline)
+        return failure.value.status, [
+            record.category for record in session.attempt_records
+        ]
+
+    assert (status, [category]) == outcomes(True)
+    assert (status, [unnamed]) == outcomes(False)
+
+
+def test_a_session_that_names_response_failures_keeps_classified_categories() -> None:
+    session = _session(
+        lambda _: _json({}, 404),
+        clocks=_quiet_clocks(),
+        name_response_failures=True,
+    )
+    with pytest.raises(ProviderFailure):
+        _request(session)
+    assert ["http_404"] == [record.category for record in session.attempt_records]
+
+
+def test_marking_a_response_attempt_only_rewrites_a_received_response() -> None:
+    responses = iter((_json({}, 404), _json({"value": 1})))
+    session = _session(lambda _: next(responses), clocks=_quiet_clocks())
+    session.mark_response_attempt("response_malformed")
+    assert [] == list(session.attempt_records)
+
+    with pytest.raises(ProviderFailure):
+        _request(session)
+    session.mark_response_attempt("response_malformed")
+    assert [("http_404", "terminal")] == [
+        (record.category, record.outcome) for record in session.attempt_records
+    ]
+
+    _request(session)
+    session.mark_response_attempt("provider_declared_error")
+    received = session.attempt_records[-1]
+    assert ("provider_declared_error", "terminal", None, 2) == (
+        received.category,
+        received.outcome,
+        received.delay_seconds,
+        received.ordinal,
+    )
+
+
+def test_a_session_that_refuses_empty_success_does_so_before_judging_its_shape() -> (
+    None
+):
+    def outcome(refuse: bool) -> tuple[ProviderStatus, str]:
+        session = BoundedProviderSession(
+            "provider",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200, headers={"content-type": "text/html"}, content=b""
+                    )
+                )
+            ),
+            _bounds(),
+            _DiscoveryRequestLedger("provider", "v1"),
+            clocks=_quiet_clocks(),
+            name_response_failures=True,
+            refuse_empty_success=refuse,
+        )
+        with pytest.raises(ProviderFailure) as failure:
+            _request(session)
+        return failure.value.status, session.attempt_records[-1].category
+
+    assert (ProviderStatus.UNAVAILABLE, "provider_failure") == outcome(True)
+    assert (ProviderStatus.MALFORMED, "response_malformed") == outcome(False)
