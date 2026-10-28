@@ -17,8 +17,18 @@ changes a work, route or decision identity.
 
 A new empty store uses one calm seven-step ledger: create owner access, connect,
 providers, libraries, mounts, optional cover reviewer, and kickoff. The progress
-panel also lists at most five prerequisites the deployment owns before the first
-step. Completed steps collapse to recorded rows with
+panel lists at most five prerequisites the deployment owns before the ledger
+itself. Each recorded step is confirmed in one line on the next card: the
+connected origin, the providers and libraries recorded, the cover reviewer, and
+for each library the service path found on its read-only mount (never a file
+count). A connection failure names its class (the name does not resolve, the
+connection was refused, the certificate could not be verified, no answer in
+time, or the key was not accepted), the address's origin and one remedy, and
+returns focus to the field to correct. Providers are grouped as Books and ebooks
+and Audiobooks; a group is suggested for the libraries it fits, using
+Audiobookshelf's own audiobooks-only switch, and nothing is ticked for the owner.
+A change made in another tab reads as such and restores the latest recorded step,
+and a refused OpenRouter validation is shown beside its button. Completed steps collapse to recorded rows with
 Change; reopening a row removes only dependent answers and secrets, and resume
 always returns to the first incomplete step. Provider setup is optional,
 library discovery remains retryable and summarizes filtered-out podcast libraries,
@@ -499,6 +509,14 @@ review path without treating the URL segment itself as data authority. The
 review API remains the authoritative existence and shape check, so a missing or
 invalid case renders the application's bounded recovery state rather than a raw
 server error. Root entry redirects to sign-in.
+
+Sign-in and setup open in the saved or system theme on their first frame and use
+the workspace's Georgia and Inter. Sign-in offers a Show password toggle, says
+whether the password was not accepted (clearing it and returning focus to it) or
+the device must wait five minutes after too many attempts, and explains a
+forgotten password truthfully: there is no reset in the app, and the
+[deployment guide](../operations/deployment.md#forgotten-owner-password) gives
+the recovery path for each mode.
 
 The detail view presents identity and current-versus-proposed choices before
 supporting evidence. The current value and each specific eligible proposed

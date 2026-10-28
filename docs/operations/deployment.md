@@ -320,6 +320,25 @@ still requires the existing backup/recovery procedure, not deletion of ledger ro
 or a repeated attempt to bypass validation.
 
 
+## Forgotten owner password
+
+Mechanical Librarian keeps only an Argon2id verifier of the owner password, so
+it cannot show the password, and this release has no in-app or offline reset
+(ADR-0030 keeps password recovery out of scope). The sign-in page links here.
+
+- **Owner password hash file** (file-managed `config-v9`, `review.owner_password_hash_file`):
+  write a new Argon2id PHC string to that file, keeping it a regular owner-only
+  file, then restart the container. Any Argon2id tool will do; with the
+  `argon2-cffi` library, for example,
+  `python3 -c "import getpass; from argon2 import PasswordHasher; print(PasswordHasher().hash(getpass.getpass()))"`.
+  Sessions are bound to the verifier, so the restart signs every browser out.
+- **Password created in guided setup** (settings-store mode): the verifier lives
+  in `/data/application.sqlite3` and nothing replaces it. Restore a
+  [backup](backups-and-recovery.md) of the data volume taken while you knew the
+  password, or start again from an empty volume and repeat guided setup.
+  Starting again discards the review history, decisions and settings kept on
+  that volume.
+
 ## Optional description advice
 
 Before enabling an adviser, open Policy → Curation → Description advice. Review
