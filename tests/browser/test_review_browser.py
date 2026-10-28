@@ -8583,9 +8583,13 @@ def test_description_retry_retains_real_selected_choice(state):
                     expect(
                         page.get_by_text("Choice recorded.", exact=True)
                     ).to_be_visible()
+                    # The recorded choice also says so in words (#1290).
                     expect(
                         page.get_by_text(
-                            "Advised · Authored content · Recorded choice", exact=True
+                            re.compile(
+                                "^Advised · Authored content · Recorded choice"
+                                " ?Your choice$"
+                            )
                         )
                     ).to_be_visible()
                     assert page.evaluate(
