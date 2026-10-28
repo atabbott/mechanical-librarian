@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-- A provider throttle seen while a failed provider is waiting to be retried
-  now only ever lengthens that wait. A one-second Google Books pacing hold
-  carried by a retried report no longer brings the next retry forward from
-  hours away, so a pacing pause no longer uses up a recovery attempt (#1318).
+- Once a provider failure has earned a wait before its next retry, a later
+  throttle can lengthen that wait but no longer shorten it. A one-second Google
+  Books pacing hold carried by a retried report no longer brings the next retry
+  forward from hours away, so a pacing pause no longer uses up a recovery
+  attempt (#1318).
 
 - A review case's history now shows the same owner decisions, description
   advice and description selections on every read when several share one

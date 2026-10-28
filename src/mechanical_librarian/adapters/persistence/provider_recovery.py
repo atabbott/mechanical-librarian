@@ -979,9 +979,14 @@ class SQLiteProviderRecoveryStore:
             # authoritative deferral replaces a waiting deadline while keeping
             # its recovery attempt; ambiguous observations remain idempotent.
             # A deferral only paces.  Once a transient or rate-limited failure
-            # in this episode has earned a backoff, a deferral may lengthen
-            # that wait but never shorten it, or the next attempt is spent
-            # early (#1318); an evidence-free enqueue fallback still yields.
+            # recorded in this episode has earned a backoff, a deferral may
+            # lengthen that wait but never shorten it, or the next attempt is
+            # spent early (#1318).  An enqueue fallback with no failure
+            # outcome recorded since the scope last recovered still yields.
+            # A dropped deferral writes no event, so the shown reason stays
+            # that of the earned wait.  Exhaustion needs no boundary of its
+            # own: reopening an exhausted scope resets its attempt to 0, and
+            # only a recorded canary or fanout failure raises it again.
             successor = observed
             if current is not None:
                 if current[0] < observed.generation:
