@@ -222,6 +222,7 @@ export const claimBasisLabels = {
   embedded_tag: 'Audio file tags',
   sidecar: 'Sidecar file',
   path: 'Folder and file name',
+  prior_admission: 'Earlier matched edition',
 } satisfies Record<ClaimBasis, string>
 
 export const fieldStateLabels = {

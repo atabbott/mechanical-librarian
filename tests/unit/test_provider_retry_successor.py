@@ -42,6 +42,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     audiobook_asin_feed_plan,
+    audiobook_carried_plan,
     audiobook_discovery_plan,
     metadata_discovery_plan,
     observe_provider,
@@ -3174,3 +3175,90 @@ def test_a_recovery_window_that_starves_an_audiobook_lane_names_the_stop(
         "deadline_kind": "recovery_window",
         "count": 1,
     } == {key: value for key, value in event.items() if key != "item_ref"}
+
+
+def test_an_audible_retry_rebuilds_the_carried_lane_from_the_source_claim() -> None:
+    """A failed carried lookup is asked again under the lane it failed under (#1316).
+
+    The source plan for this item is a search; the catalogue was handed it with
+    the carried product lane added. Recovery rebuilds that lane from the
+    retained `prior_admission` claim rather than refusing it as unplanned.
+    """
+    snapshot, source_claims, _plan = _fed_audio_source(asserted=False)
+    carried_claim = LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed="B0CARRIED1",
+        canonical="B0CARRIED1",
+        excerpt="B0CARRIED1",
+        applicability="not_applicable",
+        basis="prior_admission",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+    )
+    claims = (*source_claims, carried_claim)
+    plan = audiobook_carried_plan(
+        audiobook_discovery_plan(snapshot, claims, audio=_RETAINED_AUDIO)
+    )
+    lookup = next(value for value in plan.lanes if value.kind is ProviderQueryKind.ASIN)
+    search = next(value for value in plan.lanes if value.kind is ProviderQueryKind.WORK)
+    original = recorded_dispatch(
+        provider_observation(
+            "audible",
+            (
+                ProviderLaneResult(lookup, ProviderStatus.UNAVAILABLE),
+                ProviderLaneResult(search, ProviderStatus.NO_MATCH),
+            ),
+            authority="audible_catalog",
+        )
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", snapshot.fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(original,),
+        audio=_RETAINED_AUDIO,
+    )
+    provider = _Provider(
+        provider_observation(
+            "audible",
+            (ProviderLaneResult(lookup, ProviderStatus.NO_MATCH),),
+            authority="audible_catalog",
+        )
+    )
+    service = GenerateProviderRetrySuccessor(
+        target=_Target(snapshot),
+        inspector=_Inspector(),
+        repository_factory=lambda: cast(ReportRepository, _Repository(report)),
+        audio_inspector=cast("Any", _Inspector()),
+        provider_resolver=cast(
+            "ProviderRetryResolver",
+            lambda *_args: ConfiguredProviderRetry(
+                ProviderBinding("audible", True, lambda: provider, "audible_catalog"),
+                "audible_catalog",
+                2,
+            ),
+        ),
+        mount=MediaMountConfiguration("audiobooks", "/container", "/service", True),
+        limits=ReportLimits(),
+        after_publication=lambda *_args: None,
+    )
+
+    successor = MetadataReport.from_json(
+        service.run(
+            report.report_id,
+            (lookup.identity,),
+            provider_name="audible",
+            adapter="audible_catalog",
+            generation=2,
+        )
+    )
+
+    assert ((lookup.identity, "B0CARRIED1"),) == tuple(
+        (value.identity, value.canonical_asin) for value in provider.plans[0].lanes
+    )
+    assert (carried_claim.reference,) == provider.plans[0].lanes[0].input_references
+    statuses = {value.identity: value.status for value in successor.providers[0].lanes}
+    assert ProviderStatus.NO_MATCH is statuses[lookup.identity]
+    assert ProviderStatus.NO_MATCH is statuses[search.identity]

@@ -41,6 +41,7 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetReader,
     audiobook_asin_feed_plan,
+    audiobook_carried_plan,
     audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
@@ -462,6 +463,11 @@ class GenerateProviderRetrySuccessor:
         feed is rebuilt from the retained observations by the same function
         that built it, and a feed that cannot be rebuilt is refused rather than
         retried against a plan the provider never saw.
+
+        The Audible catalogue may have been handed its plan with the carried
+        product lane added (#1316). That lane is rebuilt from the source's own
+        `prior_admission` claim by the same function, so a retry looks the
+        carried ASIN up again under the lane identity it failed under.
         """
         snapshot = self._target.read(source.target.item)
         audio = _is_audio(source)
@@ -478,6 +484,10 @@ class GenerateProviderRetrySuccessor:
         )
         if plan.overflow:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
+        if audio and original.authority == "audible_catalog":
+            carried = audiobook_carried_plan(plan)
+            if carried.lanes != plan.lanes:
+                return carried
         if (
             audio
             and original.lanes
@@ -592,7 +602,9 @@ class GenerateProviderRetrySuccessor:
         )
         try:
             client: MetadataProvider = provider.binding.factory()
-            result = client.observe(replace(plan, lanes=selected), deadline=deadline)
+            result = client.observe(
+                _retry_plan(plan, selected, original), deadline=deadline
+            )
         except Exception as error:
             elapsed, failure = time.monotonic() - started, error
             # The partial evidence is read inside the event guard: a snapshot
@@ -757,6 +769,16 @@ class GenerateProviderRetrySuccessor:
                 exhausted_dispatch=observation.exhausted_dispatch,
                 recording_lookup_hints=observation.recording_lookup_hints,
                 dispatch=observation.dispatch,
+                # What an ASIN lane refused stays with the stub it explains.
+                refused_products=tuple(
+                    product
+                    for product in evidence.refused_products
+                    if lane.kind is ProviderQueryKind.ASIN
+                    and any(
+                        item.edition_identity == product.identity
+                        for item in observation.candidates
+                    )
+                ),
             )
 
         # Merge over the observed lanes only: retrying an asserted lane that
@@ -843,6 +865,46 @@ def _is_audio(source: MetadataReport) -> bool:
     other by section.
     """
     return source.file.format in AUDIO_FILE_FORMATS or source.audio is not None
+
+
+def _retry_plan(
+    plan: MetadataDiscoveryPlan,
+    selected: tuple[MetadataDiscoveryLane, ...],
+    original: ProviderObservation,
+) -> MetadataDiscoveryPlan:
+    """Narrow a plan to the retried lanes, keeping the rule only where safe.
+
+    The corroborated rule (#1307) reads only once every exact path refused.
+    A retry sees only its own lanes, so it keeps the rule only when every
+    alternative WORK lane the plan carries is retried here or already ended
+    `no_match`, and no ASIN lane left out of the retry answered with a product. Otherwise the
+    retry runs without it: an alternative lane suppressed behind a failed
+    asserted lane was never asked, and a refused page is not retained, so a
+    later retry of that lane alone cannot re-arm the rule. The ladder itself is
+    unchanged, its leading-number rung included, since the report requires
+    every rung of the asserted lane however the rule ends.
+    """
+    retried = {lane.identity for lane in selected}
+    observed = {lane.identity: lane for lane in original.lanes}
+    keeps_rule = all(
+        lane.identity in retried
+        or (
+            (prior := observed.get(lane.identity)) is not None
+            and prior.status is ProviderStatus.NO_MATCH
+        )
+        for lane in plan.lanes
+        if lane.kind is ProviderQueryKind.WORK and lane.title_basis is not None
+    ) and not any(
+        lane.kind is ProviderQueryKind.ASIN
+        and lane.identity not in retried
+        and lane.status is ProviderStatus.CANDIDATES
+        for lane in original.lanes
+    )
+    return replace(
+        plan,
+        lanes=selected,
+        corroborated_rule=plan.corroborated_rule and keeps_rule,
+    )
 
 
 __all__ = [

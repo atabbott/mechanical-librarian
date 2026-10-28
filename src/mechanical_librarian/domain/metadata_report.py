@@ -72,6 +72,8 @@ from mechanical_librarian.domain.validation import (
 )
 from mechanical_librarian.domain.work_identity import (
     BAND_TITLE_PRODUCTIONS,
+    CORROBORATED_TITLE_APPLICATION,
+    CORROBORATED_TITLE_PRODUCTION,
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkIdentityAdmission,
@@ -80,6 +82,8 @@ from mechanical_librarian.domain.work_identity import (
     admit_provider_work_identity,
     closed_creator_display_possibility,
     direct_work_title_election_matches,
+    fold_lone_apostrophes,
+    narrowing_work_query,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
     work_query_ladder,
@@ -90,8 +94,8 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v59"
-COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
+REPORT_SCHEMA = "metadata-report-v61"
+COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
@@ -295,6 +299,7 @@ class FieldSource(StrEnum):
     AUDIO_TAG = "audio_tag"
     AUDIO_SIDECAR = "audio_sidecar"
     AUDIO_PATH = "audio_path"
+    PRIOR_ADMISSION = "prior_admission"
 
 
 # Which local-claim bases each owner-facing source buckets.  This mapping is
@@ -308,11 +313,19 @@ _SOURCE_CLAIM_BASES: Mapping[FieldSource, frozenset[str]] = MappingProxyType(
         FieldSource.AUDIO_TAG: frozenset({"embedded_tag"}),
         FieldSource.AUDIO_SIDECAR: frozenset({"sidecar"}),
         FieldSource.AUDIO_PATH: frozenset({"path"}),
+        FieldSource.PRIOR_ADMISSION: frozenset({"prior_admission"}),
     }
 )
 CLAIM_BASES = frozenset(
     basis for bases in _SOURCE_CLAIM_BASES.values() for basis in bases
 )
+# The bases whose ASIN was stated *about* a recording rather than read off it:
+# the one the target asserts, and the one an earlier preparation of the same
+# track set admitted and this one carries forward (#1316). Neither is one of the
+# item's own identifier surfaces, so neither settles identity or is offered as
+# a local value; each only names a product to look up, whose answer the runtime
+# band and the narrator gate still judge (ADR-0061, ADR-0088).
+ASSERTED_ASIN_BASES = frozenset({"target_metadata", "prior_admission"})
 
 
 class TargetDestination(StrEnum):
@@ -358,6 +371,48 @@ class TargetSeries:
 
     def to_data(self) -> dict[str, str | None]:
         return {"name": self.name, "sequence": self.sequence}
+
+
+@dataclass(frozen=True, slots=True)
+class RecordingCorroboration:
+    """What the corroborated admission rule reads off the target (#1307).
+
+    The recording's own narrators and series memberships as the target
+    records them. Its local claims travel beside it, so this holds only what
+    the claims do not.
+    """
+
+    narrators: tuple[str, ...] = ()
+    series: tuple[TargetSeries, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.narrators) is not tuple
+            or any(type(value) is not str or not value for value in self.narrators)
+            or type(self.series) is not tuple
+            or any(type(value) is not TargetSeries for value in self.series)
+        ):
+            raise ReportValueError("recording corroboration is invalid")
+
+
+def recording_corroboration(
+    fields: tuple[TargetField, ...],
+) -> RecordingCorroboration:
+    """Read the target's narrators and series for the corroborated rule (#1307)."""
+    narrators: tuple[str, ...] = ()
+    series: tuple[TargetSeries, ...] = ()
+    for field in fields:
+        if field.state is not TargetFieldState.VALUE or type(field.value) is not tuple:
+            continue
+        if field.destination is TargetDestination.NARRATORS:
+            narrators = tuple(
+                value for value in field.value if type(value) is str and value
+            )
+        elif field.destination is TargetDestination.SERIES:
+            series = tuple(
+                value for value in field.value if type(value) is TargetSeries
+            )
+    return RecordingCorroboration(narrators, series)
 
 
 @dataclass(frozen=True, slots=True)
@@ -544,6 +599,19 @@ class ProviderStatus(StrEnum):
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
     QUERY_LIMIT_EXCEEDED = "query_limit_exceeded"
+
+
+# A lane that ended in one of these may answer differently when it is asked
+# again, so provider recovery retries it and a carried admission survives it.
+PROVIDER_RECOVERY_ELIGIBLE_STATUSES = frozenset(
+    {
+        ProviderStatus.AUTHENTICATION,
+        ProviderStatus.AUTHORIZATION,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.UNAVAILABLE,
+        ProviderStatus.INCOMPLETE,
+    }
+)
 
 
 class DispatchOutcome(StrEnum):
@@ -1329,6 +1397,11 @@ class LocalClaim:
             ClaimKind.ASIN,
         }:
             raise ReportValueError("target metadata claim kind is invalid")
+        # A carried admission names one edition and nothing else (#1316).
+        if self.basis == "prior_admission" and (
+            self.kind is not ClaimKind.ASIN or self.scope is not ClaimScope.EDITION
+        ):
+            raise ReportValueError("prior admission claim kind is invalid")
         if self.role is not None:
             if self.kind not in {
                 ClaimKind.CREATOR,
@@ -2807,6 +2880,10 @@ class ProviderObservation:
     transformation_lineage: WorkTitleTransformationLineage | None = None
 
     recording_lookup_candidates: tuple[ProviderCandidate, ...] = ()
+    # A product an ASIN lane refused, retained with the claims its stub in
+    # `candidates` lost (#1307). Never read for admission: it records what was
+    # refused, so a report can say a tight product was refused by title.
+    refused_products: tuple[ProviderCandidate, ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -2918,6 +2995,7 @@ class ProviderObservation:
                 )
             ):
                 raise ReportValueError("recording lookup provenance is invalid")
+        self._validate_refused_products()
         if (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates):
             raise ReportValueError("provider status and candidates disagree")
         if self.edition_enrichment_overflow is not None and (
@@ -2985,7 +3063,11 @@ class ProviderObservation:
                     claim.date_confidence,
                 ),
             )
-            for candidate in (*self.candidates, *self.recording_lookup_candidates)
+            for candidate in (
+                *self.candidates,
+                *self.recording_lookup_candidates,
+                *self.refused_products,
+            )
             for claim in candidate.claims
         ):
             raise ReportValueError("provider candidate claim reference is inconsistent")
@@ -3065,12 +3147,59 @@ class ProviderObservation:
         elif expected_convergence:
             object.__setattr__(self, "convergence", expected_convergence)
 
+    def _validate_refused_products(self) -> None:
+        """Bind each refused product to the ASIN-only stub it was cut to (#1307)."""
+        if (
+            type(self.refused_products) is not tuple
+            or len(self.refused_products) > MAX_CANDIDATES
+            or any(
+                type(value) is not ProviderCandidate for value in self.refused_products
+            )
+        ):
+            raise ReportValueError("refused products are invalid")
+        identities = tuple(value.identity for value in self.refused_products)
+        if identities != tuple(sorted(set(identities))):
+            raise ReportValueError("refused products are not canonical")
+        if not self.refused_products:
+            return
+        stubs = {value.identity: value for value in self.candidates}
+        if self.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES or not (
+            self.query_kind is ProviderQueryKind.ASIN
+            or any(lane.kind is ProviderQueryKind.ASIN for lane in self.lanes)
+        ):
+            raise ReportValueError("refused product provenance is invalid")
+        for product in self.refused_products:
+            stub = stubs.get(product.identity)
+            if (
+                stub is None
+                # Only finalization's own publication-date text (#1307).
+                or any(
+                    value.kind is not ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    for value in product.evidence
+                )
+                or product.identity_bindings
+                or product.runtime_short_of_local
+                or stub.evidence
+                or stub.work_identity != product.work_identity
+                or not stub.claims
+                or any(claim.kind is not ClaimKind.ASIN for claim in stub.claims)
+                or tuple(claim.reference for claim in stub.claims)
+                != tuple(
+                    claim.reference
+                    for claim in product.claims
+                    if claim.kind is ClaimKind.ASIN
+                )
+                or len(product.claims) == len(stub.claims)
+            ):
+                raise ReportValueError("refused product does not match its stub")
+
     def to_data(self) -> dict[str, object]:
         return {
             "candidates": [value.to_data() for value in self.candidates],
             "recording_lookup_candidates": [
                 value.to_data() for value in self.recording_lookup_candidates
             ],
+            "refused_products": [value.to_data() for value in self.refused_products],
             "input_references": list(self.input_references),
             "provider": self.provider,
             "query_kind": self.query_kind.value,
@@ -3184,6 +3313,7 @@ def provider_candidate_work_identity_admission(
     *,
     audiobook: bool = False,
     runtime_tight: bool = False,
+    leading_number: bool = False,
 ) -> WorkIdentityAdmission:
     """Apply the closed WORK qualification floor to one retained candidate.
 
@@ -3246,6 +3376,7 @@ def provider_candidate_work_identity_admission(
         provider_series_memberships=memberships,
         audiobook=audiobook,
         runtime_tight=runtime_tight,
+        leading_number=leading_number,
     )
     if (
         admission.transformation is not None
@@ -3697,6 +3828,29 @@ def _provider_candidate_work_identity_claims(
     )
 
 
+def provider_candidate_identity_title_claims(
+    candidate: ProviderCandidate,
+) -> tuple[str, str | None, tuple[str, ...]] | None:
+    """Read the title, one subtitle and authors the corroborated rule compares.
+
+    The same complete work claim set exact admission reads, with the one valid
+    work subtitle the product states beside it, or ``None`` for a product that
+    states no complete set or carries a work-identity veto (#1307).
+    """
+    claims = _provider_candidate_work_identity_claims(candidate)
+    if claims is None or claims[3]:
+        return None
+    subtitles = tuple(
+        claim.value
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.SUBTITLE
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    return claims[0], subtitles[0] if len(subtitles) == 1 else None, claims[1]
+
+
 def _provider_candidate_has_work_identity_veto(candidate: ProviderCandidate) -> bool:
     return any(
         claim.scope is ClaimScope.WORK
@@ -3728,6 +3882,8 @@ def provider_candidate_set_work_identity_admission(
     *,
     audiobook: bool = False,
     band_claims: tuple[LocalClaim, ...] | None = None,
+    corroboration: RecordingCorroboration | None = None,
+    leading_number: bool = False,
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit exactly one work identity and one lineage from a candidate set.
 
@@ -3737,6 +3893,22 @@ def provider_candidate_set_work_identity_admission(
     productions, each candidate inside the tight band of the item's runtime
     and without a recording conflict, so every set admitted without them
     keeps its candidates and lineage (#1260).
+
+    `corroboration` is passed beside `band_claims` on the Audible catalogue's
+    asserted lane alone (#1307). Only a set the band productions still refuse
+    reaches it, so it never changes a set admitted without it. Where two or
+    more products were admitted one by one, the band-first set rule may keep
+    the one tight product; where none was, the corroborated admission rule
+    may admit one. Either way the admitted set is that one product, and it
+    replays as one: band-first through the path that admitted it alone, the
+    rule through `band_corroborated_title_relation`.
+
+    The band reads a provider's whole-minute runtime exactly first and as a
+    floor (ADR-0064 as amended) only when that admits nothing, so a set the
+    exact band admitted keeps its candidates and lineage (#1307).
+
+    `leading_number` is Audible's asserted audiobook lane, the one lane that
+    dispatches the `leading_number_stripped` rung (#1307).
     """
 
     def admit(
@@ -3751,6 +3923,7 @@ def provider_candidate_set_work_identity_admission(
                 dispatch_lineage,
                 audiobook=audiobook,
                 runtime_tight=tight(candidate),
+                leading_number=leading_number,
             ),
             audiobook=audiobook,
         )
@@ -3770,11 +3943,146 @@ def provider_candidate_set_work_identity_admission(
     local = local_claim_runtime_seconds(band_claims)
     if local is None:
         return unwidened
-    return admit(
-        lambda candidate: (
-            runtime_agreement(local, candidate_runtime_seconds(candidate)).outcome
-            is CorroborationOutcome.CORROBORATED
-            and recording_variant_conflict(candidate, band_claims, local_title) is None
+
+    def tight_reading(
+        provider_minutes: bool,
+    ) -> Callable[[ProviderCandidate], bool]:
+        def tight(candidate: ProviderCandidate) -> bool:
+            return (
+                runtime_agreement(
+                    local,
+                    candidate_runtime_seconds(candidate),
+                    provider_minutes=provider_minutes,
+                ).outcome
+                is CorroborationOutcome.CORROBORATED
+                and recording_variant_conflict(candidate, band_claims, local_title)
+                is None
+            )
+
+        return tight
+
+    banded = admit(tight_reading(False))
+    if banded.admitted:
+        return banded
+    tight = tight_reading(True)
+    banded = admit(tight)
+    if banded.admitted or corroboration is None or not audiobook:
+        return banded
+    return _corroborated_set_admission(
+        candidates,
+        local_title,
+        local_authors,
+        dispatch_lineage,
+        band_claims,
+        corroboration,
+        tight,
+    )
+
+
+def _corroborated_set_admission(
+    candidates: tuple[ProviderCandidate, ...],
+    local_title: str,
+    local_authors: tuple[str, ...],
+    dispatch_lineage: WorkDispatchLineage | None,
+    band_claims: tuple[LocalClaim, ...],
+    corroboration: RecordingCorroboration,
+    tight: Callable[[ProviderCandidate], bool],
+) -> ProviderWorkIdentitySetAdmission:
+    """Try the band-first set rule, then the corroborated rule (#1307)."""
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        band_first_candidate,
+        corroborated_recording_candidate,
+    )
+
+    refused = ProviderWorkIdentitySetAdmission(False)
+    if dispatch_lineage is None or type(candidates) is not tuple:
+        return refused
+    if any(type(candidate) is not ProviderCandidate for candidate in candidates):
+        return refused
+    eligible = tuple(
+        candidate
+        for candidate in candidates
+        if not _provider_candidate_has_work_identity_veto(candidate)
+    )
+    admitted = tuple(
+        candidate
+        for candidate in eligible
+        if provider_candidate_work_identity_admission(
+            candidate,
+            local_title,
+            local_authors,
+            dispatch_lineage,
+            audiobook=True,
+            runtime_tight=tight(candidate),
+            leading_number=True,
+        ).admitted
+    )
+    if admitted:
+        chosen = band_first_candidate(admitted, local_title, band_claims, corroboration)
+        if chosen is None:
+            return refused
+        # The one tight product replays alone through the path that admitted
+        # it, so the lane records it and its own lineage.
+        return provider_candidate_set_work_identity_admission(
+            (chosen,),
+            local_title,
+            local_authors,
+            dispatch_lineage,
+            audiobook=True,
+            band_claims=band_claims,
+            leading_number=True,
+        )
+    chosen = corroborated_recording_candidate(
+        eligible, local_title, local_authors, band_claims, corroboration
+    )
+    if chosen is None:
+        return refused
+    queries = work_query_ladder(
+        local_title, local_authors, audiobook=True, leading_number=True
+    )
+    permitted = {WorkDispatchLineage.from_query(query) for query in queries} | {
+        WorkDispatchLineage.from_query(narrowing_work_query(query)) for query in queries
+    }
+    if dispatch_lineage not in permitted:
+        return refused
+    return ProviderWorkIdentitySetAdmission(
+        True,
+        (chosen,),
+        chosen.identity
+        if chosen.work_identity == "unresolved"
+        else chosen.work_identity,
+        WorkTitleTransformationLineage((CORROBORATED_TITLE_APPLICATION,)),
+    )
+
+
+def _corroborated_lane(lane: ProviderLaneObservation) -> bool:
+    """Say whether a lane admitted through the corroborated rule (#1307)."""
+    return (
+        lane.transformation_lineage is not None
+        and lane.transformation_lineage.production == CORROBORATED_TITLE_PRODUCTION
+    )
+
+
+# The one authority whose asserted lane walks the leading-number rung and
+# admits through the corroborated rule (#1307).
+CORROBORATED_RULE_AUTHORITY = "audible_catalog"
+
+
+def lane_work_ladder(
+    authority: str | None, payload: WorkLanePayload
+) -> tuple[WorkDispatchLineage, ...]:
+    """The audiobook ladder one planned WORK lane walks at one authority.
+
+    The catalogue's asserted lane alone adds the leading-number rung (#1307).
+    """
+    return tuple(
+        WorkDispatchLineage.from_query(query)
+        for query in work_query_ladder(
+            payload.title,
+            payload.authors,
+            audiobook=True,
+            leading_number=authority == CORROBORATED_RULE_AUTHORITY
+            and payload.title_basis is None,
         )
     )
 
@@ -4160,6 +4468,14 @@ class MetadataReport:
                 and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
                 else None
             )
+            # The corroborated rule reads only the catalogue's asserted lane,
+            # beside its band claims (#1307).
+            corroboration = (
+                recording_corroboration(self.target.fields)
+                if band_claims is not None
+                and provider.authority == CORROBORATED_RULE_AUTHORITY
+                else None
+            )
             if (
                 not work_lanes
                 and provider.query_kind is ProviderQueryKind.WORK
@@ -4172,6 +4488,8 @@ class MetadataReport:
                     provider.dispatch_lineage,
                     audiobook=self.audio is not None,
                     band_claims=band_claims,
+                    corroboration=corroboration,
+                    leading_number=corroboration is not None,
                 )
                 if (
                     not set_admission.admitted
@@ -4202,6 +4520,14 @@ class MetadataReport:
                         if payload is not None and payload.title_basis is None
                         else None
                     ),
+                    corroboration=(
+                        corroboration
+                        if payload is not None and payload.title_basis is None
+                        else None
+                    ),
+                    leading_number=corroboration is not None
+                    and payload is not None
+                    and payload.title_basis is None,
                 )
                 if (
                     not set_admission.admitted
@@ -4222,12 +4548,7 @@ class MetadataReport:
                     or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
                     or payload is None
                     or lane.exhausted_dispatch
-                    != tuple(
-                        WorkDispatchLineage.from_query(query)
-                        for query in work_query_ladder(
-                            payload.title, payload.authors, audiobook=True
-                        )
-                    )
+                    != lane_work_ladder(provider.authority, payload)
                 ):
                     raise ReportValueError(
                         "provider exhausted dispatch is inconsistent"
@@ -4249,16 +4570,14 @@ class MetadataReport:
                     raise ReportValueError(
                         "recording lookup hint provenance is invalid"
                     )
-                ladder = tuple(
-                    WorkDispatchLineage.from_query(query)
-                    for query in work_query_ladder(
-                        payload.title, payload.authors, audiobook=True
-                    )
-                )
+                ladder = lane_work_ladder(provider.authority, payload)
                 if any(
                     hint.rung not in ladder for hint in lane.recording_lookup_hints
                 ) or (
                     lane.status is ProviderStatus.CANDIDATES
+                    # A rule admission follows the whole ladder (#1307), so
+                    # every rung's hints stand beside it.
+                    and not _corroborated_lane(lane)
                     and (
                         lane.dispatch_lineage not in ladder
                         or any(
@@ -4286,7 +4605,9 @@ class MetadataReport:
 
                 local = local_claim_runtime_seconds(self.local_claims)
                 if local is None or any(
-                    runtime_agreement(local, hint.runtime_seconds).outcome
+                    runtime_agreement(
+                        local, hint.runtime_seconds, provider_minutes=True
+                    ).outcome
                     is not CorroborationOutcome.CORROBORATED
                     for hint in lane.recording_lookup_hints
                 ):
@@ -4371,7 +4692,10 @@ class MetadataReport:
         if any(
             not {link.local_reference for link in claim.links}.issubset(known)
             for provider in self.providers
-            for candidate in provider.recording_lookup_candidates
+            for candidate in (
+                *provider.recording_lookup_candidates,
+                *provider.refused_products,
+            )
             for claim in candidate.claims
         ):
             raise ReportValueError("recording lookup claim references are invalid")
@@ -4380,6 +4704,7 @@ class MetadataReport:
             for candidate in (
                 *provider.candidates,
                 *provider.recording_lookup_candidates,
+                *provider.refused_products,
             ):
                 expected = finalize_candidate_comparisons(
                     candidate,
@@ -4430,6 +4755,27 @@ class MetadataReport:
             raise ReportValueError("provider lane dispatch presence is invalid")
         if self.audio is None:
             return
+        # A rule admission stands only where every exact path refused (#1307):
+        # every planned alternative lane was asked and ended `no_match`, and
+        # no ASIN lane answered with a product, stubs included.
+        alternatives = tuple(
+            identity
+            for identity, payload in planned.items()
+            if payload.title_basis is not None
+        )
+        for provider in self.providers:
+            if not any(_corroborated_lane(lane) for lane in provider.lanes):
+                continue
+            statuses = {lane.identity: lane.status for lane in provider.lanes}
+            if any(
+                statuses.get(identity) is not ProviderStatus.NO_MATCH
+                for identity in alternatives
+            ) or any(
+                lane.kind is ProviderQueryKind.ASIN
+                and lane.status is ProviderStatus.CANDIDATES
+                for lane in provider.lanes
+            ):
+                raise ReportValueError("corroborated admission precedes an exact path")
         for _, lane in lanes:
             lane._validate_dispatch()
         if any(
@@ -4451,20 +4797,23 @@ class MetadataReport:
             for provider, lane, _ in counted
         ):
             raise ReportValueError("provider lane rungs provenance is invalid")
-        for _, lane, dispatch in counted:
+        for provider, lane, dispatch in counted:
             payload = planned[lane.identity]
-            ladder = tuple(
-                WorkDispatchLineage.from_query(query)
-                for query in work_query_ladder(
-                    payload.title, payload.authors, audiobook=True
-                )
-            )
+            ladder = lane_work_ladder(provider.authority, payload)
             rungs = cast("int", dispatch.rungs)
             if dispatch.outcome is DispatchOutcome.NOT_DISPATCHED:
                 expected = rungs == 0
             elif dispatch.outcome in {DispatchOutcome.EMPTY, DispatchOutcome.REFUSED}:
                 expected = rungs == len(lane.exhausted_dispatch)
+            elif dispatch.outcome is DispatchOutcome.ADMITTED and _corroborated_lane(
+                lane
+            ):
+                # The rule reads only after the whole ladder was sent (#1307).
+                expected = rungs == len(ladder)
             elif dispatch.outcome is DispatchOutcome.ADMITTED:
+                # A band-first admission (#1307) replays as the exact path
+                # that admitted its one product, so it is recorded as that
+                # path stops.
                 expected = (
                     lane.dispatch_lineage in ladder
                     and rungs == ladder.index(lane.dispatch_lineage) + 1
@@ -4533,6 +4882,17 @@ class MetadataReport:
                         ),
                     )
                     for candidate in provider.recording_lookup_candidates
+                ),
+                refused_products=tuple(
+                    finalize_candidate_comparisons(
+                        candidate,
+                        local_claims,
+                        provider.provider,
+                        allow_unbound_manifestation_link=(
+                            _target_backed_work_lookup(target, provider)
+                        ),
+                    )
+                    for candidate in provider.refused_products
                 ),
                 candidates=tuple(
                     finalize_candidate_comparisons(
@@ -4664,7 +5024,8 @@ def derive_field_results(
         # `unsupported` rather than `absent` keeps "this surface cannot carry
         # the field" distinct from "this surface carried nothing". The reading
         # follows the claims rather than a second list of kinds: a surface that
-        # actually stated this field is reported from what it stated.
+        # actually stated this field is reported from what it stated. A carried
+        # admission (#1316) can only ever carry an ASIN.
         bases = _SOURCE_CLAIM_BASES[source]
         if (
             source is FieldSource.TARGET_METADATA
@@ -4672,7 +5033,7 @@ def derive_field_results(
             and not any(
                 claim.kind is kind and claim.basis in bases for claim in local_claims
             )
-        ):
+        ) or (source is FieldSource.PRIOR_ADMISSION and kind is not ClaimKind.ASIN):
             return FieldState.UNSUPPORTED
         return next(
             (
@@ -5975,7 +6336,9 @@ def _typographic_text(value: str) -> str | None:
     }
     stack: list[str] = []
     translated: list[str] = []
-    for character in value:
+    # ADR-0018 step 4 as amended by #1307: an apostrophe between letters
+    # needs no partner.
+    for character in fold_lone_apostrophes(value):
         quote = paired.get(character)
         if quote is None:
             translated.append(character.translate(_TYPOGRAPHIC_TRANSLATION))
@@ -6120,6 +6483,10 @@ def _report_from_data(value: object) -> MetadataReport:
             "target",
         },
     )
+    # A predecessor document is refused for what it is before any section of
+    # it is read under the current vocabulary.
+    if root["schema_version"] != REPORT_SCHEMA:
+        raise ReportValueError("report schema is unsupported")
     target = _object(
         root["target"],
         {
@@ -6148,12 +6515,7 @@ def _report_from_data(value: object) -> MetadataReport:
         target["connection"],
         target["library"],
         target["item"],
-        tuple(
-            _target_field_from_data(
-                item, flagged=root["schema_version"] == REPORT_SCHEMA
-            )
-            for item in _list(target["fields"])
-        ),
+        tuple(_target_field_from_data(item) for item in _list(target["fields"])),
     )
     return MetadataReport(
         root["report_id"],
@@ -6304,7 +6666,7 @@ def _audio_chapter_from_data(value: object) -> AudioChapter:
 
 def _target_field_from_data(value: object, *, flagged: bool = True) -> TargetField:
     # A report of an earlier schema is read in its own shape, without the
-    # description's restore flag, so it is refused for its schema as before.
+    # description's restore flag (scripts/qualification_state_bridge.py).
     described = (
         flagged and type(value) is dict and value.get("destination") == "description"
     )
@@ -6519,6 +6881,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "authority",
             "candidates",
             "recording_lookup_candidates",
+            "refused_products",
             "convergence",
             "diagnostics",
             "dispatch_lineage",
@@ -6575,6 +6938,10 @@ def _provider_from_data(value: object) -> ProviderObservation:
         recording_lookup_candidates=tuple(
             _candidate_from_data(candidate)
             for candidate in _list(item["recording_lookup_candidates"])
+        ),
+        refused_products=tuple(
+            _candidate_from_data(candidate)
+            for candidate in _list(item["refused_products"])
         ),
     )
 
@@ -6986,6 +7353,11 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 __all__ = [
     "AUDIO_SET_SCHEMA",
+    "CORROBORATED_RULE_AUTHORITY",
+    "RecordingCorroboration",
+    "lane_work_ladder",
+    "provider_candidate_identity_title_claims",
+    "recording_corroboration",
     "AUDIOBOOK_MARKETPLACES",
     "DURATION_AGREEMENT_BAND_SECONDS",
     "MAX_AUDIO_SIDECARS",
@@ -7048,6 +7420,8 @@ __all__ = [
     "ProviderWorkIdentitySetAdmission",
     "ProviderQueryKind",
     "ProviderStatus",
+    "PROVIDER_RECOVERY_ELIGIBLE_STATUSES",
+    "ASSERTED_ASIN_BASES",
     "WorkIdentityContradiction",
     "REPORT_SCHEMA",
     "ReportValueError",

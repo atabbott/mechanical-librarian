@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Self, cast
 
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
+    candidate_edition_asin,
     candidate_recording_runtime_veto,
+    carried_asin_precedence,
+    target_current_asin,
+    verified_carried_asin,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -43,8 +47,10 @@ from mechanical_librarian.domain.field_value_comparison import (
 )
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
+    ASSERTED_ASIN_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    CORROBORATED_RULE_AUTHORITY,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -61,6 +67,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    RecordingCorroboration,
     ReportValueError,
     TargetDestination,
     TargetField,
@@ -84,6 +91,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_work_identity_contradiction,
     publication_date_is_voting,
     recording_association_references,
+    recording_corroboration,
     recording_variant_conflict,
     target_work_identity_context,
     work_discovery_lane_payloads,
@@ -105,7 +113,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v36"
+POLICY_VERSION = "fixed-conservative-v38"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1715,7 +1723,7 @@ def _observations(
             and claim.scope is local_scope
             and claim.state is FieldState.VALID
             and claim.canonical is not None
-            and claim.basis != "target_metadata"
+            and claim.basis not in ASSERTED_ASIN_BASES
             and _eligible_identifier(destination, claim.canonical, claim.applicability)
             and _eligible_identifier_reference(report, destination, claim.reference)
             and _eligible_description(destination, claim.canonical)
@@ -1734,11 +1742,29 @@ def _observations(
                     _local_representation(claim.basis),
                 )
             )
+    edition_asins = destination is TargetDestination.ASIN and report.audio is not None
+    withheld = carried_asin_precedence(report) if edition_asins else frozenset()
+    current_asin = target_current_asin(report) if edition_asins else None
+    carried_asin = verified_carried_asin(report) if edition_asins else None
     for provider in report.providers:
         for candidate in provider.candidates:
             if work_only and not _supported_work_source(report, provider, candidate):
                 continue
+            if (provider.provider, candidate.identity) in withheld:
+                continue
+            # Sibling ASINs of one recording are one edition (#1316).
+            edition_asin = (
+                candidate_edition_asin(provider, candidate, current_asin, carried_asin)
+                if edition_asins
+                else None
+            )
             for claim in candidate.claims:
+                if (
+                    edition_asins
+                    and claim.kind is ClaimKind.ASIN
+                    and canonical_asin(claim.value) != edition_asin
+                ):
+                    continue
                 if (
                     claim.kind in kinds
                     and (
@@ -2755,7 +2781,7 @@ def _local_contributor_displays(
         {
             claim.basis
             for claim in report.local_claims
-            if claim.basis != "target_metadata"
+            if claim.basis not in ASSERTED_ASIN_BASES
         }
     ):
         claims = tuple(
@@ -2926,7 +2952,7 @@ def _list_observations(
             {
                 claim.basis
                 for claim in report.local_claims
-                if claim.basis != "target_metadata"
+                if claim.basis not in ASSERTED_ASIN_BASES
             }
         )
     )
@@ -3388,6 +3414,7 @@ def _target_backed_lookup_contains(
                     expected_authors,
                     audiobook=report.audio is not None,
                     band_claims=_asserted_lane_band_claims(report, provider, lane),
+                    corroboration=_asserted_lane_corroboration(report, provider, lane),
                 )
                 and lane.identity
                 == discovery_lane_identity(
@@ -3427,6 +3454,7 @@ def _candidate_set_replays_work_qualification(
     *,
     audiobook: bool = False,
     band_claims: tuple[LocalClaim, ...] | None = None,
+    corroboration: RecordingCorroboration | None = None,
 ) -> bool:
     """Replay one unambiguous WORK candidate set before granting authority."""
     candidates_by_identity = {value.identity: value for value in provider.candidates}
@@ -3445,6 +3473,8 @@ def _candidate_set_replays_work_qualification(
         lane.dispatch_lineage,
         audiobook=audiobook,
         band_claims=band_claims,
+        corroboration=corroboration,
+        leading_number=corroboration is not None,
     )
     return (
         admission.admitted
@@ -3480,6 +3510,24 @@ def _asserted_lane_band_claims(
     )
 
 
+def _asserted_lane_corroboration(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    lane: ProviderLaneObservation,
+) -> RecordingCorroboration | None:
+    """Read what a corroborated-rule admission replays against (#1307).
+
+    Only the catalogue's asserted lane has it, beside its band claims, exactly
+    as report construction and report validation pass it.
+    """
+    return (
+        recording_corroboration(report.target.fields)
+        if provider.authority == CORROBORATED_RULE_AUTHORITY
+        and _asserted_lane_band_claims(report, provider, lane) is not None
+        else None
+    )
+
+
 def provider_candidate_represents_target_work(
     report: MetadataReport,
     provider: ProviderObservation,
@@ -3500,7 +3548,7 @@ def provider_candidate_represents_target_work(
             and canonical_asin(claim.value) == claim.value
             and any(
                 local.kind is ClaimKind.ASIN
-                and local.basis != "target_metadata"
+                and local.basis not in ASSERTED_ASIN_BASES
                 and canonical_asin(local.canonical) == claim.value
                 for local in report.local_claims
             )
@@ -3605,6 +3653,12 @@ def provider_candidate_represents_target_work(
                 lane.dispatch_lineage,
                 audiobook=report.audio is not None,
                 band_claims=_asserted_lane_band_claims(report, provider, lane),
+                corroboration=(
+                    corroboration := _asserted_lane_corroboration(
+                        report, provider, lane
+                    )
+                ),
+                leading_number=corroboration is not None,
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
         else:
@@ -3876,7 +3930,7 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 {
                     claim.basis
                     for claim in report.local_claims
-                    if claim.basis != "target_metadata"
+                    if claim.basis not in ASSERTED_ASIN_BASES
                 }
             )
         )

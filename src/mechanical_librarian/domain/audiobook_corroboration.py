@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import Final, cast
 
@@ -26,7 +27,11 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioObservation,
     AudioObservationKind,
 )
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    narrator_cast_disjoint,
+)
 from mechanical_librarian.domain.metadata_report import (
+    ASSERTED_ASIN_BASES,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     AudioFacts,
     ClaimKind,
@@ -42,16 +47,23 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    RecordingCorroboration,
     RecordingLookupHint,
     TargetDestination,
+    TargetFieldState,
     candidate_asins,
     canonical_asin,
     discovery_lane_identity,
     duration_milliseconds,
     provider_candidate_exact_work_identity_admission,
+    provider_candidate_identity_title_claims,
     recording_variant_conflict,
 )
-from mechanical_librarian.domain.work_identity import WorkDispatchLineage
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_title_extends,
+    work_title_related,
+)
 
 # Ninety whole seconds. A provider states a runtime in whole minutes, so two
 # sources that agree exactly still differ by up to half a minute of rounding on
@@ -65,6 +77,9 @@ RUNTIME_BAND_TIGHT_SECONDS: Final = 90
 # the same recording with a different intro, outro, or end-credit block.
 # Beyond it, two recordings of one work are the ordinary explanation.
 RUNTIME_BAND_LOOSE_SECONDS: Final = 600
+# Every audiobook authority states its runtime in whole minutes, truncated, so
+# the running time a minute states runs up to 59 seconds past it (#1307).
+MINUTE_FLOOR_SECONDS: Final = 59
 # Chapter boundaries are cut once and re-encoded, so two statements of one
 # chapter agree to about a second. Two is the measured tolerance.
 CHAPTER_DURATION_TOLERANCE_SECONDS: Final = 2
@@ -251,15 +266,23 @@ def runtime_corroborated_candidate(
     local = local_claim_runtime_seconds(local_claims)
     if local is None:
         return None
-    admitted: list[tuple[ProviderCandidate, CorroborationSignal]] = []
-    for candidate in candidates:
-        signal = runtime_agreement(local, candidate_runtime_seconds(candidate))
-        if signal.outcome is CorroborationOutcome.CORROBORATED:
-            admitted.append((candidate, signal))
-    if not admitted:
-        return None
-    candidate, signal = min(admitted, key=lambda value: value[0].identity)
-    return candidate, signal.reasons
+    # A product inside the band read exactly keeps its precedence over one the
+    # minute floor alone brings in, so the floor reading (#1307) never changes
+    # which candidate an earlier admission chose.
+    for provider_minutes in (False, True):
+        admitted: list[tuple[ProviderCandidate, CorroborationSignal]] = []
+        for candidate in candidates:
+            signal = runtime_agreement(
+                local,
+                candidate_runtime_seconds(candidate),
+                provider_minutes=provider_minutes,
+            )
+            if signal.outcome is CorroborationOutcome.CORROBORATED:
+                admitted.append((candidate, signal))
+        if admitted:
+            candidate, signal = min(admitted, key=lambda value: value[0].identity)
+            return candidate, signal.reasons
+    return None
 
 
 def loose_band_survivors(
@@ -358,9 +381,8 @@ def lane_band(
         return "none"
     retained = {candidate.identity: candidate for candidate in provider.candidates}
     outcomes = {
-        runtime_agreement(
-            local_runtime,
-            candidate_runtime_seconds(retained[value.edition_identity]),
+        stated_runtime_agreement(
+            local_runtime, retained[value.edition_identity]
         ).outcome
         for value in lane.candidates
     }
@@ -408,7 +430,7 @@ def recording_lookup_hints(
             or asin in held
             # A sub-second statement rounds to no runtime a hint can carry.
             or not stated
-            or runtime_agreement(local, stated).outcome
+            or runtime_agreement(local, stated, provider_minutes=True).outcome
             is not CorroborationOutcome.CORROBORATED
         ):
             continue
@@ -457,12 +479,23 @@ def local_chapter_durations_seconds(audio: AudioFacts | None) -> tuple[int, ...]
 
 
 def runtime_agreement(
-    local_seconds: int | None, provider_seconds: int | None
+    local_seconds: int | None,
+    provider_seconds: int | None,
+    *,
+    provider_minutes: bool = False,
 ) -> CorroborationSignal:
-    """Compare two running times against the two named tolerance bands."""
+    """Compare two running times against the two named tolerance bands.
+
+    `provider_minutes` says the provider's value is a whole-minute statement
+    (#1307, ADR-0064 as amended): a minute is a floor, so the running time it
+    states lies in `[m, m + 59]` seconds, and the tight band measures from
+    that interval rather than from its lower end. The band stays 90 seconds
+    wide, and the loose band still measures from the stated value.
+    """
     if (
         type(local_seconds) is not int
         or type(provider_seconds) is not int
+        or type(provider_minutes) is not bool
         or local_seconds < 0
         or provider_seconds < 0
     ):
@@ -471,7 +504,12 @@ def runtime_agreement(
             CorroborationReason.RUNTIME_UNAVAILABLE,
         )
     difference = abs(local_seconds - provider_seconds)
-    if difference <= RUNTIME_BAND_TIGHT_SECONDS:
+    if (
+        tight_runtime_distance(
+            local_seconds, provider_seconds, provider_minutes=provider_minutes
+        )
+        <= RUNTIME_BAND_TIGHT_SECONDS
+    ):
         return _signal(
             CorroborationOutcome.CORROBORATED,
             CorroborationReason.RUNTIME_WITHIN_TIGHT_BAND,
@@ -484,6 +522,31 @@ def runtime_agreement(
     return _signal(
         CorroborationOutcome.CONTRADICTED,
         CorroborationReason.RUNTIME_OUTSIDE_BANDS,
+    )
+
+
+def tight_runtime_distance(
+    local_seconds: int, provider_seconds: int, *, provider_minutes: bool = False
+) -> int:
+    """Measure a provider running time's distance for the tight band (#1307).
+
+    A whole-minute statement is read as the interval `[m, m + 59]` seconds,
+    and its distance is zero inside that interval; any other value is read
+    exactly.
+    """
+    if not provider_minutes or provider_seconds % 60:
+        return abs(local_seconds - provider_seconds)
+    if local_seconds < provider_seconds:
+        return provider_seconds - local_seconds
+    return max(0, local_seconds - provider_seconds - MINUTE_FLOOR_SECONDS)
+
+
+def stated_runtime_agreement(
+    local_seconds: int | None, candidate: ProviderCandidate
+) -> CorroborationSignal:
+    """Compare a recording with the whole-minute runtime a product states."""
+    return runtime_agreement(
+        local_seconds, candidate_runtime_seconds(candidate), provider_minutes=True
     )
 
 
@@ -913,6 +976,7 @@ __all__ = [
     "CorroborationReason",
     "CorroborationSignal",
     "CorroborationValueError",
+    "MINUTE_FLOOR_SECONDS",
     "RUNTIME_BAND_LOOSE_SECONDS",
     "RUNTIME_BAND_TIGHT_SECONDS",
     "STRONG_CHAPTER_AGREEMENT_MINIMUM",
@@ -931,6 +995,17 @@ __all__ = [
     "runtime_agreement",
     "runtime_corroborated_candidate",
     "runtime_short_of_stated",
+    "stated_runtime_agreement",
+    "tight_runtime_distance",
+    "admitted_recording_asin",
+    "band_first_candidate",
+    "corroborated_recording_candidate",
+    "candidate_edition_asin",
+    "candidate_narrator_disjoint",
+    "carried_asin_claim",
+    "carried_asin_precedence",
+    "target_current_asin",
+    "verified_carried_asin",
 ]
 
 
@@ -951,7 +1026,7 @@ def recording_runtime_veto(candidate: ProviderCandidate, coverage: int) -> bool:
         duration.state is not FieldState.VALID
         or seconds is None
         or seconds <= 0
-        or runtime_agreement(coverage, seconds).outcome
+        or runtime_agreement(coverage, seconds, provider_minutes=True).outcome
         is not CorroborationOutcome.CORROBORATED
     )
 
@@ -995,15 +1070,17 @@ def candidate_recording_runtime_veto(
 def _local_identifier_asins(local_claims: tuple[LocalClaim, ...]) -> frozenset[str]:
     """Return the canonical ASINs the item's own surfaces carry.
 
-    A target assertion is deliberately not one of them. The tag, the sidecar,
-    and the path were read off the recording; the assertion was typed about it,
-    and ADR-0061 keeps those two apart everywhere identity is at stake.
+    A target assertion is deliberately not one of them, and neither is an
+    admission carried from an earlier preparation (#1316). The tag, the
+    sidecar, and the path were read off the recording; the other two were
+    stated about it, and ADR-0061 keeps those apart everywhere identity is at
+    stake.
     """
     return frozenset(
         value
         for claim in local_claims
         if claim.kind is ClaimKind.ASIN
-        and claim.basis != "target_metadata"
+        and claim.basis not in ASSERTED_ASIN_BASES
         and (value := canonical_asin(claim.canonical)) is not None
     )
 
@@ -1215,4 +1292,658 @@ def admitted_audiobook_identity(report: MetadataReport) -> bool:
         raise CorroborationValueError("provider observation is invalid")
     return (
         _stated_runtime_admitted(report) or recording_identity_basis(report) is not None
+    )
+
+
+def candidate_narrator_disjoint(
+    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+) -> bool:
+    """Whether a product credits only narrators the recording's own credits lack.
+
+    An unknown cast on either side is never disjoint, so a recording without
+    local narrator credits, or a product stating none, passes (#1252, #1316).
+    """
+    return narrator_cast_disjoint(
+        _recording_narrators(local_claims), _candidate_narrators(candidate)
+    )
+
+
+def _recording_narrators(local_claims: tuple[LocalClaim, ...]) -> tuple[str, ...]:
+    return tuple(
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role == "narrator"
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+    )
+
+
+def _candidate_narrators(candidate: ProviderCandidate) -> tuple[str, ...]:
+    return tuple(
+        claim.value
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role == "narrator"
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+
+
+class _Signal(StrEnum):
+    AGREE = "agree"
+    CONTRADICT = "contradict"
+    UNKNOWN = "unknown"
+
+
+# Words a series name carries that say nothing about which series it is.
+_SERIES_NOISE: Final = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "series",
+        "saga",
+        "trilogy",
+        "cycle",
+        "chronicles",
+        "book",
+        "books",
+        "novel",
+        "novels",
+        "sequence",
+    }
+)
+_SEQUENCE_NUMBER: Final = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+
+
+def _series_key(value: str) -> str:
+    folded = re.sub(r"[^\w\s]|_", " ", value.casefold())
+    return " ".join(token for token in folded.split() if token not in _SERIES_NOISE)
+
+
+def _sequence_number(value: str | None) -> Decimal | None:
+    match = None if value is None else _SEQUENCE_NUMBER.search(value)
+    return None if match is None else Decimal(match.group())
+
+
+def _local_series(
+    local_claims: tuple[LocalClaim, ...], corroboration: RecordingCorroboration
+) -> tuple[tuple[str, str | None], ...]:
+    names = tuple(
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.SERIES
+        and claim.state is FieldState.VALID
+        and claim.canonical
+    )
+    sequences = tuple(
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.SERIES_SEQUENCE
+        and claim.state is FieldState.VALID
+        and claim.canonical
+    )
+    tagged = (
+        ((names[0], sequences[0] if len(sequences) == 1 else None),)
+        if len(names) == 1
+        else ()
+    )
+    return (
+        *((value.name, value.sequence) for value in corroboration.series),
+        *tagged,
+    )
+
+
+def _candidate_series(
+    candidate: ProviderCandidate,
+) -> tuple[tuple[str, str | None], ...]:
+    ordered = tuple(sorted(candidate.claims, key=lambda claim: claim.raw_order))
+    memberships: list[tuple[str, str | None]] = []
+    for index, claim in enumerate(ordered):
+        if (
+            claim.kind is not ClaimKind.SERIES
+            or claim.state is not FieldState.VALID
+            or claim.value is None
+        ):
+            continue
+        following = ordered[index + 1] if index + 1 < len(ordered) else None
+        memberships.append(
+            (
+                claim.value,
+                following.value
+                if following is not None
+                and following.kind is ClaimKind.SERIES_SEQUENCE
+                and following.state is FieldState.VALID
+                else None,
+            )
+        )
+    return tuple(memberships)
+
+
+def _series_signal(
+    local: tuple[tuple[str, str | None], ...],
+    product: tuple[tuple[str, str | None], ...],
+) -> _Signal:
+    """Agree on one shared series number, contradict on a different one.
+
+    Two memberships name one series only when their normalized names are
+    equal. A different number on any such pair contradicts, whatever another
+    pair says; otherwise an equal number on one agrees.
+    """
+    agree = False
+    for local_name, local_sequence in local:
+        for product_name, product_sequence in product:
+            left, right = _series_key(local_name), _series_key(product_name)
+            if not left or left != right:
+                continue
+            left_number = _sequence_number(local_sequence)
+            right_number = _sequence_number(product_sequence)
+            if left_number is None or right_number is None:
+                continue
+            if left_number != right_number:
+                return _Signal.CONTRADICT
+            agree = True
+    return _Signal.AGREE if agree else _Signal.UNKNOWN
+
+
+def _narrator_signal(local: tuple[str, ...], candidate: ProviderCandidate) -> _Signal:
+    product = _candidate_narrators(candidate)
+    if not local or not product:
+        return _Signal.UNKNOWN
+    if narrator_cast_disjoint(local, product):
+        return _Signal.CONTRADICT
+    return _Signal.AGREE
+
+
+def _corroborated_distance(
+    candidate: ProviderCandidate,
+    title: str,
+    authors: tuple[str, ...],
+    local_claims: tuple[LocalClaim, ...],
+    corroboration: RecordingCorroboration,
+) -> int | None:
+    """The tight-band distance of one product the rule admits, or ``None``."""
+    local = local_claim_runtime_seconds(local_claims)
+    stated = candidate_runtime_seconds(candidate)
+    claims = provider_candidate_identity_title_claims(candidate)
+    if (
+        local is None
+        or not stated
+        or claims is None
+        or stated_runtime_agreement(local, candidate).outcome
+        is not CorroborationOutcome.CORROBORATED
+        or recording_variant_conflict(candidate, local_claims, title) is not None
+    ):
+        return None
+    provider_title, provider_subtitle, provider_authors = claims
+    if not work_title_related(title, provider_title, provider_subtitle):
+        return None
+    # The author is the query's own term, so it only ever contradicts.
+    if narrator_cast_disjoint(authors, provider_authors):
+        return None
+    narrators = _narrator_signal(
+        (*corroboration.narrators, *_recording_narrators(local_claims)), candidate
+    )
+    series = _series_signal(
+        _local_series(local_claims, corroboration), _candidate_series(candidate)
+    )
+    if _Signal.CONTRADICT in {narrators, series} or _Signal.AGREE not in {
+        narrators,
+        series,
+    }:
+        return None
+    # A title that runs on past the other, on either side, is the shape of a
+    # series neighbour by the same author and narrator, so only an agreeing
+    # series position admits it.
+    if (
+        work_title_extends(
+            title,
+            provider_title,
+            provider_subtitle,
+            decorations=tuple(
+                name
+                for name, _ in (
+                    *_local_series(local_claims, corroboration),
+                    *_candidate_series(candidate),
+                )
+            ),
+            sequences=tuple(
+                sequence
+                for _, sequence in _candidate_series(candidate)
+                if sequence is not None
+            ),
+        )
+        and series is not _Signal.AGREE
+    ):
+        return None
+    return tight_runtime_distance(local, stated, provider_minutes=True)
+
+
+def corroborated_recording_candidate(
+    candidates: tuple[ProviderCandidate, ...],
+    title: str,
+    authors: tuple[str, ...],
+    local_claims: tuple[LocalClaim, ...],
+    corroboration: RecordingCorroboration,
+) -> ProviderCandidate | None:
+    """Choose the one product the corroborated admission rule admits (#1307).
+
+    The rule reads only where exact admission admitted nothing. A product
+    qualifies when its whole-minute runtime is inside the tight band, its
+    title is related to the local one (`work_title_related`, the mandatory
+    guard), its narrator or series number agrees, and nothing contradicts it:
+    no disjoint narrator cast or author set, no different series number, and
+    no recording language or format conflict. When several products qualify,
+    each must state a narrator and share narrators with every other, or none
+    is admitted; of those that do, the closest runtime wins, then the
+    identity.
+    """
+    if (
+        type(candidates) is not tuple
+        or any(type(value) is not ProviderCandidate for value in candidates)
+        or type(corroboration) is not RecordingCorroboration
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    qualified = tuple(
+        (distance, candidate)
+        for candidate in candidates
+        if (
+            distance := _corroborated_distance(
+                candidate, title, authors, local_claims, corroboration
+            )
+        )
+        is not None
+    )
+    # Several qualifying editions are one recording only when each states a
+    # narrator and no two casts are disjoint: an unnarrated edition beside
+    # them could be any recording, so it does not pass by saying nothing.
+    if not qualified or (
+        len(qualified) > 1
+        and (
+            any(not _candidate_narrators(candidate) for _, candidate in qualified)
+            or any(
+                narrator_cast_disjoint(
+                    _candidate_narrators(left), _candidate_narrators(right)
+                )
+                for _, left in qualified
+                for _, right in qualified
+            )
+        )
+    ):
+        return None
+    return min(qualified, key=lambda value: (value[0], value[1].identity))[1]
+
+
+def band_first_candidate(
+    admitted: tuple[ProviderCandidate, ...],
+    title: str,
+    local_claims: tuple[LocalClaim, ...],
+    corroboration: RecordingCorroboration,
+) -> ProviderCandidate | None:
+    """Admit the one tight product of a set of title-admitted ones (#1260, #1307).
+
+    Every product here already passed work-identity admission one by one, but
+    each Audible product is its own work identity, so two of them refuse the
+    set. When exactly one is inside the tight band, every other one is beyond
+    the loose band, and the tight one has no recording conflict and no
+    narrator cast disjoint from the recording's own, that one is the
+    recording and the rest are other cuts of the work.
+    """
+    if type(admitted) is not tuple or any(
+        type(value) is not ProviderCandidate for value in admitted
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    local = local_claim_runtime_seconds(local_claims)
+    if local is None or len(admitted) < 2:
+        return None
+    outcomes = tuple(
+        (stated_runtime_agreement(local, candidate).outcome, candidate)
+        for candidate in admitted
+    )
+    tight = tuple(
+        candidate
+        for outcome, candidate in outcomes
+        if outcome is CorroborationOutcome.CORROBORATED
+    )
+    if (
+        len(tight) != 1
+        or sum(outcome is CorroborationOutcome.CONTRADICTED for outcome, _ in outcomes)
+        != len(admitted) - 1
+        or recording_variant_conflict(tight[0], local_claims, title) is not None
+        or _narrator_signal(
+            (*corroboration.narrators, *_recording_narrators(local_claims)), tight[0]
+        )
+        is _Signal.CONTRADICT
+    ):
+        return None
+    return tight[0]
+
+
+def carried_asin_claim(local_claims: tuple[LocalClaim, ...]) -> LocalClaim | None:
+    """Return the one admission an earlier preparation carried forward (#1316)."""
+    claims = tuple(
+        claim
+        for claim in local_claims
+        if claim.basis == "prior_admission"
+        and claim.kind is ClaimKind.ASIN
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+        and canonical_asin(claim.canonical) == claim.canonical
+    )
+    return claims[0] if len(claims) == 1 else None
+
+
+def _edition_asins(candidate: ProviderCandidate) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                value
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.ASIN
+                and claim.scope is ClaimScope.EDITION
+                and claim.state is FieldState.VALID
+                and (value := canonical_asin(claim.value)) is not None
+            }
+        )
+    )
+
+
+def _queried_asin(lane: ProviderLaneObservation, asins: tuple[str, ...]) -> str | None:
+    """Name the ASIN one product lane looked up, among the ones offered.
+
+    A lane identity is keyed on the ASIN it asked for, so it is recovered by
+    recomputing that key rather than by trusting any candidate statement.
+    """
+    if lane.kind is not ProviderQueryKind.ASIN:
+        return None
+    return next(
+        (
+            asin
+            for asin in asins
+            if lane.identity
+            == discovery_lane_identity(
+                {
+                    "canonical_asin": asin,
+                    "input_references": list(lane.input_references),
+                    "kind": ProviderQueryKind.ASIN.value,
+                }
+            )
+        ),
+        None,
+    )
+
+
+def candidate_edition_asin(
+    observation: ProviderObservation,
+    candidate: ProviderCandidate,
+    current: str | None = None,
+    carried: str | None = None,
+) -> str | None:
+    """Return the one edition ASIN a candidate stands for (#1316).
+
+    AudioSilo lists one recording under its regional and relisted ASINs, and
+    those siblings are one edition rather than a choice. A candidate stating
+    one ASIN stands for it; one stating several stands for `current`, the
+    target's own ASIN, when that is among them, and otherwise for the ASIN its
+    lane looked up. When lanes looked it up by several of its siblings and one
+    of them is `carried`, the verified carried ASIN, it stands for that: the
+    carried ASIN wins (ADR-0088). A candidate no lane looked up by one of its
+    siblings, or looked up by several none of which is the carry, stands for
+    none.
+    """
+    asins = _edition_asins(candidate)
+    if len(asins) <= 1:
+        return asins[0] if asins else None
+    if current is not None and current in asins:
+        return current
+    queried = {
+        value
+        for lane in observation.lanes
+        if any(
+            member.edition_identity == candidate.identity for member in lane.candidates
+        )
+        and (value := _queried_asin(lane, asins)) is not None
+    }
+    if len(queried) == 1:
+        return queried.pop()
+    return carried if carried is not None and carried in queried else None
+
+
+def verified_carried_asin(report: MetadataReport) -> str | None:
+    """Return the carried ASIN when a lookup of it verified it, else None."""
+    claim = carried_asin_claim(report.local_claims)
+    if claim is None or not _verified_carried_candidates(report):
+        return None
+    return claim.canonical
+
+
+def _tight_recording(
+    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+) -> bool:
+    """A recording the stated runtime admitted inside the tight band.
+
+    Edition marketplace evidence survives only an admission, and the tight
+    band read again over the retained runtime excludes one admitted on its
+    chapter structure alone.
+    """
+    return (
+        any(
+            value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            and value.scope is ClaimScope.EDITION
+            for value in candidate.evidence
+        )
+        and runtime_corroborated_candidate((candidate,), local_claims) is not None
+    )
+
+
+def _carried_lanes(
+    report: MetadataReport, claim: LocalClaim
+) -> tuple[tuple[ProviderObservation, ProviderLaneObservation], ...]:
+    asin = cast("str", claim.canonical)
+    return tuple(
+        (observation, lane)
+        for observation in report.providers
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        for lane in observation.lanes
+        if claim.reference in lane.input_references
+        and _queried_asin(lane, (asin,)) == asin
+    )
+
+
+def _verified_carried_candidates(
+    report: MetadataReport,
+) -> tuple[ProviderCandidate, ...]:
+    """Return the products a direct lookup of the carried ASIN admitted."""
+    claim = carried_asin_claim(report.local_claims)
+    if claim is None or report.audio is None:
+        return ()
+    asin = cast("str", claim.canonical)
+    verified: list[ProviderCandidate] = []
+    for observation, lane in _carried_lanes(report, claim):
+        if lane.status is not ProviderStatus.CANDIDATES:
+            continue
+        by_identity = {value.identity: value for value in observation.candidates}
+        for member in lane.candidates:
+            candidate = by_identity.get(member.edition_identity)
+            if (
+                candidate is not None
+                and asin in _edition_asins(candidate)
+                and _tight_recording(candidate, report.local_claims)
+                and not candidate_narrator_disjoint(candidate, report.local_claims)
+            ):
+                verified.append(candidate)
+    return tuple(verified)
+
+
+def target_current_asin(report: MetadataReport) -> str | None:
+    """Return the canonical ASIN the target records, if it records one."""
+    return next(
+        (
+            canonical_asin(field.value)
+            for field in report.target.fields
+            if field.destination is TargetDestination.ASIN
+            and field.state is TargetFieldState.VALUE
+            and type(field.value) is str
+        ),
+        None,
+    )
+
+
+def _admitted_candidates(
+    report: MetadataReport,
+) -> tuple[tuple[ProviderObservation, ProviderCandidate], ...]:
+    """The tight, narrator-compatible recordings audiobook authorities admitted."""
+    return tuple(
+        (observation, candidate)
+        for observation in report.providers
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and observation.status is ProviderStatus.CANDIDATES
+        for candidate in observation.candidates
+        if _tight_recording(candidate, report.local_claims)
+        and not candidate_narrator_disjoint(candidate, report.local_claims)
+    )
+
+
+# A carried lookup that ended in one of these answered; any other non-disabled
+# status is a failure, which never refutes a carried edition (#1316).
+_DEFINITIVE_LANE_STATUSES: Final = frozenset(
+    {ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH}
+)
+
+
+def admitted_recording_asin(report: MetadataReport) -> str | None:
+    """Return the one edition ASIN this report admitted, to carry forward (#1316).
+
+    Only an audiobook with no ASIN of its own carries anything: one that has
+    its identifier already looks it up. The admission is a stated runtime
+    inside the tight band at an audiobook authority, with edition marketplace
+    evidence and a narrator cast not disjoint from the recording's own; a
+    chapter-only admission is not carried. Every admitted product must name
+    the same edition, a multi-ASIN statement counting as the ASIN its lane
+    looked up, or nothing is carried.
+
+    An ASIN this report itself carried is kept while any audiobook
+    authority's lookup of it verified it, and kept again unverified while at
+    least one of those lookups failed (it ended in anything but products or
+    no match) or none answered (none was made, or every one was disabled).
+    Only when one answered definitively, none verified it and none failed is
+    it refuted: it is dropped, and this report cannot admit it again.
+
+    The owner's value is never displaced: when the target already records an
+    ASIN this report admitted as a distinct product, no other edition is
+    carried.
+    """
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    if report.audio is None or _local_identifier_asins(report.local_claims):
+        return None
+    admitted_candidates = _admitted_candidates(report)
+    asin = _carried_or_admitted_asin(report, admitted_candidates)
+    current = target_current_asin(report)
+    if (
+        asin is not None
+        and current is not None
+        and asin != current
+        and any(
+            current in (edition_asins := _edition_asins(candidate))
+            and asin not in edition_asins
+            for _observation, candidate in admitted_candidates
+        )
+    ):
+        # Carrying another edition would contest the owner's admitted one
+        # every preparation, and the carried edition would never settle. A
+        # product stating both is one recording's siblings, not a contest.
+        return None
+    return asin
+
+
+def _carried_or_admitted_asin(
+    report: MetadataReport,
+    admitted_candidates: tuple[tuple[ProviderObservation, ProviderCandidate], ...],
+) -> str | None:
+    carried = carried_asin_claim(report.local_claims)
+    refuted: str | None = None
+    if carried is not None:
+        asin = cast("str", carried.canonical)
+        if _verified_carried_candidates(report):
+            return asin
+        # Verified nowhere. Only a lane that completed answers: it returned
+        # products or no match. Any other ending, recoverable or not (a
+        # malformed or oversized response, a candidate limit), is a failure
+        # and leaves the question open, as does no answer at all. A disabled
+        # provider is not asked, so it neither keeps nor refutes.
+        statuses = tuple(
+            lane.status
+            for _observation, lane in _carried_lanes(report, carried)
+            if lane.status is not ProviderStatus.DISABLED
+        )
+        if not statuses or any(
+            status not in _DEFINITIVE_LANE_STATUSES for status in statuses
+        ):
+            return asin
+        refuted = asin
+    admitted: set[str | None] = {
+        candidate_edition_asin(observation, candidate)
+        for observation, candidate in admitted_candidates
+    }
+    admitted.discard(refuted)
+    if len(admitted) != 1:
+        return None
+    return admitted.pop()
+
+
+def carried_asin_precedence(report: MetadataReport) -> frozenset[tuple[str, str]]:
+    """Name the products withheld at the ASIN field once a carried edition is verified.
+
+    The one place the precedence rule lives (ADR-0088, the owner's decision of
+    2026-10-28): once a direct lookup verified the carried ASIN, that is the
+    ASIN proposed, and a tight product naming another ASIN whose narrator cast
+    is not disjoint from the carried product's is the same recording relisted
+    rather than a second choice, so it is withheld. Search still runs and
+    still feeds every other field.
+
+    The owner's value is never outranked. When this report admitted the
+    target's own ASIN as the recording, and that product's narrator cast is
+    not disjoint from the carried product's, the owner's edition stands and it
+    is the carried products that are withheld; a product naming the target's
+    own ASIN is never withheld. Returned as provider name and candidate
+    identity pairs.
+    """
+    carried = _verified_carried_candidates(report)
+    claim = carried_asin_claim(report.local_claims)
+    if not carried or claim is None:
+        return frozenset()
+    current = target_current_asin(report)
+    narrators = tuple(
+        value for candidate in carried for value in _candidate_narrators(candidate)
+    )
+    products = tuple(
+        (observation, candidate)
+        for observation in report.providers
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        for candidate in observation.candidates
+        if current not in _edition_asins(candidate)
+    )
+    owner = tuple(
+        candidate
+        for _observation, candidate in _admitted_candidates(report)
+        if current in _edition_asins(candidate)
+        and claim.canonical not in _edition_asins(candidate)
+    )
+    owner_narrators = tuple(
+        value for candidate in owner for value in _candidate_narrators(candidate)
+    )
+    if owner and not narrator_cast_disjoint(narrators, owner_narrators):
+        return frozenset(
+            (observation.provider, candidate.identity)
+            for observation, candidate in products
+            if claim.canonical in _edition_asins(candidate)
+        )
+    return frozenset(
+        (observation.provider, candidate.identity)
+        for observation, candidate in products
+        if claim.canonical not in _edition_asins(candidate)
+        and _tight_recording(candidate, report.local_claims)
+        and not narrator_cast_disjoint(narrators, _candidate_narrators(candidate))
     )

@@ -340,6 +340,7 @@ export const CLAIM_BASES = [
   'embedded_tag',
   'sidecar',
   'path',
+  'prior_admission',
 ] as const
 export type ClaimBasis = (typeof CLAIM_BASES)[number]
 export const FIELD_STATES = [
