@@ -288,8 +288,9 @@ a failed collection keeps navigation and a manual retry usable. Superseded
 queries cancel, and an older response cannot replace a newer URL selection.
 While a newer Library, Attention or diagnostic read is pending, the content the
 view last showed stays in place, marked busy but never dimmed below its text
-contrast, and its selection, paging and queue controls stay inert; it is cleared rather than revived once
-that read settles or fails, and the route is announced as loaded only then. The
+contrast, and its selection, paging and queue controls stay inert; it is
+cleared rather than revived once that read settles or fails, and the route is
+announced as loaded only then. The
 selected-work panel never keeps another work's fields while it loads. Its
 identity comes from its own case read when the Library result, page or
 Attention no longer lists the work, so a search, a lens, a deep link or an

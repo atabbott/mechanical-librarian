@@ -336,9 +336,9 @@ default type, so every call site states its own.
   next authoritative action, not every available action.
 - **Hover / Focus:** hover shifts borders or surfaces toward Archive Teal and
   its wash. The default keyboard focus treatment is a three-pixel Focus Blue
-  outline, unmixed so it holds 3:1 on every surface, with a three-pixel offset. Compact native fields may use the
-  implemented two-pixel Archive Teal outline where their local component
-  contract requires it.
+  outline, unmixed so it holds 3:1 on every surface, with a three-pixel
+  offset. Compact native fields may use the implemented two-pixel Archive Teal
+  outline where their local component contract requires it.
 - **Secondary / Ghost:** paper-toned or transparent surfaces with catalogue
   borders; secondary is the plain button.
 - **Danger:** transparent with Correction Red text and border until explicitly
