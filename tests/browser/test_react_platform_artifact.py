@@ -4074,3 +4074,274 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                 "'.owner-controls')).color"
             )
         assert backgrounds["light"] != backgrounds["dark"], backgrounds
+
+
+# An update stream the test drops, restores and publishes on, so the masthead's
+# status can change in place rather than across reloads.
+_CONTROLLED_UPDATE_STREAM = """
+globalThis.EventSource = class extends EventTarget {
+  constructor(url) {
+    super();
+    this.url = url;
+    this.readyState = 1;
+    (globalThis.__streams ??= []).push(this);
+    queueMicrotask(() => this.onopen?.(new Event('open')));
+  }
+  close() { this.readyState = 2; }
+};
+globalThis.__sequence = 0;
+globalThis.__publish = (topic) => {
+  for (const stream of globalThis.__streams ?? [])
+    stream.dispatchEvent(new MessageEvent(topic, {
+      data: JSON.stringify({sequence: ++globalThis.__sequence, subject: null, topic}),
+    }));
+};
+globalThis.__drop = () => {
+  for (const stream of globalThis.__streams ?? []) {
+    stream.readyState = 0;
+    stream.onerror?.(new Event('error'));
+  }
+};
+globalThis.__restore = () => {
+  for (const stream of globalThis.__streams ?? []) {
+    stream.readyState = 1;
+    stream.onopen?.(new Event('open'));
+  }
+};
+"""
+
+# Every layout shift that moved a node of the masthead outside its status slot.
+# What the masthead's own size moves below it is read from its box instead,
+# since a route's content also moves with the reads it waits on.
+_SHIFTS_OUTSIDE_STATUS = """
+(() => {
+  globalThis.__shifts = [];
+  new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      const moved = entry.sources.map((source) => source.node)
+        .map((node) => node?.nodeType === 1 ? node : node?.parentElement)
+        .filter((node) => node?.closest('.masthead') && !node.closest('.shell-status'));
+      if (moved.length)
+        globalThis.__shifts.push([entry.value, moved.map((node) => node.className || node.tagName)]);
+    }
+  }).observe({type: 'layout-shift', buffered: true});
+})();
+"""
+
+_MASTHEAD_GEOMETRY = """() => {
+  const box = (selector) => {
+    const bounds = document.querySelector(selector).getBoundingClientRect();
+    return [bounds.left, bounds.top, bounds.width, bounds.height].map(Math.round);
+  };
+  return {
+    masthead: box('.masthead'),
+    nav: box('.masthead nav'),
+    static: document.documentElement.dataset.masthead === 'static',
+  };
+}"""
+
+# The preparation states the masthead names, as overrides of the cohort's read.
+_PREPARATION_STATES = {
+    "absent": {"libraries": []},
+    "Preparation idle": {"active": False, "actionable": False},
+    "Preparing libraries": {"actionable": False},
+    "Preparation needs attention": {},
+    "Preparation paused": {"paused": True},
+    "Preparation stopped": {"recovery_required": True},
+}
+
+
+def test_masthead_holds_still_while_status_changes() -> None:
+    """Preparation loading, absent and in each of its states, and the update
+    stream dropping and returning, never move the masthead or its
+    destinations: nothing outside the status slot shifts, at every width of
+    the ladder. Enlarged text is root font-size 200% (rem and container
+    queries respond to it; px media queries do not): there the destinations
+    keep their place, and the masthead may change size only while it is
+    static, in the page's flow (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    state = {"preparation": "absent"}
+    held: list[Route] = []
+
+    def preparation(route: Route) -> None:
+        if state["preparation"] == "loading":
+            held.append(route)
+            return
+        payload = cast("dict[str, object]", rich_payload("/api/v1/review-preparation"))
+        payload |= _PREPARATION_STATES[state["preparation"]]
+        route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_CONTROLLED_UPDATE_STREAM)
+        page.add_init_script(_SHIFTS_OUTSIDE_STATUS)
+        page.clock.install()
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        page.route("**/api/v1/review-preparation", preparation)
+        trigger = page.locator(".masthead .preparation-activity > button")
+        notice = page.locator(".masthead .live-state")
+        for text in styles:
+            for width in (1440, 1200, 1100, 1025, 1024, 884, 761, 760, 390, 375, 320):
+                where = f"{text} text at {width}px"
+                page.set_viewport_size({"width": width, "height": 900})
+                state["preparation"] = "loading"
+                page.goto("https://react-platform.invalid/settings?group=connection")
+                page.get_by_role("heading", name="Settings", exact=True).wait_for()
+                page.evaluate(_TWO_FRAMES)
+                expect(trigger).to_have_count(0)
+                states = {"loading": page.evaluate(_MASTHEAD_GEOMETRY)}
+                # The route has painted; from here only status changes.
+                page.evaluate("() => { globalThis.__shifts.length = 0 }")
+                state["preparation"] = "absent"
+                while held:
+                    preparation(held.pop())
+                page.evaluate(_TWO_FRAMES)
+                states["absent"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                # Each state live, then with the stream down; the notice waits
+                # a second before it shows, which the clock runs through.
+                for label in list(_PREPARATION_STATES)[1:]:
+                    state["preparation"] = label
+                    page.evaluate("() => globalThis.__publish('preparation')")
+                    expect(trigger).to_have_text(label)
+                    page.evaluate(_TWO_FRAMES)
+                    states[label] = page.evaluate(_MASTHEAD_GEOMETRY)
+                    page.evaluate("() => globalThis.__drop()")
+                    page.clock.run_for(1_100)
+                    expect(notice).to_be_visible()
+                    page.evaluate(_TWO_FRAMES)
+                    states[f"{label}, reconnecting"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                    page.evaluate("() => globalThis.__restore()")
+                    expect(notice).to_have_count(0)
+                page.evaluate(_TWO_FRAMES)
+                states["restored"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                navs = {state["nav"][0] for state in states.values()}
+                assert len(navs) == 1, f"{where}: the destinations moved {states}"
+                boxes = {
+                    json.dumps([state["masthead"], state["nav"]])
+                    for state in states.values()
+                }
+                if text == "100%":
+                    assert len(boxes) == 1, f"{where}: the masthead moved {states}"
+                    shifts = page.evaluate("() => globalThis.__shifts")
+                    assert shifts == [], f"{where}: {shifts}"
+                elif len(boxes) > 1:
+                    assert all(state["static"] for state in states.values()), (
+                        f"{where}: a sticky masthead changed size {states}"
+                    )
+
+
+# Where the masthead and the focused control are, and every sticky region.
+_MASTHEAD_COVER = """() => {
+  const masthead = document.querySelector('.masthead');
+  const bounds = masthead.getBoundingClientRect();
+  const focused = document.activeElement;
+  const focus = focused && focused !== document.body && !masthead.contains(focused)
+    ? focused.getBoundingClientRect() : null;
+  const sticky = [...document.querySelectorAll('main *')]
+    .filter((node) => getComputedStyle(node).position === 'sticky'
+      && getComputedStyle(node).top !== 'auto' && node.getClientRects().length > 0)
+    .map((node) => [String(node.className).slice(0, 40), Math.round(node.getBoundingClientRect().top)]);
+  return {
+    static: document.documentElement.dataset.masthead === 'static',
+    position: getComputedStyle(masthead).position,
+    share: bounds.height / innerHeight,
+    height: bounds.height,
+    bottom: bounds.bottom,
+    focus: focus && [focused.tagName, (focused.textContent || '').trim().slice(0, 32),
+      Math.round(focus.top), Math.round(focus.bottom)],
+    sticky,
+  };
+}"""
+
+
+def test_compact_and_enlarged_masthead_never_covers_content() -> None:
+    """The masthead sticks only while it takes at most a quarter of the
+    viewport, and otherwise scrolls with the page; whichever it is, no focused
+    control and no sticky region lies beneath it, and the preparation popover
+    opens inside the viewport. Enlarged text is root font-size 200%, which rem
+    and container queries follow and px media queries do not (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text in styles:
+            for width, height in (
+                (375, 812),
+                (375, 667),
+                (320, 568),
+                (320, 640),
+                (390, 844),
+                (1024, 768),
+                (1440, 900),
+            ):
+                page.set_viewport_size({"width": width, "height": height})
+                for route in (
+                    "/library?lens=all",
+                    "/policy?section=identity",
+                    "/activity?eventType=all&rangeDays=30&page=1&pageSize=25",
+                ):
+                    where = f"{text} text at {width}x{height} on {route}"
+                    page.goto(f"https://react-platform.invalid{route}")
+                    page.locator("main h1").first.wait_for()
+                    page.locator(".masthead .preparation-activity > button").wait_for()
+                    page.evaluate(_TWO_FRAMES)
+                    cover = page.evaluate(_MASTHEAD_COVER)
+                    assert cover["static"] == (cover["share"] > 0.25), (
+                        f"{where}: {cover}"
+                    )
+                    assert cover["position"] == (
+                        "relative" if cover["static"] else "sticky"
+                    ), f"{where}: {cover}"
+                    if text == "100%" and (width, height) == (375, 812):
+                        # No phone pays more chrome than before (#1291).
+                        assert cover["height"] <= 160.5, f"{where}: {cover}"
+                        top = page.evaluate(
+                            "() => document.querySelector('main').getBoundingClientRect().top"
+                        )
+                        assert top <= 176, f"{where}: content starts at {top}"
+                    page.locator(".skip-link").focus()
+                    for _ in range(18):
+                        page.keyboard.press("Tab")
+                        cover = page.evaluate(_MASTHEAD_COVER)
+                        if cover["focus"] is not None:
+                            assert cover["focus"][2] >= cover["bottom"] - 1, (
+                                f"{where}: focus under the masthead {cover}"
+                            )
+                    page.evaluate(
+                        "() => window.scrollTo(0, document.body.scrollHeight / 2)"
+                    )
+                    page.evaluate(_TWO_FRAMES)
+                    cover = page.evaluate(_MASTHEAD_COVER)
+                    if not cover["static"]:
+                        under = [
+                            region
+                            for region in cover["sticky"]
+                            if region[1] < cover["bottom"] - 1
+                        ]
+                        assert under == [], f"{where}: under the masthead {cover}"
+        # The popover opens inside the viewport, however the status wraps.
+        for width in (1440, 1100, 884, 390, 320):
+            for text in styles:
+                where = f"{text} text at {width}px"
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto("https://react-platform.invalid/settings?group=connection")
+                trigger = page.locator(".masthead .preparation-activity > button")
+                trigger.click()
+                popover = page.get_by_role("region", name="Background activity")
+                expect(popover).to_be_visible()
+                box = popover.bounding_box()
+                assert box is not None
+                assert box["x"] >= 0 and box["x"] + box["width"] <= width, (
+                    f"{where}: {box}"
+                )
+                page.keyboard.press("Escape")
+                expect(trigger).to_be_focused()
