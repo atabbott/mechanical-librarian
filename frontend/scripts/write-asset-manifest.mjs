@@ -4,7 +4,7 @@ import path from 'node:path'
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib'
 
 const outputRoot = path.resolve(process.env.ML_FRONTEND_OUT_DIR ?? 'dist')
-const handoffAssets = ['preparation-handoff.css', 'preparation-handoff.js']
+const handoffAssets = ['preparation-handoff.css', 'preparation-handoff.js', 'theme.js']
 let shell = await readFile(path.join(outputRoot, 'index.html'), 'utf8')
 await mkdir(path.join(outputRoot, 'assets'), { recursive: true })
 const hashedHandoffAssets = []
@@ -46,12 +46,18 @@ if (!entryKey) throw new Error('Vite entry key is missing')
 visit(entryKey)
 reachable.add('index.html')
 for (const asset of hashedHandoffAssets) reachable.add(asset)
+// Fonts are reached through stylesheet url()s, whether or not Vite's manifest lists them.
+for (const style of [...reachable].filter((asset) => asset.endsWith('.css'))) {
+  const css = await readFile(path.join(outputRoot, style), 'utf8')
+  for (const [, asset] of css.matchAll(/url\(["']?\/assets\/review-app\/(assets\/[^"')]+)/g))
+    reachable.add(asset)
+}
 
 const assets = []
 for (const relativePath of [...reachable].sort()) {
   if (
     relativePath !== 'index.html' &&
-    !/^assets\/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.(?:css|js)$/.test(relativePath)
+    !/^assets\/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.(?:css|js|woff2)$/.test(relativePath)
   ) {
     throw new Error(`Asset is not content hashed: ${relativePath}`)
   }
@@ -61,15 +67,14 @@ for (const relativePath of [...reachable].sort()) {
   const bytes = await readFile(absolutePath)
   const metadata = await stat(absolutePath)
   if (!metadata.isFile()) throw new Error(`Asset is not a regular file: ${relativePath}`)
-  const variants = [
-    [
-      relativePath === 'index.html' ? 'shell' : relativePath.endsWith('.css') ? 'style' : 'script',
-      relativePath,
-      bytes,
-    ],
-  ]
-  if (relativePath !== 'index.html') {
-    // Precompressed siblings let the server negotiate encodings without compressing per request.
+  const kind =
+    relativePath === 'index.html'
+      ? 'shell'
+      : ({ '.css': 'style', '.woff2': 'font' }[path.extname(relativePath)] ?? 'script')
+  const variants = [[kind, relativePath, bytes]]
+  if (kind === 'style' || kind === 'script') {
+    // Precompressed siblings let the server negotiate encodings without compressing per request;
+    // a woff2 font is already Brotli-compressed.
     const brotli = { [constants.BROTLI_PARAM_QUALITY]: constants.BROTLI_MAX_QUALITY }
     variants.push(['br', `${relativePath}.br`, brotliCompressSync(bytes, { params: brotli })])
     variants.push(['gzip', `${relativePath}.gz`, gzipSync(bytes, { level: 9 })])

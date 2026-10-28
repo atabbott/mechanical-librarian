@@ -113,6 +113,11 @@ from mechanical_librarian.interfaces.web.react_assets import (
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"
 _IMMUTABLE_CACHE = "private, max-age=31536000, immutable"
+_REACT_ASSET_MEDIA_TYPES = {
+    "script": "text/javascript",
+    "style": "text/css",
+    "font": "font/woff2",
+}
 _ShellResponse: TypeAlias = HTMLResponse | RedirectResponse
 
 # The rule these seven were chosen by:
@@ -4270,7 +4275,7 @@ def _register_html_routes(
         selected = next(
             (asset for asset in bundle.assets if asset.path == asset_path), None
         )
-        if selected is None or selected.kind not in {"script", "style"}:
+        if selected is None or selected.kind not in _REACT_ASSET_MEDIA_TYPES:
             raise HTTPException(404, detail={"code": "asset_not_found"})
         try:
             served, payload = bundle.negotiate(
@@ -4293,8 +4298,9 @@ def _register_html_routes(
             return Response(status_code=304, headers=headers)
         if served.path != asset_path:
             headers["Content-Encoding"] = served.kind
-        media_type = "text/css" if selected.kind == "style" else "text/javascript"
-        return Response(payload, media_type=media_type, headers=headers)
+        return Response(
+            payload, media_type=_REACT_ASSET_MEDIA_TYPES[selected.kind], headers=headers
+        )
 
 
 def _react_asset_recovery_response() -> HTMLResponse:
@@ -4564,8 +4570,8 @@ def _set_security_headers(response: Response, *, hsts: bool) -> None:
         response.headers["Cache-Control"] = "no-store, private"
     response.headers["Content-Security-Policy"] = (
         "default-src 'none'; script-src 'self'; style-src 'self'; "
-        "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
-        "frame-ancestors 'none'; base-uri 'none'"
+        "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+        "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
     )
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Referrer-Policy"] = "no-referrer"

@@ -3745,6 +3745,107 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         )
 
 
+def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads() -> (
+    None
+):
+    """The shell's blocking theme script sets the saved, else the system, theme
+    before the application bundle runs, under the production CSP; the bundled
+    Inter face loads from the same origin (#1289)."""
+    held: list[Route] = []
+    first_paint = (
+        "() => { const body = document.body; if (!body) return null;"
+        " const background = getComputedStyle(body).backgroundColor;"
+        " return background === 'rgba(0, 0, 0, 0)' ? null :"
+        " [document.documentElement.dataset.theme ?? null, background] }"
+    )
+
+    def painted(page: Page, url: str) -> list[str | None]:
+        page.goto(url, wait_until="commit")
+        return cast(list[str | None], page.wait_for_function(first_paint).json_value())
+
+    with _identity_library() as (page, origin, _queries):
+        context = page.context
+        errors: list[str] = []
+        fonts: list[tuple[int, str | None, str | None]] = []
+        page.on(
+            "console",
+            lambda message: (
+                errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        page.on(
+            "response",
+            lambda response: (
+                fonts.append(
+                    (
+                        response.status,
+                        response.headers.get("content-type"),
+                        response.headers.get("cache-control"),
+                    )
+                )
+                if response.url.endswith(".woff2")
+                else None
+            ),
+        )
+        page.route(
+            "**/assets/review-app/assets/index-*.js", lambda route: held.append(route)
+        )
+        page.emulate_media(color_scheme="dark")
+        url = f"{origin}/library?lens=all"
+        assert painted(page, url) == ["dark", "rgb(15, 21, 18)"]
+        assert len(held) == 1
+        held.pop().abort()
+        context.add_cookies([{"name": "ml_theme", "value": "light", "url": origin}])
+        assert painted(page, url) == ["light", "rgb(244, 242, 236)"]
+        held.pop().abort()
+        context.clear_cookies(name="ml_theme")
+
+        # Without the script the shell paints light under a dark system: the
+        # gap the script closes, and the proof this test bites.
+        control = context.new_page()
+        control.emulate_media(color_scheme="dark")
+        control.route(
+            "**/assets/review-app/assets/index-*.js", lambda route: held.append(route)
+        )
+        control.route(
+            "**/assets/review-app/assets/theme-*.js", lambda route: route.abort()
+        )
+        assert painted(control, url) == [None, "rgb(244, 242, 236)"]
+        held.pop().abort()
+        control.close()
+
+        page.goto(url, wait_until="commit")
+        assert page.wait_for_function(first_paint).json_value()[0] == "dark"
+        held.pop().continue_()
+        expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
+        html = page.locator("html")
+        page.emulate_media(color_scheme="light")
+        expect(html).to_have_attribute("data-theme", "light")
+        page.emulate_media(color_scheme="dark")
+        expect(html).to_have_attribute("data-theme", "dark")
+        page.get_by_role("button", name="Use light mode").click()
+        expect(html).to_have_attribute("data-theme", "light")
+        page.emulate_media(color_scheme="light")
+        page.emulate_media(color_scheme="dark")
+        expect(html).to_have_attribute("data-theme", "light")
+
+        assert page.evaluate(
+            "async () => { await document.fonts.ready;"
+            " return document.fonts.check('400 16px Inter') && [...document.fonts]"
+            ".some(face => face.family.replaceAll('\"', '') === 'Inter'"
+            " && face.status === 'loaded') }"
+        )
+        assert fonts and all(
+            status == 200
+            and content_type == "font/woff2"
+            and cache_control == "private, max-age=31536000, immutable"
+            for status, content_type, cache_control in fonts
+        ), fonts
+        assert not [error for error in errors if "Content Security Policy" in error], (
+            errors
+        )
+
+
 @pytest.mark.parametrize("cohort", [24, 30])
 def test_load_more_attention_keeps_focus_on_the_first_row_it_added(
     cohort: int,

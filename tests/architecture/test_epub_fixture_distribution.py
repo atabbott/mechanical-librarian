@@ -85,3 +85,23 @@ def test_wheel_carries_the_built_react_assets_and_neither_carries_source_maps(
         for name in wheel_names
     )
     assert not any(name.endswith(".map") for name in wheel_names + sdist_names)
+
+
+def test_both_carry_the_vendored_inter_face_and_its_licence(
+    distribution: tuple[list[str], list[str]],
+) -> None:
+    wheel_names, sdist_names = distribution
+    # woff2 is already Brotli-compressed, so a font ships with no siblings.
+    fonts = [name for name in wheel_names if name.endswith(".woff2")]
+    assert len(fonts) == 2
+    assert all("interfaces/web/react_assets/assets/inter-" in name for name in fonts)
+    assert not any(name.endswith((".woff2.br", ".woff2.gz")) for name in wheel_names)
+    assert any(
+        ".dist-info/licenses/frontend/src/fonts/LICENSE" in name for name in wheel_names
+    )
+    for file in (
+        "inter-latin-wght-normal.woff2",
+        "inter-latin-ext-wght-normal.woff2",
+        "LICENSE",
+    ):
+        assert any(name.endswith(f"/frontend/src/fonts/{file}") for name in sdist_names)

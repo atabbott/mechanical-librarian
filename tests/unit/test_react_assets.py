@@ -354,3 +354,64 @@ def test_corrupt_identity_asset_keeps_its_existing_refusal() -> None:
 
         with pytest.raises(ReactAssetError, match="asset_corrupt"):
             load_react_asset_bundle(root)
+
+
+_FONT = b"wOF2 synthetic face"
+
+
+def _add_font(root: Path, kind: str, path: str) -> None:
+    """Add one vendored face to an exact bundle under `kind` and `path`."""
+    root.joinpath(*path.split("/")).write_bytes(_FONT)
+    value = json.loads((root / "review-assets-v1.json").read_text("utf-8"))
+    record = {
+        "kind": kind,
+        "path": path,
+        "sha256": hashlib.sha256(_FONT).hexdigest(),
+        "size": len(_FONT),
+    }
+    _rewrite_manifest(
+        root, sorted([*value["assets"], record], key=lambda item: item["path"])
+    )
+
+
+def test_a_hashed_woff2_face_is_admitted_as_a_font_with_no_sibling() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_bundle(root, encoded=True)
+        _add_font(root, "font", "assets/inter-latin-deadbeef.woff2")
+        bundle = load_react_asset_bundle(root)
+
+        asset, payload = bundle.negotiate("assets/inter-latin-deadbeef.woff2", "br")
+        assert (asset.kind, payload) == ("font", _FONT)
+        assert bundle.unverified_siblings == ()
+
+
+@pytest.mark.parametrize(
+    ("kind", "path"),
+    (
+        ("style", "assets/inter-latin-deadbeef.woff2"),
+        ("script", "assets/inter-latin-deadbeef.woff2"),
+        ("font", "assets/inter-latin-deadbeef.css"),
+        ("font", "assets/inter-latin-deadbeef.js"),
+        ("br", "assets/inter-latin-deadbeef.woff2.br"),
+        ("font", "assets/inter-latin.woff2"),
+    ),
+    ids=(
+        "woff2_as_style",
+        "woff2_as_script",
+        "font_on_css",
+        "font_on_js",
+        "woff2_sibling",
+        "unhashed_woff2",
+    ),
+)
+def test_a_font_outside_its_kind_or_hashed_path_fails_closed(
+    kind: str, path: str
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_bundle(root, encoded=True)
+        _add_font(root, kind, path)
+
+        with pytest.raises(ReactAssetError, match="manifest_invalid"):
+            load_react_asset_bundle(root)
