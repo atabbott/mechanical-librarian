@@ -782,8 +782,9 @@ lane and on the observation. The `malformed`, `oversized` and
 status-derived `malformed_response` is withheld only when the observation
 itself carries that identity diagnostic and every `malformed` lane carries it
 too, and at least one such lane exists. A lane that is malformed for its own
-reason therefore keeps `malformed_response` alongside the identity diagnostic.
-An adapter that names a lookup miss `not_found` (AudioSilo's 404) counts it as
+reason therefore keeps `malformed_response` alongside the identity diagnostic;
+an oversized or candidate-limited lane keeps its own status.
+An adapter that names a miss `not_found` (every AudioSilo 404) counts it as
 `empty_no_match`, never as `http_non_success`, and it is never a
 `provider_request_failed` event.
 A lane's `work_identity_refused/provider/identity` count is lifted once to the

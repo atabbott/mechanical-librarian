@@ -416,8 +416,9 @@ _MALFORMED_DIAGNOSTIC = FailureDiagnostic(
 )
 _IDENTITY_LANE = _failed_lane("a", (_IDENTITY_DIAGNOSTIC,))
 _INDEPENDENT_LANE = _failed_lane("b", (_MALFORMED_DIAGNOSTIC,))
-# A candidate-limited lane names its own category on the lane, so it neither
-# needs nor defeats the suppression of the observation's malformed aggregate.
+# A candidate-limited lane is not malformed, so it neither needs nor defeats the
+# suppression of the observation's malformed aggregate; its own status stays on
+# the lane, and only an attempt that names it adds a provider aggregate.
 _OVER_BOUND_LANE = _failed_lane("c", (), ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
 
 

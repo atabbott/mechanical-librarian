@@ -151,7 +151,9 @@ oversized failures, and Hardcover names a candidate-count overflow
 
 An identity conflict withholds the status-derived `malformed_response` only
 when every `malformed` lane carries the identity diagnostic; an oversized or
-candidate-limited lane names its own category and no longer decides it. An
+candidate-limited lane no longer decides it. That lane keeps its own status,
+and its category reaches the provider aggregate only when an attempt names it,
+as the shared session and Hardcover do. An
 adapter may name an ordinary lookup miss `not_found`, which maps to
 `empty_no_match` and is never a `provider_request_failed` event. AudioSilo
 names its 404s that way.

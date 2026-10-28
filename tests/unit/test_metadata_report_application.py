@@ -3637,6 +3637,8 @@ def test_each_request_failure_is_one_counted_event(
     (
         (ProviderStatus.NO_MATCH, "http_404", []),
         (ProviderStatus.NO_MATCH, "region_unavailable", []),
+        # An adapter's own miss is silent even beside a failed lane (#1308).
+        (ProviderStatus.UNAVAILABLE, "not_found", []),
         (
             ProviderStatus.UNAVAILABLE,
             "http_404",
@@ -3662,6 +3664,7 @@ def test_each_request_failure_is_one_counted_event(
     ids=(
         "answered_not_found",
         "answered_region",
+        "adapter_not_found",
         "failed_not_found",
         "failed_region",
     ),
