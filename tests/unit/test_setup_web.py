@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
@@ -43,9 +44,15 @@ from mechanical_librarian.interfaces.web.setup import create_setup_app
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
     SETUP_HANDOFF_CSS,
-    SETUP_JS,
     SETUP_ORIGIN_REFUSAL_HTML,
 )
+from mechanical_librarian.interfaces.web.setup_frontend import (
+    SETUP_JS as SHIPPED_SETUP_JS,
+)
+
+# The shipped script sets one statement per indented line. The substring pins
+# below read it with that layout removed, so a pin can span statements.
+SETUP_JS = re.sub(r"\n *", "", SHIPPED_SETUP_JS)
 
 
 @pytest.mark.parametrize(
@@ -504,33 +511,34 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert handoff_css.headers["content-type"].startswith("text/css")
     assert handoff_css.text == "@view-transition{navigation:auto}"
     assert script.status_code == 200
-    assert "https://openlibrary.org/account/create" in script.text
-    assert "https://hardcover.app/account/api" in script.text
-    assert "localStorage" not in script.text
-    assert "sessionStorage" not in script.text
-    assert "csrf=state.csrf_token" in script.text
-    assert "location.assign('/library')" not in script.text
-    assert "const retired=visible?.state==='dismissed'" in script.text
-    assert "let open=null;let observed=true" in script.text
-    assert "if(!visible||retired){if(observed||retired)retire(retired)" in script.text
-    assert "dismissed?'Preparation was dismissed'" in script.text
-    assert "dismissed?'Open the ordinary workspace.'" in script.text
-    assert "if(!open){open=document.createElement('a')" in script.text
-    assert "open.href='/library?lens=all'" in script.text
+    assert script.text == SHIPPED_SETUP_JS
+    assert "https://openlibrary.org/account/create" in SETUP_JS
+    assert "https://hardcover.app/account/api" in SETUP_JS
+    assert "localStorage" not in SETUP_JS
+    assert "sessionStorage" not in SETUP_JS
+    assert "csrf=state.csrf_token" in SETUP_JS
+    assert "location.assign('/library')" not in SETUP_JS
+    assert "const retired=visible?.state==='dismissed'" in SETUP_JS
+    assert "let open=null;let observed=true" in SETUP_JS
+    assert "if(!visible||retired){if(observed||retired)retire(retired)" in SETUP_JS
+    assert "dismissed?'Preparation was dismissed'" in SETUP_JS
+    assert "dismissed?'Open the ordinary workspace.'" in SETUP_JS
+    assert "if(!open){open=document.createElement('a')" in SETUP_JS
+    assert "open.href='/library?lens=all'" in SETUP_JS
     assert (
         "['completed_clean','completed_with_failures'].includes(visible.state)"
-        in script.text
+        in SETUP_JS
     )
-    assert "pollDelay=terminal?5000:1500" in script.text
-    assert "if(terminal)stop()" not in script.text
-    assert "encodeURIComponent(visible.run_id)" in script.text
-    assert "setInterval" not in script.text
-    assert "const poll=async()=>" in script.text
-    assert "finally{if(!stopped)timer=setTimeout(poll,pollDelay)}" in script.text
+    assert "pollDelay=terminal?5000:1500" in SETUP_JS
+    assert "if(terminal)stop()" not in SETUP_JS
+    assert "encodeURIComponent(visible.run_id)" in SETUP_JS
+    assert "setInterval" not in SETUP_JS
+    assert "const poll=async()=>" in SETUP_JS
+    assert "finally{if(!stopped)timer=setTimeout(poll,pollDelay)}" in SETUP_JS
     assert ".field[hidden]{display:none}" in css.text
     assert "input[aria-invalid=true]" in css.text
-    assert "MutationObserver" not in script.text
-    assert "Writes stay off until you turn them on in Activity." in script.text
+    assert "MutationObserver" not in SETUP_JS
+    assert "Writes stay off until you turn them on in Activity." in SETUP_JS
     assert client.get("/api/setup/state").status_code == 401
 
     login = _claim(client)

@@ -107,13 +107,670 @@ SETUP_CSS += (
 
 SETUP_HANDOFF_CSS = "@view-transition{navigation:auto}"
 
-SETUP_JS = r"""{const saved=/(?:^|; )ml_theme=(light|dark)(?:;|$)/.exec(document.cookie)?.[1];if(saved)document.documentElement.dataset.theme=saved}const main=document.querySelector('#setup-main');const ledger=document.querySelector('#setup-ledger');const status=document.querySelector('#setup-status');const steps=[['claim','Create owner access'],['connect','Connect Audiobookshelf'],['providers','Choose metadata providers'],['libraries','Choose libraries'],['mounts','Check read-only mounts'],['reviewer','Choose reviewer'],['kick_off','Kick off preparation']];const mountState={matched:'Matched',missing:'No mapping',ambiguous:'More than one mapping',unavailable:'No folder reported'};const mountRemedy={missing:'Correct the Audiobookshelf service path and compare again, or have the deployment declare a read-only mapping for it; Mechanical Librarian never creates or changes mounts.',ambiguous:'Correct the service path so exactly one deployment-owned read-only mapping matches.',unavailable:'Audiobookshelf reported no folder path to compare. Enter the service path yourself and compare again; Mechanical Librarian never creates or changes mounts.'};const mountSummary={matched:'read-only mount matched',missing:'no read-only mount declares this folder yet',ambiguous:'more than one read-only mount matches',unavailable:'no service path was reported to compare'};const insecureTransport=()=>location.protocol!=='https:';let csrf=null;let state=null;let codexTerminal=null;let mountDraft=null;let fieldSequence=0;let mutating=false;let refusalGuard=null;const api=async(path,options={})=>{const headers={'content-type':'application/json',...(options.mutation?{'x-csrf-token':csrf}:{})};const response=await fetch(path,{credentials:'same-origin',...options,headers:{...headers,...options.headers}});let body={};try{body=await response.json()}catch{}if(!response.ok){const failure=new Error(body?.detail?.error||body?.error||'unavailable');failure.status=response.status;throw failure}return body};const announce=value=>{status.textContent='';requestAnimationFrame(()=>{status.textContent=value})};const escapeName=value=>String(value).replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,64)||'library';const humanName=value=>String(value).split(/[-_]+/u).filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');const field=(label,input)=>{const wrap=document.createElement('label');wrap.className='field';const text=document.createElement('span');text.textContent=label;wrap.append(text,input);return wrap};const secretField=(label,control,subject)=>{const wrap=document.createElement('div');wrap.className='field';const id=`setup-field-${++fieldSequence}`;control.id=id;const text=document.createElement('label');text.className='field-label';text.setAttribute('for',id);text.textContent=label;const row=document.createElement('div');row.className='reveal-row';const toggle=document.createElement('button');toggle.type='button';toggle.className='reveal';toggle.textContent='Show';toggle.setAttribute('aria-pressed','false');toggle.setAttribute('aria-controls',id);toggle.setAttribute('aria-label',`Show ${subject}`);toggle.addEventListener('click',()=>{const reveal=control.type==='password';control.type=reveal?'text':'password';toggle.setAttribute('aria-pressed',reveal?'true':'false');toggle.textContent=reveal?'Hide':'Show';toggle.setAttribute('aria-label',`${reveal?'Hide':'Show'} ${subject}`)});row.append(control,toggle);wrap.append(text,row);return wrap};const rules=items=>{const list=document.createElement('ul');list.className='rules';for(const item of items){const row=document.createElement('li');row.textContent=item;list.append(row)}return list};const input=(name,type='text')=>{const value=document.createElement('input');value.name=name;value.type=type;value.autocomplete='off';return value};const button=(label,primary=false)=>{const value=document.createElement('button');value.type='submit';value.textContent=label;if(primary)value.className='primary';return value};const describe=(control,refused)=>{const ids=`${refused?'setup-error ':''}${control.dataset.hint||''}`.trim();if(ids)control.setAttribute('aria-describedby',ids);else control.removeAttribute('aria-describedby')};const error=(form,message,control)=>{if(refusalGuard)refusalGuard.abort();refusalGuard=new AbortController();let node=form.querySelector('.error');if(!node){node=document.createElement('p');node.className='error';node.id='setup-error';node.setAttribute('role','alert')}const anchor=control?.closest('.field');if(anchor)anchor.after(node);else form.prepend(node);node.textContent=recovery(message);for(const other of form.querySelectorAll('[aria-invalid]'))if(other!==control){other.removeAttribute('aria-invalid');describe(other,false)}if(control){control.setAttribute('aria-invalid','true');describe(control,true);control.addEventListener('input',()=>{control.removeAttribute('aria-invalid');describe(control,false);node.textContent=''},{once:true,signal:refusalGuard.signal});control.focus();const settle=requestAnimationFrame(()=>{if(control.isConnected)control.focus({preventScroll:true})});form.addEventListener('focusin',event=>{if(event.target!==control&&event.target.matches('input,select,textarea'))cancelAnimationFrame(settle)},{signal:refusalGuard.signal})}return node};const recovery=code=>({unauthorized:'Audiobookshelf did not accept that API key. Issue a key that can read your libraries, then paste it again.',invalid_endpoint:'That address could not be used. Enter the full Audiobookshelf address, including http:// or https:// and the port it serves on.',tls:'The certificate for that https:// address could not be verified against the address you entered. Use an address whose certificate this deployment already trusts, or use the service http:// address across a network you control. Mechanical Librarian never skips verification.',timeout:'Audiobookshelf did not answer in time. Check that the address is reachable from this deployment, then retry.',redirect:'That address redirected elsewhere. Enter the direct Audiobookshelf address; setup never follows a redirect with your key.',oversize:'Audiobookshelf returned more data than setup can safely read. Nothing was recorded.',malformed:'Audiobookshelf answered, but not with the supported libraries response. Check that the address points at Audiobookshelf itself.',unavailable:'Setup could not finish that step, so nothing was recorded. Wait a moment and try again.',invalid_origin:settingsVocabulary.errors.invalid_origin,session_expired:'Your setup sign-in expired, so nothing was recorded. Reload this page and sign in with the owner password; every recorded step is kept.',activation_failed:'Preparation could not be started, so nothing changed. Try kicking off again; if it keeps failing, the deployment log holds the reason.',invalid_mounts:'One of those service paths could not be used. Enter the absolute folder path the Audiobookshelf service itself reports, or leave it empty.',invalid_providers:'One of those provider entries could not be recorded. Check the contact email and API key on each provider you enabled.',invalid_credentials:'That owner password was not accepted. Check it and try again.',throttled:'Too many sign-in attempts from here. Wait a minute, then try the owner password again.',invalid_password:settingsVocabulary.errors.owner_password,invalid_password_long:settingsVocabulary.errors.owner_password_long,invalid_password_empty:settingsVocabulary.errors.owner_password_empty,invalid_password_mismatch:settingsVocabulary.errors.owner_password_mismatch,claimed:'This workspace was claimed in another tab. Sign in with its owner password.',claim_token:'That setup claim token was not accepted. Copy the newest token from the container log, or from private/setup-claim-token on the data volume; a restart replaces it.',csrf:'This setup form expired. Reload it and try again.',invalid_secret:settingsVocabulary.errors.secret,invalid_provider_email:settingsVocabulary.errors.open_library_email,missing_provider_key:settingsVocabulary.errors.provider_key,stale:'Setup changed in another tab. The latest recorded step has been restored.',invalid_libraries:settingsVocabulary.errors.libraries,invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name:'Use a library name from 1 to 256 characters without leading or trailing spaces.',mounts_unready:'Every selected book library needs one matching read-only mount before kickoff.'}[code]||'That could not be recorded. Check the fields and try again.');const mutate=async(path,payload,form,control)=>{if(mutating)return;mutating=true;const actions=[...form.querySelectorAll('button:not(.reveal)')];for(const action of actions)action.disabled=true;main.setAttribute('aria-busy','true');announce('Working on that step\u2026');try{await api(path,{method:'POST',body:JSON.stringify(payload),mutation:true});await load();announce('Setup progress recorded')}catch(e){const code=e.status===401?'session_expired':e.message;if(code==='stale'){await load();announce(recovery('stale'));const fresh=main.querySelector('form');if(fresh){error(fresh,'stale');return}}error(form,code,typeof control==='function'?control(code):control)}finally{mutating=false;main.setAttribute('aria-busy','false');for(const action of actions)if(action.isConnected)action.disabled=false}};const reopen=async step=>{const label=steps.find(([id])=>id===step)?.[1]||step;try{await api('/api/setup/change',{method:'POST',body:JSON.stringify({expected_revision:state.revision,step}),mutation:true});mountDraft=null;await load();announce(`${label} reopened`)}catch(e){announce(recovery(e.status===401?'session_expired':e.message))}};const drawLedger=()=>{ledger.replaceChildren();for(const [id,label] of steps){const row=document.createElement('li');row.className='ledger-row';const complete=state?.completed_steps?.includes(id);row.setAttribute('aria-current',state?.next_step===id?'step':'false');const mark=document.createElement('span');mark.textContent=complete?'✓':state?.next_step===id?'→':'·';const text=document.createElement('span');text.textContent=label;row.append(mark,text);if(complete&&id!=='claim'){const change=document.createElement('button');change.type='button';change.textContent='Change';change.setAttribute('aria-label',`Change ${label}`);change.addEventListener('click',()=>reopen(id));row.append(change)}ledger.append(row)}};const card=(title,intro)=>{main.replaceChildren();main.setAttribute('aria-busy','false');const section=document.createElement('section');section.className='step-card';const eyebrow=document.createElement('p');eyebrow.className='eyebrow';eyebrow.textContent=`Step ${steps.findIndex(([id])=>id===state.next_step)+1} of 7`;const heading=document.createElement('h2');heading.tabIndex=-1;heading.textContent=title;const copy=document.createElement('p');copy.className='intro';copy.textContent=intro;section.append(heading,eyebrow,copy);main.append(section);requestAnimationFrame(()=>{heading.focus({preventScroll:true});section.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})});return section};const renderClaim=async()=>{if(!state)state={next_step:'claim',completed_steps:[]};drawLedger();let claim;try{claim=await api('/api/setup/claim')}catch(e){const section=card('Setup is unavailable','Mechanical Librarian could not open owner access safely.');const retry=button('Retry',true);retry.type='button';retry.addEventListener('click',renderClaim);section.append(retry);return}state.revision=claim.revision;const section=card(claim.claimed?'Sign in to continue':'Create your owner password',claim.claimed?'Owner access already exists. Sign in with the owner password to resume exactly where you stopped.':'Only someone who can read this deployment’s own output can create the owner password. Enter the setup claim token, then choose the password you will use to sign in. Mechanical Librarian keeps a verifier, never the password itself.');const transport=document.createElement('p');transport.className='notice';transport.textContent=insecureTransport()?'This page is served over plain http, so the owner password you type and the session cookie it returns travel in clear text across this network. Use this address only on a network you control or through a VPN.':'This page is served over https that your browser already trusts, so the owner password you type and the session cookie it returns are encrypted between this browser and Mechanical Librarian.';section.append(transport);const form=document.createElement('form');let claimToken=null;if(!claim.claimed){claimToken=input('claim_token','password');claimToken.maxLength=128;const source=document.createElement('p');source.textContent='Copy the setup claim token from the container log, or from private/setup-claim-token on the data volume. A restart replaces the token, so use the newest one.';form.append(source,secretField('Setup claim token',claimToken,'the setup claim token'))}const password=input('password','password');password.autocomplete=claim.claimed?'current-password':'new-password';form.append(secretField('Owner password',password,'the owner password'));if(!claim.claimed){const list=rules([`At least ${settingsVocabulary.owner_password.minimum_characters} characters. Any characters are allowed, including spaces.`,'Both fields must match exactly.','Only a verifier is kept, so this password cannot be read back or reset from inside the application.']);list.id='setup-password-rules';list.children[1].id='setup-password-match';password.dataset.hint=list.id;describe(password,false);form.append(list)}let confirmation=null;if(!claim.claimed){confirmation=input('confirmation','password');confirmation.autocomplete='new-password';confirmation.dataset.hint='setup-password-match';describe(confirmation,false);form.append(secretField('Confirm owner password',confirmation,'the confirmed owner password'))}form.append(button(claim.claimed?'Sign in':'Create owner access',true));form.addEventListener('submit',async event=>{event.preventDefault();if(confirmation){const length=[...password.value].length;const long=new TextEncoder().encode(password.value).length>settingsVocabulary.owner_password.maximum_bytes;if(length<settingsVocabulary.owner_password.minimum_characters||long){error(form,length===0?'invalid_password_empty':long?'invalid_password_long':'invalid_password',password);return}if(password.value!==confirmation.value){error(form,'invalid_password_mismatch',confirmation);return}}try{const payload={password:password.value,...(claim.claimed?{}:{confirmation:confirmation.value,expected_revision:claim.revision,claim_token:claimToken.value.trim()})};const result=await api('/api/setup/session',{method:'POST',body:JSON.stringify(payload),headers:claim.claimed?{}:{'x-setup-nonce':claim.nonce}});csrf=result.csrf_token;await load()}catch(e){if(e.message==='claimed'){state=null;await renderClaim();return}if(claimToken&&['claim_token','invalid_password'].includes(e.message)){try{const fresh=await api('/api/setup/claim');if(fresh.claimed){state=null;await renderClaim();return}claim.nonce=fresh.nonce;claim.revision=fresh.revision;state.revision=fresh.revision}catch{}error(form,e.message,e.message==='claim_token'?claimToken:password);return}if(confirmation&&(e.status===401||e.status===429)){let already=false;try{already=(await api('/api/setup/claim')).claimed}catch{}if(already){state=null;await renderClaim();const fresh=main.querySelector('form');if(fresh)error(fresh,'claimed',fresh.querySelector('input[type=password]'));return}}error(form,e.message,password)}});section.append(form);(claimToken||password).focus()};const renderConnect=()=>{const section=card('Connect Audiobookshelf','Setup makes one bounded read of the supported libraries API. Nothing is written to Audiobookshelf.');const scheme=document.createElement('p');scheme.className='muted';scheme.textContent='Enter the address exactly as Audiobookshelf serves it, including its port. An http:// address is read in clear text, so use one only across a network you control. An https:// address is always verified against its certificate and hostname; Mechanical Librarian never skips that check, never follows a redirect with your key, and offers no way to trust an unverified certificate.';section.append(scheme);const form=document.createElement('form');const endpoint=input('endpoint','url');endpoint.placeholder='https://audiobookshelf.example:443';const key=input('key','password');key.autocomplete='off';form.append(field('Audiobookshelf address',endpoint),secretField('Audiobookshelf API key',key,'the Audiobookshelf API key'),button('Verify and continue',true));form.noValidate=true;const addressCodes=['invalid_endpoint','invalid_origin','tls','timeout','redirect','malformed','oversize'];form.addEventListener('submit',event=>{event.preventDefault();const address=endpoint.value.trim();if(address!==endpoint.value)endpoint.value=address;if(!address||!endpoint.checkValidity()){error(form,'invalid_endpoint',endpoint);return}if(!settingsSecretValid(key.value)){error(form,'invalid_secret',key);return}mutate('/api/setup/connect',{expected_revision:state.revision,name:'primary',endpoint:address,key:key.value},form,code=>code==='unauthorized'?key:addressCodes.includes(code)?endpoint:null)});section.append(form);endpoint.focus()};const renderProviders=()=>{const section=card('Choose metadata providers','Mechanical Librarian gets better results when it can compare more sources. Connect as many providers as you reasonably can; you can add or change them later in Settings.');const form=document.createElement('form');form.noValidate=true;const emailInvalid=control=>!control.checkValidity()||!settingsOpenLibraryEmailValid(control.value);const specs=[['inventaire','inventaire'],['open','open_library'],['hardcover','hardcover'],['google','google_books'],['audible','audible_catalog'],['audnexus','audnexus'],['audiosilo','audiosilo'],['itunes','itunes_search']];const rows=[];for(const [name,adapter] of specs){const label=settingsVocabulary.provider_labels[adapter];const row=document.createElement('div');row.className='option';const enabled=input(`${name}-enabled`,'checkbox');enabled.checked=adapter==='inventaire';const head=document.createElement('label');head.append(enabled,document.createTextNode(label));row.append(head);const contribution=document.createElement('p');contribution.className='muted';contribution.textContent=settingsVocabulary.provider_contributions[adapter];row.append(contribution);if(settingsVocabulary.cover_switch_provider_adapters.includes(adapter)){const covers=document.createElement('p');covers.className='muted';covers.textContent=`Cover evidence from ${label} stays off until you turn it on in Settings.`;row.append(covers)}const accessHref={open_library:'https://openlibrary.org/account/create',hardcover:'https://hardcover.app/account/api',google_books:'https://console.cloud.google.com/apis/credentials'}[adapter];if(accessHref){const access=document.createElement('a');access.className='provider-access';access.href=accessHref;access.rel='noreferrer';access.textContent=`Get ${label} access`;row.append(access)}const email=adapter==='open_library'?input(`${name}-email`,'email'):null;const key=adapter==='open_library'||settingsProviderKeyless(adapter)?null:input(`${name}-key`,'password');const emailField=email?field(`${label} contact email`,email):null;const keyField=key?secretField(`${label} API key`,key,`the ${label} API key`):null;if(emailField)row.append(emailField);if(keyField)row.append(keyField);const disclose=()=>{for(const control of [email,key]){if(control){control.disabled=!enabled.checked;control.closest('.field').hidden=!enabled.checked}}};enabled.addEventListener('change',disclose);disclose();form.append(row);rows.push({name,adapter,enabled,email,key})}const actions=document.createElement('div');actions.className='actions';actions.append(button('Continue',true));const skip=button('Skip providers');skip.type='button';skip.addEventListener('click',()=>mutate('/api/setup/providers',{expected_revision:state.revision,providers:[]},form));actions.append(skip);form.append(actions);form.addEventListener('submit',event=>{event.preventDefault();const invalidProvider=rows.find(row=>row.enabled.checked&&((row.email&&emailInvalid(row.email))||(row.key&&((settingsProviderKeyRequired(row.adapter)&&!settingsSecretValid(row.key.value))||(row.key.value&&!settingsSecretValid(row.key.value))))));if(invalidProvider){const control=invalidProvider.email&&emailInvalid(invalidProvider.email)?invalidProvider.email:invalidProvider.key;error(form,control===invalidProvider.email?'invalid_provider_email':!control.value&&settingsProviderKeyRequired(invalidProvider.adapter)?'missing_provider_key':'invalid_secret',control);return}const providers=rows.filter(row=>row.enabled.checked).map(row=>({name:row.name,adapter:row.adapter,enabled:true,cover_enabled:row.adapter==='inventaire',contact_email:row.email?.value||null,key:row.key?.value||null}));mutate('/api/setup/providers',{expected_revision:state.revision,providers},form)});section.append(form)};const renderLibraries=async()=>{const section=card('Choose libraries','Select one or more book libraries.');const form=document.createElement('form');const loading=document.createElement('p');loading.textContent='Reading libraries…';form.append(loading);section.append(form);try{const result=await api(`/api/setup/libraries?expected_revision=${state.revision}`);loading.remove();for(const item of result.libraries){const row=document.createElement('div');row.className='option';const selected=input(`library-${item.library_id}`,'checkbox');selected.disabled=item.media_kind==='unsupported';const head=document.createElement('label');head.append(selected,document.createTextNode(item.name));row.append(head);const name=input(`name-${item.library_id}`);name.value=escapeName(item.name);name.maxLength=settingsVocabulary.local_library_name.maximum;name.pattern=settingsVocabulary.local_library_name.pattern;name.title=settingsVocabulary.errors.library_name;const kind=document.createElement('select');kind.name=`kind-${item.library_id}`;for(const value of ['ebook','audiobook']){const option=document.createElement('option');option.value=value;option.textContent=value==='ebook'?'Ebook library':'Audiobook library';kind.append(option)}row.append(field('Local name',name),field('Library kind',kind));if(item.media_kind==='unsupported'){name.disabled=true;kind.disabled=true;const note=document.createElement('p');note.className='muted';note.textContent='This library type is not supported.';row.append(note)}row.dataset.id=item.library_id;form.append(row)}form.append(button('Continue',true));form.addEventListener('submit',event=>{event.preventDefault();const selected=[...form.querySelectorAll('.option')].filter(row=>row.querySelector('input[type=checkbox]').checked);if(!selected.length){error(form,'invalid_libraries');return}const invalid=selected.map(row=>row.querySelector('input[type=text]')).find(control=>!control.checkValidity()||!settingsLocalLibraryNameValid(control.value));if(invalid){invalid.focus();invalid.reportValidity();error(form,'invalid_library_name');return}const libraries=selected.map(row=>({name:row.querySelector('input[type=text]').value,library_id:row.dataset.id,media_kind:row.querySelector('select').value,provider_connections:state.providers.filter(value=>value.enabled).map(value=>value.name)}));mutate('/api/setup/libraries',{expected_revision:state.revision,libraries},form)})}catch(e){loading.textContent=recovery(e.message);loading.className='error';const retry=button('Retry');retry.type='button';retry.addEventListener('click',render);form.append(retry)}};const renderMounts=async()=>{const section=card('Check read-only mounts','Check that each selected library can reach its files. Mechanical Librarian only reads these folders and never creates or changes a mapping.');const guidance=document.createElement('p');guidance.className='muted';guidance.textContent='Enter the folder path the Audiobookshelf service itself reports, such as /audiobooks or /srv/media/books. That is the path inside that service, which is usually not the path you would type on your own computer. Setup compares it against the read-only mappings this deployment declares.';section.append(guidance);const form=document.createElement('form');let discovered=[];try{discovered=(await api(`/api/setup/libraries?expected_revision=${state.revision}`)).libraries}catch{}const shown=library=>{const evidence=discovered.find(item=>item.library_id===library?.library_id);return library?.display_name||evidence?.name||humanName(library?.name||'library')};if(state.mounts.length){const results=document.createElement('div');results.className='mount-results notice';results.setAttribute('role','status');for(const item of state.mounts){const line=document.createElement('p');const selectedLibrary=state.libraries.find(library=>library.name===item.library);const remedy=mountRemedy[item.state];line.className=remedy?'mount-line mount-line-attention':'mount-line';const lead=document.createElement('span');const label=document.createElement('span');label.className='mount-state';label.textContent=mountState[item.state]||'Compared';lead.append(document.createTextNode(`${selectedLibrary?shown(selectedLibrary):humanName(item.library)}: `),label);line.append(lead);if(remedy){const detail=document.createElement('span');detail.className='mount-remedy';detail.textContent=remedy;line.append(detail)}results.append(line)}form.append(results)}for(const library of state.libraries){const path=input(`path-${library.name}`);const evidence=discovered.find(item=>item.library_id===library.library_id);path.value=mountDraft&&library.name in mountDraft?mountDraft[library.name]:evidence?.service_path||'';path.placeholder=library.media_kind==='audiobook'?'Optional for audiobook libraries':'/service/path/to/books';form.append(field(`${shown(library)} service path`,path))}form.append(button(state.mounts.length?'Retest mounts':'Check mounts',true));form.addEventListener('submit',event=>{event.preventDefault();const service_paths={};const draft={};for(const library of state.libraries){const entered=form.elements[`path-${library.name}`].value;draft[library.name]=entered;const value=entered.trim();service_paths[library.name]=value||null}mountDraft=draft;mutate('/api/setup/mounts',{expected_revision:state.revision,service_paths},form)});section.append(form)};const renderKickoff=()=>{const section=card('Kick off preparation','Preparation will begin in the workspace.');const notice=document.createElement('p');notice.className='notice';notice.textContent='Nothing in your library changes. Writes stay off until you turn them on in Activity.';const form=document.createElement('form');form.append(notice,button('Kick off preparation',true));form.addEventListener('submit',async event=>{event.preventDefault();try{const result=await api('/api/setup/kick-off',{method:'POST',body:JSON.stringify({expected_revision:state.revision}),mutation:true});section.replaceChildren();const heading=document.createElement('h2');heading.textContent='Preparation is starting';const copy=document.createElement('p');copy.textContent=result.message;const progress=document.createElement('p');progress.className='notice';progress.textContent='Waiting for the normal workspace…';section.append(heading,copy,progress);const bridge=setInterval(async()=>{try{const response=await fetch('/api/v1/review-preparation',{credentials:'same-origin'});if(response.status===401){clearInterval(bridge);for(const row of ledger.querySelectorAll('.ledger-row')){row.removeAttribute('aria-current');row.querySelector('span').textContent='✓';row.querySelector('button')?.remove()}heading.textContent='Sign in to continue';copy.textContent='Your setup sign-in expired while preparation continued safely. Sign in to the workspace to see live progress.';progress.textContent='Preparation continues in the normal workspace.';const signIn=document.createElement('a');signIn.href='/library?lens=all';signIn.textContent='Sign in to workspace';section.append(signIn);heading.tabIndex=-1;heading.focus({preventScroll:true});section.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});return}if(response.ok){const preparation=await response.json();const libraries=Array.isArray(preparation.libraries)?preparation.libraries:[];const visible=preparation.presentation;const ready=visible?.passage?.ready??libraries.reduce((sum,item)=>sum+item.ready,0);const checked=visible?.passage?.checked??libraries.reduce((sum,item)=>sum+item.checked,0);const total=visible?.total??libraries.reduce((sum,item)=>sum+item.total,0);const failed=visible?.passage?.failed??0;progress.textContent=`${ready} ready · ${failed} could not finish · ${checked} of ${total} checked`;const needsAttention=preparation.actionable||preparation.paused;if(ready>0||preparation.first_boot_complete||needsAttention){clearInterval(bridge);for(const row of ledger.querySelectorAll('.ledger-row')){row.removeAttribute('aria-current');row.querySelector('span').textContent='✓';row.querySelector('button')?.remove()}heading.textContent=ready>0?'Your work is ready':preparation.first_boot_complete?'Preparation is complete':'Preparation needs attention';copy.textContent=ready>0?(preparation.first_boot_complete?'Preparation is complete. Open the workspace to review your ready work.':'Open the workspace while preparation continues.'):preparation.first_boot_complete?(preparation.actionable?'No work became ready. Open the workspace to review the failures and recovery.':'Preparation finished without ready work. Open the workspace to continue.'):'Open the workspace to review the paused connection and use Check connection again.';const open=document.createElement('a');open.href='/library?lens=all';open.textContent='Open workspace';section.append(open);heading.tabIndex=-1;heading.focus({preventScroll:true});section.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}}}catch{}},1500)}catch(e){error(form,e.message)}});section.append(form)};const render=async()=>{drawLedger();await ({claim:renderClaim,connect:renderConnect,providers:renderProviders,libraries:renderLibraries,mounts:renderMounts,reviewer:renderReviewer,kick_off:renderKickoff}[state.next_step]||renderClaim)()};const load=async()=>{csrf=null;try{state=await api('/api/setup/state');csrf=state.csrf_token;if(state.next_step!=='mounts')mountDraft=null;await render()}catch{state=null;mountDraft=null;await renderClaim()}};load();"""
-
-
 _VOCABULARY = json.loads(
     files(__package__).joinpath("settings_vocabulary.json").read_text(encoding="utf-8")
 )
-_AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
+
+# One source, served as written: no fragment is patched in afterwards.
+_SETUP_JS_SOURCE = r"""{
+  const saved=/(?:^|; )ml_theme=(light|dark)(?:;|$)/.exec(document.cookie)?.[1];
+  if(saved)document.documentElement.dataset.theme=saved
+}
+const main=document.querySelector('#setup-main');
+const ledger=document.querySelector('#setup-ledger');
+const status=document.querySelector('#setup-status');
+const steps=[['claim','Create owner access'],['connect','Connect Audiobookshelf'],['providers','Choose metadata providers'],['libraries','Choose libraries'],['mounts','Check read-only mounts'],['reviewer','Choose reviewer'],['kick_off','Kick off preparation']];
+const mountState={matched:'Matched',missing:'No mapping',ambiguous:'More than one mapping',unavailable:'No folder reported'};
+const mountRemedy={missing:'Correct the Audiobookshelf service path and compare again, or have the deployment declare a read-only mapping for it; Mechanical Librarian never creates or changes mounts.',ambiguous:'Correct the service path so exactly one deployment-owned read-only mapping matches.',unavailable:'Audiobookshelf reported no folder path to compare. Enter the service path yourself and compare again; Mechanical Librarian never creates or changes mounts.'};
+const mountSummary={matched:'read-only mount matched',missing:'no read-only mount declares this folder yet',ambiguous:'more than one read-only mount matches',unavailable:'no service path was reported to compare'};
+const insecureTransport=()=>location.protocol!=='https:';
+let csrf=null;
+let state=null;
+let codexTerminal=null;
+let mountDraft=null;
+let fieldSequence=0;
+let mutating=false;
+let refusalGuard=null;
+const api=async(path,options={})=>{
+  const headers={'content-type':'application/json',...(options.mutation?{'x-csrf-token':csrf}:{})};
+  const response=await fetch(path,{credentials:'same-origin',...options,headers:{...headers,...options.headers}});
+  let body={};
+  try{body=await response.json()}catch{}
+  if(!response.ok){
+    const failure=new Error(body?.detail?.error||body?.error||'unavailable');
+    failure.status=response.status;
+    throw failure
+  }
+  return body
+};
+const announce=value=>{
+  status.textContent='';
+  requestAnimationFrame(()=>{status.textContent=value})
+};
+const escapeName=value=>String(value).replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,64)||'library';
+const humanName=value=>String(value).split(/[-_]+/u).filter(Boolean).map(word=>word.charAt(0).toUpperCase()+word.slice(1)).join(' ');
+const field=(label,input)=>{
+  const wrap=document.createElement('label');
+  wrap.className='field';
+  const text=document.createElement('span');
+  text.textContent=label;
+  wrap.append(text,input);
+  return wrap
+};
+const secretField=(label,control,subject)=>{
+  const wrap=document.createElement('div');
+  wrap.className='field';
+  const id=`setup-field-${++fieldSequence}`;
+  control.id=id;
+  const text=document.createElement('label');
+  text.className='field-label';
+  text.setAttribute('for',id);
+  text.textContent=label;
+  const row=document.createElement('div');
+  row.className='reveal-row';
+  const toggle=document.createElement('button');
+  toggle.type='button';
+  toggle.className='reveal';
+  toggle.textContent='Show';
+  toggle.setAttribute('aria-pressed','false');
+  toggle.setAttribute('aria-controls',id);
+  toggle.setAttribute('aria-label',`Show ${subject}`);
+  toggle.addEventListener('click',()=>{
+    const reveal=control.type==='password';
+    control.type=reveal?'text':'password';
+    toggle.setAttribute('aria-pressed',reveal?'true':'false');
+    toggle.textContent=reveal?'Hide':'Show';
+    toggle.setAttribute('aria-label',`${reveal?'Hide':'Show'} ${subject}`)
+  });
+  row.append(control,toggle);
+  wrap.append(text,row);
+  return wrap
+};
+const rules=items=>{
+  const list=document.createElement('ul');
+  list.className='rules';
+  for(const item of items){
+    const row=document.createElement('li');
+    row.textContent=item;
+    list.append(row)
+  }
+  return list
+};
+const input=(name,type='text')=>{
+  const value=document.createElement('input');
+  value.name=name;
+  value.type=type;
+  value.autocomplete='off';
+  return value
+};
+const button=(label,primary=false)=>{
+  const value=document.createElement('button');
+  value.type='submit';
+  value.textContent=label;
+  if(primary)value.className='primary';
+  return value
+};
+const describe=(control,refused)=>{
+  const ids=`${refused?'setup-error ':''}${control.dataset.hint||''}`.trim();
+  if(ids)control.setAttribute('aria-describedby',ids);else control.removeAttribute('aria-describedby')
+};
+const error=(form,message,control)=>{
+  if(refusalGuard)refusalGuard.abort();
+  refusalGuard=new AbortController();
+  let node=form.querySelector('.error');
+  if(!node){
+    node=document.createElement('p');
+    node.className='error';
+    node.id='setup-error';
+    node.setAttribute('role','alert')
+  }
+  const anchor=control?.closest('.field');
+  if(anchor)anchor.after(node);else form.prepend(node);
+  node.textContent=recovery(message);
+  for(const other of form.querySelectorAll('[aria-invalid]'))if(other!==control){
+    other.removeAttribute('aria-invalid');
+    describe(other,false)
+  }
+  if(control){
+    control.setAttribute('aria-invalid','true');
+    describe(control,true);
+    control.addEventListener('input',()=>{
+      control.removeAttribute('aria-invalid');
+      describe(control,false);
+      node.textContent=''
+    },{once:true,signal:refusalGuard.signal});
+    control.focus();
+    const settle=requestAnimationFrame(()=>{if(control.isConnected)control.focus({preventScroll:true})});
+    form.addEventListener('focusin',event=>{if(event.target!==control&&event.target.matches('input,select,textarea'))cancelAnimationFrame(settle)},{signal:refusalGuard.signal})
+  }
+  return node
+};
+const recovery=code=>({reviewer_unconfigured:'The selected reviewer is no longer ready. Check its access and select it again, or continue without a reviewer.',not_provisioned:'The contained reviewer profile is unavailable. Reload to see its deployment remedy, or choose OpenRouter or no reviewer.',invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid or oversized response. Retry later.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_stale:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_unavailable:'Reviewer access is temporarily unavailable. Retry this step.',unauthorized:'Audiobookshelf did not accept that API key. Issue a key that can read your libraries, then paste it again.',invalid_endpoint:'That address could not be used. Enter the full Audiobookshelf address, including http:// or https:// and the port it serves on.',tls:'The certificate for that https:// address could not be verified against the address you entered. Use an address whose certificate this deployment already trusts, or use the service http:// address across a network you control. Mechanical Librarian never skips verification.',timeout:'Audiobookshelf did not answer in time. Check that the address is reachable from this deployment, then retry.',redirect:'That address redirected elsewhere. Enter the direct Audiobookshelf address; setup never follows a redirect with your key.',oversize:'Audiobookshelf returned more data than setup can safely read. Nothing was recorded.',malformed:'Audiobookshelf answered, but not with the supported libraries response. Check that the address points at Audiobookshelf itself.',unavailable:'Setup could not finish that step, so nothing was recorded. Wait a moment and try again.',invalid_origin:settingsVocabulary.errors.invalid_origin,session_expired:'Your setup sign-in expired, so nothing was recorded. Reload this page and sign in with the owner password; every recorded step is kept.',activation_failed:'Preparation could not be started, so nothing changed. Try kicking off again; if it keeps failing, the deployment log holds the reason.',invalid_mounts:'One of those service paths could not be used. Enter the absolute folder path the Audiobookshelf service itself reports, or leave it empty.',invalid_providers:'One of those provider entries could not be recorded. Check the contact email and API key on each provider you enabled.',invalid_credentials:'That owner password was not accepted. Check it and try again.',throttled:'Too many sign-in attempts from here. Wait a minute, then try the owner password again.',invalid_password:settingsVocabulary.errors.owner_password,invalid_password_long:settingsVocabulary.errors.owner_password_long,invalid_password_empty:settingsVocabulary.errors.owner_password_empty,invalid_password_mismatch:settingsVocabulary.errors.owner_password_mismatch,claimed:'This workspace was claimed in another tab. Sign in with its owner password.',claim_token:'That setup claim token was not accepted. Copy the newest token from the container log, or from private/setup-claim-token on the data volume; a restart replaces it.',csrf:'This setup form expired. Reload it and try again.',invalid_secret:settingsVocabulary.errors.secret,invalid_provider_email:settingsVocabulary.errors.open_library_email,missing_provider_key:settingsVocabulary.errors.provider_key,stale:'Setup changed in another tab. The latest recorded step has been restored.',invalid_libraries:settingsVocabulary.errors.libraries,invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name:'Use a library name from 1 to 256 characters without leading or trailing spaces.',mounts_unready:'Every selected book library needs one matching read-only mount before kickoff.'}[code]||'That could not be recorded. Check the fields and try again.');
+const mutate=async(path,payload,form,control)=>{
+  if(mutating)return;
+  mutating=true;
+  const actions=[...form.querySelectorAll('button:not(.reveal)')];
+  for(const action of actions)action.disabled=true;
+  main.setAttribute('aria-busy','true');
+  announce('Working on that step\u2026');
+  try{
+    await api(path,{method:'POST',body:JSON.stringify(payload),mutation:true});
+    await load();
+    announce('Setup progress recorded')
+  }catch(e){
+    const code=e.status===401?'session_expired':e.message;
+    if(code==='stale'){
+      await load();
+      announce(recovery('stale'));
+      const fresh=main.querySelector('form');
+      if(fresh){
+        error(fresh,'stale');
+        return
+      }
+    }
+    error(form,code,typeof control==='function'?control(code):control)
+  }finally{
+    mutating=false;
+    main.setAttribute('aria-busy','false');
+    for(const action of actions)if(action.isConnected)action.disabled=false
+  }
+};
+const reopen=async step=>{
+  const label=steps.find(([id])=>id===step)?.[1]||step;
+  try{
+    await api('/api/setup/change',{method:'POST',body:JSON.stringify({expected_revision:state.revision,step}),mutation:true});
+    mountDraft=null;
+    await load();
+    announce(`${label} reopened`)
+  }catch(e){announce(recovery(e.status===401?'session_expired':e.message))}
+};
+const drawLedger=()=>{
+  ledger.replaceChildren();
+  for(const [id,label] of steps){
+    const row=document.createElement('li');
+    row.className='ledger-row';
+    const complete=state?.completed_steps?.includes(id);
+    row.setAttribute('aria-current',state?.next_step===id?'step':'false');
+    const mark=document.createElement('span');
+    mark.textContent=complete?'✓':state?.next_step===id?'→':'·';
+    const text=document.createElement('span');
+    text.textContent=label;
+    row.append(mark,text);
+    if(complete&&id!=='claim'){
+      const change=document.createElement('button');
+      change.type='button';
+      change.textContent='Change';
+      change.setAttribute('aria-label',`Change ${label}`);
+      change.addEventListener('click',()=>reopen(id));
+      row.append(change)
+    }
+    ledger.append(row)
+  }
+};
+const card=(title,intro)=>{
+  main.replaceChildren();
+  main.setAttribute('aria-busy','false');
+  const section=document.createElement('section');
+  section.className='step-card';
+  const eyebrow=document.createElement('p');
+  eyebrow.className='eyebrow';
+  eyebrow.textContent=`Step ${steps.findIndex(([id])=>id===state.next_step)+1} of 7`;
+  const heading=document.createElement('h2');
+  heading.tabIndex=-1;
+  heading.textContent=title;
+  const copy=document.createElement('p');
+  copy.className='intro';
+  copy.textContent=intro;
+  section.append(heading,eyebrow,copy);
+  main.append(section);
+  requestAnimationFrame(()=>{
+    heading.focus({preventScroll:true});
+    section.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})
+  });
+  return section
+};
+const renderClaim=async()=>{
+  if(!state)state={next_step:'claim',completed_steps:[]};
+  drawLedger();
+  let claim;
+  try{claim=await api('/api/setup/claim')}catch(e){
+    const section=card('Setup is unavailable','Mechanical Librarian could not open owner access safely.');
+    const retry=button('Retry',true);
+    retry.type='button';
+    retry.addEventListener('click',renderClaim);
+    section.append(retry);
+    return
+  }
+  state.revision=claim.revision;
+  const section=card(claim.claimed?'Sign in to continue':'Create your owner password',claim.claimed?'Owner access already exists. Sign in with the owner password to resume exactly where you stopped.':'Only someone who can read this deployment’s own output can create the owner password. Enter the setup claim token, then choose the password you will use to sign in. Mechanical Librarian keeps a verifier, never the password itself.');
+  const transport=document.createElement('p');
+  transport.className='notice';
+  transport.textContent=insecureTransport()?'This page is served over plain http, so the owner password you type and the session cookie it returns travel in clear text across this network. Use this address only on a network you control or through a VPN.':'This page is served over https that your browser already trusts, so the owner password you type and the session cookie it returns are encrypted between this browser and Mechanical Librarian.';
+  section.append(transport);
+  const form=document.createElement('form');
+  let claimToken=null;
+  if(!claim.claimed){
+    claimToken=input('claim_token','password');
+    claimToken.maxLength=128;
+    const source=document.createElement('p');
+    source.textContent='Copy the setup claim token from the container log, or from private/setup-claim-token on the data volume. A restart replaces the token, so use the newest one.';
+    form.append(source,secretField('Setup claim token',claimToken,'the setup claim token'))
+  }
+  const password=input('password','password');
+  password.autocomplete=claim.claimed?'current-password':'new-password';
+  form.append(secretField('Owner password',password,'the owner password'));
+  if(!claim.claimed){
+    const list=rules([`At least ${settingsVocabulary.owner_password.minimum_characters} characters. Any characters are allowed, including spaces.`,'Both fields must match exactly.','Only a verifier is kept, so this password cannot be read back or reset from inside the application.']);
+    list.id='setup-password-rules';
+    list.children[1].id='setup-password-match';
+    password.dataset.hint=list.id;
+    describe(password,false);
+    form.append(list)
+  }
+  let confirmation=null;
+  if(!claim.claimed){
+    confirmation=input('confirmation','password');
+    confirmation.autocomplete='new-password';
+    confirmation.dataset.hint='setup-password-match';
+    describe(confirmation,false);
+    form.append(secretField('Confirm owner password',confirmation,'the confirmed owner password'))
+  }
+  form.append(button(claim.claimed?'Sign in':'Create owner access',true));
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();
+    if(confirmation){
+      const length=[...password.value].length;
+      const long=new TextEncoder().encode(password.value).length>settingsVocabulary.owner_password.maximum_bytes;
+      if(length<settingsVocabulary.owner_password.minimum_characters||long){
+        error(form,length===0?'invalid_password_empty':long?'invalid_password_long':'invalid_password',password);
+        return
+      }
+      if(password.value!==confirmation.value){
+        error(form,'invalid_password_mismatch',confirmation);
+        return
+      }
+    }
+    try{
+      const payload={password:password.value,...(claim.claimed?{}:{confirmation:confirmation.value,expected_revision:claim.revision,claim_token:claimToken.value.trim()})};
+      const result=await api('/api/setup/session',{method:'POST',body:JSON.stringify(payload),headers:claim.claimed?{}:{'x-setup-nonce':claim.nonce}});
+      csrf=result.csrf_token;
+      await load()
+    }catch(e){
+      if(e.message==='claimed'){
+        state=null;
+        await renderClaim();
+        return
+      }
+      if(claimToken&&['claim_token','invalid_password'].includes(e.message)){
+        try{
+          const fresh=await api('/api/setup/claim');
+          if(fresh.claimed){
+            state=null;
+            await renderClaim();
+            return
+          }
+          claim.nonce=fresh.nonce;
+          claim.revision=fresh.revision;
+          state.revision=fresh.revision
+        }catch{}
+        error(form,e.message,e.message==='claim_token'?claimToken:password);
+        return
+      }
+      if(confirmation&&(e.status===401||e.status===429)){
+        let already=false;
+        try{already=(await api('/api/setup/claim')).claimed}catch{}
+        if(already){
+          state=null;
+          await renderClaim();
+          const fresh=main.querySelector('form');
+          if(fresh)error(fresh,'claimed',fresh.querySelector('input[type=password]'));
+          return
+        }
+      }
+      error(form,e.message,password)
+    }
+  });
+  section.append(form);
+  (claimToken||password).focus()
+};
+const renderConnect=()=>{
+  const section=card('Connect Audiobookshelf','Setup makes one bounded read of the supported libraries API. Nothing is written to Audiobookshelf.');
+  const scheme=document.createElement('p');
+  scheme.className='muted';
+  scheme.textContent='Enter the address exactly as Audiobookshelf serves it, including its port. An http:// address is read in clear text, so use one only across a network you control. An https:// address is always verified against its certificate and hostname; Mechanical Librarian never skips that check, never follows a redirect with your key, and offers no way to trust an unverified certificate.';
+  section.append(scheme);
+  const form=document.createElement('form');
+  const endpoint=input('endpoint','url');
+  endpoint.placeholder='https://audiobookshelf.example:443';
+  const key=input('key','password');
+  key.autocomplete='off';
+  form.append(field('Audiobookshelf address',endpoint),secretField('Audiobookshelf API key',key,'the Audiobookshelf API key'),button('Verify and continue',true));
+  form.noValidate=true;
+  const addressCodes=['invalid_endpoint','invalid_origin','tls','timeout','redirect','malformed','oversize'];
+  form.addEventListener('submit',event=>{
+    event.preventDefault();
+    const address=endpoint.value.trim();
+    if(address!==endpoint.value)endpoint.value=address;
+    if(!address||!endpoint.checkValidity()){
+      error(form,'invalid_endpoint',endpoint);
+      return
+    }
+    if(!settingsSecretValid(key.value)){
+      error(form,'invalid_secret',key);
+      return
+    }
+    mutate('/api/setup/connect',{expected_revision:state.revision,name:'primary',endpoint:address,key:key.value},form,code=>code==='unauthorized'?key:addressCodes.includes(code)?endpoint:null)
+  });
+  section.append(form);
+  endpoint.focus()
+};
+const renderProviders=()=>{
+  const section=card('Choose metadata providers','Mechanical Librarian gets better results when it can compare more sources. Connect as many providers as you reasonably can; you can add or change them later in Settings.');
+  const form=document.createElement('form');
+  form.noValidate=true;
+  const emailInvalid=control=>!control.checkValidity()||!settingsOpenLibraryEmailValid(control.value);
+  const specs=[['inventaire','inventaire'],['open','open_library'],['hardcover','hardcover'],['google','google_books'],['audible','audible_catalog'],['audnexus','audnexus'],['audiosilo','audiosilo'],['itunes','itunes_search']];
+  const rows=[];
+  for(const [name,adapter] of specs){
+    const label=settingsVocabulary.provider_labels[adapter];
+    const row=document.createElement('div');
+    row.className='option';
+    const enabled=input(`${name}-enabled`,'checkbox');
+    enabled.checked=adapter==='inventaire';
+    const head=document.createElement('label');
+    head.append(enabled,document.createTextNode(label));
+    row.append(head);
+    const contribution=document.createElement('p');
+    contribution.className='muted';
+    contribution.textContent=settingsVocabulary.provider_contributions[adapter];
+    row.append(contribution);
+    if(settingsVocabulary.cover_switch_provider_adapters.includes(adapter)){
+      const covers=document.createElement('p');
+      covers.className='muted';
+      covers.textContent=`Cover evidence from ${label} stays off until you turn it on in Settings.`;
+      row.append(covers)
+    }
+    const accessHref={open_library:'https://openlibrary.org/account/create',hardcover:'https://hardcover.app/account/api',google_books:'https://console.cloud.google.com/apis/credentials'}[adapter];
+    if(accessHref){
+      const access=document.createElement('a');
+      access.className='provider-access';
+      access.href=accessHref;
+      access.rel='noreferrer';
+      access.textContent=`Get ${label} access`;
+      row.append(access)
+    }
+    const email=adapter==='open_library'?input(`${name}-email`,'email'):null;
+    const key=adapter==='open_library'||settingsProviderKeyless(adapter)?null:input(`${name}-key`,'password');
+    const emailField=email?field(`${label} contact email`,email):null;
+    const keyField=key?secretField(`${label} API key`,key,`the ${label} API key`):null;
+    if(emailField)row.append(emailField);
+    if(keyField)row.append(keyField);
+    const disclose=()=>{for(const control of [email,key]){if(control){
+      control.disabled=!enabled.checked;
+      control.closest('.field').hidden=!enabled.checked
+    }}};
+    enabled.addEventListener('change',disclose);
+    disclose();
+    form.append(row);
+    rows.push({name,adapter,enabled,email,key})
+  }
+  const actions=document.createElement('div');
+  actions.className='actions';
+  actions.append(button('Continue',true));
+  const skip=button('Skip providers');
+  skip.type='button';
+  skip.addEventListener('click',()=>mutate('/api/setup/providers',{expected_revision:state.revision,providers:[]},form));
+  actions.append(skip);
+  form.append(actions);
+  form.addEventListener('submit',event=>{
+    event.preventDefault();
+    const invalidProvider=rows.find(row=>row.enabled.checked&&((row.email&&emailInvalid(row.email))||(row.key&&((settingsProviderKeyRequired(row.adapter)&&!settingsSecretValid(row.key.value))||(row.key.value&&!settingsSecretValid(row.key.value))))));
+    if(invalidProvider){
+      const control=invalidProvider.email&&emailInvalid(invalidProvider.email)?invalidProvider.email:invalidProvider.key;
+      error(form,control===invalidProvider.email?'invalid_provider_email':!control.value&&settingsProviderKeyRequired(invalidProvider.adapter)?'missing_provider_key':'invalid_secret',control);
+      return
+    }
+    const providers=rows.filter(row=>row.enabled.checked).map(row=>({name:row.name,adapter:row.adapter,enabled:true,cover_enabled:row.adapter==='inventaire',contact_email:row.email?.value||null,key:row.key?.value||null}));
+    mutate('/api/setup/providers',{expected_revision:state.revision,providers},form)
+  });
+  section.append(form)
+};
+const renderLibraries=async()=>{
+  const section=card('Choose libraries','Select one or more book libraries.');
+  const form=document.createElement('form');
+  const loading=document.createElement('p');
+  loading.textContent='Reading libraries…';
+  form.append(loading);
+  section.append(form);
+  try{
+    const result=await api(`/api/setup/libraries?expected_revision=${state.revision}`);
+    loading.remove();
+    const usedNames=new Set();
+    const unsupported=result.libraries.filter(item=>item.media_kind==='unsupported');
+    if(unsupported.length){
+      const note=document.createElement('p');
+      note.className='notice';
+      note.textContent=`${unsupported.length} unsupported podcast ${unsupported.length===1?'library':'libraries'} excluded.`;
+      form.append(note)
+    }
+    for(const item of result.libraries.filter(value=>value.media_kind!=='unsupported')){
+      const row=document.createElement('div');
+      row.className='option';
+      const selected=input(`library-${item.library_id}`,'checkbox');
+      selected.disabled=item.media_kind==='unsupported';
+      const head=document.createElement('label');
+      head.append(selected,document.createTextNode(item.name));
+      row.append(head);
+      const name=input(`name-${item.library_id}`);
+      name.value=escapeName(item.name);
+      name.maxLength=settingsVocabulary.local_library_name.maximum;
+      name.pattern=settingsVocabulary.local_library_name.pattern;
+      name.title=settingsVocabulary.errors.library_name;
+      const kind=document.createElement('select');
+      kind.name=`kind-${item.library_id}`;
+      for(const value of ['ebook','audiobook']){
+        const option=document.createElement('option');
+        option.value=value;
+        option.textContent=value==='ebook'?'Ebook library':'Audiobook library';
+        kind.append(option)
+      }
+      const displayName=input(`display-${item.library_id}`);
+      displayName.value=item.name;
+      displayName.required=true;
+      const displayNameField=field('Library name',displayName);
+      displayNameField.hidden=true;
+      const changeName=button('Change name');
+      changeName.type='button';
+      changeName.addEventListener('click',()=>{
+        displayNameField.hidden=false;
+        changeName.hidden=true;
+        displayName.focus()
+      });
+      row.append(changeName,displayNameField);
+      if(item.media_kind==='unsupported'){
+        name.disabled=true;
+        kind.disabled=true;
+        const note=document.createElement('p');
+        note.className='muted';
+        note.textContent='This library type is not supported.';
+        row.append(note)
+      }
+      let stableName=escapeName(item.name);
+      let suffix=2;
+      while(usedNames.has(stableName)){
+        const tail=`-${suffix++}`;
+        stableName=`${escapeName(item.name).slice(0,64-tail.length)}${tail}`
+      }
+      usedNames.add(stableName);
+      row.dataset.id=item.library_id;
+      row.dataset.name=stableName;
+      form.append(row)
+    }
+    form.append(button('Continue',true));
+    form.addEventListener('submit',event=>{
+      event.preventDefault();
+      const selected=[...form.querySelectorAll('.option')].filter(row=>row.querySelector('input[type=checkbox]').checked);
+      if(!selected.length){
+        error(form,'invalid_libraries');
+        return
+      }
+      const invalid=selected.map(row=>row.querySelector('input[name^=display-]')).find(control=>{
+        const value=control.value;
+        return Array.from(value).length<1||Array.from(value).length>256||value.includes('\0')||value.trim()!==value
+      });
+      if(invalid){
+        invalid.focus();
+        error(form,'invalid_library_display_name');
+        return
+      }
+      const libraries=selected.map(row=>({display_name:row.querySelector('input[name^=display-]').value,name:row.dataset.name,library_id:row.dataset.id,media_kind:'book',provider_connections:state.providers.filter(value=>value.enabled).map(value=>value.name)}));
+      mutate('/api/setup/libraries',{expected_revision:state.revision,libraries},form)
+    })
+  }catch(e){
+    loading.textContent=recovery(e.message);
+    loading.className='error';
+    const retry=button('Retry');
+    retry.type='button';
+    retry.addEventListener('click',render);
+    form.append(retry)
+  }
+};
+const renderMounts=async()=>{
+  const section=card('Check read-only mounts','Check that each selected library can reach its files. Mechanical Librarian only reads these folders and never creates or changes a mapping.');
+  const guidance=document.createElement('p');
+  guidance.className='muted';
+  guidance.textContent='Enter the folder path the Audiobookshelf service itself reports, such as /audiobooks or /srv/media/books. That is the path inside that service, which is usually not the path you would type on your own computer. Setup compares it against the read-only mappings this deployment declares.';
+  section.append(guidance);
+  const form=document.createElement('form');
+  let discovered=[];
+  try{discovered=(await api(`/api/setup/libraries?expected_revision=${state.revision}`)).libraries}catch{}
+  const shown=library=>{
+    const evidence=discovered.find(item=>item.library_id===library?.library_id);
+    return library?.display_name||evidence?.name||humanName(library?.name||'library')
+  };
+  if(state.mounts.length){
+    const results=document.createElement('div');
+    results.className='mount-results notice';
+    results.setAttribute('role','status');
+    for(const item of state.mounts){
+      const line=document.createElement('p');
+      const selectedLibrary=state.libraries.find(library=>library.name===item.library);
+      const remedy=mountRemedy[item.state];
+      line.className=remedy?'mount-line mount-line-attention':'mount-line';
+      const lead=document.createElement('span');
+      const label=document.createElement('span');
+      label.className='mount-state';
+      label.textContent=mountState[item.state]||'Compared';
+      lead.append(document.createTextNode(`${selectedLibrary?shown(selectedLibrary):humanName(item.library)}: `),label);
+      line.append(lead);
+      if(remedy){
+        const detail=document.createElement('span');
+        detail.className='mount-remedy';
+        detail.textContent=remedy;
+        line.append(detail)
+      }
+      results.append(line)
+    }
+    form.append(results)
+  }
+  for(const library of state.libraries){
+    const path=input(`path-${library.name}`);
+    const evidence=discovered.find(item=>item.library_id===library.library_id);
+    path.value=mountDraft&&library.name in mountDraft?mountDraft[library.name]:evidence?.service_path||'';
+    path.placeholder=library.media_kind==='audiobook'?'Optional for audiobook libraries':'/service/path/to/books';
+    form.append(field(`${shown(library)} service path`,path))
+  }
+  form.append(button(state.mounts.length?'Retest mounts':'Check mounts',true));
+  form.addEventListener('submit',event=>{
+    event.preventDefault();
+    const service_paths={};
+    const draft={};
+    for(const library of state.libraries){
+      const entered=form.elements[`path-${library.name}`].value;
+      draft[library.name]=entered;
+      const value=entered.trim();
+      service_paths[library.name]=value||null
+    }
+    mountDraft=draft;
+    mutate('/api/setup/mounts',{expected_revision:state.revision,service_paths},form)
+  });
+  section.append(form)
+};
+const renderPreparation=(host,visible)=>{
+  host.replaceChildren();
+  host.className='setup-preparation';
+  const stateLine=document.createElement('p');
+  stateLine.setAttribute('role','status');
+  const stateCopy={starting:'Preparation is starting',running:'Preparation continues',blocked:'Preparation needs recovery',completed_clean:'Preparation is complete',completed_with_failures:'Preparation completed with failures',dismissed:'Preparation dismissed'};
+  stateLine.textContent=visible?stateCopy[visible.state]||'Preparation continues':'Preparation is starting';
+  host.append(stateLine);
+  if(!visible)return stateLine.textContent;
+  const active=document.createElement('section');
+  const activeHeading=document.createElement('h3');
+  activeHeading.textContent='Now preparing';
+  active.append(activeHeading);
+  const books=Array.isArray(visible.active_books)?visible.active_books.slice(0,5):[];
+  if(books.length){
+    const list=document.createElement('ol');
+    list.className='setup-active';
+    for(const book of books){
+      const item=document.createElement('li');
+      const name=document.createElement('strong');
+      name.textContent=book.name;
+      const stage=document.createElement('small');
+      stage.textContent=book.stage;
+      item.append(name,stage);
+      list.append(item)
+    }
+    active.append(list)
+  }else{
+    const empty=document.createElement('p');
+    empty.textContent='No book is active at the last confirmed refresh.';
+    active.append(empty)
+  }
+  if(visible.active_overflow){
+    const overflow=document.createElement('p');
+    overflow.textContent=`${visible.active_overflow} more active books follow in this run.`;
+    active.append(overflow)
+  }
+  const passage=document.createElement('section');
+  const passageHeading=document.createElement('h3');
+  passageHeading.textContent='How many books made it this far?';
+  const measures=document.createElement('dl');
+  measures.className='setup-passage';
+  for(const [field,label] of [['read','Read from library'],['searches_finished','Searches finished'],['compared','Candidates compared'],['checked','Metadata checked'],['ready','Prepared'],['failed','Stopped before finishing']]){
+    const row=document.createElement('div');
+    const term=document.createElement('dt');
+    term.textContent=label;
+    const value=document.createElement('dd');
+    value.textContent=String(visible.passage?.[field]??'…');
+    row.append(term,value);
+    measures.append(row)
+  }
+  passage.append(passageHeading,measures);
+  if((visible.state==='starting'||visible.state==='running')&&typeof visible.throughput_per_minute==='number'){
+    const throughput=document.createElement('p');
+    throughput.textContent=`${visible.throughput_per_minute.toFixed(1)} books/min`;
+    passage.append(throughput)
+  }
+  host.append(active,passage);
+  const recent=Array.isArray(visible.recent_completions)?visible.recent_completions.slice(0,8):[];
+  if(recent.length){
+    const recentSection=document.createElement('section');
+    const recentHeading=document.createElement('h3');
+    recentHeading.textContent='Recent completions';
+    const recentList=document.createElement('ul');
+    recentList.className='setup-completions';
+    for(const completion of recent){
+      const item=document.createElement('li');
+      item.textContent=`${completion.name} · ${completion.outcome==='ready'?'Prepared':'Stopped before finishing'}`;
+      recentList.append(item)
+    }
+    recentSection.append(recentHeading,recentList);
+    host.append(recentSection)
+  }
+  return stateLine.textContent
+};const renderReviewer=async()=>{
   const section=card('Choose an optional cover reviewer','Cover observations are advice only. Choose one engine or continue without a reviewer. No choice enables automatic application.');
   const form=document.createElement('form');section.append(form);
   const later=document.createElement('p');later.textContent='Optional description advice is configured separately in Settings → Reviewer after setup.';form.append(later);
@@ -176,7 +833,196 @@ _AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
   router.append(routerHeading,freeCaveat,caveat,shared,recommendation,field('Model ID',model),field('API key (write-only)',key),save,disclosure);form.append(router);
   if(access.mapping){const next=button('Continue with this reviewer',true);next.type='button';next.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form));form.append(next)}
 };
-"""
+const renderKickoff=async()=>{
+  const section=card('Kick off preparation','Check what preparation will use, then start it. Preparation will begin in the workspace.');
+  let reviewerChoice='No reviewer';
+  try{
+    const access=await api('/api/setup/reviewer-access');
+    const engine=access.mapping?.engine;
+    reviewerChoice=engine?{codex:'Codex',openrouter:'OpenRouter'}[engine]||humanName(engine):'No reviewer'
+  }catch{reviewerChoice='The reviewer choice could not be read just now'}
+  const providerNames=(state.providers||[]).filter(item=>item.enabled).map(item=>settingsVocabulary.provider_labels[item.adapter]||humanName(item.adapter));
+  const libraryLines=(state.libraries||[]).map(library=>{
+    const record=(state.mounts||[]).find(item=>item.library===library.name);
+    const mount=record?mountSummary[record.state]||'compared':'not compared yet';
+    return `${library.display_name||humanName(library.name)} — ${mount}`
+  });
+  const summary=document.createElement('dl');
+  summary.className='summary';
+  for(const [label,step,lines,action] of [['Audiobookshelf address','connect',[state.connection?.endpoint||'Not connected'],'Change the Audiobookshelf address'],['Metadata providers','providers',[providerNames.length?providerNames.join(', '):'None'],'Change the metadata providers'],['Libraries','libraries',libraryLines.length?libraryLines:['None selected'],'Change the selected libraries'],['Cover reviewer','reviewer',[reviewerChoice],'Change the cover reviewer']]){
+    const row=document.createElement('div');
+    row.className='summary-row';
+    const term=document.createElement('dt');
+    term.textContent=label;
+    const value=document.createElement('dd');
+    for(const line of lines){
+      const item=document.createElement('span');
+      item.textContent=line;
+      value.append(item)
+    }
+    const actions=document.createElement('dd');
+    const change=document.createElement('button');
+    change.type='button';
+    change.className='summary-change';
+    change.textContent='Change';
+    change.setAttribute('aria-label',action);
+    change.addEventListener('click',()=>reopen(step));
+    actions.append(change);
+    row.append(term,value,actions);
+    summary.append(row)
+  }
+  section.append(summary);
+  const notice=document.createElement('p');
+  notice.className='notice';
+  notice.textContent='Nothing in your library changes. Writes stay off until you turn them on in Activity.';
+  const form=document.createElement('form');
+  const submit=button('Kick off preparation',true);
+  form.append(notice,submit);
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();
+    if(submit.disabled)return;
+    submit.disabled=true;
+    try{
+      const result=await api('/api/setup/kick-off',{method:'POST',body:JSON.stringify({expected_revision:state.revision}),mutation:true});
+      section.replaceChildren();
+      document.querySelector('.prerequisites')?.classList.add('complete');
+      const heading=document.createElement('h2');
+      heading.tabIndex=-1;
+      heading.textContent='Preparation is starting';
+      const copy=document.createElement('p');
+      copy.textContent='Preparation continues safely in the normal workspace.';
+      const safety=document.createElement('p');
+      safety.className='notice';
+      safety.textContent=result.message;
+      const progress=document.createElement('div');
+      renderPreparation(progress,null);
+      const descriptions=document.createElement('a');
+      descriptions.href='/settings?group=reviewer';
+      descriptions.textContent='Configure optional description advice in Settings';
+      section.append(heading,copy,safety,progress,descriptions);
+      heading.focus({preventScroll:true});
+      let open=null;
+      let observed=true;
+      let announcedState=null;
+      let stopped=false;
+      let timer=null;
+      let pollDelay=1500;
+      const finishLedger=()=>{for(const row of ledger.querySelectorAll('.ledger-row')){
+        row.removeAttribute('aria-current');
+        row.querySelector('span').textContent='✓';
+        row.querySelector('button')?.remove()
+      }};
+      const stop=()=>{
+        stopped=true;
+        if(timer!==null)clearTimeout(timer)
+      };
+      const retire=dismissed=>{
+        stop();
+        renderPreparation(progress,null);
+        finishLedger();
+        heading.textContent=dismissed?'Preparation was dismissed':'Preparation is no longer available';
+        copy.textContent=dismissed?'Open the ordinary workspace.':'The preparation record is no longer available. Open the ordinary workspace.';
+        progress.textContent='No preparation run is available.';
+        if(!open){
+          open=document.createElement('a');
+          open.className='primary';
+          open.textContent='Open workspace';
+          section.append(open)
+        }
+        open.href='/library?lens=all';
+        announce(heading.textContent)
+      };
+      const poll=async()=>{try{
+        const response=await fetch('/api/v1/review-preparation',{credentials:'same-origin'});
+        if(response.status===401){
+          stop();
+          finishLedger();
+          heading.textContent='Sign in to continue';
+          copy.textContent='Your setup sign-in expired while preparation continued safely. Sign in to the workspace to see live progress.';
+          progress.textContent='Preparation continues in the normal workspace.';
+          const signIn=document.createElement('a');
+          signIn.href='/library?lens=all';
+          signIn.textContent='Sign in to workspace';
+          section.append(signIn);
+          heading.focus({preventScroll:true});
+          return
+        }
+        if(!response.ok)throw new Error('unavailable');
+        const preparation=await response.json();
+        const visible=preparation.presentation;
+        const retired=visible?.state==='dismissed';
+        if(!visible||retired){
+          if(observed||retired)retire(retired);else renderPreparation(progress,null);
+          return
+        }
+        observed=true;
+        const confirmed=renderPreparation(progress,visible);
+        if(!open){
+          open=document.createElement('a');
+          open.className='primary workspace-handoff';
+          open.textContent='Open workspace';
+          open.addEventListener('click',event=>{
+            if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+            const target=new URL(open.href,location.href);
+            const run=target.searchParams.get('preparation')??'';
+            if(target.origin!==location.origin||target.pathname!=='/library'||!/^preparation_run_[0-9a-f]{64}$/.test(run))return;
+            const motion=document.querySelector('#setup-handoff-motion');
+            if(!(motion instanceof HTMLLinkElement))return;
+            let fallback=null;
+            const disable=()=>{
+              motion.disabled=true;
+              if(fallback!==null)clearTimeout(fallback)
+            };
+            motion.disabled=false;
+            addEventListener('pageshow',disable,{once:true});
+            addEventListener('pageswap',handoff=>{if(handoff.viewTransition)void handoff.viewTransition.finished.then(disable,disable);else disable()},{once:true});
+            fallback=setTimeout(disable,2000)
+          });
+          section.append(open)
+        }
+        open.href=`/library?lens=all&preparation=${encodeURIComponent(visible.run_id)}`;
+        finishLedger();
+        const terminal=['completed_clean','completed_with_failures'].includes(visible.state);
+        pollDelay=terminal?5000:1500;
+        heading.textContent=visible.state==='blocked'?'Preparation needs attention':terminal?'Preparation is complete':'Preparation continues';
+        copy.textContent=visible.state==='blocked'?'Open the workspace to review recovery while preparation remains safely paused.':terminal?'Open the workspace to review the completed preparation record.':'Open the workspace while preparation continues.';
+        if(confirmed!==announcedState){
+          announcedState=confirmed;
+          announce(confirmed)
+        }
+      }catch{
+        const confirmed=progress.querySelector('[role=status]');
+        if(confirmed){
+          confirmed.textContent='Reconnecting · showing the last confirmed state';
+          announce('Reconnecting to preparation progress')
+        }
+      }finally{if(!stopped)timer=setTimeout(poll,pollDelay)}};
+      timer=setTimeout(poll,1500)
+    }catch(e){
+      submit.disabled=false;
+      error(form,e.status===401?'session_expired':e.message)
+    }
+  });
+  section.append(form)
+};
+const render=async()=>{
+  drawLedger();
+  await ({claim:renderClaim,connect:renderConnect,providers:renderProviders,libraries:renderLibraries,mounts:renderMounts,reviewer:renderReviewer,kick_off:renderKickoff}[state.next_step]||renderClaim)()
+};
+const load=async()=>{
+  csrf=null;
+  try{
+    state=await api('/api/setup/state');
+    csrf=state.csrf_token;
+    if(state.next_step!=='mounts')mountDraft=null;
+    await render()
+  }catch{
+    state=null;
+    mountDraft=null;
+    await renderClaim()
+  }
+};
+load();"""
 
 SETUP_JS = (
     "const settingsVocabulary="
@@ -187,65 +1033,8 @@ SETUP_JS = (
     + "const settingsLocalLibraryNameValid=value=>settingsTextValid(value,settingsVocabulary.local_library_name)&&new RegExp(settingsVocabulary.local_library_name.pattern,'u').test(value);"
     + "const settingsProviderKeyRequired=adapter=>settingsVocabulary.required_provider_keys.includes(adapter);"
     + "const settingsProviderKeyless=adapter=>settingsVocabulary.keyless_provider_adapters.includes(adapter);"
-    + SETUP_JS.replace(
-        "loading.remove();for(const item of result.libraries){",
-        "loading.remove();const usedNames=new Set();const unsupported=result.libraries.filter(item=>item.media_kind==='unsupported');if(unsupported.length){const note=document.createElement('p');note.className='notice';note.textContent=`${unsupported.length} unsupported podcast ${unsupported.length===1?'library':'libraries'} excluded.`;form.append(note)}for(const item of result.libraries.filter(value=>value.media_kind!=='unsupported')){",
-    )
-    .replace(
-        "row.append(field('Local name',name),field('Library kind',kind));",
-        "row.append(field('Local name',name));",
-    )
-    .replace(
-        "media_kind:row.querySelector('select').value",
-        "media_kind:'book'",
-    )
-    .replace(
-        "const renderKickoff=()=>{",
-        "const renderPreparation=(host,visible)=>{host.replaceChildren();host.className='setup-preparation';const stateLine=document.createElement('p');stateLine.setAttribute('role','status');const stateCopy={starting:'Preparation is starting',running:'Preparation continues',blocked:'Preparation needs recovery',completed_clean:'Preparation is complete',completed_with_failures:'Preparation completed with failures',dismissed:'Preparation dismissed'};stateLine.textContent=visible?stateCopy[visible.state]||'Preparation continues':'Preparation is starting';host.append(stateLine);if(!visible)return stateLine.textContent;const active=document.createElement('section');const activeHeading=document.createElement('h3');activeHeading.textContent='Now preparing';active.append(activeHeading);const books=Array.isArray(visible.active_books)?visible.active_books.slice(0,5):[];if(books.length){const list=document.createElement('ol');list.className='setup-active';for(const book of books){const item=document.createElement('li');const name=document.createElement('strong');name.textContent=book.name;const stage=document.createElement('small');stage.textContent=book.stage;item.append(name,stage);list.append(item)}active.append(list)}else{const empty=document.createElement('p');empty.textContent='No book is active at the last confirmed refresh.';active.append(empty)}if(visible.active_overflow){const overflow=document.createElement('p');overflow.textContent=`${visible.active_overflow} more active books follow in this run.`;active.append(overflow)}const passage=document.createElement('section');const passageHeading=document.createElement('h3');passageHeading.textContent='How many books made it this far?';const measures=document.createElement('dl');measures.className='setup-passage';for(const [field,label] of [['read','Read from library'],['searches_finished','Searches finished'],['compared','Candidates compared'],['checked','Metadata checked'],['ready','Prepared'],['failed','Stopped before finishing']]){const row=document.createElement('div');const term=document.createElement('dt');term.textContent=label;const value=document.createElement('dd');value.textContent=String(visible.passage?.[field]??'…');row.append(term,value);measures.append(row)}passage.append(passageHeading,measures);if((visible.state==='starting'||visible.state==='running')&&typeof visible.throughput_per_minute==='number'){const throughput=document.createElement('p');throughput.textContent=`${visible.throughput_per_minute.toFixed(1)} books/min`;passage.append(throughput)}host.append(active,passage);const recent=Array.isArray(visible.recent_completions)?visible.recent_completions.slice(0,8):[];if(recent.length){const recentSection=document.createElement('section');const recentHeading=document.createElement('h3');recentHeading.textContent='Recent completions';const recentList=document.createElement('ul');recentList.className='setup-completions';for(const completion of recent){const item=document.createElement('li');item.textContent=`${completion.name} · ${completion.outcome==='ready'?'Prepared':'Stopped before finishing'}`;recentList.append(item)}recentSection.append(recentHeading,recentList);host.append(recentSection)}return stateLine.textContent};const renderKickoff=()=>{",
-    )
-    .replace(
-        "row.append(field('Local name',name));",
-        "const displayName=input(`display-${item.library_id}`);displayName.value=item.name;displayName.required=true;const displayNameField=field('Library name',displayName);displayNameField.hidden=true;const changeName=button('Change name');changeName.type='button';changeName.addEventListener('click',()=>{displayNameField.hidden=false;changeName.hidden=true;displayName.focus()});row.append(changeName,displayNameField);",
-    )
-    .replace(
-        "row.dataset.id=item.library_id;",
-        "let stableName=escapeName(item.name);let suffix=2;while(usedNames.has(stableName)){const tail=`-${suffix++}`;stableName=`${escapeName(item.name).slice(0,64-tail.length)}${tail}`}usedNames.add(stableName);row.dataset.id=item.library_id;row.dataset.name=stableName;",
-    )
-    .replace(
-        "const invalid=selected.map(row=>row.querySelector('input[type=text]')).find(control=>!control.checkValidity()||!settingsLocalLibraryNameValid(control.value));if(invalid){invalid.focus();invalid.reportValidity();error(form,'invalid_library_name');return}",
-        "const invalid=selected.map(row=>row.querySelector('input[name^=display-]')).find(control=>{const value=control.value;return Array.from(value).length<1||Array.from(value).length>256||value.includes('\\0')||value.trim()!==value});if(invalid){invalid.focus();error(form,'invalid_library_display_name');return}",
-    )
-    .replace(
-        "const libraries=selected.map(row=>({name:",
-        "const libraries=selected.map(row=>({display_name:row.querySelector('input[name^=display-]').value,name:",
-    )
-    .replace(
-        "name:row.querySelector('input[type=text]').value",
-        "name:row.dataset.name",
-    )
-    .replace(
-        "const recovery=code=>({",
-        "const recovery=code=>({reviewer_unconfigured:'The selected reviewer is no longer ready. Check its access and select it again, or continue without a reviewer.',not_provisioned:'The contained reviewer profile is unavailable. Reload to see its deployment remedy, or choose OpenRouter or no reviewer.',invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid or oversized response. Retry later.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_stale:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_unavailable:'Reviewer access is temporarily unavailable. Retry this step.',",
-    )
-    .replace(
-        "const renderKickoff=()=>{", _AUTHORED_REVIEWER + "const renderKickoff=()=>{"
-    )
+    + _SETUP_JS_SOURCE
 )
-
-_AUTHORED_PREPARATION_KICKOFF = r"""const renderKickoff=async()=>{const section=card('Kick off preparation','Check what preparation will use, then start it. Preparation will begin in the workspace.');let reviewerChoice='No reviewer';try{const access=await api('/api/setup/reviewer-access');const engine=access.mapping?.engine;reviewerChoice=engine?{codex:'Codex',openrouter:'OpenRouter'}[engine]||humanName(engine):'No reviewer'}catch{reviewerChoice='The reviewer choice could not be read just now'}const providerNames=(state.providers||[]).filter(item=>item.enabled).map(item=>settingsVocabulary.provider_labels[item.adapter]||humanName(item.adapter));const libraryLines=(state.libraries||[]).map(library=>{const record=(state.mounts||[]).find(item=>item.library===library.name);const mount=record?mountSummary[record.state]||'compared':'not compared yet';return `${library.display_name||humanName(library.name)} — ${mount}`});const summary=document.createElement('dl');summary.className='summary';for(const [label,step,lines,action] of [['Audiobookshelf address','connect',[state.connection?.endpoint||'Not connected'],'Change the Audiobookshelf address'],['Metadata providers','providers',[providerNames.length?providerNames.join(', '):'None'],'Change the metadata providers'],['Libraries','libraries',libraryLines.length?libraryLines:['None selected'],'Change the selected libraries'],['Cover reviewer','reviewer',[reviewerChoice],'Change the cover reviewer']]){const row=document.createElement('div');row.className='summary-row';const term=document.createElement('dt');term.textContent=label;const value=document.createElement('dd');for(const line of lines){const item=document.createElement('span');item.textContent=line;value.append(item)}const actions=document.createElement('dd');const change=document.createElement('button');change.type='button';change.className='summary-change';change.textContent='Change';change.setAttribute('aria-label',action);change.addEventListener('click',()=>reopen(step));actions.append(change);row.append(term,value,actions);summary.append(row)}section.append(summary);const notice=document.createElement('p');notice.className='notice';notice.textContent='Nothing in your library changes. Writes stay off until you turn them on in Activity.';const form=document.createElement('form');const submit=button('Kick off preparation',true);form.append(notice,submit);form.addEventListener('submit',async event=>{event.preventDefault();if(submit.disabled)return;submit.disabled=true;try{const result=await api('/api/setup/kick-off',{method:'POST',body:JSON.stringify({expected_revision:state.revision}),mutation:true});section.replaceChildren();document.querySelector('.prerequisites')?.classList.add('complete');const heading=document.createElement('h2');heading.tabIndex=-1;heading.textContent='Preparation is starting';const copy=document.createElement('p');copy.textContent='Preparation continues safely in the normal workspace.';const safety=document.createElement('p');safety.className='notice';safety.textContent=result.message;const progress=document.createElement('div');renderPreparation(progress,null);const descriptions=document.createElement('a');descriptions.href='/settings?group=reviewer';descriptions.textContent='Configure optional description advice in Settings';section.append(heading,copy,safety,progress,descriptions);heading.focus({preventScroll:true});let open=null;let observed=true;let announcedState=null;let stopped=false;let timer=null;let pollDelay=1500;const finishLedger=()=>{for(const row of ledger.querySelectorAll('.ledger-row')){row.removeAttribute('aria-current');row.querySelector('span').textContent='✓';row.querySelector('button')?.remove()}};const stop=()=>{stopped=true;if(timer!==null)clearTimeout(timer)};const retire=dismissed=>{stop();renderPreparation(progress,null);finishLedger();heading.textContent=dismissed?'Preparation was dismissed':'Preparation is no longer available';copy.textContent=dismissed?'Open the ordinary workspace.':'The preparation record is no longer available. Open the ordinary workspace.';progress.textContent='No preparation run is available.';if(!open){open=document.createElement('a');open.className='primary';open.textContent='Open workspace';section.append(open)}open.href='/library?lens=all';announce(heading.textContent)};const poll=async()=>{try{const response=await fetch('/api/v1/review-preparation',{credentials:'same-origin'});if(response.status===401){stop();finishLedger();heading.textContent='Sign in to continue';copy.textContent='Your setup sign-in expired while preparation continued safely. Sign in to the workspace to see live progress.';progress.textContent='Preparation continues in the normal workspace.';const signIn=document.createElement('a');signIn.href='/library?lens=all';signIn.textContent='Sign in to workspace';section.append(signIn);heading.focus({preventScroll:true});return}if(!response.ok)throw new Error('unavailable');const preparation=await response.json();const visible=preparation.presentation;const retired=visible?.state==='dismissed';if(!visible||retired){if(observed||retired)retire(retired);else renderPreparation(progress,null);return}observed=true;const confirmed=renderPreparation(progress,visible);if(!open){open=document.createElement('a');open.className='primary workspace-handoff';open.textContent='Open workspace';open.addEventListener('click',event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;const target=new URL(open.href,location.href);const run=target.searchParams.get('preparation')??'';if(target.origin!==location.origin||target.pathname!=='/library'||!/^preparation_run_[0-9a-f]{64}$/.test(run))return;const motion=document.querySelector('#setup-handoff-motion');if(!(motion instanceof HTMLLinkElement))return;let fallback=null;const disable=()=>{motion.disabled=true;if(fallback!==null)clearTimeout(fallback)};motion.disabled=false;addEventListener('pageshow',disable,{once:true});addEventListener('pageswap',handoff=>{if(handoff.viewTransition)void handoff.viewTransition.finished.then(disable,disable);else disable()},{once:true});fallback=setTimeout(disable,2000)});section.append(open)}open.href=`/library?lens=all&preparation=${encodeURIComponent(visible.run_id)}`;finishLedger();const terminal=['completed_clean','completed_with_failures'].includes(visible.state);pollDelay=terminal?5000:1500;heading.textContent=visible.state==='blocked'?'Preparation needs attention':terminal?'Preparation is complete':'Preparation continues';copy.textContent=visible.state==='blocked'?'Open the workspace to review recovery while preparation remains safely paused.':terminal?'Open the workspace to review the completed preparation record.':'Open the workspace while preparation continues.';if(confirmed!==announcedState){announcedState=confirmed;announce(confirmed)}}catch{const confirmed=progress.querySelector('[role=status]');if(confirmed){confirmed.textContent='Reconnecting · showing the last confirmed state';announce('Reconnecting to preparation progress')}}finally{if(!stopped)timer=setTimeout(poll,pollDelay)}};timer=setTimeout(poll,1500)}catch(e){submit.disabled=false;error(form,e.status===401?'session_expired':e.message)}});section.append(form)}"""
-
-
-def _install_authored_preparation_kickoff(source: str) -> str:
-    start_marker = "const renderKickoff=()=>{"
-    end_marker = ";const render=async()=>"
-    if source.count(start_marker) != 1 or source.count(end_marker) != 1:
-        raise RuntimeError("setup preparation bridge boundary changed")
-    start = source.index(start_marker)
-    end = source.index(end_marker, start)
-    return source[:start] + _AUTHORED_PREPARATION_KICKOFF + source[end:]
-
-
-SETUP_JS = _install_authored_preparation_kickoff(SETUP_JS)
 
 SETUP_ORIGIN_REFUSAL_HTML = (
     "<!doctype html>\n"
