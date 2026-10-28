@@ -4063,17 +4063,6 @@ def _corroborated_lane(lane: ProviderLaneObservation) -> bool:
     )
 
 
-def _whole_ladder_sent(
-    lane: ProviderLaneObservation, ladder: tuple[WorkDispatchLineage, ...]
-) -> bool:
-    """Say whether an admitted lane records its whole ladder as sent (#1307).
-
-    The corroborated rule and the band-first set rule read the refused pages
-    only after every rung was sent, so their admissions count every rung.
-    """
-    return lane.dispatch is not None and lane.dispatch.rungs == len(ladder)
-
-
 # The one authority whose asserted lane walks the leading-number rung and
 # admits through the corroborated rule (#1307).
 CORROBORATED_RULE_AUTHORITY = "audible_catalog"
@@ -4589,7 +4578,6 @@ class MetadataReport:
                     # A rule admission follows the whole ladder (#1307), so
                     # every rung's hints stand beside it.
                     and not _corroborated_lane(lane)
-                    and not _whole_ladder_sent(lane, ladder)
                     and (
                         lane.dispatch_lineage not in ladder
                         or any(
@@ -4767,6 +4755,27 @@ class MetadataReport:
             raise ReportValueError("provider lane dispatch presence is invalid")
         if self.audio is None:
             return
+        # A rule admission stands only where every exact path refused (#1307):
+        # every planned alternative lane was asked and ended `no_match`, and
+        # no ASIN lane admitted.
+        alternatives = tuple(
+            identity
+            for identity, payload in planned.items()
+            if payload.title_basis is not None
+        )
+        for provider in self.providers:
+            if not any(_corroborated_lane(lane) for lane in provider.lanes):
+                continue
+            statuses = {lane.identity: lane.status for lane in provider.lanes}
+            if any(
+                statuses.get(identity) is not ProviderStatus.NO_MATCH
+                for identity in alternatives
+            ) or any(
+                lane.kind is ProviderQueryKind.ASIN
+                and lane.status is ProviderStatus.CANDIDATES
+                for lane in provider.lanes
+            ):
+                raise ReportValueError("corroborated admission precedes an exact path")
         for _, lane in lanes:
             lane._validate_dispatch()
         if any(
@@ -4802,16 +4811,12 @@ class MetadataReport:
                 # The rule reads only after the whole ladder was sent (#1307).
                 expected = rungs == len(ladder)
             elif dispatch.outcome is DispatchOutcome.ADMITTED:
-                # A band-first admission (#1307) also follows the whole
-                # ladder; its lineage is the exact path's, so its record may
-                # count every rung rather than stop at the admitted one.
-                expected = lane.dispatch_lineage in ladder and (
-                    rungs == ladder.index(lane.dispatch_lineage) + 1
-                    or (
-                        provider.authority == CORROBORATED_RULE_AUTHORITY
-                        and payload.title_basis is None
-                        and rungs == len(ladder)
-                    )
+                # A band-first admission (#1307) replays as the exact path
+                # that admitted its one product, so it is recorded as that
+                # path stops.
+                expected = (
+                    lane.dispatch_lineage in ladder
+                    and rungs == ladder.index(lane.dispatch_lineage) + 1
                 )
             else:
                 expected = 1 <= rungs <= len(ladder)

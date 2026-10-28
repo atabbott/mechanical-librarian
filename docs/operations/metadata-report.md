@@ -318,9 +318,12 @@ Provider runtimes from Audible, Audnexus and AudioSilo are whole minutes, so
 the tight band reads a provider runtime of `m` minutes as the interval
 `[60m, 60m + 59]` seconds (#1307, ADR-0064): the distance is zero inside that
 interval and otherwise measured to its nearer end. The band stays 90 seconds,
-and the loose band is unchanged. Set admission, corroboration and the bounded
-hints read the exact band first and the floor only where it found nothing, so
-nothing the exact band admitted or kept changes.
+and the loose band is unchanged. Set admission and corroboration read the
+exact band first and the floor only where it found nothing, so no recording
+admission the exact band made changes; the bounded hints and the ASIN feed
+take exactly tight hints before floor-only ones. Narrator plausibility and
+the runtime veto read the floor directly, so a product they judged by the
+exact band can be judged differently, as intended.
 
 Every lane of an audiobook report also records `dispatch` (#1258): an
 `outcome` of `admitted`, `empty`, `refused`, `overflow`, `unavailable`,
@@ -682,8 +685,9 @@ it. When no product admits, the corroborated rule (`band_corroborated_title_rela
 admits one product only if its runtime is inside the tight band, its title is
 related to the lane title, its narrator or its series number agrees with the
 target (series names must be equal once normalized), and nothing contradicts
-it on narrator, author, series number or language. A product whose title runs
-on past the whole lane title also needs its series number to agree. A title is related when, after accents, case, articles, apostrophes
+it on narrator, author, series number or language. Where either title, the
+product's read with its subtitle, runs on past the other with a word that is
+not decoration, the series number must agree. A title is related when, after accents, case, articles, apostrophes
 and punctuation are folded, it equals the lane title, its title and subtitle
 joined equal it, one contains the other as a contiguous run of words, or the
 two share at least half of their combined words; the guard is mandatory,
@@ -694,10 +698,12 @@ identity wins. The
 lineage records the rung the page was asked on plus the single
 `corroborated_title_relation` application, and replay recomputes the rule from
 the report's own claims. Audible applies the rule only after its whole asserted
-ladder and the alternative lane, where the plan has one, both ended
-`no_match`, so an exact admission on any rung of either lane comes first. A
-rule admission's `dispatch` counts every rung the walk sent, and so may a
-band-first admission's.
+ladder ended `no_match`, every alternative lane the plan carries was asked and
+ended `no_match`, and no ASIN lane admitted, so an exact admission on any lane
+comes first; validation refuses a rule admission beside any other outcome. A
+retry that does not cover every planned alternative lane runs without the
+rule. A rule admission's `dispatch` counts every rung the walk sent; a
+band-first admission is recorded as its exact path stops.
 
 The filename-prefix query grammar requires the complete prefix token sequence
 to equal the complete first ordered author. It permits no inversion, initial

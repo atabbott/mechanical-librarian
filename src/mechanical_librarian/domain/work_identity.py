@@ -1216,24 +1216,71 @@ def work_title_related(
     return len(left & right) >= TITLE_RELATION_OVERLAP * len(left | right)
 
 
-def work_title_extends(local_title: str, provider_title: str) -> bool:
-    """Whether a provider title runs on past the whole local title (#1307).
+# Words that decorate a title rather than name a work: the stop list both
+# audiobook title grammars share, plus the generic provider subtitles (#1307).
+_TITLE_DECORATION_TOKENS = _DISCOVERY_STOP_WORDS | frozenset({"novel", "stories"})
 
-    "Example Journey Home" extends "Example Journey": the shape of a sequel
-    or companion in the same series, which title relation alone cannot tell
-    from the same book. A provider title whose part before a colon lies inside
-    the local title, such as "Example Journey: A Novel", does not extend it.
+
+def _decoration_token(token: str, decorations: frozenset[str]) -> bool:
+    return (
+        token in _TITLE_DECORATION_TOKENS
+        or token in decorations
+        or any(character.isdigit() for character in token)
+        or _ROMAN_NUMERAL.fullmatch(token) is not None
+    )
+
+
+def work_title_extends(
+    local_title: str,
+    provider_title: str,
+    provider_subtitle: str | None = None,
+    *,
+    decorations: tuple[str, ...] = (),
+) -> bool:
+    """Whether one title runs on past the whole other with a new word (#1307).
+
+    The provider title is read joined to its subtitle, and either side may be
+    the longer: "Example Journey Home" and "Example Journey: The Return" both
+    extend "Example Journey", whichever side holds them. That is the shape of
+    a sequel or companion in the same series, which title relation alone
+    cannot tell from the same book. Words that only decorate a title -- the
+    shared stop list ("book", "edition", "unabridged", ...), "a novel",
+    numbers, roman numerals and the words of `decorations`, the series names
+    either side states -- do not extend it, so "Example Journey: A Novel" and
+    "Example Journey: Example Saga, Book 2" do not.
     """
-    if type(local_title) is not str or type(provider_title) is not str:
+    if (
+        type(local_title) is not str
+        or type(provider_title) is not str
+        or provider_subtitle is not None
+        and type(provider_subtitle) is not str
+        or type(decorations) is not tuple
+        or any(type(value) is not str for value in decorations)
+    ):
         raise ValueError("work title relation input is invalid")
     local = _relation_tokens(local_title)
-    title = _relation_tokens(provider_title)
-    main = _relation_tokens(provider_title.split(":", 1)[0])
-    return (
-        bool(local)
-        and len(title) > len(local)
-        and _contains_tokens(title, local)
-        and not (main and _contains_tokens(local, main))
+    joined = _relation_tokens(f"{provider_title} {provider_subtitle or ''}")
+    if len(local) == len(joined):
+        return False
+    longer, shorter = (joined, local) if len(joined) > len(local) else (local, joined)
+    if not shorter:
+        return False
+    index = next(
+        (
+            start
+            for start in range(len(longer) - len(shorter) + 1)
+            if longer[start : start + len(shorter)] == shorter
+        ),
+        None,
+    )
+    if index is None:
+        return False
+    named = frozenset(
+        token for value in decorations for token in _relation_tokens(value)
+    )
+    return any(
+        not _decoration_token(token, named)
+        for token in (*longer[:index], *longer[index + len(shorter) :])
     )
 
 

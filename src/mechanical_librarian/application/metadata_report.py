@@ -136,6 +136,7 @@ from mechanical_librarian.domain.metadata_report import (
     work_ladder_diagnostics,
 )
 from mechanical_librarian.domain.work_identity import (
+    CORROBORATED_TITLE_PRODUCTION,
     WorkDispatchLineage,
     WorkQuery,
     WorkTitleTransformationLineage,
@@ -774,6 +775,30 @@ def alternative_work_lane_permitted(
     ) or (asserted is not None and asserted.status is ProviderStatus.NO_MATCH)
 
 
+def corroborated_rule_permitted(
+    plan: MetadataDiscoveryPlan, results: list[ProviderLaneResult]
+) -> bool:
+    """Permit the asserted lane's corroborated rule once every exact path refused.
+
+    Exact admission wins on every lane (#1307): every alternative WORK lane the
+    plan carries must have been observed and ended `no_match`, and no ASIN
+    lane, the carried one included, may have admitted. A lane that failed, was
+    suppressed or is missing from `results` blocks the rule rather than
+    standing in for a refusal.
+    """
+    observed = {result.lane.identity: result for result in results}
+    return all(
+        (result := observed.get(lane.identity)) is not None
+        and result.status is ProviderStatus.NO_MATCH
+        for lane in plan.lanes
+        if lane.kind is ProviderQueryKind.WORK and lane.title_basis is not None
+    ) and not any(
+        result.lane.kind is ProviderQueryKind.ASIN
+        and result.status is ProviderStatus.CANDIDATES
+        for result in results
+    )
+
+
 def identifier_suppresses_discovery(
     plan: MetadataDiscoveryPlan,
     results: list[ProviderLaneResult],
@@ -1129,15 +1154,26 @@ def audiobook_asin_feed_plan(
                             )
                         )
     # Band-first hints (#1257) come last, so a refused product's ASIN never
-    # displaces a stronger origin inside the cap.
-    for observation in observations:
-        if observation.authority != "audible_catalog":
-            continue
-        for lane in observation.lanes:
-            for hint in lane.recording_lookup_hints:
-                ordered[hint.asin] = tuple(
-                    sorted(set(ordered.get(hint.asin, ())) | set(lane.input_references))
-                )
+    # displaces a stronger origin inside the cap; and a hint inside the band
+    # read exactly comes before one only the minute floor brings in (#1307).
+    local = local_claim_runtime_seconds(plan.local_claims)
+    hinted = [
+        (hint, lane.input_references)
+        for observation in observations
+        if observation.authority == "audible_catalog"
+        for lane in observation.lanes
+        for hint in lane.recording_lookup_hints
+    ]
+    for hint, references in sorted(
+        hinted,
+        key=lambda value: (
+            runtime_agreement(local, value[0].runtime_seconds).outcome
+            is not CorroborationOutcome.CORROBORATED
+        ),
+    ):
+        ordered[hint.asin] = tuple(
+            sorted(set(ordered.get(hint.asin, ())) | set(references))
+        )
     room = MAX_ASIN_DISCOVERY_LANES - sum(
         lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes
     )
@@ -2412,9 +2448,11 @@ def observe_work_ladder(
     refused, the exhausted result carries `corroborated`: it qualifies each
     refused rung's page again, in ladder order, with the band-first set rule
     and the corroborated admission rule, and the first page either admits is
-    the lane's result. The walk sent every rung, so that result counts them
-    all and keeps every rung's hints. The caller runs it only after every
-    exact path, the alternative lane's included, admitted nothing.
+    the lane's result. A rule admission counts every rung the walk sent and
+    keeps every rung's hints; a band-first admission, whose lineage is the
+    exact path's, is recorded as that path stops. The caller runs it only
+    after every exact path, the alternative lane's and every ASIN lane's
+    included, admitted nothing.
     """
     corroborate = (
         corroborate
@@ -2427,7 +2465,7 @@ def observe_work_ladder(
     refused_products = 0
     hints: tuple[ProviderCandidate, ...] = ()
     tight: list[RecordingLookupHint] = []
-    refused_pages: list[ProviderObservation] = []
+    refused_pages: list[tuple[int, ProviderObservation]] = []
     observation: ProviderObservation | None = None
     for query in work_query_ladder(
         lookup.title or "",
@@ -2461,7 +2499,7 @@ def observe_work_ladder(
         ):
             refused_products += len(physical.candidates)
             hints = hints or observation.recording_lookup_candidates
-            refused_pages.append(physical)
+            refused_pages.append((len(exhausted), physical))
         elif observation.status is ProviderStatus.CANDIDATES:
             return QualifiedLaneObservation(
                 observation,
@@ -2481,16 +2519,36 @@ def observe_work_ladder(
     sent = len(exhausted)
 
     def corroborated() -> QualifiedLaneObservation | None:
-        for physical in refused_pages:
+        for index, physical in refused_pages:
             admitted = qualify_provider_observation(physical, lookup, corroborate=True)
-            if admitted.status is ProviderStatus.CANDIDATES:
-                return QualifiedLaneObservation(
-                    admitted,
-                    recording_lookup_hints=_bounded_lookup_hints(
-                        tight, admitted, lookup.local_claims
+            if admitted.status is not ProviderStatus.CANDIDATES:
+                continue
+            # A rule admission names its own production, so its record can
+            # count every rung sent. A band-first admission replays as the
+            # exact path that admitted its one product, so it is recorded as
+            # that path would be: rungs and hints up to its rung.
+            ruled = (
+                admitted.transformation_lineage is not None
+                and admitted.transformation_lineage.production
+                == CORROBORATED_TITLE_PRODUCTION
+            )
+            return QualifiedLaneObservation(
+                admitted,
+                recording_lookup_hints=_bounded_lookup_hints(
+                    (
+                        tight
+                        if ruled
+                        else [
+                            hint
+                            for hint in tight
+                            if exhausted.index(hint.rung) <= index
+                        ]
                     ),
-                    rungs=sent,
-                )
+                    admitted,
+                    lookup.local_claims,
+                ),
+                rungs=sent if ruled else index + 1,
+            )
         return None
 
     return QualifiedLaneObservation(
@@ -3727,6 +3785,7 @@ __all__ = [
     "UnsupportedMediaError",
     "admitted_audiobook_identity",
     "alternative_work_lane_permitted",
+    "corroborated_rule_permitted",
     "audiobook_asin_feed_plan",
     "audiobook_carried_plan",
     "audiobook_discovery_plan",

@@ -48,6 +48,7 @@ from mechanical_librarian.application.metadata_report import (
     QualifiedLaneObservation,
     WorkLadderFacts,
     alternative_work_lane_permitted,
+    corroborated_rule_permitted,
     merge_provider_cover_descriptors,
     observe_work_ladder,
     provider_discovery_lane_order,
@@ -398,12 +399,7 @@ class AudibleCatalogMetadataProvider:
                     )
                 else:
                     descriptors = merged
-            if deferred is not None and all(
-                result.status is ProviderStatus.NO_MATCH
-                for result in results
-                if result.lane.kind is ProviderQueryKind.WORK
-                and result.lane.title_basis is not None
-            ):
+            if deferred is not None and corroborated_rule_permitted(plan, results):
                 index, corroborated, lane_descriptors = deferred
                 ruled = corroborated()
                 if ruled is not None:
@@ -414,7 +410,14 @@ class AudibleCatalogMetadataProvider:
                         ),
                     )
                     if merged is not None:
-                        results[index] = _lane_result(results[index].lane, ruled)
+                        lane = results[index].lane
+                        results[index] = _lane_result(lane, ruled)
+                        self._work_ladders = [
+                            replace(facts, rungs=ruled.rungs)
+                            if facts.lane_identity == lane.identity
+                            else facts
+                            for facts in self._work_ladders
+                        ]
                         descriptors = merged
         self._cover_descriptors = descriptors
         return provider_observation(

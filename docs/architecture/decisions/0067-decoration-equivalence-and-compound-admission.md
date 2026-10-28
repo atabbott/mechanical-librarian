@@ -249,10 +249,22 @@ accepted.
 and only after every exact path admitted nothing: set admission first runs
 exactly as before, then with the #1260 band productions, and only a page every
 path refused reaches the rule. The asserted lane walks its whole ladder first,
-and the #1255 alternative lane is then asked as before; only when it also
-ends `no_match`, or the plan has none, does the rule read the asserted lane's
-refused pages. An exact admission on any rung of either lane therefore always
-comes first. A rule admission records every rung the walk sent. The carried
+and the #1255 alternative lane is then asked as before; only when every
+alternative lane the plan carries was asked and ended `no_match`, and no ASIN
+lane (the carried one included) admitted, does the rule read the asserted
+lane's refused pages. An exact admission on any lane therefore always comes
+first, and report validation refuses a rule admission beside an alternative
+lane that was not asked or did not end `no_match`, or beside an admitted ASIN
+lane. A rule admission records every rung the walk sent.
+
+A provider retry (#1257) sees only the lanes it retries. It keeps the rule
+only when every planned alternative lane is retried with it or already ended
+`no_match`, and no ASIN lane left out of it admitted. An alternative lane
+suppressed behind a failed asserted lane was never asked, so a retry of the
+asserted lane alone runs without the rule. The refused pages are not
+retained, so a later retry of the alternative lane alone that ends
+`no_match` cannot re-arm the rule; the item waits for its next full
+preparation. The carried
 lane (#1316, ADR-0088) may verify a refused product through the same rule. The alternative-title lane, every other
 fed ASIN lane, the overflow witness, ebooks and every other authority keep
 their rules unchanged.
@@ -281,11 +293,19 @@ A language contradiction needs a language the local file states, as
 none. A product in another language then fails the rule only by lacking a
 narrator or series agreement, or by its runtime.
 
-A product whose title runs on past the whole local title ("Example Journey
-Home" for "Example Journey") is the shape of a sequel by the same author and
-narrator, so it admits only when its series position agrees; a narrator
-agreement alone does not admit it. A title whose part before a colon lies
-inside the local title, such as "Example Journey: A Novel", does not run on.
+A title that runs on past the other with a new word is the shape of a sequel
+by the same author and narrator, so it admits only when its series position
+agrees; a narrator agreement alone does not admit it. The product title is
+read joined to its subtitle, and either side may be the longer: "Example
+Journey Home", "Example Journey: The Return" and a separate subtitle "The
+Return" all run on past "Example Journey", and "Example Journey Home" runs on
+past a product "Example Journey". Decoration does not run on: the stop list
+both audiobook title grammars share ("book", "edition", "unabridged", ...),
+"a novel", numbers, roman numerals and the series names either side states.
+So "Example Journey: A Novel", "Example Journey: Example Saga, Book 2" and a
+bare "12 Example Journey" do not need a series. A local title with a
+subtitle the product lacks ("Example Journey: Into the Fold" beside "Example
+Journey") does; no measured rescue had that shape.
 
 When several products qualify, each must state a narrator and every pair must
 share one, or none admits: an unnarrated edition beside a narrated one could
@@ -312,9 +332,12 @@ claims, and a forged narrator or series claim fails it.
 one of them is inside the tight band and every other one is outside the loose
 band, the tight one is kept, unless it has a recording-variant conflict or its
 narrators contradict the target's. It then replays alone through the path
-that admitted it, so its lineage is that path's. It too reads only after the
-whole ladder, so its record may count every rung sent rather than stop at the
-rung its lineage names.
+that admitted it, so its lineage is that path's, and it is recorded as that
+path stops: its rungs and hints run only to the rung its lineage names, so
+validation still requires an exact admission's count. Because nothing on the
+lane names it, validation cannot tell a band-first admission from an exact
+one, and the deferral is the only thing that orders it after the exact
+paths.
 
 **Per-shape productions: not added.** Title and subtitle join, subtitle
 stripping with series corroboration, article fold, right-hand segment and the

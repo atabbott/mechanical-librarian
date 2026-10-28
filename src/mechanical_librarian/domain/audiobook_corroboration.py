@@ -1493,10 +1493,24 @@ def _corroborated_distance(
         series,
     }:
         return None
-    # A title that runs on past the local one is the shape of a series
-    # neighbour by the same author and narrator, so only an agreeing series
-    # position admits it.
-    if work_title_extends(title, provider_title) and series is not _Signal.AGREE:
+    # A title that runs on past the other, on either side, is the shape of a
+    # series neighbour by the same author and narrator, so only an agreeing
+    # series position admits it.
+    if (
+        work_title_extends(
+            title,
+            provider_title,
+            provider_subtitle,
+            decorations=tuple(
+                name
+                for name, _ in (
+                    *_local_series(local_claims, corroboration),
+                    *_candidate_series(candidate),
+                )
+            ),
+        )
+        and series is not _Signal.AGREE
+    ):
         return None
     return tight_runtime_distance(local, stated, provider_minutes=True)
 

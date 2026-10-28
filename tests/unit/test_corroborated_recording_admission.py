@@ -23,6 +23,7 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AudibleCatalogMetadataProvider,
 )
 from mechanical_librarian.application import metadata_report as m
+from mechanical_librarian.application.provider_retry_successor import _retry_plan
 from mechanical_librarian.domain.audiobook_corroboration import (
     CorroborationOutcome,
     band_first_candidate,
@@ -412,7 +413,7 @@ def test_the_rule_refuses_without_corroboration_or_with_a_contradiction(
 
 
 def test_a_language_conflict_refuses_the_rule() -> None:
-    product = _candidate(language="de")
+    product = _candidate(subtitle="Into the Fold", language="de")
 
     assert None is _ruled(product, claims=_local_claims(language="en"))
     assert product == _ruled(product, claims=_local_claims(language="de"))
@@ -426,10 +427,10 @@ def test_qualifying_editions_must_share_a_narrator_and_the_closest_wins() -> Non
     )
     disjoint = _candidate("audible-product-B000000004", narrators=(_OTHER_NARRATOR,))
 
-    assert near == _ruled(far, near)
-    assert near == _ruled(far, near, other)
+    assert near == _ruled(far, near, title="Synthetic Journey")
+    assert near == _ruled(far, near, other, title="Synthetic Journey")
     # A contradicting product never qualifies, so it never splits the set.
-    assert near == _ruled(near, disjoint)
+    assert near == _ruled(near, disjoint, title="Synthetic Journey")
     # Two qualifying editions with disjoint casts are two recordings.
     split = _candidate(
         "audible-product-B000000005", narrators=(_OTHER_NARRATOR,), minutes=999
@@ -437,6 +438,7 @@ def test_qualifying_editions_must_share_a_narrator_and_the_closest_wins() -> Non
     assert None is _ruled(
         near,
         split,
+        title="Synthetic Journey",
         corroboration=RecordingCorroboration((_NARRATOR, _OTHER_NARRATOR)),
     )
 
@@ -1265,4 +1267,240 @@ def test_refused_product_comparison_links_replay() -> None:
         claim["links"] = []
 
     with pytest.raises(ReportValueError, match="comparison links are inconsistent"):
+        MetadataReport.from_json(_readdressed(data))
+
+
+@pytest.mark.parametrize(
+    ("local", "title", "subtitle"),
+    (
+        # A provider subtitle that names something new.
+        ("Synthetic Journey", "Synthetic Journey: The Return", None),
+        ("Synthetic Journey", "Synthetic Journey", "The Return"),
+        # The local title is the longer one.
+        ("Synthetic Journey Home", "Synthetic Journey", None),
+        ("Synthetic Journey: Into the Fold", "Synthetic Journey", None),
+    ),
+)
+def test_a_title_extended_on_either_side_needs_its_series_to_agree(
+    local: str, title: str, subtitle: str | None
+) -> None:
+    product = _candidate(
+        title=title, subtitle=subtitle, series=(("Example Saga", "2"),)
+    )
+
+    assert work_title_extends(local, title, subtitle)
+    assert None is _ruled(product, title=local)
+    assert product == _ruled(
+        product,
+        title=local,
+        corroboration=RecordingCorroboration(
+            (_NARRATOR,), (TargetSeries("Example Saga", "2"),)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("local", "title", "subtitle"),
+    (
+        ("Synthetic Journey", "Synthetic Journey: A Novel", None),
+        ("Synthetic Journey", "Synthetic Journey", "Example Saga, Book 2"),
+        ("12 Synthetic Journey", "Synthetic Journey", None),
+        ("Synthetic Journey (Unabridged)", "Synthetic Journey", None),
+    ),
+)
+def test_decoration_does_not_extend_a_title(
+    local: str, title: str, subtitle: str | None
+) -> None:
+    assert not work_title_extends(local, title, subtitle, decorations=("Example Saga",))
+
+
+def test_the_feed_takes_an_exactly_tight_hint_before_a_floor_only_one() -> None:
+    title = "Synthetic Journey"
+    asserted, carried = "B000000008", "B000000009"
+    claims = (
+        target_title_claim(title),
+        *(
+            LocalClaim.create(
+                kind=ClaimKind.ASIN,
+                observed=asin,
+                canonical=asin,
+                excerpt=asin,
+                applicability="not_applicable",
+                basis=basis,
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.EDITION,
+            )
+            for asin, basis in (
+                (asserted, "target_metadata"),
+                (carried, "prior_admission"),
+            )
+        ),
+        local_runtime_claim("60100.000"),
+    )
+    fields = tuple(
+        TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, asserted)
+        if field.destination is TargetDestination.ASIN
+        else field
+        for field in _target_fields(title, (_NARRATOR,))
+    )
+    snapshot = m.TargetSnapshot("audiobook", title, (), fields=fields)
+    plan = m.audiobook_discovery_plan(
+        snapshot, claims, audio=single_track_audio_facts()
+    )
+    # Unrelated titles, so admission and the rule refuse them all: 1,000
+    # minutes is 100 s short (tight only as a floor), 1,001 is 40 s short.
+    floor_only, _ = _walk(
+        plan,
+        [_product(1, "Other Book One"), _product(2, "Other Book Two")],
+        [],
+    )
+    exact, _ = _walk(plan, [_product(3, "Other Book Three", minutes=1_001)], [])
+    assert {"B000000001", "B000000002"} == {
+        hint.asin for hint in floor_only.lanes[0].recording_lookup_hints
+    }
+
+    feed = m.audiobook_asin_feed_plan(snapshot, plan, (floor_only, exact))
+
+    assert feed is not None
+    fed = {lane.canonical_asin for lane in feed.lanes}
+    assert {asserted, carried, "B000000003"} <= fed
+    assert m.MAX_ASIN_DISCOVERY_LANES == len(fed)
+
+
+def test_a_retry_of_the_asserted_lane_alone_cannot_admit_by_rule() -> None:
+    plan = _alternative_plan()
+    (asserted,) = (lane for lane in plan.lanes if lane.title_basis is None)
+    joined = [_product(1, "Synthetic Journey", subtitle="Into the Fold")]
+    pages = {_DECORATED: joined, "Synthetic Journey": joined}
+    original = m.provider_observation(
+        "audible",
+        (m.ProviderLaneResult(asserted, ProviderStatus.UNAVAILABLE),),
+        authority="audible_catalog",
+    )
+
+    # The successor narrows the plan to the failed lane and, since the
+    # suppressed alternative lane was never asked, drops the rule with it.
+    retry = _retry_plan(plan, (asserted,), original)
+    assert retry.recording_corroboration is None
+    observation, _ = _walk_by_title(retry, pages)
+    assert [ProviderStatus.NO_MATCH] == [lane.status for lane in observation.lanes]
+
+    # A report that admits by rule beside an alternative lane never asked is
+    # refused, so no merge can carry one.
+    unsafe = replace(plan, lanes=(asserted,))
+    admitted, _ = _walk_by_title(unsafe, pages)
+    assert ProviderStatus.CANDIDATES is admitted.lanes[0].status
+    with pytest.raises(ReportValueError, match="precedes an exact path"):
+        _alternative_report(admitted)
+
+
+def test_a_retry_keeps_the_rule_once_the_alternative_lane_refused() -> None:
+    plan = _alternative_plan()
+    asserted, alternative = sorted(
+        plan.lanes, key=lambda lane: lane.title_basis is not None
+    )
+    original = m.provider_observation(
+        "audible",
+        (
+            m.ProviderLaneResult(asserted, ProviderStatus.UNAVAILABLE),
+            m.ProviderLaneResult(alternative, ProviderStatus.NO_MATCH),
+        ),
+        authority="audible_catalog",
+    )
+
+    assert _retry_plan(plan, (asserted,), original).recording_corroboration == (
+        plan.recording_corroboration
+    )
+    assert _retry_plan(plan, (asserted, alternative), original).recording_corroboration
+
+
+def test_an_exact_carried_lane_admission_comes_before_the_rule() -> None:
+    prior = LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed="B000000009",
+        canonical="B000000009",
+        excerpt="B000000009",
+        applicability="not_applicable",
+        basis="prior_admission",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+    )
+    claims = (target_title_claim(_DECORATED), prior, local_runtime_claim(_RUNTIME))
+    fields = _target_fields(_DECORATED, (_NARRATOR,))
+    plan = m.audiobook_carried_plan(
+        m.audiobook_discovery_plan(
+            m.TargetSnapshot("audiobook", _DECORATED, (), fields=fields),
+            claims,
+            audio=single_track_audio_facts(),
+        )
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "title" in request.url.params:
+            products = (
+                [_product(1, "Synthetic Journey", subtitle="Into the Fold")]
+                if request.url.params["title"] == _DECORATED
+                else []
+            )
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"total_results": len(products), "products": products},
+            )
+        product = _product(9, _DECORATED, minutes=999)
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json={"product": product}
+        )
+
+    provider = AudibleCatalogMetadataProvider(
+        "audible",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        262_144,
+        5.0,
+        marketplaces=("us",),
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_700_000_000.0,
+        sleep=lambda value: None,
+        jitter=lambda: 0.0,
+    )
+    try:
+        observation = m.observe_provider(
+            "audible", "audible_catalog", provider, plan
+        ).observation
+    finally:
+        provider._client.close()
+
+    assert {"audible-product-B000000009"} == {
+        value.identity for value in observation.candidates
+    }
+    assert ProviderStatus.NO_MATCH in {lane.status for lane in observation.lanes}
+    MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=plan.local_claims,
+        local_reasons=("target_metadata_title",),
+        providers=(recorded_dispatch(observation),),
+        audio=single_track_audio_facts(),
+    )
+
+
+def test_a_band_first_admission_is_recorded_as_its_exact_path_stops() -> None:
+    plan = _plan(_DECORATED)
+    observation, seen = _walk(
+        plan,
+        [_product(1, _DECORATED), _product(2, _DECORATED, minutes=1_200)],
+        [],
+    )
+    (lane,) = observation.lanes
+
+    assert 2 == len(seen)
+    assert lane.dispatch is not None
+    assert 1 == lane.dispatch.rungs
+    report = _report(plan, _DECORATED, observation)
+    # An exact admission may not claim the whole ladder was sent.
+    data = json.loads(report.to_json())
+    data["providers"][0]["lanes"][0]["dispatch"]["rungs"] = 2
+    with pytest.raises(ReportValueError, match="rungs do not replay"):
         MetadataReport.from_json(_readdressed(data))

@@ -530,11 +530,13 @@ applies wherever a provider runtime meets the tight band: the lane band, the
 recording-lookup hints, the band-aware set admission, the recording runtime
 veto and stated-runtime corroboration. Every place that chooses reads the
 exact band first and the floor only where that found nothing: set admission
-admits with the exact reading before it tries the floor, corroboration picks
-a product tight exactly before one tight only as a floor, and the bounded
-hints keep exactly tight hints before floor-only ones. So every set, pick and
-hint the exact band kept is unchanged. The veto only ever vetoes less under
-the floor. `DURATION_AGREEMENT_BAND_SECONDS`
+admits with the exact reading before it tries the floor, and corroboration
+picks a product tight exactly before one tight only as a floor, so no
+recording admission the exact band made changes. The bounded hints and the
+ASIN feed take exactly tight hints before floor-only ones. Narrator
+plausibility and the recording runtime veto read the floor directly, so a
+product they judged under the exact band may be judged differently; that is
+intended, and the veto only ever vetoes less. `DURATION_AGREEMENT_BAND_SECONDS`
 for claim links is unchanged.
 
 The band was not reopened. Once sibling-edition re-selections were removed,
