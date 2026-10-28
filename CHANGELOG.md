@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Setup now describes iTunes as what it is since audiobooks stopped being sent
+  to it: a check of an ebook's title and author against iTunes audiobook
+  listings. An audiobook inspection that states no recording facts now fails
+  that item instead of being planned without them (#1303).
+
 - **Clean rebuild required.** An AudioSilo answer whose recording lists more
   regions than the ten admitted marketplaces now keeps the queried ASIN's own
   entry instead of failing as malformed. Malformed, oversized and
@@ -14,6 +19,19 @@
   naming the address and one remedy. Setup suggests providers per library and
   confirms each step; sign-in clears a rejected password, explains a forgotten
   one and opens in your theme with the workspace type (#1287).
+
+- Hardcover and Open Library now send their requests through the same bounded
+  request path as every other metadata provider. Their requests, limits,
+  retries and reported outcomes are unchanged (#984).
+
+- When the review library cannot read the provider-recovery schedule, the
+  service log now gets the same one-line JSON warning as every other
+  operational event; before, its code and exception type were dropped (#1447).
+
+- A managed Node or Python update now moves the Dockerfile, workflow and, for
+  Node, frontend `engines` pins together in one Renovate pull request, instead
+  of moving the dated pins alone into a build that could not pass. A new Node
+  major line or Python minor version waits for approval (#1448).
 
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.

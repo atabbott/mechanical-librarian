@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 import httpx
 
@@ -42,6 +42,12 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 _MAX_BACKOFF_SECONDS = 16.0
+# The category a session that names its response failures attaches to the one
+# response-shape outcome every session otherwise reports as a generic failure:
+# a deadline reached while reading the body.  Malformed and oversized bodies
+# are always named (#1308).
+_RESPONSE_FAILURE_CATEGORIES = {ProviderStatus.UNAVAILABLE: "deadline"}
+_Read = TypeVar("_Read")
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +59,9 @@ class ProviderBounds:
     attempts_per_request: int
     attempts_per_observation: int
     aggregate_response_bytes: int
+    # A separate ceiling on retry dispatches across the observation, for a
+    # provider whose retry budget is tighter than its dispatch budget.
+    retries_per_observation: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +100,7 @@ def provider_bounds(
     attempts_per_observation: int,
     aggregate_multiple: int,
     aggregate_ceiling_bytes: int,
+    retries_per_observation: int | None = None,
 ) -> ProviderBounds:
     """Validate one adapter's caller-supplied bounds before any dispatch."""
     if (
@@ -108,6 +118,7 @@ def provider_bounds(
         attempts_per_request,
         attempts_per_observation,
         min(maximum_bytes * aggregate_multiple, aggregate_ceiling_bytes),
+        retries_per_observation,
     )
 
 
@@ -129,6 +140,8 @@ class BoundedProviderSession:
         pacer: ProviderRequestPacer | None = None,
         clocks: ProviderClocks | None = None,
         accept_content_types: tuple[str, ...] = ("application/json",),
+        name_response_failures: bool = False,
+        refuse_empty_success: bool = False,
     ) -> None:
         if (
             type(accept_content_types) is not tuple
@@ -149,7 +162,15 @@ class BoundedProviderSession:
         # Anything outside it is `MALFORMED`, exactly as before: widening is a
         # per-adapter admission and never a fallback.
         self._accept_content_types = frozenset(accept_content_types)
+        # Whether a malformed, oversized or deadline-cut response is recorded
+        # under its own attempt category rather than as a generic failure.
+        # Only the providers that always recorded them that way opt in.
+        self._name_response_failures = name_response_failures
+        # Whether an empty success body is an unavailable response, refused
+        # before its encoding or media type is judged.
+        self._refuse_empty_success = refuse_empty_success
         self.attempt_count = 0
+        self.retry_count = 0
         self.remaining_response_bytes = bounds.aggregate_response_bytes
         self._attempt_records: list[ProviderAttemptRecord] = []
         self._incomplete_causes: list[ProviderIncompleteCauseRecord] = []
@@ -199,6 +220,40 @@ class BoundedProviderSession:
         the bytes actually read, so a later lane can still be answered (#1308).
         A body that overruns the aggregate budget itself always ends it.
         """
+        return self.request(
+            url,
+            method=method,
+            params=params,
+            headers=headers,
+            deadline=deadline,
+            query_retry=query_retry,
+            classify=classify,
+            maximum_bytes=maximum_bytes,
+            oversize_keeps_budget=oversize_keeps_budget,
+            read=_json_object,
+        )
+
+    def request(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        params: dict[str, str] | httpx.QueryParams | None = None,
+        content: bytes | None = None,
+        headers: dict[str, str],
+        deadline: float | None,
+        query_retry: bool = False,
+        classify: ProviderResponseClassifier,
+        maximum_bytes: int | None = None,
+        oversize_keeps_budget: bool = False,
+        read: Callable[[bytes], _Read],
+    ) -> _Read:
+        """Return one bounded success body as `read` admits it.
+
+        `read` runs inside the attempt, so a `ProviderFailure` it raises is
+        recorded as that attempt's terminal outcome, exactly as a refused JSON
+        body is for `request_json`.
+        """
         if maximum_bytes is not None and (
             type(maximum_bytes) is not int or maximum_bytes < 1
         ):
@@ -211,12 +266,14 @@ class BoundedProviderSession:
                     url,
                     method=method,
                     params=params,
+                    content=content,
                     headers=headers,
                     deadline=deadline,
                     is_retry=query_retry or retry_index > 0,
                     classify=classify,
                     maximum_bytes=maximum_bytes,
                     oversize_keeps_budget=oversize_keeps_budget,
+                    read=read,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self.attempt_count != attempts_before_dispatch:
@@ -230,9 +287,11 @@ class BoundedProviderSession:
             except ProviderFailure as error:
                 if self.attempt_count == attempts_before_dispatch:
                     raise
+                retries = self._bounds.retries_per_observation
                 can_retry = (
                     error.retryable
                     and retry_index + 1 < self._bounds.attempts_per_request
+                    and (retries is None or self.retry_count < retries)
                     and self.attempt_count < self._bounds.attempts_per_observation
                     and self._ledger.allows_retry(
                         self.attempt_count, self._bounds.attempts_per_observation
@@ -299,17 +358,22 @@ class BoundedProviderSession:
         *,
         method: str,
         params: dict[str, str] | httpx.QueryParams | None,
+        content: bytes | None,
         headers: dict[str, str],
         deadline: float | None,
         is_retry: bool,
         classify: ProviderResponseClassifier,
         maximum_bytes: int | None,
         oversize_keeps_budget: bool,
-    ) -> dict[str, Any]:
+        read: Callable[[bytes], _Read],
+    ) -> _Read:
         if self.remaining_response_bytes <= 0:
             raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
         if self.attempt_count >= self._bounds.attempts_per_observation:
             raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
+        retries = self._bounds.retries_per_observation
+        if is_retry and retries is not None and self.retry_count >= retries:
+            raise ProviderFailure(ProviderStatus.UNAVAILABLE)
         if self._pacer is not None and not self._pacer.wait(deadline):
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._bounds.timeout_seconds
@@ -324,10 +388,13 @@ class BoundedProviderSession:
                 self._accessed_at = provider_access_time(self._clocks.wall_clock())
             self._ledger.dispatch(retry=is_retry)
             self.attempt_count += 1
+            if is_retry:
+                self.retry_count += 1
             with self._client.stream(
                 method,
                 url,
                 params=params,
+                content=content,
                 headers=headers,
                 timeout=remaining,
             ) as response:
@@ -348,6 +415,12 @@ class BoundedProviderSession:
                     clock=self._clocks.clock,
                     consume=self._consume_response_bytes,
                 )
+                if (
+                    self._refuse_empty_success
+                    and response.status_code == 200
+                    and not payload
+                ):
+                    raise ValueError("provider response empty")
                 if not identity_encoding:
                     raise ProviderFailure(
                         ProviderStatus.MALFORMED, category="response_malformed"
@@ -367,6 +440,16 @@ class BoundedProviderSession:
         except ProviderFailure as error:
             if error.status is ProviderStatus.OVERSIZED and not oversize_keeps_budget:
                 self.remaining_response_bytes = 0
+            # The only generic failure raised inside this block is the deadline
+            # reached while reading a body.  Classified statuses, named shape
+            # refusals and incomplete causes already carry their own category.
+            named = _RESPONSE_FAILURE_CATEGORIES.get(error.status)
+            if (
+                self._name_response_failures
+                and error.category == "provider_failure"
+                and named is not None
+            ):
+                raise ProviderFailure(error.status, category=named) from None
             raise
         except httpx.HTTPError as error:
             category = transient_transport_failure(error)
@@ -379,17 +462,7 @@ class BoundedProviderSession:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         except (OSError, ValueError):
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
-        try:
-            value = decode_json(payload)
-        except (TypeError, ValueError, UnicodeError, RecursionError):
-            raise ProviderFailure(
-                ProviderStatus.MALFORMED, category="response_malformed"
-            ) from None
-        if type(value) is not dict:
-            raise ProviderFailure(
-                ProviderStatus.MALFORMED, category="response_malformed"
-            )
-        return value
+        return read(payload)
 
     def _failure(
         self,
@@ -430,6 +503,27 @@ class BoundedProviderSession:
             )
             if classified is None
             else classified
+        )
+
+    def mark_response_attempt(self, category: str) -> None:
+        """Turn the last received response into a terminal attempt.
+
+        An adapter that reads the body after the session returns it may refuse
+        what it finds there; this records that refusal against the attempt that
+        carried the body instead of leaving it reported as received.
+        """
+        if not self._attempt_records:
+            return
+        prior = self._attempt_records[-1]
+        if prior.outcome != "response_received":
+            return
+        self._attempt_records[-1] = ProviderAttemptRecord(
+            provider=prior.provider,
+            ordinal=prior.ordinal,
+            category=category,
+            delay_seconds=None,
+            elapsed_seconds=prior.elapsed_seconds,
+            outcome="terminal",
         )
 
     def _consume_response_bytes(self, amount: int) -> None:
@@ -477,6 +571,18 @@ class BoundedProviderSession:
                 outcome=outcome,
             )
         )
+
+
+def _json_object(payload: bytes) -> dict[str, Any]:
+    try:
+        value = decode_json(payload)
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        raise ProviderFailure(
+            ProviderStatus.MALFORMED, category="response_malformed"
+        ) from None
+    if type(value) is not dict:
+        raise ProviderFailure(ProviderStatus.MALFORMED, category="response_malformed")
+    return value
 
 
 def decode_json(payload: bytes) -> object:
@@ -527,6 +633,9 @@ def _body(
             )
         chunks.append(chunk)
         if deadline is not None and clock() >= deadline:
+            # The only generic UNAVAILABLE raised while a response is open; a
+            # session that names its response failures records it as
+            # `deadline`, so any other one added here needs its own category.
             raise ProviderFailure(ProviderStatus.UNAVAILABLE)
     return b"".join(chunks)
 

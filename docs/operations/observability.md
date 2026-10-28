@@ -140,8 +140,10 @@ thread ends: `{"code":"stopped","event":"activity_projector","level":"info"}`,
 service is closing, or `unexpected` at `warning` with `error` set to the
 exception's type name. Shutdown adds `join_timeout` at `warning` when the
 projector's current step outlasts the join bound; closing still waits for that
-step (#1231, #1304). Nothing configures Python `logging`, so no event depends
-on it.
+step (#1231, #1304). When the review library cannot read the provider-recovery
+schedule, it withdraws the retry promise and writes
+`{"code":"unavailable","error":"<exception type>","event":"provider_recovery_schedule","level":"warning"}`
+(#1407, #1447). Nothing configures Python `logging`, so no event depends on it.
 
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound

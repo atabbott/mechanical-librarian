@@ -60,18 +60,43 @@
       "enabled": false
     },
     {
-      "description": "Move all Node runtime declarations together",
+      "description": "Look up the workflow and engines Node pins in the same registry as the image pins, so all see the same releases",
+      "matchManagers": [
+        "github-actions",
+        "npm"
+      ],
       "matchDepNames": [
         "node"
       ],
-      "groupName": "Node runtime"
+      "overrideDatasource": "docker",
+      "overridePackageName": "node"
     },
     {
-      "description": "Move all Python runtime declarations together",
+      "description": "Look up the workflow Python pins in the same registry as the image pins, so all see the same releases",
+      "matchManagers": [
+        "github-actions"
+      ],
       "matchDepNames": [
         "python"
       ],
-      "groupName": "Python runtime"
+      "overrideDatasource": "docker",
+      "overridePackageName": "python"
+    },
+    {
+      "description": "Move all Node runtime declarations together; the image registry publishes no release dates, so the release age cannot hold them",
+      "matchDepNames": [
+        "node"
+      ],
+      "groupName": "Node runtime",
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "Move all Python runtime declarations together; the image registry publishes no release dates, so the release age cannot hold them",
+      "matchDepNames": [
+        "python"
+      ],
+      "groupName": "Python runtime",
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
       "description": "Look up the workflow uv pin in the same registry as the image pin, so both see the same releases",
@@ -99,6 +124,29 @@
         "npm"
       ],
       "groupName": "npm package manager"
+    },
+    {
+      "description": "Require approval for a new Node major line",
+      "matchDepNames": [
+        "node"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Require approval for a new Python minor or major version",
+      "matchDepNames": [
+        "python"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
     },
     {
       "description": "Require approval for dependency replacements",
