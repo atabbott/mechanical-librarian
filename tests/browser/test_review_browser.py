@@ -5092,7 +5092,8 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     expect(basis).to_contain_text("Audible product B08G9PRS1K")
                     source = basis.locator("summary")
                     desktop_bounds = source.bounding_box()
-                    assert desktop_bounds is not None and desktop_bounds["height"] < 44
+                    # Every disclosure is a full target, at every width (#1288).
+                    assert desktop_bounds is not None and desktop_bounds["height"] >= 44
                     page.set_viewport_size({"width": 390, "height": 844})
                     bounds = source.bounding_box()
                     assert bounds is not None and bounds["height"] >= 44
@@ -5548,7 +5549,13 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                     ]
                                 ),
                                 "active_overflow": 0,
-                                "recent_completions": [],
+                                "recent_completions": [
+                                    {
+                                        "name": "Synthetic finished title",
+                                        "outcome": "ready",
+                                        "completed_at": 100,
+                                    }
+                                ],
                                 "throughput_per_minute": 0,
                                 "started_at": 100,
                                 "updated_at": 101,
@@ -5600,6 +5607,12 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 expect(page.locator(".workspace-detail")).to_have_attribute(
                     "aria-live", "polite"
                 )
+                # Find in Works is a full target even though it wraps with the
+                # name it searches for (#1288).
+                find = page.get_by_role("link", name="Find in Works")
+                expect(find).to_have_count(1)
+                find_bounds = find.bounding_box()
+                assert find_bounds is not None and find_bounds["height"] >= 44
                 passage = page.get_by_role("progressbar")
                 expect(passage).to_have_count(4)
                 passage_facts = passage.evaluate_all(
