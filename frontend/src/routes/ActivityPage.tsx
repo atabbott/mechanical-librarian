@@ -357,7 +357,8 @@ function ActivityEventRow({
         data-activity-focus={`details-${changeId}`}
         aria-expanded={expanded}
         aria-controls={`activity-evidence-${event.event_id}`}
-        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}${result ? `, ${result.toLowerCase()}` : ''}`}
+        // The row's time names it apart from another change to the same field.
+        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}${result ? `, ${result.toLowerCase()}` : ''}${event.occurred_at === null ? '' : `, ${formatWhen(event.occurred_at, new Date(), { dayShown: true })}`}`}
         onClick={onToggle}
       >
         {expanded ? 'Hide details' : 'Details'}

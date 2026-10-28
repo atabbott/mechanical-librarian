@@ -19,7 +19,7 @@ import type {
 } from '../src/api/http'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import { activityRoute, normalizeActivitySearch } from '../src/router'
-import { formatDay } from '../src/dates'
+import { formatDay, formatWhen } from '../src/dates'
 import { document as settingsDocument, view as settingsView } from './settingsFixtures'
 import {
   activity,
@@ -30,6 +30,9 @@ import {
   permissionReadiness,
   renderRoute,
 } from './fixtures'
+
+// A row's disclosure ends with the row's own time, as the row shows it.
+const rowAt = (seconds: number) => formatWhen(seconds, new Date(), { dayShown: true })
 
 it('keeps navigation available during initial Activity failure and retries the real read', async () => {
   const user = userEvent.setup()
@@ -1263,12 +1266,16 @@ describe('Activity route', () => {
     disclosure.focus()
     await user.keyboard('{Enter}')
     expect(disclosure).toHaveAttribute('aria-expanded', 'true')
-    expect(disclosure).toHaveAccessibleName('Hide details for ISBN, Paper Moons: Larkspur')
+    expect(disclosure).toHaveAccessibleName(
+      `Hide details for ISBN, Paper Moons: Larkspur, ${rowAt(1785742465)}`,
+    )
     expect(screen.getByText('Previous value')).toBeVisible()
     disclosure.focus()
     await user.keyboard('{Enter}')
     expect(disclosure).toHaveAttribute('aria-expanded', 'false')
-    expect(disclosure).toHaveAccessibleName('Details for ISBN, Paper Moons: Larkspur')
+    expect(disclosure).toHaveAccessibleName(
+      `Details for ISBN, Paper Moons: Larkspur, ${rowAt(1785742465)}`,
+    )
     expect(screen.queryByText('Previous value')).toBeNull()
   })
 
@@ -3687,7 +3694,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
         'This check confirmed the automatic decision below; nothing was written.',
       ),
     ).toBeVisible()
-    expect(paired).toHaveAccessibleName(/^Details for Title, .*, automatic decision$/u)
+    expect(paired).toHaveAccessibleName(/^Details for Title, .*, automatic decision, [^,]+$/u)
     expect(details).toHaveAccessibleName(/^Hide details for Title, /u)
     // The nested list names what it holds (#1288).
     expect(
@@ -3696,7 +3703,7 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     await user.click(paired)
     expect(paired).toHaveAttribute('aria-expanded', 'true')
     // Both open, the field and its decision still name apart (#1286 X4).
-    expect(paired).toHaveAccessibleName(/^Hide details for Title, .*, automatic decision$/u)
+    expect(paired).toHaveAccessibleName(/^Hide details for Title, .*, automatic decision, [^,]+$/u)
     const opened = screen
       .getAllByRole('button', { name: /details for /iu })
       .map((button) => button.getAttribute('aria-label'))
@@ -4484,9 +4491,9 @@ describe('owner language in Activity (#1286)', () => {
     const disclosures = await screen.findAllByRole('button', { name: /^Details for /u })
     const names = disclosures.map((button) => button.getAttribute('aria-label'))
     expect(names).toEqual([
-      'Details for ISBN, First Book',
-      'Details for ISBN, Second Book',
-      'Details for Title, First Book',
+      `Details for ISBN, First Book, ${rowAt(1785742465)}`,
+      `Details for ISBN, Second Book, ${rowAt(1785742465)}`,
+      `Details for Title, First Book, ${rowAt(1785742465)}`,
     ])
     expect(new Set(names).size).toBe(names.length)
     // The visible text stays inside the name (WCAG 2.5.3).
@@ -4494,7 +4501,43 @@ describe('owner language in Activity (#1286)', () => {
     const [first] = disclosures
     if (!first) throw new Error('Expected a disclosure')
     await user.click(first)
-    expect(first).toHaveAccessibleName('Hide details for ISBN, First Book')
+    expect(first).toHaveAccessibleName(`Hide details for ISBN, First Book, ${rowAt(1785742465)}`)
+  })
+
+  it('names two policy events on one work distinctly', async () => {
+    const policyEvent = (
+      eventId: string,
+      occurredAt: number,
+    ): Partial<ActivityView['events'][number]> => ({
+      event_id: eventId,
+      category: 'policy',
+      event_type: 'policy',
+      field_label: 'Policy',
+      library: 'Library policy',
+      destination: 'policy',
+      state: 'completed',
+      origin: 'policy',
+      occurred_at: occurredAt,
+      work_label: 'Library policy',
+      change: '1 change activated',
+      change_detail: '1 change activated',
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [policyEvent('policy-late', 1785742465), policyEvent('policy-early', 1785735265)],
+        }),
+      ),
+    }
+    renderRoute('/activity', http)
+    const disclosures = await screen.findAllByRole('button', { name: /^Details for Policy/u })
+    const names = disclosures.map((button) => button.getAttribute('aria-label'))
+    expect(names).toEqual([
+      `Details for Policy, Library policy, ${rowAt(1785742465)}`,
+      `Details for Policy, Library policy, ${rowAt(1785735265)}`,
+    ])
+    expect(new Set(names).size).toBe(2)
   })
 
   it.each([
