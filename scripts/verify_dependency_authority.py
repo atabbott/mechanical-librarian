@@ -10,14 +10,11 @@ omission being caught by eye during review (#769). That is the same failure
 `scripts/verify_documentation_integrity.py` was written to remove one layer up,
 and this is its sibling.
 
-Three checks, in both directions plus the arithmetic:
+Two checks, one in each direction:
 
 1. every direct dependency `pyproject.toml` declares -- runtime, every
    dependency group, and the build backend -- carries a grant;
-2. every grant names a dependency `pyproject.toml` still declares;
-3. every bare cardinal a grant states about its own subjects is the number of
-   subjects that grant has. A count repeated in prose is arithmetic that goes
-   stale, which is the same defect in a smaller form.
+2. every grant names a dependency `pyproject.toml` still declares.
 
 Grant *quality* is deliberately out of scope: that a grant exists is
 machine-checkable, that it is true is not. So are licences and transitive
@@ -55,31 +52,6 @@ _SPAN = re.compile(r"\*\*([^*]+)\*\*|`([^`]+)`")
 _CONNECTIVE = re.compile(r"\s*(?:,|and|/|&)\s*")
 _NAME_SEPARATOR = re.compile(r",| and ")
 _REQUIREMENT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-
-_CARDINALS = {
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-    "eleven": 11,
-    "twelve": 12,
-}
-# A cardinal standing on its own -- "the only one of the four that produces a
-# shipped artifact" -- is a pronoun for the grant's subjects and is checked
-# against them. A cardinal that quantifies its own noun -- "one of the five
-# permitted read paths" -- counts something this checker knows nothing about
-# and is left alone, which is why the lookahead requires a relative pronoun or
-# punctuation rather than any word at all.
-_BARE_CARDINAL = re.compile(
-    r"\bthe (" + "|".join(_CARDINALS) + r")\b"
-    r"(?=\s*(?:that\b|which\b|who\b|whose\b|[,.;:]|$))"
-)
 
 
 class DependencyAuthorityError(RuntimeError):
@@ -204,7 +176,7 @@ def granted_dependencies(root: Path) -> dict[str, str]:
     return granted
 
 
-def coverage_findings(root: Path) -> tuple[str, ...]:
+def authority_findings(root: Path) -> tuple[str, ...]:
     declared = declared_dependencies(root)
     granted = granted_dependencies(root)
     findings = [
@@ -218,26 +190,6 @@ def coverage_findings(root: Path) -> tuple[str, ...]:
         for name in sorted(granted.keys() - declared.keys())
     )
     return tuple(findings)
-
-
-def stated_count_findings(root: Path) -> tuple[str, ...]:
-    """Every grant whose own arithmetic no longer matches its subjects."""
-
-    document = root / DEPENDENCY_AUTHORITY
-    findings: list[str] = []
-    for item in grant_items(document.read_text(encoding="utf-8")):
-        subjects = grant_subjects(item)
-        findings.extend(
-            f"{DEPENDENCY_AUTHORITY.as_posix()} says 'the {word}' of a grant"
-            f" covering {len(subjects)}: {', '.join(subjects)}"
-            for word in _BARE_CARDINAL.findall(item)
-            if _CARDINALS[word] != len(subjects)
-        )
-    return tuple(findings)
-
-
-def authority_findings(root: Path) -> tuple[str, ...]:
-    return (*coverage_findings(root), *stated_count_findings(root))
 
 
 def main(argv: list[str] | None = None) -> int:

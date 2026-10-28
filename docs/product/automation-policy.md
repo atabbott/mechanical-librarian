@@ -307,10 +307,13 @@ qualified fill owns the subtitle destination unless an acting title-combination
 candidate already covers it; a manual title-combination witness is replaced by
 the fill, and a later human title split proceeds through the existing override
 and revoke path. Safe plaintext fills an empty Description from one exact
-target-work-applicable source. Competing descriptions first pass the fixed
-80-character, 16-word, no-visible-cutoff floor and then the fixed Hardcover,
-Google Books, Open Library authority order; provider text is never combined and
-an unavailable provider does not change the order. Corroborated split and
+target-work-applicable source. A description is eligible only as plain text
+that is not a whole-value catalogue marker (such as `(duplicate)` or a page and
+size line) and not mostly quoted praise (#1283). When several remain, any that
+ends at a visible cutoff is dropped, and the fixed Hardcover, Google Books, Open
+Library authority order chooses among the rest; provider text is never combined
+and an unavailable provider does not change the order. No length or word-count
+floor applies. Corroborated split and
 Google visible-text remain `not_qualified`; ASIN remains
 `insufficient_coverage`; `tags:off` is policy-only and stays the default; and
 `explicit:unsupported` is human-only. Owners retain `Ask me` or `Ignore` for
