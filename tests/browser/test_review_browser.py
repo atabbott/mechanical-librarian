@@ -7892,8 +7892,15 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     expect(page.locator("html")).to_have_attribute(
                         "data-theme", "light" if shown == "dark" else "dark"
                     )
+                heading_top = (
+                    "() => document.querySelector('.settings-heading h1')"
+                    ".getBoundingClientRect().top + scrollY"
+                )
+                before_save = page.evaluate(heading_top)
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
+                # The notice floats; its arrival moves no heading.
+                assert abs(page.evaluate(heading_top) - before_save) <= 1
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[
                     "document"
                 ]
