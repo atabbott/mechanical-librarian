@@ -15,6 +15,9 @@
   `shadow-outcome-set-v11`, and the qualification-state bridge leaves the
   installed CLI for `scripts/` (#1396).
 
+- The activity projector's exit events now reach the service log as value-free
+  JSON lines on stderr; before, its `info` events were silently dropped. A
+  never-shown owner-settings log line is removed (#1304).
 - A managed uv update now moves the CI workflow and container pins together in
   one Renovate pull request, instead of moving only the workflow pin (#1177).
 

@@ -90,7 +90,12 @@ each of those once.
 - Configuration must use documented schema fields; do not add hidden
   environment-variable behavior.
 - Avoid global mutable state and import-time side effects.
-- Use structured logging with automatic secret and private-path redaction.
+- Operational events are value-free JSON lines, each written to stderr in one
+  best-effort call that cannot raise into the caller. They are redacted by
+  construction: allow-listed keys, closed vocabularies and bounded integers,
+  never a message, path, title, credential or exception text. Nothing
+  configures `logging`, so its INFO records are dropped and `extra` fields never
+  appear; do not use it for an event someone needs.
 
 The allowed dependency direction is:
 

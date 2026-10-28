@@ -1958,7 +1958,18 @@ _FILL_AND_ACCENT = """node => {
 
 
 def _assert_primary_fill(primary: Locator, secondary: Locator | None) -> None:
-    """The primary is filled with the theme's accent, unlike its neighbour (#1289)."""
+    """The primary is filled with the theme's accent, unlike its neighbour (#1289).
+
+    It first waits out a theme change, whose fill can trail it by a frame.
+    """
+    try:
+        primary.page.wait_for_function(
+            f"node => (([fill, accent]) => fill === accent)(({_FILL_AND_ACCENT})(node))",
+            arg=primary.element_handle(),
+            timeout=5_000,
+        )
+    except PlaywrightTimeoutError:
+        pass  # The assertion below reports the fill and accent it saw.
     fill, accent = primary.evaluate(_FILL_AND_ACCENT)
     assert fill == accent, (fill, accent)
     if secondary is not None:

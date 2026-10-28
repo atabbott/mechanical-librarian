@@ -57,6 +57,11 @@ a line. The redaction test feeds each of these in and asserts none comes out.
 No handler, level, switch or global sink exists, and nothing is persisted or
 added to status or support.
 
+The activity projector's lifecycle events (`activity_projector`: a closed
+`code`, `level` and at most an exception type name, otherwise `null`) cross the
+same boundary through `activity_projector_event` (#1231, #1304). Nothing
+configures `logging`; no event depends on it.
+
 Ordinary Linux server-root recovery is explicitly opted in under the exclusive
 bound-parent lock. A supported private DELETE journal must pass streaming envelope
 checks and native rollback plus full current-schema admission on byte-verified
