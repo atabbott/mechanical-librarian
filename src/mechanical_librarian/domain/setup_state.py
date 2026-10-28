@@ -67,6 +67,8 @@ class SetupLibraryCandidate(_Closed):
     library_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
     name: Annotated[StrictStr, Field(min_length=1, max_length=256)]
     media_kind: Literal["book", "unsupported"]
+    # Read from the library's own settings to suggest providers; never stored.
+    audiobooks_only: StrictBool = False
     service_paths: tuple[
         Annotated[StrictStr, Field(min_length=1, max_length=4096)], ...
     ] = Field(default=(), max_length=16, exclude=True)

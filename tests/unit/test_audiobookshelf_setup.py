@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ssl
+from contextlib import closing
 
 import httpx
 import pytest
@@ -9,6 +10,10 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_setup import 
     AudiobookshelfSetupProbe,
     AudiobookshelfSetupProbeError,
 )
+from mechanical_librarian.infrastructure.security.credentials import (
+    target_client_token,
+)
+from tests.support.ports import ReservedPort
 
 
 def _probe(
@@ -162,3 +167,81 @@ def test_setup_probe_classifies_a_contextual_certificate_failure_as_tls() -> Non
 
     assert error.value.code == "tls"
     assert "private certificate detail" not in str(error.value)
+
+
+def _real_probe() -> AudiobookshelfSetupProbe:
+    return AudiobookshelfSetupProbe(
+        lambda endpoint, key: target_client_token(endpoint, key, 5), timeout_seconds=5
+    )
+
+
+def test_setup_probe_classifies_a_refused_connection_from_a_real_socket() -> None:
+    # A bound socket that never listens refuses every connection to its port.
+    with closing(ReservedPort()) as port:
+        with pytest.raises(AudiobookshelfSetupProbeError) as error:
+            _real_probe()(f"http://127.0.0.1:{port.number}", "secret-value")
+
+    assert error.value.code == "refused"
+    assert error.value.__cause__ is None and error.value.__suppress_context__
+
+
+def test_setup_probe_classifies_an_unresolvable_name_from_a_real_lookup() -> None:
+    # `.invalid` is reserved and never resolves (RFC 6761).
+    with pytest.raises(AudiobookshelfSetupProbeError) as error:
+        _real_probe()("http://audiobookshelf.invalid:13378", "secret-value")
+
+    assert error.value.code == "name_resolution"
+    assert "audiobookshelf.invalid" not in str(error.value)
+
+
+def test_setup_probe_ranks_a_certificate_failure_above_its_connection_error() -> None:
+    def tls_failure(request: httpx.Request) -> httpx.Response:
+        try:
+            try:
+                raise ConnectionRefusedError(111, "private refusal")
+            except ConnectionRefusedError:
+                raise ssl.SSLCertVerificationError("private certificate detail")  # noqa: B904
+        except ssl.SSLCertVerificationError:
+            raise httpx.ConnectError("private", request=request)  # noqa: B904
+
+    with pytest.raises(AudiobookshelfSetupProbeError) as error:
+        _probe(httpx.MockTransport(tls_failure))("https://abs.invalid", "secret-value")
+
+    assert error.value.code == "tls"
+
+
+def test_setup_probe_reads_only_an_exact_audiobooks_only_switch() -> None:
+    def library(identifier: str, settings: object) -> dict[str, object]:
+        return {
+            "id": identifier,
+            "name": identifier,
+            "mediaType": "book",
+            "settings": settings,
+        }
+
+    response = httpx.MockTransport(
+        lambda _request: httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={
+                "libraries": [
+                    library("audio", {"audiobooksOnly": True}),
+                    library("mixed", {"audiobooksOnly": False}),
+                    library("text", {"audiobooksOnly": "true"}),
+                    library("bare", None),
+                    {"id": "pods", "name": "pods", "mediaType": "podcast"},
+                ]
+            },
+        )
+    )
+    candidates = _probe(response, maximum_bytes=1024).discover(
+        "https://abs.invalid", "secret-value"
+    )
+
+    assert [value.audiobooks_only for value in candidates] == [
+        True,
+        False,
+        False,
+        False,
+        False,
+    ]

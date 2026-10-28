@@ -94,7 +94,8 @@ class SetupJourneyOperation:
 
     def discover(self, expected_revision: int) -> tuple[SetupLibraryCandidate, ...]:
         current = self._current(expected_revision)
-        if current.next_step() not in {"libraries", "mounts"}:
+        # Providers reads it too, to suggest those that fit each library.
+        if current.next_step() not in {"providers", "libraries", "mounts"}:
             raise SetupJourneyError("stale")
         try:
             return self._discover_libraries(current)
@@ -104,6 +105,8 @@ class SetupJourneyOperation:
             code = getattr(error, "code", "unavailable")
             if code not in {
                 "unauthorized",
+                "name_resolution",
+                "refused",
                 "tls",
                 "timeout",
                 "unavailable",

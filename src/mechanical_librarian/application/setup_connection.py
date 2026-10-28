@@ -44,6 +44,8 @@ class SetupConnectionVerification:
                 code = "unauthorized"
             if code not in {
                 "unauthorized",
+                "name_resolution",
+                "refused",
                 "tls",
                 "timeout",
                 "unavailable",

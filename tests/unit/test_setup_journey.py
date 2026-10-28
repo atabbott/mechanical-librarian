@@ -261,6 +261,45 @@ def test_colliding_discovered_names_keep_unique_stable_names_and_exact_labels() 
     ]
 
 
+def test_providers_step_reads_libraries_to_suggest_and_records_nothing() -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    candidate = SetupLibraryCandidate(
+        library_id="audio", name="Audio", media_kind="book", audiobooks_only=True
+    )
+    journey = _journey(store, (candidate,))
+
+    assert state.next_step() == "providers"
+    assert journey.discover(state.revision) == (candidate,)
+    assert store.read(_BOOTSTRAP) == state
+
+
+class _CodedFailure(RuntimeError):
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(f"private detail {code}")
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["name_resolution", "refused", "tls", "timeout", "unauthorized", "private"],
+)
+def test_library_discovery_keeps_the_closed_connection_codes(code: str) -> None:
+    _connection, store = _store()
+    state = _connected(store)
+
+    def fail(document: SetupStateDocument) -> tuple[SetupLibraryCandidate, ...]:
+        del document
+        raise _CodedFailure(code)
+
+    journey = SetupJourneyOperation(store, _BOOTSTRAP, fail, {})
+    with pytest.raises(SetupJourneyError) as error:
+        journey.discover(state.revision)
+
+    assert error.value.code == ("unavailable" if code == "private" else code)
+    assert store.read(_BOOTSTRAP) == state
+
+
 def test_library_discovery_failure_is_retryable_and_records_nothing() -> None:
     _connection, store = _store()
     state = _connected(store)

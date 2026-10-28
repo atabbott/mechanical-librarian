@@ -50,12 +50,15 @@ class _Repository:
     (
         ("authentication", "unauthorized"),
         ("authorization", "unauthorized"),
+        ("name_resolution", "name_resolution"),
+        ("refused", "refused"),
         ("tls", "tls"),
         ("timeout", "timeout"),
         ("unavailable", "unavailable"),
         ("malformed", "malformed"),
         ("oversize", "oversize"),
         ("redirect", "redirect"),
+        ("secret-value", "unavailable"),
     ),
 )
 def test_failure_codes_are_closed_and_value_free(source: str, expected: str) -> None:
