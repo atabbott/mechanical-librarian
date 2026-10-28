@@ -76,7 +76,7 @@ def test_csrf_renewal_resends_idempotent_decision_and_pure_policy_validation() -
                 _login(page, origin)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 choice = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 )
                 choice.wait_for()
                 decisions = _statuses(page, "/decisions")

@@ -1360,9 +1360,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             comparison.get_by_text(label, exact=True).wait_for()
             comparison.get_by_text("Recommended cover ready", exact=True).wait_for()
             assert "best confirmed match is ready" in comparison.inner_text()
-            for choice in comparison.locator("button[aria-pressed]").all():
+            for choice in comparison.locator("[role=radio]").all():
                 expect(choice).to_be_enabled()
-                expect(choice).to_have_attribute("aria-pressed", "false")
+                expect(choice).to_have_attribute("aria-checked", "false")
             for evidence in comparison.get_by_role(
                 "button", name=re.compile(r"^Evidence for .+ cover$")
             ).all():
@@ -1403,18 +1403,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     in unconfirmed.inner_text()
                 )
                 unconfirmed_choice = unconfirmed.get_by_role(
-                    "button", name="Choose Alternative 2 cover", exact=True
+                    "radio", name="Choose Alternative 2 cover", exact=True
                 )
+                # The card states the unconfirmed match before any tap, and a
+                # tap on it is the explicit choice; no dialog asks again (#1290).
                 expect(unconfirmed_choice).to_be_enabled()
-                unconfirmed_choice.click()
-                dialog = page.get_by_role("dialog")
-                expect(dialog).to_be_visible()
-                expect(
-                    dialog.get_by_text("Match not confirmed.", exact=False)
-                ).to_be_visible()
-                dialog.get_by_role("button", name="Cancel", exact=True).click()
-                expect(dialog).not_to_be_visible()
-                expect(unconfirmed_choice).to_be_focused()
+                expect(unconfirmed_choice).to_contain_text("Match not confirmed")
+                expect(page.get_by_role("dialog")).to_have_count(0)
                 current_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )
@@ -1425,7 +1420,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 comparison.get_by_text("Local library record", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-current")
-                ).to_have_attribute("aria-pressed", "false")
+                ).to_have_attribute("aria-checked", "false")
                 alternative_evidence = comparison.get_by_role(
                     "button", name="Evidence for Alternative 1 cover"
                 )
@@ -1438,7 +1433,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-recommended")
-                ).to_have_attribute("aria-pressed", "false")
+                ).to_have_attribute("aria-checked", "false")
             if case_id == "case-3":
                 recommended = comparison.locator(".library-cover-card.is-recommended")
                 expect(recommended).to_have_count(1)
@@ -2110,6 +2105,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).count()
             == 0
         )
+        assert page.get_by_role("radio").count() == 0
         load_more = page.get_by_role("button", name="Load more evidence")
         assert load_more.bounding_box()["height"] >= 44
         load_more.click()
@@ -2200,6 +2196,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).count()
             == 0
         )
+        assert page.get_by_role("radio").count() == 0
         assert_diagnostic_layout("History")
         capture_visual_proof("case-diagnostics-history")
         page.go_back()
@@ -2341,7 +2338,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert ambiguous_decisions == before_description_choice
         capture_visual_proof("library-long-description")
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current description"
+            "radio", name="Choose current description"
         )
         full_description.wait_for()
         decide(
@@ -2358,7 +2355,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         summary.wait_for()
         summary.click()
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current description"
+            "radio", name="Choose current description"
         )
         full_description.wait_for()
         full_description.focus()
@@ -2376,7 +2373,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         summary.wait_for()
         summary.click()
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current description"
+            "radio", name="Choose current description"
         )
         full_description.wait_for()
         full_description.focus()

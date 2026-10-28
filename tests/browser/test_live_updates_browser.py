@@ -332,7 +332,7 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
                 actor.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 actor.get_by_role("heading", name="Works", exact=True).wait_for()
                 actor.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).first.click()
                 # The authoritative acknowledgement advances to the next exact
                 # field; it is not retained as a cross-field status message.
@@ -955,7 +955,7 @@ def test_a_permission_draft_survives_other_tabs_until_its_consent_basis_changes(
                 actor.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 actor.get_by_role("heading", name="Works", exact=True).wait_for()
                 actor.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).first.click()
                 assert _wait_until(watcher, lambda: len(activity_reads) > reads), (
                     "the watcher never refetched Activity after the decision"

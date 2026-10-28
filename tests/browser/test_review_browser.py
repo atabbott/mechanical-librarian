@@ -487,6 +487,7 @@ def _server(
     retained_decoration: tuple[str, bool] | None = None,
     retained_component_text: str | None = None,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
+    cover_duplicate: bool = False,
     cohort: int = 0,
     preparation: bool = False,
     preparation_terminal: bool = False,
@@ -599,6 +600,10 @@ def _server(
             _cover_preview(index, width=width, height=height)
             for index, (width, height) in enumerate(cover_shapes, 1)
         )
+        if cover_duplicate:
+            # Hardcover (index 3) and Open Library (index 4) offer one image,
+            # which the comparison merges into a single candidate (#1290).
+            payloads = (*payloads[:3], payloads[2], *payloads[4:])
         sources = (
             (
                 _cover_source(1, payloads[0], embedded=True),
@@ -2895,20 +2900,20 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 )
                 assert (
                     page.get_by_role(
-                        "button", name="Choose current value:", exact=False
+                        "radio", name="Choose current value:", exact=False
                     ).count()
                     == 1
                 )
                 assert (
                     page.get_by_role(
-                        "button", name="Choose proposed value", exact=False
+                        "radio", name="Choose proposed value", exact=False
                     ).count()
                     == 1
                 )
                 page.get_by_role("button", name="Use dark mode").click()
                 page.get_by_role("button", name="Use light mode").wait_for()
                 page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).first.click()
                 # The acknowledgement advances to the next field rather than
                 # leaking a recorded status across the selected-work surface.
@@ -2921,10 +2926,10 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # composition and marks the recorded answer, rather than
                 # replacing it with prose.
                 recorded_title = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 )
                 assert recorded_title.count() == 1
-                expect(recorded_title).to_have_attribute("aria-pressed", "true")
+                expect(recorded_title).to_have_attribute("aria-checked", "true")
                 page.get_by_role("link", name="Activity", exact=True).click()
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.go_back()
@@ -3078,23 +3083,23 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.route(f"**/api/v1/review-cases/{case_id}", automatic_projection)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 title_current = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 )
                 title_candidate = page.get_by_role(
-                    "button", name="Choose proposed value", exact=False
+                    "radio", name="Choose proposed value", exact=False
                 )
-                expect(title_candidate).to_have_attribute("aria-pressed", "true")
+                expect(title_candidate).to_have_attribute("aria-checked", "true")
                 assert title_candidate.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
-                expect(title_current).to_have_attribute("aria-pressed", "false")
+                expect(title_current).to_have_attribute("aria-checked", "false")
                 assert not (
                     title_current.locator("xpath=..").evaluate(
                         "node => node.classList.contains('is-selected')"
                     )
                 )
                 page.reload()
-                expect(title_candidate).to_have_attribute("aria-pressed", "true")
+                expect(title_candidate).to_have_attribute("aria-checked", "true")
                 assert title_candidate.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
@@ -3109,12 +3114,12 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 # remains the place to inspect and revise the recorded title.
                 page.wait_for_function(_CURRENT_FIELD_CHANGED, arg=before)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-                expect(title_current).to_have_attribute("aria-pressed", "true")
+                expect(title_current).to_have_attribute("aria-checked", "true")
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
                 series_current = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 )
-                expect(series_current).to_have_attribute("aria-pressed", "true")
+                expect(series_current).to_have_attribute("aria-checked", "true")
                 assert series_current.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
@@ -3129,7 +3134,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 ).to_be_visible()
                 assert (
                     page.get_by_role(
-                        "button", name="Choose proposed value", exact=False
+                        "radio", name="Choose proposed value", exact=False
                     ).count()
                     == 0
                 )
@@ -3152,11 +3157,11 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 automatic_cover = page.locator(".library-cover-card").filter(
                     has_text="Alternative 1 cover"
                 )
-                expect(automatic_cover).to_have_attribute("aria-pressed", "true")
+                expect(automatic_cover).to_have_attribute("aria-checked", "true")
                 assert automatic_cover.evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
-                expect(current_cover).to_have_attribute("aria-pressed", "false")
+                expect(current_cover).to_have_attribute("aria-checked", "false")
                 assert not (
                     current_cover.evaluate(
                         "node => node.classList.contains('is-selected')"
@@ -3167,7 +3172,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     page.locator(".library-cover-card").filter(
                         has_text="Alternative 1 cover"
                     )
-                ).to_have_attribute("aria-pressed", "true")
+                ).to_have_attribute("aria-checked", "true")
                 assert (
                     page.locator(".library-cover-card")
                     .filter(has_text="Alternative 1 cover")
@@ -3175,18 +3180,16 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 )
                 # A recorded automatic choice is already selected: choosing it
                 # again is a no-op. Explicitly retain the incumbent first, then
-                # confirm a different cover as a fresh owner revision.
+                # choose a different cover, in one tap, as a fresh owner revision.
                 automatic_cover.click()
-                expect(
-                    page.get_by_role("dialog", name="Confirm this cover")
-                ).to_have_count(0)
+                expect(page.get_by_role("dialog")).to_have_count(0)
                 with page.expect_response(
                     lambda response: response.url.endswith("/decisions")
                 ) as kept:
                     current_cover.click()
                 assert kept.value.status == 200, kept.value.text()
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
-                expect(current_cover).to_have_attribute("aria-pressed", "true")
+                expect(current_cover).to_have_attribute("aria-checked", "true")
                 with (
                     page.expect_response(
                         lambda response: response.url.endswith("/decisions")
@@ -3194,9 +3197,6 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 ):
                     page.locator(".library-cover-card").filter(
                         has_text="Alternative 1 cover"
-                    ).click()
-                    page.get_by_role(
-                        "button", name="Confirm cover choice", exact=True
                     ).click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
@@ -3287,15 +3287,12 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                 candidate = page.locator(".library-cover-card").filter(
                     has_text="Alternative 1 cover"
                 )
-                expect(candidate).to_have_attribute("aria-pressed", "false")
+                expect(candidate).to_have_attribute("aria-checked", "false")
                 with page.expect_response(
                     lambda value: value.url.endswith("/decisions")
                 ) as decision_response:
                     candidate.focus()
                     page.keyboard.press("Enter")
-                    page.get_by_role(
-                        "button", name="Confirm cover choice", exact=True
-                    ).click()
                 assert decision_response.value.status == 200
                 page.get_by_role("heading", name="Review complete").wait_for()
 
@@ -3369,9 +3366,6 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                 comparison.locator(".library-cover-card").filter(
                     has_text="Alternative 1 cover"
                 ).click()
-                page.get_by_role(
-                    "button", name="Confirm cover choice", exact=True
-                ).click()
 
                 stale = page.get_by_text(
                     "This cover comparison changed before your choice was recorded. "
@@ -3407,10 +3401,7 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                     page.get_by_role("heading", name="Review complete")
                 ).to_have_count(0)
                 current_comparison.get_by_role(
-                    "button", name="Choose Alternative 1 cover", exact=True
-                ).click()
-                page.get_by_role(
-                    "button", name="Confirm cover choice", exact=True
+                    "radio", name="Choose Alternative 1 cover", exact=True
                 ).click()
                 page.get_by_role("heading", name="Review complete").wait_for()
                 assert decision_statuses == [409, 200]
@@ -3472,9 +3463,6 @@ def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() 
                 comparison.locator(".library-cover-card").filter(
                     has_text="Alternative 1 cover"
                 ).click()
-                page.get_by_role(
-                    "button", name="Confirm cover choice", exact=True
-                ).click()
 
                 stale = page.get_by_text(
                     "This cover comparison changed before your choice was recorded. "
@@ -3489,9 +3477,6 @@ def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() 
                 )
                 current_choice.focus()
                 page.keyboard.press("Enter")
-                page.get_by_role(
-                    "button", name="Confirm cover choice", exact=True
-                ).click()
                 page.get_by_role("heading", name="Review complete").wait_for()
                 expect(stale).to_have_count(0)
                 expect(
@@ -4084,8 +4069,8 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         page.get_by_role("button", name="Show less description")
                     ).to_have_count(1)
                     expect(
-                        page.get_by_role("button", name="Choose current description")
-                    ).to_have_attribute("aria-pressed", "true")
+                        page.get_by_role("radio", name="Choose current description")
+                    ).to_have_attribute("aria-checked", "true")
                     expect(
                         page.get_by_role("heading", name="Review complete")
                     ).to_have_count(0)
@@ -4134,7 +4119,7 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                     page.get_by_role("heading", name="Review complete")
                 ).to_have_count(0)
                 assert (
-                    page.locator(".library-cover-card[aria-pressed='true']").count()
+                    page.locator(".library-cover-card[aria-checked='true']").count()
                     == 0
                 )
                 page.goto(f"{origin}/settings?group=reviewer")
@@ -4149,10 +4134,7 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 assert library["counts"]["needs_attention"] == 1, library
                 assert attention["total"] == 1, attention
                 page.get_by_role(
-                    "button", name="Choose Alternative 1 cover", exact=True
-                ).click()
-                page.get_by_role(
-                    "button", name="Confirm cover choice", exact=True
+                    "radio", name="Choose Alternative 1 cover", exact=True
                 ).click()
                 expect(
                     page.get_by_role("heading", name="Review complete")
@@ -4258,6 +4240,19 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     label="library:desktop",
                     shapes=_LIBRARY_SHAPES,
                 )
+                # Every card states its size and its sources, beside any
+                # rationale (#1290).
+                dimensions = page.locator(
+                    ".library-cover-card .cover-dimensions"
+                ).all_inner_texts()
+                assert len(dimensions) == len(_LIBRARY_SHAPES), dimensions
+                assert all(
+                    re.fullmatch(r"\d+ × \d+ px", text) for text in dimensions
+                ), dimensions
+                assert len(set(dimensions)) == len(dimensions), dimensions
+                assert all(
+                    page.locator(".library-cover-card .cover-sources").all_inner_texts()
+                )
 
                 # A scrolled pointer must hit disclosure, never a sticky choice
                 # covering it. Keyboard-only tests cannot detect this overlap.
@@ -4278,7 +4273,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     page.get_by_role("heading", name="Review complete")
                 ).to_have_count(0)
                 assert (
-                    page.locator(".library-cover-card[aria-pressed='true']").count()
+                    page.locator(".library-cover-card[aria-checked='true']").count()
                     == 0
                 )
                 cards = page.locator(".library-cover-gallery .cover-choice")
@@ -4432,8 +4427,28 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     "**/cover-considerations/**/images/**",
                     lambda route: route.abort(),
                 )
+                requested: set[str] = set()
+                page.on(
+                    "request",
+                    lambda request: (
+                        requested.add(request.url.split("?")[0])
+                        if "/images/" in request.url
+                        else None
+                    ),
+                )
                 page.reload()
                 page.get_by_text("Image unavailable").first.wait_for()
+                page.wait_for_timeout(300)
+                # Covers load lazily (#1290): a card below the fold has not
+                # asked for its image until it nears the viewport.
+                frames = page.locator(".library-cover-image")
+                assert 0 < len(requested) < frames.count(), requested
+                for frame in frames.all():
+                    frame.scroll_into_view_if_needed()
+                page.wait_for_function(
+                    "() => document.querySelectorAll('.library-cover-image img')"
+                    ".length === 0"
+                )
                 unavailable = cast(
                     "list[dict[str, Any]]",
                     page.evaluate(_COVER_CONTAINMENT, ".library-cover-image"),
@@ -4452,6 +4467,178 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 assert errors and all(
                     "Failed to load resource" in error for error in errors
                 ), errors
+            browser.close()
+
+
+def test_duplicate_cover_images_are_one_choice_naming_both_sources() -> None:
+    """#1290: one image offered by two sources is one card that names both."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    cover_shapes=_COVER_SHAPES,
+                    cover_duplicate=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.wait_for()
+                group = comparison.get_by_role(
+                    "radiogroup", name="Which cover should this work use?"
+                )
+                # Five sources, four distinct images: the current cover and
+                # three alternatives.
+                expect(group.get_by_role("radio")).to_have_count(4)
+                sources = group.locator(".cover-sources").all_inner_texts()
+                assert sources.count("Hardcover · Open Library") == 1, sources
+                assert all(
+                    text and "Open Library" not in text
+                    for text in sources
+                    if text != "Hardcover · Open Library"
+                ), sources
+                dimensions = group.locator(".cover-dimensions").all_inner_texts()
+                assert len(dimensions) == 4, dimensions
+                assert all(
+                    re.fullmatch(r"\d+ × \d+ px", text) for text in dimensions
+                ), dimensions
+                expect(
+                    comparison.get_by_text(
+                        "1 duplicate image merged. Each card names every source "
+                        "that offered it."
+                    )
+                ).to_be_visible()
+                expect(comparison.locator(".library-cover-excluded")).to_have_count(0)
+            browser.close()
+
+
+@pytest.mark.parametrize("mode", ["click", "tap"])
+@pytest.mark.parametrize("width", [1440, 1024, 375, 320])
+def test_cover_choice_records_in_one_tap(width: int, mode: str) -> None:
+    """#1290: one press on a cover records it, even half off a compact track.
+
+    Pointer focus arrives on mousedown; before #1290 it scrolled the track
+    under the press and the first tap at 375px and 320px was lost.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": width, "height": 812},
+                reduced_motion="reduce",
+                has_touch=mode == "tap",
+            )
+            page = context.new_page()
+            decisions: list[str] = []
+            page.on(
+                "request",
+                lambda request: (
+                    decisions.append(request.url)
+                    if request.method == "POST" and "/decisions" in request.url
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    cover_shapes=_COVER_SHAPES,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                group = page.get_by_role(
+                    "radiogroup", name="Which cover should this work use?"
+                )
+                group.wait_for()
+                track = page.locator(".library-cover-pinned, .library-cover-layout")
+                # The alternative to press: the first enabled one that the
+                # track's right edge cuts at compact widths, else the first.
+                target = cast(
+                    "dict[str, Any]",
+                    track.evaluate(
+                        """track => {
+                          const edge = track.getBoundingClientRect().right
+                          const cards = [...track.querySelectorAll(
+                            '.library-cover-card:not(:disabled)')].filter(card =>
+                            card.getAttribute('aria-label').startsWith('Choose Alternative'))
+                          const cut = cards.find(card => {
+                            const box = card.getBoundingClientRect()
+                            return box.left < edge - 24 && box.right > edge
+                          })
+                          const card = cut ?? cards[0]
+                          const box = card.getBoundingClientRect()
+                          return { label: card.getAttribute('aria-label'), cut: Boolean(cut),
+                            left: box.left, right: Math.min(box.right, edge),
+                            top: box.top, bottom: box.bottom }
+                        }"""
+                    ),
+                )
+                if width <= 375:
+                    assert target["cut"], target
+                card = group.get_by_role("radio", name=target["label"], exact=True)
+                card.evaluate(
+                    "node => window.scrollBy(0, node.getBoundingClientRect().top - 200)"
+                )
+                box = card.bounding_box()
+                assert box is not None
+                x = (box["x"] + min(box["x"] + box["width"], target["right"])) / 2
+                y = box["y"] + box["height"] / 2
+                scroll_before = track.evaluate("node => node.scrollLeft")
+                if mode == "tap":
+                    page.touchscreen.tap(x, y)
+                else:
+                    page.mouse.click(x, y)
+                deadline = time.monotonic() + 10
+                while not decisions and time.monotonic() < deadline:
+                    page.wait_for_timeout(25)
+                assert len(decisions) == 1, (decisions, target)
+                # The press did not move the track from under itself.
+                assert track.evaluate("node => node.scrollLeft") == scroll_before
+                page.wait_for_function(
+                    "() => document.activeElement?.matches("
+                    '\'.decision-canvas [role="radio"][tabindex="0"], .review-complete\')'
+                    " === true"
+                )
+                page.wait_for_timeout(300)
+                assert len(decisions) == 1, decisions
+                expect(page.get_by_role("dialog")).to_have_count(0)
             browser.close()
 
 
@@ -4578,7 +4765,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     before = current_field()
                     settled = len(library_responses)
                     choice = page.get_by_role(
-                        "button", name="Choose current value:", exact=False
+                        "radio", name="Choose current value:", exact=False
                     ).first
                     started = time.monotonic()
                     if pointer:
@@ -4727,9 +4914,9 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     has_text=first_field.split("\n")[0]
                 ).first.click()
                 recorded = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).first
-                expect(recorded).to_have_attribute("aria-pressed", "true")
+                expect(recorded).to_have_attribute("aria-checked", "true")
                 assert (
                     page.get_by_role(
                         "button", name="Take no action", exact=True
@@ -4737,7 +4924,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     == 0
                 )
                 assert page.get_by_role(
-                    "button", name="Choose proposed value", exact=False
+                    "radio", name="Choose proposed value", exact=False
                 ).count()
                 assert (
                     "You can select another eligible value"
@@ -4887,7 +5074,7 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                 ]
                 before = page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
                 lower_choice = page.get_by_role(
-                    "button", name="Choose proposed value", exact=False
+                    "radio", name="Choose proposed value", exact=False
                 )
                 lower_choice.scroll_into_view_if_needed()
                 scroll_before = page.evaluate("() => window.scrollY")
@@ -4965,6 +5152,151 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                         ".field-filmstrip button"
                     ).all_inner_texts()
                 ] == rail_order
+            browser.close()
+
+
+_FOCUSED_STOP = (
+    "() => document.activeElement?.matches("
+    '\'.decision-canvas [role="radio"][tabindex="0"]\') === true'
+)
+
+
+@pytest.mark.parametrize("width", [1440, 375])
+def test_review_choice_group_keyboard_model(width: int) -> None:
+    """#1290: one radio group per field; arrows move, Space or Enter records once."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": width, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            decisions: list[str] = []
+            page.on(
+                "request",
+                lambda request: (
+                    decisions.append(request.url)
+                    if request.method == "POST" and "/decisions" in request.url
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=needs_attention&preview={case_id}&field=title"
+                )
+                group = page.get_by_role(
+                    "radiogroup", name="Which title should this work use?"
+                )
+                group.wait_for()
+                snapshot = group.aria_snapshot()
+                assert snapshot.startswith(
+                    '- radiogroup "Which title should this work use?"'
+                ), snapshot
+                radios = group.get_by_role("radio")
+                count = radios.count()
+                assert count >= 2, snapshot
+                names = [
+                    radios.nth(index).get_attribute("aria-label")
+                    for index in range(count)
+                ]
+                assert names[0] is not None
+                assert names[0].startswith("Choose current value:"), names
+                assert all(
+                    name is not None and name.startswith("Choose proposed value:")
+                    for name in names[1:]
+                ), names
+                for index in range(count):
+                    radio = radios.nth(index)
+                    expect(radio).to_have_attribute("aria-checked", "false")
+                    expect(radio).to_have_attribute("aria-posinset", str(index + 1))
+                    expect(radio).to_have_attribute("aria-setsize", str(count))
+                    assert f'radio "{names[index]}"' in snapshot, snapshot
+
+                # Tab reaches the group at its one stop, the first choice.
+                radios.nth(0).focus()
+                page.keyboard.press("Shift+Tab")
+                expect(radios.nth(0)).not_to_be_focused()
+                page.keyboard.press("Tab")
+                expect(radios.nth(0)).to_be_focused()
+                # Arrows wrap over Current and every alternative and send nothing.
+                for step in range(1, count + 1):
+                    page.keyboard.press("ArrowDown")
+                    expect(radios.nth(step % count)).to_be_focused()
+                page.keyboard.press("ArrowUp")
+                expect(radios.nth(count - 1)).to_be_focused()
+                page.wait_for_timeout(300)
+                assert decisions == []
+
+                # Space records the focused alternative once and opens the next
+                # field with focus on its group's stop.
+                page.keyboard.press("Space")
+                page.wait_for_function(
+                    "() => !new URL(location.href).searchParams.get('field')"
+                    "?.startsWith('title')"
+                )
+                page.wait_for_function(_FOCUSED_STOP)
+                assert len(decisions) == 1, decisions
+                next_group = page.locator(".decision-canvas [role='radiogroup']")
+                expect(next_group).to_have_count(1)
+                next_name = next_group.get_attribute("aria-label")
+                assert next_name is not None
+                assert next_name != "Which title should this work use?"
+                expect(
+                    page.locator(".decision-canvas [role='radio']:focus")
+                ).to_be_visible()
+                # Enter records the next field once in the same way.
+                page.keyboard.press("Enter")
+                deadline = time.monotonic() + 10
+                while len(decisions) < 2 and time.monotonic() < deadline:
+                    page.wait_for_timeout(25)
+                assert len(decisions) == 2, decisions
+                page.wait_for_function(
+                    "() => document.activeElement?.matches("
+                    '\'.decision-canvas [role="radio"][tabindex="0"], .review-complete\')'
+                    " === true"
+                )
+                page.wait_for_timeout(300)
+                assert len(decisions) == 2, decisions
+
+                # Revisiting the first field states the recorded choice.
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                group.wait_for()
+                recorded = group.aria_snapshot()
+                assert f'radio "{names[-1]}" [checked]' in recorded, recorded
+                chosen = radios.nth(count - 1)
+                expect(chosen).to_have_attribute("aria-checked", "true")
+                expect(chosen).to_have_attribute("tabindex", "0")
+                expect(chosen).to_contain_text("Your choice")
+                # Tab reaches no other choice on the way: an Evidence button in
+                # an earlier card may come first, in reading order (R2).
+                radios.nth(0).focus()
+                page.keyboard.press("Shift+Tab")
+                for _ in range(4):
+                    page.keyboard.press("Tab")
+                    if page.evaluate(
+                        "() => document.activeElement?.getAttribute('role') === 'radio'"
+                    ):
+                        break
+                expect(chosen).to_be_focused()
             browser.close()
 
 
@@ -5185,7 +5517,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     re.compile("needs (your )?review", re.IGNORECASE)
                 )
                 accept = page.get_by_role(
-                    "button", name=re.compile("^Choose proposed value: ")
+                    "radio", name=re.compile("^Choose proposed value: ")
                 ).first
                 expect(accept).to_be_visible()
                 accept.click()
@@ -5197,7 +5529,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                         "button", name=re.compile("^Narrators")
                     ).first.click()
                     keep = page.get_by_role(
-                        "button", name=re.compile("^Choose current value: ")
+                        "radio", name=re.compile("^Choose current value: ")
                     ).first
                     expect(keep).to_be_visible()
                     keep.click()
@@ -5325,7 +5657,7 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 )
                 expect(
                     page.get_by_role(
-                        "button", name=re.compile("^Choose proposed value: ")
+                        "radio", name=re.compile("^Choose proposed value: ")
                     ).first
                 ).to_be_visible()
             browser.close()
@@ -5376,7 +5708,7 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
                 assert pending_detail.bounding_box() is not None
                 held_selected_detail[0].continue_()
                 page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).wait_for()
                 expect(page.locator(".selected-work-header")).to_be_focused()
                 page.unroute("**/api/v1/review-cases/**", hold_selected_detail)
@@ -7593,7 +7925,7 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                     expected = "A Journey Through the Carefully Remembered Stories of the Northern Coast"
                 expect(page.get_by_text(expected, exact=True).first).to_be_visible()
                 proposed = page.get_by_role(
-                    "button", name="Choose proposed value", exact=False
+                    "radio", name="Choose proposed value", exact=False
                 ).first
                 evidence = page.get_by_role(
                     "button", name=f"Evidence for Alternative 1: {expected}", exact=True
@@ -7612,12 +7944,12 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                         panel_box = panel.bounding_box()
                         assert toggle_box is not None and panel_box is not None
                         assert toggle_box["y"] + toggle_box["height"] <= panel_box["y"]
-                        expect(proposed).to_have_attribute("aria-pressed", "false")
+                        expect(proposed).to_have_attribute("aria-checked", "false")
                         evidence.focus()
                         page.keyboard.press("Enter")
                         expect(evidence).to_have_attribute("aria-expanded", "false")
                         expect(panel).to_have_count(0)
-                        expect(proposed).to_have_attribute("aria-pressed", "false")
+                        expect(proposed).to_have_attribute("aria-checked", "false")
                 with page.expect_response(
                     lambda response: response.url.endswith("/decisions")
                 ) as accepted:
@@ -7626,12 +7958,12 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                 page.goto(
                     f"{origin}/library?lens=all&preview={case_id}&field={component}"
                 )
-                expect(proposed).to_have_attribute("aria-pressed", "true")
+                expect(proposed).to_have_attribute("aria-checked", "true")
                 page.reload()
                 expect(page.get_by_text(expected, exact=True).first).to_be_visible()
-                expect(proposed).to_have_attribute("aria-pressed", "true")
+                expect(proposed).to_have_attribute("aria-checked", "true")
                 current = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).first
                 current.focus()
                 with page.expect_response(
@@ -7642,9 +7974,9 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                 page.goto(
                     f"{origin}/library?lens=all&preview={case_id}&field={component}"
                 )
-                expect(current).to_have_attribute("aria-pressed", "true")
+                expect(current).to_have_attribute("aria-checked", "true")
                 page.reload()
-                expect(current).to_have_attribute("aria-pressed", "true")
+                expect(current).to_have_attribute("aria-checked", "true")
             browser.close()
 
 
@@ -7693,7 +8025,7 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
 
                 page.route("**/decisions", first_failure)
                 page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).click()
                 retry = page.get_by_role("button", name="Try the same decision again")
                 expect(retry).to_be_visible()
@@ -7706,15 +8038,13 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 assert commands[0].startswith("decision-")
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 expect(
-                    page.get_by_role(
-                        "button", name="Choose current value:", exact=False
-                    )
-                ).to_have_attribute("aria-pressed", "true")
+                    page.get_by_role("radio", name="Choose current value:", exact=False)
+                ).to_have_attribute("aria-checked", "true")
                 page.unroute("**/decisions")
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
                 page.route("**/decisions", lambda route: route.abort())
                 page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).click()
                 expect(
                     page.get_by_text(
@@ -7723,7 +8053,7 @@ def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
                 ).to_be_visible()
                 page.unroute("**/decisions")
                 page.get_by_role(
-                    "button", name="Choose current value:", exact=False
+                    "radio", name="Choose current value:", exact=False
                 ).click()
                 expect(
                     page.get_by_text(
@@ -7810,7 +8140,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                     page.get_by_role("heading", name=later_title, exact=True)
                 ).to_be_visible()
                 expect(
-                    page.get_by_role("button", name="Choose current value", exact=False)
+                    page.get_by_role("radio", name="Choose current value", exact=False)
                 ).to_be_visible()
                 returned = parse_qs(urlsplit(page.url).query)
                 assert returned["attentionCursor"] == produced["attentionCursor"]
@@ -7830,7 +8160,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 expect(page.get_by_text(reason)).to_be_visible()
                 expect(
                     page.get_by_role(
-                        "button", name="Choose proposed value", exact=False
+                        "radio", name="Choose proposed value", exact=False
                     ).first
                 ).to_be_enabled()
                 for width in (1280, 390):
@@ -7877,9 +8207,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 page.goto(f"{origin}/review/{case_id}?subview=evidence")
                 expect(page.get_by_text(reason)).to_be_visible()
                 expect(
-                    page.get_by_role(
-                        "button", name="Choose proposed value", exact=False
-                    )
+                    page.get_by_role("radio", name="Choose proposed value", exact=False)
                 ).to_have_count(0)
                 from tests.support.provider_recovery_rail import provider_failure_report
 
@@ -7956,15 +8284,15 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                     page.get_by_role("article", name="Advised description")
                 ).to_have_count(0)
                 current = chooser.get_by_role(
-                    "button", name="Choose current value: Existing description."
+                    "radio", name="Choose current value: Existing description."
                 )
                 provider = chooser.get_by_role(
-                    "button", name="Choose proposed value: A qualified description."
+                    "radio", name="Choose proposed value: A qualified description."
                 )
                 expect(current).to_be_enabled()
                 expect(provider).to_be_enabled()
                 select = chooser.get_by_role(
-                    "button", name=re.compile("^Choose advised value:")
+                    "radio", name=re.compile("^Choose advised value:")
                 )
                 if state == "failed":
                     expect(chooser.get_by_role("status")).to_contain_text(
@@ -7976,8 +8304,8 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                     expect(select).to_contain_text("Advised · Authored content")
                     expect(select).to_contain_text("codex · synthetic-contained-model")
                     if state in {"automatic", "no_change"}:
-                        expect(select).to_have_attribute("aria-pressed", "true")
-                        expect(current).to_have_attribute("aria-pressed", "false")
+                        expect(select).to_have_attribute("aria-checked", "true")
+                        expect(current).to_have_attribute("aria-checked", "false")
                         expect(select).to_contain_text(
                             "Applied and verified"
                             if state == "automatic"
@@ -8024,7 +8352,7 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                         page.get_by_role(
                             "button", name=re.compile("^Description ")
                         ).click()
-                        expect(select).to_have_attribute("aria-pressed", "true")
+                        expect(select).to_have_attribute("aria-checked", "true")
                         assert len(selection_requests) == 1
                         assert set(selection_requests[0]) == {"candidate_id", "binding"}
                         assert (
@@ -8056,7 +8384,7 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                 ).to_be_visible()
                 expect(
                     page.get_by_role(
-                        "button", name=re.compile("Choose advised|Retry description")
+                        "radio", name=re.compile("Choose advised|Retry description")
                     )
                 ).to_have_count(0)
                 expect(
@@ -8083,7 +8411,7 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                 ).to_be_visible()
                 expect(
                     page.get_by_role(
-                        "button", name=re.compile("Choose advised|Retry description")
+                        "radio", name=re.compile("Choose advised|Retry description")
                     )
                 ).to_have_count(0)
                 expect(
@@ -8136,18 +8464,16 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                 else:
                     expect(
                         page.get_by_role(
-                            "button", name="Choose current value: Existing description."
+                            "radio", name="Choose current value: Existing description."
                         )
                     ).to_be_enabled()
                 expect(
-                    page.get_by_role(
-                        "button", name=re.compile("^Choose advised value:")
-                    )
+                    page.get_by_role("radio", name=re.compile("^Choose advised value:"))
                 ).to_have_count(0)
                 if state == "no_alternatives":
                     expect(
                         page.get_by_role(
-                            "button", name=re.compile("^Choose proposed value:")
+                            "radio", name=re.compile("^Choose proposed value:")
                         )
                     ).to_have_count(0)
                     expect(
@@ -8156,7 +8482,7 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                 else:
                     expect(
                         page.get_by_role(
-                            "button",
+                            "radio",
                             name="Choose proposed value: A qualified description.",
                         )
                     ).to_be_enabled()
@@ -8251,12 +8577,12 @@ def test_description_retry_retains_real_selected_choice(state):
                         color_scheme="dark" if theme == "dark" else "light"
                     )
                     choices = page.get_by_role(
-                        "button", name=re.compile("^Choose advised value:")
+                        "radio", name=re.compile("^Choose advised value:")
                     )
                     expect(choices).to_have_count(
                         2 if state == "retry_succeeded" else 1
                     )
-                    expect(choices.first).to_have_attribute("aria-pressed", "true")
+                    expect(choices.first).to_have_attribute("aria-checked", "true")
                     expect(choices.first).to_be_disabled()
                     expect(
                         page.get_by_text("Choice recorded.", exact=True)
@@ -8296,10 +8622,10 @@ def test_description_retry_retains_real_selected_choice(state):
                     ).to_be_visible()
                 if state == "retry_succeeded":
                     latest = page.get_by_role(
-                        "button",
+                        "radio",
                         name="Choose advised value: A new authored description from the explicit retry.",
                     )
-                    expect(latest).to_have_attribute("aria-pressed", "false")
+                    expect(latest).to_have_attribute("aria-checked", "false")
                     latest.focus()
                     with page.expect_response(
                         lambda response: (
@@ -8310,10 +8636,10 @@ def test_description_retry_retains_real_selected_choice(state):
                         latest.press("Enter")
                     assert response.value.ok
                     page.goto(url)
-                    expect(latest).to_have_attribute("aria-pressed", "true")
+                    expect(latest).to_have_attribute("aria-checked", "true")
                     expect(
                         page.get_by_role(
-                            "button", name=re.compile("^Choose advised value:")
+                            "radio", name=re.compile("^Choose advised value:")
                         )
                     ).to_have_count(1)
             browser.close()
@@ -8489,7 +8815,7 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
                 if scenario == "ignore":
                     expect(
                         page.get_by_role(
-                            "button", name="Choose proposed value: Ada Example"
+                            "radio", name="Choose proposed value: Ada Example"
                         )
                     ).to_have_count(0)
                     page.get_by_text("Inspect context", exact=True).click()
@@ -8621,17 +8947,15 @@ def test_language_ask_owner_choice_is_reachable_and_durable(audio):
                 "heading", name="Which language should this work use?", exact=True
             ).wait_for()
             choice = page.get_by_role(
-                "button", name="Choose proposed value: English", exact=True
+                "radio", name="Choose proposed value: English", exact=True
             )
             expect(choice).to_be_enabled()
             expect(
-                page.get_by_role(
-                    "button", name="Choose proposed value: UND", exact=True
-                )
+                page.get_by_role("radio", name="Choose proposed value: UND", exact=True)
             ).to_have_count(0)
             choice.focus()
             choice.press("Space")
-            expect(choice).to_have_attribute("aria-pressed", "true")
+            expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="History", exact=True).click()
             expect(page.get_by_text("To English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
@@ -8645,9 +8969,9 @@ def test_language_ask_owner_choice_is_reachable_and_durable(audio):
             page.reload()
             expect(
                 page.get_by_role(
-                    "button", name="Choose proposed value: English", exact=True
+                    "radio", name="Choose proposed value: English", exact=True
                 )
-            ).to_have_attribute("aria-pressed", "true")
+            ).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
@@ -8684,30 +9008,30 @@ def test_genre_creator_equivalence_owner_journey(destination):
             page.get_by_role("heading", name="Real Tigers", exact=True).wait_for()
             if destination == "ask":
                 choice = page.get_by_role(
-                    "button", name="Choose proposed value: Fantasy", exact=True
+                    "radio", name="Choose proposed value: Fantasy", exact=True
                 )
                 expect(choice).to_be_enabled()
                 choice.focus()
                 choice.press("Space")
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                expect(choice).to_have_attribute("aria-checked", "true")
                 page.reload()
                 expect(
                     page.get_by_role(
-                        "button", name="Choose proposed value: Fantasy", exact=True
+                        "radio", name="Choose proposed value: Fantasy", exact=True
                     )
-                ).to_have_attribute("aria-pressed", "true")
+                ).to_have_attribute("aria-checked", "true")
             elif destination == "ignore":
                 expect(
                     page.get_by_role(
-                        "button", name="Choose proposed value: Fantasy", exact=True
+                        "radio", name="Choose proposed value: Fantasy", exact=True
                     )
                 ).to_have_count(0)
             else:
                 expect(
                     page.get_by_role(
-                        "button", name="Choose proposed value: Fantasy", exact=True
+                        "radio", name="Choose proposed value: Fantasy", exact=True
                     )
-                ).to_have_attribute("aria-pressed", "true")
+                ).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             if destination == "ignore":
                 expect(page.get_by_text("Genre: Fantasy", exact=False)).to_have_count(0)
@@ -9279,7 +9603,7 @@ def test_same_name_series_owner_journey(media, destination):
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
             page.get_by_role("heading", name=title, exact=True).wait_for()
             choice = page.get_by_role(
-                "button", name=re.compile(r"^Choose proposed value: " + title)
+                "radio", name=re.compile(r"^Choose proposed value: " + title)
             )
             if destination == "ask":
                 expect(choice).to_be_enabled()
@@ -9300,9 +9624,9 @@ def test_same_name_series_owner_journey(media, destination):
                     )
                 ).to_be_visible()
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                expect(choice).to_have_attribute("aria-checked", "true")
             elif destination == "automatic":
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                expect(choice).to_have_attribute("aria-checked", "true")
                 if media == "ebook":
                     expect(
                         page.get_by_text(
@@ -9375,7 +9699,7 @@ def test_audiobook_work_owner_journey():
                     page.get_by_role("button", name=re.compile(rf"^{field}\b"))
                 ).to_have_count(0)
             choice = page.get_by_role(
-                "button",
+                "radio",
                 name="Choose proposed value: A voyage reveals a hidden city.",
                 exact=True,
             )
@@ -9392,7 +9716,7 @@ def test_audiobook_work_owner_journey():
                 page.get_by_role("heading", name="Review complete", exact=True)
             ).to_be_visible()
             page.reload()
-            expect(choice).to_have_attribute("aria-pressed", "true")
+            expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(
                 page.get_by_role("region", name="Book-level evidence")
@@ -9448,7 +9772,7 @@ def test_audiobook_work_series_title_owner_journey():
                 "choices. The exact recording remains unresolved."
             )
             series = page.get_by_role(
-                "button", name=re.compile(r"^Choose proposed value: Example Saga")
+                "radio", name=re.compile(r"^Choose proposed value: Example Saga")
             )
             series.focus()
             # Each choice is acknowledged, and the case advances past it,
@@ -9464,7 +9788,7 @@ def test_audiobook_work_series_title_owner_journey():
                 )
             ).to_be_visible()
             title = page.get_by_role(
-                "button", name="Choose proposed value: Synthetic Journey", exact=True
+                "radio", name="Choose proposed value: Synthetic Journey", exact=True
             )
             title.focus()
             with page.expect_response(
@@ -9480,7 +9804,7 @@ def test_audiobook_work_series_title_owner_journey():
                 )
             ).to_be_visible()
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-            expect(title).to_have_attribute("aria-pressed", "true")
+            expect(title).to_have_attribute("aria-checked", "true")
             # Only the book's own fields are offered; the subtitle, cover and
             # recording rows stay out.
             expect(page.get_by_text("field 2 of 4", exact=False)).to_be_visible()
@@ -9498,7 +9822,7 @@ def test_audiobook_work_series_title_owner_journey():
                     page.get_by_role("button", name=re.compile(rf"^{field}\b"))
                 ).to_have_count(count)
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
-            expect(series).to_have_attribute("aria-pressed", "true")
+            expect(series).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(
                 page.get_by_role("heading", name="Series", exact=True)
@@ -9530,7 +9854,7 @@ def test_audiobook_work_series_title_owner_journey():
                     .first
                 ).to_be_visible()
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-            expect(title).to_have_attribute("aria-pressed", "true")
+            expect(title).to_have_attribute("aria-checked", "true")
             for width in (390, 320):
                 page.set_viewport_size({"width": width, "height": 844})
                 for scheme in ("light", "dark"):
@@ -9572,7 +9896,7 @@ def test_audiobook_synopsis_owner_journey(destination):
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
             page.get_by_role("heading", name="Synthetic Journey", exact=True).wait_for()
             choice = page.get_by_role(
-                "button",
+                "radio",
                 name="Choose proposed value: A voyage reveals a hidden city.",
                 exact=True,
             )
@@ -9600,9 +9924,9 @@ def test_audiobook_synopsis_owner_journey(destination):
                         f"{origin}/library?lens=all&preview={case_id}&field=description"
                     )
                 else:
-                    expect(choice).to_have_attribute("aria-pressed", "true")
+                    expect(choice).to_have_attribute("aria-checked", "true")
                     page.reload()
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
@@ -9668,7 +9992,7 @@ def test_ebook_synopsis_owner_journey(destination):
                 else "A voyage reveals a hidden city."
             )
             choice = page.get_by_role(
-                "button",
+                "radio",
                 name=f"Choose proposed value: {selected}",
                 exact=True,
             )
@@ -9688,9 +10012,9 @@ def test_ebook_synopsis_owner_journey(destination):
                         page.get_by_role("heading", name="Review complete", exact=True)
                     ).to_be_visible()
                 else:
-                    expect(choice).to_have_attribute("aria-pressed", "true")
+                    expect(choice).to_have_attribute("aria-checked", "true")
                 page.reload()
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(
                 page.get_by_role("heading", name="Description", exact=True)
@@ -9749,7 +10073,7 @@ def test_ebook_isbn_owner_journey(destination):
             ).wait_for()
             selected = "9780306406157"
             choice = page.get_by_role(
-                "button",
+                "radio",
                 name=f"Choose proposed value: {selected}",
                 exact=True,
             )
@@ -9769,9 +10093,9 @@ def test_ebook_isbn_owner_journey(destination):
                         page.get_by_role("heading", name="Review complete", exact=True)
                     ).to_be_visible()
                 else:
-                    expect(choice).to_have_attribute("aria-pressed", "true")
+                    expect(choice).to_have_attribute("aria-checked", "true")
                 page.reload()
-                expect(choice).to_have_attribute("aria-pressed", "true")
+                expect(choice).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(page.get_by_role("heading", name="ISBN", exact=True)).to_be_visible()
             if destination != "ignore":
