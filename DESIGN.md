@@ -261,8 +261,9 @@ dashboard. Main content is capped at `98rem` and padded with
 destinations—Library, Policy, Activity, and Settings—a status slot, and the
 theme and sign-out controls. The status slot sits between the destinations and
 the actions and holds the live-update status (shown only while it reconnects)
-and preparation status, so whatever it says moves nothing else. The masthead
-is sticky only while it takes at most a quarter of the viewport; taller—a
+and preparation status, so whatever it says moves nothing else: squeezed, its
+labels wrap within the row rather than clip. The masthead is sticky only
+while it takes at most a quarter of the viewport; taller—a
 phone, a short window, enlarged text—it scrolls away with the page, so it
 never covers what the owner reads or focuses, and sticky regions then sit at
 the top of the window. Between 1025px and 1199px the product name recedes and
