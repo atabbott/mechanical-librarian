@@ -2751,6 +2751,8 @@ export default function LibraryPage({
   const selectedPreviewRef = useRef<string | undefined>(undefined)
   const selectedDetailRetry = useRef<string | null>(null)
   const selectedDetailRetryButton = useRef<HTMLButtonElement>(null)
+  // The preview whose detail was last shown ready, until the preview changes.
+  const selectedDetailShown = useRef<string | null>(null)
   const pendingSuccessorRef = useRef(new Set<string>())
   const lineageGenerationRef = useRef(0)
   const [reconciledSuccessorIdentity, setReconciledSuccessorIdentity] = useState<string | null>(
@@ -3585,6 +3587,7 @@ export default function LibraryPage({
     !selectedReadError
   useEffect(() => {
     selectedDetailRetry.current = null
+    selectedDetailShown.current = null
   }, [search.preview])
   useEffect(() => {
     const selectedDetailSettled = selectedDetailReady || selectedReadError
@@ -3601,7 +3604,17 @@ export default function LibraryPage({
         workspace?.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     }
     selectedDetailRetry.current = null
+    if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
   }, [selectedReadError, search.preview, selectedDetailReady])
+  // A detail that was shown and then could not be read again, as after a
+  // command whose follow-up reads fail, takes away the control that had focus;
+  // its Try again takes focus rather than the page (#1288).
+  useEffect(() => {
+    if (!search.preview || !selectedReadError || leaving) return
+    if (document.activeElement !== document.body) return
+    if (selectedDetailShown.current !== search.preview) return
+    selectedDetailRetryButton.current?.focus({ preventScroll: true })
+  }, [leaving, search.preview, selectedReadError])
   useEffect(() => {
     currentSearch.current = search
   }, [search])
