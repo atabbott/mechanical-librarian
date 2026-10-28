@@ -79,6 +79,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     DeviceAuthFailure,
     DeviceAuthStatus,
+    OpenRouterPublicFailure,
 )
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.description_advice import (
@@ -429,6 +430,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_engine: Literal["codex", "openrouter"] | None
     reviewer_model: str | None
     reviewer_access_revision: StrictInt | None
+    reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: str
     reviewer_unavailable_reason: str | None
     schema_version: Literal["cover-consideration-v4"]
@@ -2452,7 +2454,7 @@ def reviewer_failure_response(error: Exception) -> tuple[int, str]:
     if isinstance(error, ReviewerAccessApplicationError):
         if error.code == "access_changed":
             return 409, "reviewer_access_stale"
-        if error.code in {"credential_clear_failed", "unreachable"}:
+        if error.code in {"credential_clear_failed", "unreachable", "timed_out"}:
             return 503, error.code
         return 422, error.code
     return 422, "reviewer_access_invalid"

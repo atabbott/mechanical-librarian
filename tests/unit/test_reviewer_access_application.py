@@ -215,7 +215,19 @@ def test_openrouter_configuration_validates_then_atomically_maps_without_disclos
     assert calls.count(("probe", "dots-studio/dots-3-note-preview:free")) == 1
 
 
-def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure() -> None:
+@pytest.mark.parametrize(
+    "code",
+    (
+        "rate_limited",
+        "response_too_large",
+        "timed_out",
+        "data_policy_refused",
+        "image_limit_exceeded",
+    ),
+)
+def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure(
+    code: str,
+) -> None:
     operations, _auth, calls, _codex = _operations()
     operations.configure_openrouter(
         expected_revision=1, api_key="secret-key", model="example/vision"
@@ -224,14 +236,14 @@ def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure() 
     assert operations.read().openrouter.state == "configured"
     assert calls == []
 
-    class _RateLimited(_OpenRouter):
+    class _Refused(_OpenRouter):
         def probe(self):
-            raise OpenRouterReviewerError("rate_limited")
+            raise OpenRouterReviewerError(cast("OpenRouterFailure", code))
 
-    operations._openrouter_factory = lambda key, model: _RateLimited(key, model, calls)
+    operations._openrouter_factory = lambda key, model: _Refused(key, model, calls)
     refreshed = operations.refresh_openrouter()
-    assert refreshed.openrouter.state == "rate_limited"
-    assert refreshed.openrouter.reason == "rate_limited"
+    assert refreshed.openrouter.state == code
+    assert refreshed.openrouter.reason == code
 
 
 @pytest.mark.parametrize(
@@ -245,6 +257,10 @@ def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure() 
         ("malformed_response", "malformed_response"),
         ("unreachable", "unreachable"),
         ("transport", "unreachable"),
+        ("response_too_large", "response_too_large"),
+        ("timed_out", "timed_out"),
+        ("data_policy_refused", "data_policy_refused"),
+        ("image_limit_exceeded", "image_limit_exceeded"),
     ),
 )
 def test_configuration_preserves_closed_value_free_provider_failure(

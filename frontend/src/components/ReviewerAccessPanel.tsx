@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
 import { ModelPicker } from './ModelPicker'
-import { coverReviewerLabel, reviewerStateLabels } from '../labels'
+import { coverReviewerLabel, reviewerFailureCopy, reviewerStateLabels } from '../labels'
 import { ApiError, CsrfRenewedError, sessionRefreshedCopy } from '../api/http'
 import type {
   CodexDeviceAuthState,
@@ -37,8 +37,15 @@ const failureCopy: Readonly<Record<string, string>> = {
   model_unavailable: 'That model is unavailable. Choose another vision model and validate again.',
   model_text_only: 'That model cannot inspect covers. Choose a model with image input.',
   malformed_response:
-    'OpenRouter returned an invalid or oversized response. Retry later or choose another model.',
+    'OpenRouter returned an invalid response. Retry later or choose another model.',
   unreachable: 'OpenRouter could not be reached. Check network access, then retry.',
+  response_too_large:
+    'OpenRouter returned an answer too large to read. Retry later, or choose another model.',
+  timed_out: 'OpenRouter did not answer in time. Check network access, then retry.',
+  data_policy_refused:
+    'No provider for this model accepts your OpenRouter data policy. Change your privacy settings on OpenRouter, or choose a model with a compliant provider.',
+  image_limit_exceeded:
+    'That model accepts fewer images than a cover review sends. Choose another vision model.',
   credential_clear_failed:
     'The credential could not be removed. It remains protected; retry the clear action.',
   not_provisioned:
@@ -78,13 +85,7 @@ const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
   protocol_or_process: 'Codex returned an unexpected result. Restart the sign-in flow.',
   restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
   not_selected: 'Codex is not selected. Check the sign-in, then select it for cover observations.',
-  invalid_key: 'The configured reviewer credential is invalid. Replace it and retry.',
-  quota_exhausted: 'The configured reviewer has no remaining quota. Restore quota and retry.',
-  rate_limited: 'The configured reviewer is rate limited. Wait, then retry.',
-  model_unavailable: 'The configured reviewer model is unavailable. Choose another model.',
-  model_text_only: 'The configured reviewer model cannot inspect cover images.',
-  malformed_response: 'The configured reviewer returned an invalid response. Retry later.',
-  unreachable: 'The configured reviewer could not be reached. Check network access and retry.',
+  ...reviewerFailureCopy,
 }
 
 export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {

@@ -188,6 +188,9 @@ class DescriptionAdviceService:
                 else "unavailable"
             )
         except OpenRouterReviewerError as error:
+            # Only an unreadable answer is invalid output. An oversized answer,
+            # an exhausted deadline and a data-policy or image-count refusal
+            # are the provider being unavailable, within the persisted set.
             failure = (
                 "invalid_output"
                 if error.code == "malformed_response"
