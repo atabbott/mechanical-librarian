@@ -182,6 +182,51 @@ def test_library_selection_rejects_duplicate_canonical_local_names() -> None:
     assert store.read(_BOOTSTRAP) == state
 
 
+@pytest.mark.parametrize(
+    "override", ("Reading Shelf", "reading shelf", "READING SHELF")
+)
+def test_library_selection_refuses_a_display_name_another_library_carries(
+    override: str,
+) -> None:
+    _connection, store = _store()
+    state = _connected(store)
+    journey = _journey(
+        store,
+        (
+            SetupLibraryCandidate(
+                library_id="one", name="Reading Shelf", media_kind="book"
+            ),
+            SetupLibraryCandidate(
+                library_id="two", name="Split Shelf", media_kind="book"
+            ),
+        ),
+    )
+    state = journey.providers(state.revision, [], {})
+
+    with pytest.raises(SetupJourneyError) as error:
+        journey.libraries(
+            state.revision,
+            [
+                LibrarySettings(
+                    name="reading-shelf",
+                    connection="primary",
+                    library_id="one",
+                    media_kind="book",
+                ),
+                LibrarySettings(
+                    name="split-shelf",
+                    display_name=override,
+                    connection="primary",
+                    library_id="two",
+                    media_kind="book",
+                ),
+            ],
+        )
+
+    assert error.value.code == "invalid_library_display_name_duplicate"
+    assert store.read(_BOOTSTRAP) == state
+
+
 def test_library_selection_preserves_discovered_name_and_owner_override() -> None:
     _connection, store = _store()
     state = _connected(store)

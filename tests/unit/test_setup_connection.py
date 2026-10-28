@@ -71,6 +71,41 @@ def test_failure_codes_are_closed_and_value_free(source: str, expected: str) -> 
     assert "secret-value" not in str(error.value)
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "http://127.0.0.1:13378/audiobookshelf",
+        "https://owner:synthetic-userinfo@abs.invalid:13378",
+        "https://abs.invalid:13378/?library=one",
+        "https://abs.invalid:13378/#fragment",
+    ),
+)
+def test_an_address_beyond_scheme_host_and_port_is_refused_before_probing(
+    endpoint: str,
+) -> None:
+    probes: list[str] = []
+
+    def probe(endpoint: str, key: str) -> None:
+        probes.append(endpoint)
+
+    with pytest.raises(SetupConnectionError) as error:
+        SetupConnectionVerification(probe).verify("primary", endpoint, "secret-value")
+    assert error.value.code == "invalid_endpoint"
+    assert probes == []
+    assert "synthetic-userinfo" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "endpoint", ("http://127.0.0.1:13378", "https://abs.invalid:13378/")
+)
+def test_an_origin_with_or_without_a_trailing_slash_is_probed(endpoint: str) -> None:
+    probes: list[str] = []
+    SetupConnectionVerification(lambda address, _key: probes.append(address)).verify(
+        "primary", endpoint, "secret-value"
+    )
+    assert probes == [endpoint]
+
+
 def test_success_returns_connection_and_write_only_delta() -> None:
     connection, secrets = SetupConnectionVerification(
         lambda _endpoint, _key: None

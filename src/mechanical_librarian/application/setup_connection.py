@@ -9,7 +9,7 @@ from mechanical_librarian.domain.setup_state import (
     SetupStateDocument,
     SetupStateError,
 )
-from mechanical_librarian.domain.validation import credential
+from mechanical_librarian.domain.validation import credential, http_origin
 
 
 class SetupConnectionProbe(Protocol):
@@ -32,6 +32,9 @@ class SetupConnectionVerification:
         if (
             type(endpoint) is not str
             or not endpoint.startswith(("https://", "http://"))
+            # Only scheme, host and port: a path, userinfo, query or fragment
+            # is refused here, before any probe, rather than read as a failure.
+            or not http_origin(endpoint)
             or type(key) is not str
             or not credential(key)
         ):

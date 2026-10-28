@@ -6241,6 +6241,20 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                 submit = page.get_by_role("button", name="Verify and continue")
                 closed = f"http://127.0.0.1:{closed_port.number}"
                 cases = [
+                    # More than scheme, host and port is refused before any
+                    # probe, and never echoed (#1287).
+                    (
+                        service + "/abs-subpath",
+                        _FAKE_AUDIOBOOKSHELF_KEY,
+                        "Enter only the scheme, host and port Audiobookshelf serves on",
+                        endpoint,
+                    ),
+                    (
+                        service.replace("http://", "http://owner:synthetic-pw@"),
+                        _FAKE_AUDIOBOOKSHELF_KEY,
+                        "with no path, user name or password.",
+                        endpoint,
+                    ),
                     (
                         "https://audiobookshelf.invalid:13378",
                         _FAKE_AUDIOBOOKSHELF_KEY,
@@ -6276,6 +6290,8 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                     expect(alert).to_contain_text(message)
                     text = alert.inner_text()
                     assert secret not in text
+                    assert "abs-subpath" not in text
+                    assert "synthetic-pw" not in text
                     assert _PASSWORD not in text
                     expect(focused).to_be_focused()
                     expect(focused).to_have_attribute("aria-invalid", "true")
@@ -6329,6 +6345,15 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= innerWidth"
                 )
+                # Doubled text never pushes a provider card past a phone width.
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                for width in (375, 320):
+                    page.set_viewport_size({"width": width, "height": 812})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    ), width
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 375, "height": 812})
                 page.get_by_role("button", name="Skip providers").click()
 
                 expect(
@@ -6343,9 +6368,18 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                     ).to_have_count(1)
                     page.get_by_role("checkbox", name=name).check()
                 page.get_by_role("button", name="Change name of Listening Room").click()
-                expect(
-                    page.get_by_label("New name for Listening Room", exact=True)
-                ).to_be_focused()
+                rename = page.get_by_label("New name for Listening Room", exact=True)
+                expect(rename).to_be_focused()
+                # A name another library carries is refused on that field.
+                rename.fill("reading shelf")
+                page.get_by_role("button", name="Continue").click()
+                expect(page.get_by_role("alert")).to_have_text(
+                    "That name is already used by another library. Choose a "
+                    "different name for this one."
+                )
+                expect(rename).to_be_focused()
+                expect(rename).to_have_attribute("aria-invalid", "true")
+                rename.fill("Listening Room")
                 page.get_by_role("button", name="Continue").click()
 
                 expect(

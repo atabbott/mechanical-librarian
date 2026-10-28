@@ -157,6 +157,11 @@ class SetupJourneyOperation:
             ),
             key=lambda value: value.name,
         )
+        # One library carries one name everywhere, so two may not share one,
+        # whatever its case.
+        shown = [str(value.display_name).casefold() for value in canonical]
+        if len(set(shown)) != len(shown):
+            raise SetupJourneyError("invalid_library_display_name_duplicate")
         successor = SetupStateDocument.model_validate(
             {
                 **current.model_dump(),

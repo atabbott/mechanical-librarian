@@ -1534,7 +1534,8 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "form.noValidate=true" in SETUP_JS
     assert (
         "const address=endpoint.value.trim();if(address!==endpoint.value)"
-        "endpoint.value=address;if(!address||!endpoint.checkValidity())"
+        "endpoint.value=address;if(!address||!endpoint.checkValidity()||"
+        "!bareOrigin(address))"
         "{error(form,'invalid_endpoint',endpoint);return}" in SETUP_JS
     )
     assert "endpoint:address,key:key.value" in SETUP_JS

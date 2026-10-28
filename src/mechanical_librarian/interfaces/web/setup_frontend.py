@@ -63,7 +63,7 @@ SETUP_CSS += (
     "min-height:44px;width:max-content;max-width:100%;margin-top:1rem;padding:.65rem .9rem;"
     "border-radius:.5rem;text-decoration:none;transition:transform 160ms ease,filter 160ms ease}"
     ".workspace-handoff:hover{transform:translateY(-2px);filter:brightness(1.08)}"
-    ".provider-access{width:max-content;max-width:100%;min-height:44px;display:inline-flex;"
+    ".provider-access{width:fit-content;max-width:100%;min-width:0;min-height:44px;display:inline-flex;"
     "align-items:center;color:var(--teal);font-weight:750;text-decoration-line:underline;"
     "text-decoration-thickness:.1em;text-underline-offset:.2em;overflow-wrap:anywhere}"
     ".provider-access:hover{text-decoration-thickness:.16em}"
@@ -75,7 +75,7 @@ SETUP_CSS += (
     ".setup-preparation h3{margin:0}.setup-active{display:flex;gap:.55rem;overflow-x:auto;margin:0;padding:0;list-style:none}"
     ".setup-active li{flex:0 0 min(15rem,80%);display:grid;gap:.15rem;padding:.65rem;border:1px solid var(--line);border-radius:.6rem}"
     ".setup-active small{color:var(--quiet)}.setup-passage{display:grid;gap:.35rem;margin:0}"
-    ".setup-passage div{display:flex;justify-content:space-between;gap:1rem}.setup-passage dd{margin:0;font-weight:800}"
+    ".setup-passage div{display:flex;justify-content:space-between;gap:1rem}.setup-passage dd{margin:0;font-weight:800;white-space:nowrap}"
     ".setup-completions{display:grid;gap:.3rem;margin:0;padding-left:1.2rem}"
     ".setup-active li>*,.setup-completions li{min-width:0;overflow-wrap:anywhere}"
     "a{color:var(--teal);text-decoration-thickness:.08em;text-underline-offset:.18em}"
@@ -164,6 +164,13 @@ const originOf=address=>{
     const value=new URL(address).origin;
     return value==='null'?null:value
   }catch{return null}
+};
+// Only scheme, host and port: the same rule the server applies before probing.
+const bareOrigin=address=>{
+  try{
+    const value=new URL(address);
+    return ['http:','https:'].includes(value.protocol)&&!value.username&&!value.password&&value.pathname==='/'&&!/[?#]/.test(address)
+  }catch{return false}
 };
 const refusal=e=>e.status===401?'session_expired':e.status===403&&e.message==='csrf'?'stale':e.message;
 const escapeName=value=>String(value).replace(/[^a-z0-9_-]+/gi,'-').replace(/^-+|-+$/g,'').toLowerCase().slice(0,64)||'library';
@@ -269,7 +276,7 @@ const recovery=(code,address)=>{
   const origin=address?originOf(address):null;
   return origin&&reachCopy[code]?reachCopy[code](origin):recoveryCopy(code)
 };
-const recoveryCopy=code=>({reviewer_unconfigured:'The selected reviewer is no longer ready. Check its access and select it again, or continue without a reviewer.',not_provisioned:'The contained reviewer profile is unavailable. Reload to see its deployment remedy, or choose OpenRouter or no reviewer.',invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid or oversized response. Retry later.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_stale:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_unavailable:'Reviewer access is temporarily unavailable. Retry this step.',unauthorized:'Audiobookshelf did not accept that API key. Issue a key that can read your libraries, then paste it again.',invalid_endpoint:'That address could not be used. Enter the full Audiobookshelf address, including http:// or https:// and the port it serves on.',tls:'The certificate for that https:// address could not be verified against the address you entered. Use an address whose certificate this deployment already trusts, or use the service http:// address across a network you control. Mechanical Librarian never skips verification.',timeout:'Audiobookshelf did not answer in time. Check that the address is reachable from this deployment, then retry.',redirect:'That address redirected elsewhere. Enter the direct Audiobookshelf address; setup never follows a redirect with your key.',oversize:'Audiobookshelf returned more data than setup can safely read. Nothing was recorded.',malformed:'Audiobookshelf answered, but not with the supported libraries response. Check that the address points at Audiobookshelf itself.',unavailable:'Setup could not finish that step, so nothing was recorded. Wait a moment and try again.',invalid_origin:settingsVocabulary.errors.invalid_origin,session_expired:'Your setup sign-in expired, so nothing was recorded. Reload this page and sign in with the owner password; every recorded step is kept.',activation_failed:'Preparation could not be started, so nothing changed. Try kicking off again; if it keeps failing, the deployment log holds the reason.',invalid_mounts:'One of those service paths could not be used. Enter the absolute folder path the Audiobookshelf service itself reports, or leave it empty.',invalid_providers:'One of those provider entries could not be recorded. Check the contact email and API key on each provider you enabled.',invalid_credentials:'That owner password was not accepted. Check it and try again.',throttled:'Too many sign-in attempts from this device. Wait five minutes, then try again.',invalid_password:settingsVocabulary.errors.owner_password,invalid_password_long:settingsVocabulary.errors.owner_password_long,invalid_password_empty:settingsVocabulary.errors.owner_password_empty,invalid_password_mismatch:settingsVocabulary.errors.owner_password_mismatch,claimed:'This workspace was claimed in another tab. Sign in with its owner password.',claim_token:'That setup claim token was not accepted. Copy the newest token from the container log, or from private/setup-claim-token on the data volume; a restart replaces it.',csrf:'This setup form expired. Reload it and try again.',invalid_secret:settingsVocabulary.errors.secret,invalid_provider_email:settingsVocabulary.errors.open_library_email,missing_provider_key:settingsVocabulary.errors.provider_key,stale:'Setup changed in another tab. The latest recorded step has been restored.',invalid_libraries:settingsVocabulary.errors.libraries,invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name:'Use a library name from 1 to 256 characters without leading or trailing spaces.',mounts_unready:'Every selected book library needs one matching read-only mount before kickoff.'}[code]||'That could not be recorded. Check the fields and try again.');
+const recoveryCopy=code=>({reviewer_unconfigured:'The selected reviewer is no longer ready. Check its access and select it again, or continue without a reviewer.',not_provisioned:'The contained reviewer profile is unavailable. Reload to see its deployment remedy, or choose OpenRouter or no reviewer.',invalid_key:'OpenRouter rejected this key. Replace it and validate again.',quota_exhausted:'OpenRouter credits are exhausted. Add credits, then retry.',rate_limited:'OpenRouter is rate limited. Wait, then retry.',model_unavailable:'That model is unavailable. Choose another vision model.',model_text_only:'That model cannot inspect covers. Choose an image-capable model.',malformed_response:'OpenRouter returned an invalid or oversized response. Retry later.',unreachable:'OpenRouter could not be reached. Check network access, then retry.',credential_clear_failed:'The credential could not be removed. Retry from Settings.',host_unsupported:'This host cannot safely run the contained Codex reviewer.',credential_unavailable:'Codex sign-in is unavailable. Test or replace it, then select Codex.',access_changed:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_stale:'Reviewer access changed in another session. Reload before trying again.',reviewer_access_unavailable:'Reviewer access is temporarily unavailable. Retry this step.',unauthorized:'Audiobookshelf did not accept that API key. Issue a key that can read your libraries, then paste it again.',invalid_endpoint:'That address could not be used. Enter only the scheme, host and port Audiobookshelf serves on, such as https://audiobookshelf.example:13378, with no path, user name or password.',tls:'The certificate for that https:// address could not be verified against the address you entered. Use an address whose certificate this deployment already trusts, or use the service http:// address across a network you control. Mechanical Librarian never skips verification.',timeout:'Audiobookshelf did not answer in time. Check that the address is reachable from this deployment, then retry.',redirect:'That address redirected elsewhere. Enter the direct Audiobookshelf address; setup never follows a redirect with your key.',oversize:'Audiobookshelf returned more data than setup can safely read. Nothing was recorded.',malformed:'Audiobookshelf answered, but not with the supported libraries response. Check that the address points at Audiobookshelf itself.',unavailable:'Setup could not finish that step, so nothing was recorded. Wait a moment and try again.',invalid_origin:settingsVocabulary.errors.invalid_origin,session_expired:'Your setup sign-in expired, so nothing was recorded. Reload this page and sign in with the owner password; every recorded step is kept.',activation_failed:'Preparation could not be started, so nothing changed. Try kicking off again; if it keeps failing, the deployment log holds the reason.',invalid_mounts:'One of those service paths could not be used. Enter the absolute folder path the Audiobookshelf service itself reports, or leave it empty.',invalid_providers:'One of those provider entries could not be recorded. Check the contact email and API key on each provider you enabled.',invalid_credentials:'That owner password was not accepted. Check it and try again.',throttled:'Too many sign-in attempts from this device. Wait five minutes, then try again.',invalid_password:settingsVocabulary.errors.owner_password,invalid_password_long:settingsVocabulary.errors.owner_password_long,invalid_password_empty:settingsVocabulary.errors.owner_password_empty,invalid_password_mismatch:settingsVocabulary.errors.owner_password_mismatch,claimed:'This workspace was claimed in another tab. Sign in with its owner password.',claim_token:'That setup claim token was not accepted. Copy the newest token from the container log, or from private/setup-claim-token on the data volume; a restart replaces it.',csrf:'This setup form expired. Reload it and try again.',invalid_secret:settingsVocabulary.errors.secret,invalid_provider_email:settingsVocabulary.errors.open_library_email,missing_provider_key:settingsVocabulary.errors.provider_key,stale:'Setup changed in another tab. The latest recorded step has been restored.',invalid_libraries:settingsVocabulary.errors.libraries,invalid_library_name:settingsVocabulary.errors.library_name,invalid_library_display_name:'Use a library name from 1 to 256 characters without leading or trailing spaces.',invalid_library_display_name_duplicate:'That name is already used by another library. Choose a different name for this one.',mounts_unready:'Every selected book library needs one matching read-only mount before kickoff.'}[code]||'That could not be recorded. Check the fields and try again.');
 // `control` names the field a refusal is about; `address` is the Audiobookshelf
 // address a reach failure names; `confirm` says what the recorded step found.
 const mutate=async(path,payload,form,{control,address,confirm}={})=>{
@@ -283,7 +290,8 @@ const mutate=async(path,payload,form,{control,address,confirm}={})=>{
     await api(path,{method:'POST',body:JSON.stringify(payload),mutation:true});
     confirmation=confirm||null;
     await load();
-    announce(main.querySelector('.confirmation')?.textContent||'Setup progress recorded')
+    const recorded=[...main.querySelectorAll('.confirmation p')].map(line=>line.textContent.trim()).filter(Boolean);
+    announce(recorded.length?recorded.join(' '):'Setup progress recorded')
   }catch(e){
     confirmation=null;
     // A form token rotated by another tab is the same event as a stale step.
@@ -501,7 +509,7 @@ const renderConnect=()=>{
     event.preventDefault();
     const address=endpoint.value.trim();
     if(address!==endpoint.value)endpoint.value=address;
-    if(!address||!endpoint.checkValidity()){
+    if(!address||!endpoint.checkValidity()||!bareOrigin(address)){
       error(form,'invalid_endpoint',endpoint);
       return
     }
@@ -519,27 +527,22 @@ const renderProviders=async()=>{
   const section=card('Choose metadata providers','Each provider you tick adds a source to compare. Tick the ones that fit your libraries; you can add or change them later in Settings.');
   const form=document.createElement('form');
   form.noValidate=true;
-  // Suggestions only: nothing is ticked for the owner, and a failed read suggests nothing.
-  let libraries=[];
-  try{libraries=(await api(`/api/setup/libraries?expected_revision=${state.revision}`)).libraries.filter(item=>item.media_kind==='book')}catch{}
-  if(!section.isConnected)return;
-  const suggested={books:libraries.filter(item=>!item.audiobooks_only).map(item=>item.name),audiobooks:libraries.map(item=>item.name)};
+  // The form is drawn at once; suggestions follow the library read. They only
+  // suggest: nothing is ticked for the owner, and a failed read suggests nothing.
+  const reading=document.createElement('p');
+  reading.className='muted';
+  reading.textContent='Reading your libraries to suggest providers…';
+  form.append(reading);
+  const fieldsets={};
   const emailInvalid=control=>!control.checkValidity()||!settingsOpenLibraryEmailValid(control.value);
   const rows=[];
-  for(const [group,title,specs] of !suggested.books.length&&suggested.audiobooks.length?[...providerGroups].reverse():providerGroups){
+  for(const [group,title,specs] of providerGroups){
     const fieldset=document.createElement('fieldset');
     fieldset.className='provider-group';
+    fieldsets[group]=fieldset;
     const legend=document.createElement('legend');
     legend.textContent=title;
     fieldset.append(legend);
-    if(suggested[group].length){
-      const note=document.createElement('p');
-      note.className='suggestion';
-      note.id=`suggested-${group}`;
-      note.textContent=`Suggested for ${suggested[group].join(', ')}`;
-      fieldset.setAttribute('aria-describedby',note.id);
-      fieldset.append(note)
-    }
     const cards=document.createElement('div');
     cards.className='provider-cards';
     for(const [name,adapter] of specs){
@@ -614,7 +617,27 @@ const renderProviders=async()=>{
     const providers=chosen.map(row=>({name:row.name,adapter:row.adapter,enabled:true,cover_enabled:row.adapter==='inventaire',contact_email:row.email?.value||null,key:row.key?.value||null}));
     mutate('/api/setup/providers',{expected_revision:state.revision,providers},form,{confirm:recorded(chosen.map(row=>row.label))})
   });
-  section.append(form)
+  section.append(form);
+  // Not awaited, so the step is ready (and focused) before the read returns.
+  void suggest();
+  async function suggest(){
+    let libraries=[];
+    try{libraries=(await api(`/api/setup/libraries?expected_revision=${state.revision}`)).libraries.filter(item=>item.media_kind==='book')}catch{}
+    if(!section.isConnected)return;
+    reading.remove();
+    const suggested={books:libraries.filter(item=>!item.audiobooks_only).map(item=>item.name),audiobooks:libraries.map(item=>item.name)};
+    // Audiobook-only libraries lead with Audiobooks, unless the owner is already in the form.
+    if(!suggested.books.length&&suggested.audiobooks.length&&!form.contains(document.activeElement))fieldsets.books.before(fieldsets.audiobooks);
+    for(const group of ['books','audiobooks']){
+      if(!suggested[group].length)continue;
+      const note=document.createElement('p');
+      note.className='suggestion';
+      note.id=`suggested-${group}`;
+      note.textContent=`Suggested for ${suggested[group].join(', ')}`;
+      fieldsets[group].setAttribute('aria-describedby',note.id);
+      fieldsets[group].querySelector('legend').after(note)
+    }
+  }
 };
 const renderLibraries=async()=>{
   const section=card('Choose libraries','Select one or more book libraries.');
@@ -684,6 +707,22 @@ const renderLibraries=async()=>{
         invalid.focus();
         error(form,'invalid_library_display_name');
         return
+      }
+      // One library carries one name everywhere: two may not share one, in any case.
+      const seen=new Map();
+      for(const control of selected.map(row=>row.querySelector('input[name^=display-]'))){
+        const key=control.value.toLowerCase();
+        const earlier=seen.get(key);
+        if(earlier){
+          // Point at the name the owner is editing; otherwise at the later library.
+          const duplicate=control.closest('.field').hidden&&!earlier.closest('.field').hidden?earlier:control;
+          const holder=duplicate.closest('.option');
+          duplicate.closest('.field').hidden=false;
+          holder.querySelector('button').hidden=true;
+          error(form,'invalid_library_display_name_duplicate',duplicate);
+          return
+        }
+        seen.set(key,control)
       }
       const libraries=selected.map(row=>({display_name:row.querySelector('input[name^=display-]').value,name:row.dataset.name,library_id:row.dataset.id,media_kind:'book',provider_connections:state.providers.filter(value=>value.enabled).map(value=>value.name)}));
       mutate('/api/setup/libraries',{expected_revision:state.revision,libraries},form,{confirm:()=>[`Libraries recorded: ${libraries.map(value=>value.display_name).join(', ')}.`]})
@@ -755,11 +794,12 @@ const renderMounts=async()=>{
     }
     mountDraft=draft;
     // Said on the next card only once every mount matched; a retest stays here.
-    const found=()=>state.next_step==='mounts'?[]:state.libraries.filter(library=>library.mount).map(library=>`${shown(library)}: found ${service_paths[library.name]||discovered.find(item=>item.library_id===library.library_id)?.service_path||'its reported folders'} on read-only mount ${library.mount}`);
+    const found=()=>state.next_step==='mounts'?[]:state.libraries.filter(library=>library.mount).map(library=>`${shown(library)}: found ${service_paths[library.name]||discovered.find(item=>item.library_id===library.library_id)?.service_path||'its reported folders'} on read-only mount ${library.mount}.`);
     mutate('/api/setup/mounts',{expected_revision:state.revision,service_paths},form,{confirm:found})
   });
   section.append(form)
 };
+const counted=new Intl.NumberFormat('en-US');
 const renderPreparation=(host,visible)=>{
   host.replaceChildren();
   host.className='setup-preparation';
@@ -807,8 +847,9 @@ const renderPreparation=(host,visible)=>{
     const term=document.createElement('dt');
     term.textContent=label;
     const value=document.createElement('dd');
-    const count=String(visible.passage?.[field]??'…');
-    value.textContent=typeof visible.total==='number'?`${count} of ${visible.total}`:count;
+    const raw=visible.passage?.[field];
+    const count=typeof raw==='number'?counted.format(raw):'…';
+    value.textContent=typeof visible.total==='number'?`${count} of ${counted.format(visible.total)}`:count;
     row.append(term,value);
     measures.append(row)
   }

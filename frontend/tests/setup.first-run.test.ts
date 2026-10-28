@@ -561,7 +561,7 @@ describe('shipped first-run setup script', () => {
   })
 
   it.each([
-    [422, 'invalid_endpoint', 'Enter the full Audiobookshelf address', 'endpoint'],
+    [422, 'invalid_endpoint', 'Enter only the scheme, host and port', 'endpoint'],
     [502, 'unauthorized', 'Issue a key that can read your libraries', 'key'],
     [502, 'name_resolution', 'that name does not resolve here', 'endpoint'],
     [502, 'refused', 'refused the connection', 'endpoint'],
@@ -634,7 +634,7 @@ describe('shipped first-run setup script', () => {
 
       const endpoint = await screen.findByLabelText('Audiobookshelf address')
       fireEvent.input(endpoint, {
-        target: { value: 'https://owner:hunter2@books.invalid:8443/abs/?token=query-secret' },
+        target: { value: 'https://books.invalid:8443/' },
       })
       fireEvent.input(screen.getByLabelText('Audiobookshelf API key'), {
         target: { value: 'target-key-secret' },
@@ -643,13 +643,46 @@ describe('shipped first-run setup script', () => {
 
       const alert = await screen.findByRole('alert')
       await waitFor(() => expect(alert).toHaveTextContent('https://books.invalid:8443'))
-      for (const secret of ['owner', 'hunter2', 'target-key-secret', 'query-secret', '/abs'])
-        expect(alert.textContent).not.toContain(secret)
+      expect(alert.textContent).not.toContain('target-key-secret')
+      expect(alert.textContent).not.toContain('https://books.invalid:8443/')
       expect(
         code === 'unauthorized' ? screen.getByLabelText('Audiobookshelf API key') : endpoint,
       ).toHaveFocus()
     },
   )
+
+  it.each([
+    'http://127.0.0.1:13378/audiobookshelf',
+    'https://owner:hunter2@books.invalid:8443',
+    'https://books.invalid:8443/?token=query-secret',
+    'https://books.invalid:8443/#fragment',
+  ])('refuses %s as more than scheme, host and port before sending it', async (address) => {
+    const attempts: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(request) === '/api/setup/connect' && init?.method === 'POST')
+          attempts.push(jsonBody(init.body))
+        return response(setupState('connect', { completed_steps: ['claim'], connection: null }))
+      }),
+    )
+    runSetup()
+    const endpoint = await screen.findByLabelText('Audiobookshelf address')
+    fireEvent.input(endpoint, { target: { value: address } })
+    fireEvent.input(screen.getByLabelText('Audiobookshelf API key'), {
+      target: { value: 'target-key-secret' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(
+      'That address could not be used. Enter only the scheme, host and port Audiobookshelf serves on, such as https://audiobookshelf.example:13378, with no path, user name or password.',
+    )
+    for (const secret of ['owner', 'hunter2', 'query-secret', 'target-key-secret'])
+      expect(alert.textContent).not.toContain(secret)
+    expect(endpoint).toHaveFocus()
+    expect(endpoint).toHaveAttribute('aria-invalid', 'true')
+    expect(attempts).toEqual([])
+  })
 
   it('states an address the browser cannot parse and trims a stray space', async () => {
     const attempts: unknown[] = []
@@ -677,7 +710,7 @@ describe('shipped first-run setup script', () => {
       fireEvent.input(endpoint, { target: { value } })
       fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
       const alert = await screen.findByRole('alert')
-      await waitFor(() => expect(alert).toHaveTextContent('Enter the full Audiobookshelf address'))
+      await waitFor(() => expect(alert).toHaveTextContent('Enter only the scheme, host and port'))
       expect(endpoint).toHaveAttribute('aria-invalid', 'true')
       expect(endpoint).toHaveFocus()
       expect(attempts).toEqual([])
@@ -1277,6 +1310,23 @@ describe('shipped first-run setup script', () => {
     expect(displayName).toHaveFocus()
     expect(libraryMutations).toBe(0)
 
+    // Two libraries may not share a name, whatever its case: the refusal is on
+    // the name being edited, and nothing is sent (#1287).
+    const audio = screen.getByRole('checkbox', { name: 'Audio' })
+    fireEvent.click(audio)
+    fireEvent.input(displayName, { target: { value: 'AUDIO' } })
+    fireEvent.submit(form)
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'That name is already used by another library. Choose a different name for this one.',
+      ),
+    )
+    expect(displayName).toHaveFocus()
+    expect(displayName).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByLabelText('New name for Audio')).not.toBeVisible()
+    expect(libraryMutations).toBe(0)
+    fireEvent.click(audio)
+
     fireEvent.input(displayName, { target: { value: 'My Reading Shelf' } })
     fireEvent.submit(form)
     expect(await screen.findByRole('heading', { name: 'Check read-only mounts' })).toBeVisible()
@@ -1397,6 +1447,48 @@ describe('shipped first-run setup script', () => {
     expect(within(results).queryByText(/^books: matched$/u)).toBeNull()
   })
 
+  it('draws the providers form at once while the library read is pending', async () => {
+    let release: (value: Response) => void = () => undefined
+    const held = new Promise<Response>((resolve) => {
+      release = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        if (requestUrl(request).startsWith('/api/setup/libraries?')) return held
+        return response(setupState('providers'))
+      }),
+    )
+    runSetup()
+
+    const heading = await screen.findByRole('heading', { name: 'Choose metadata providers' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(screen.getByText('Reading your libraries to suggest providers…')).toBeVisible()
+    for (const label of ['Inventaire', 'Open Library', 'Audible', 'iTunes'])
+      expect(screen.getByRole('checkbox', { name: label })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Skip providers' })).toBeEnabled()
+    expect(document.querySelector('.suggestion')).toBeNull()
+
+    release(
+      response({
+        libraries: [
+          {
+            library_id: 'books',
+            media_kind: 'book',
+            name: 'Reading Shelf',
+            audiobooks_only: false,
+          },
+        ],
+      }),
+    )
+    expect(
+      await screen.findByText('Suggested for Reading Shelf', { selector: '#suggested-books' }),
+    ).toBeVisible()
+    expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull()
+    expect(document.querySelectorAll('input[type=checkbox]:checked')).toHaveLength(0)
+  })
+
   it.each([
     [
       'a book library and an audiobook-only library',
@@ -1434,6 +1526,9 @@ describe('shipped first-run setup script', () => {
       runSetup()
 
       await screen.findByRole('heading', { name: 'Choose metadata providers' })
+      await waitFor(() =>
+        expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull(),
+      )
       const groups = await waitFor(() => {
         const found = [...document.querySelectorAll('fieldset.provider-group')]
         if (found.length !== 2) throw new Error('provider groups missing')
@@ -1499,6 +1594,14 @@ describe('shipped first-run setup script', () => {
           name: 'books',
           provider_connections: [],
         },
+        {
+          connection: 'primary',
+          display_name: 'Listening Room',
+          library_id: 'audio-id',
+          media_kind: 'book',
+          name: 'audio',
+          provider_connections: [],
+        },
       ],
       revision: 5,
     })
@@ -1512,6 +1615,13 @@ describe('shipped first-run setup script', () => {
               media_kind: 'book',
               name: 'Reading Shelf',
               service_path: '/discovered/books',
+              service_path_state: 'available',
+            },
+            {
+              library_id: 'audio-id',
+              media_kind: 'book',
+              name: 'Listening Room',
+              service_path: '/discovered/audio',
               service_path_state: 'available',
             },
           ],
@@ -1529,8 +1639,20 @@ describe('shipped first-run setup script', () => {
               name: 'books',
               provider_connections: [],
             },
+            {
+              connection: 'primary',
+              display_name: 'Listening Room',
+              library_id: 'audio-id',
+              media_kind: 'book',
+              mount: 'audio',
+              name: 'audio',
+              provider_connections: [],
+            },
           ],
-          mounts: [{ library: 'books', state: 'matched' }],
+          mounts: [
+            { library: 'books', state: 'matched' },
+            { library: 'audio', state: 'matched' },
+          ],
           revision: 6,
         })
         return response({})
@@ -1561,9 +1683,11 @@ describe('shipped first-run setup script', () => {
     )
     // Stat-only: setup never counts or lists media files.
     expect(confirmation?.textContent).not.toMatch(/\bfiles?\b/u)
+    // Announced as sentences, one space between lines, never run together.
     await waitFor(() =>
-      expect(document.querySelector('#setup-status')).toHaveTextContent(
-        'Reading Shelf: found /discovered/books on read-only mount ebooks',
+      expect(document.querySelector('#setup-status')?.textContent).toBe(
+        'Reading Shelf: found /discovered/books on read-only mount ebooks. ' +
+          'Listening Room: found /discovered/audio on read-only mount audio.',
       ),
     )
   })
@@ -1855,6 +1979,78 @@ describe('shipped first-run setup script', () => {
       vi.stubGlobal('clearTimeout', previousClearTimeout)
     },
   )
+
+  it('states large funnel counts with thousands separators on one line each', async () => {
+    const previousSetTimeout = globalThis.setTimeout
+    let scheduled = false
+    vi.stubGlobal(
+      'setTimeout',
+      vi.fn((callback: () => void, delay?: number) => {
+        if (delay === 1_500) {
+          if (!scheduled) {
+            scheduled = true
+            queueMicrotask(callback)
+          }
+          return 1
+        }
+        return previousSetTimeout(callback, delay)
+      }),
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/kick-off' && init?.method === 'POST')
+          return response({ message: 'Restarting into the normal workspace.' })
+        if (url === '/api/v1/review-preparation')
+          return response({
+            actionable: false,
+            first_boot_complete: false,
+            presentation: {
+              run_id: `preparation_run_${'a'.repeat(64)}`,
+              state: 'running',
+              passage: {
+                read: 12_345,
+                searches_finished: 1_500,
+                compared: 700,
+                checked: 0,
+                ready: 0,
+                failed: 0,
+              },
+              active_books: [],
+              active_overflow: 0,
+              recent_completions: [],
+              throughput_per_minute: 4,
+              total: 12_345,
+            },
+            libraries: [],
+            paused: false,
+          })
+        return response(
+          setupState('kick_off', {
+            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+          }),
+        )
+      }),
+    )
+    runSetup()
+    fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
+    await waitFor(() => expect(document.querySelectorAll('.setup-passage dd')).toHaveLength(6))
+    expect(
+      [...document.querySelectorAll('.setup-passage dd')].map((node) => node.textContent),
+    ).toEqual([
+      '12,345 of 12,345',
+      '1,500 of 12,345',
+      '700 of 12,345',
+      '0 of 12,345',
+      '0 of 12,345',
+      '0 of 12,345',
+    ])
+    expect(shipped('setup_frontend import SETUP_CSS as value')).toContain(
+      '.setup-passage dd{margin:0;font-weight:800;white-space:nowrap}',
+    )
+    vi.stubGlobal('setTimeout', previousSetTimeout)
+  })
 
   it('serializes preparation polling, retains reconnect state, and stops on terminal adoption', async () => {
     const previousSetTimeout = globalThis.setTimeout

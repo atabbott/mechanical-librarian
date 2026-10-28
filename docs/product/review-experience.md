@@ -24,9 +24,12 @@ for each library the service path found on its read-only mount (never a file
 count). A connection failure names its class (the name does not resolve, the
 connection was refused, the certificate could not be verified, no answer in
 time, or the key was not accepted), the address's origin and one remedy, and
-returns focus to the field to correct. Providers are grouped as Books and ebooks
+returns focus to the field to correct; an address with a path, user name,
+password, query or fragment is refused before any request, without repeating it. Providers are grouped as Books and ebooks
 and Audiobooks; a group is suggested for the libraries it fits, using
 Audiobookshelf's own audiobooks-only switch, and nothing is ticked for the owner.
+The providers form is ready at once; suggestions follow the library read. Two
+libraries may not share a name in any letter case.
 A change made in another tab reads as such and restores the latest recorded step,
 and a refused OpenRouter validation is shown beside its button. Completed steps collapse to recorded rows with
 Change; reopening a row removes only dependent answers and secrets, and resume
