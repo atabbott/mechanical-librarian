@@ -4642,6 +4642,135 @@ def test_cover_choice_records_in_one_tap(width: int, mode: str) -> None:
             browser.close()
 
 
+def test_cover_group_arrows_reveal_offscreen_cards_and_space_records_once() -> None:
+    """#1290: at 375px the arrows walk the cover track without recording.
+
+    Each card that keyboard focus reaches is scrolled fully into the track,
+    including ones that started off its right edge; Space then records the
+    focused card once and focus moves to the next field's stop.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 375, "height": 812},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            decisions: list[str] = []
+            page.on(
+                "request",
+                lambda request: (
+                    decisions.append(request.url)
+                    if request.method == "POST" and "/decisions" in request.url
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    cover_shapes=_COVER_SHAPES,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                group = page.get_by_role(
+                    "radiogroup", name="Which cover should this work use?"
+                )
+                group.wait_for()
+                track = page.locator(".library-cover-pinned, .library-cover-layout")
+                # The enabled cards, in order, and those that start past the
+                # track's right edge.
+                layout = cast(
+                    "dict[str, Any]",
+                    track.evaluate(
+                        """track => {
+                          const edge = track.getBoundingClientRect().right
+                          const cards = [...track.querySelectorAll(
+                            '.library-cover-card:not(:disabled)')]
+                          return {
+                            labels: cards.map(card => card.getAttribute('aria-label')),
+                            offscreen: cards
+                              .filter(card => card.getBoundingClientRect().right > edge + 1)
+                              .map(card => card.getAttribute('aria-label')),
+                          }
+                        }"""
+                    ),
+                )
+                labels = cast("list[str]", layout["labels"])
+                offscreen = cast("list[str]", layout["offscreen"])
+                assert len(labels) >= 2 and offscreen, layout
+                stop = group.locator('[role="radio"][tabindex="0"]')
+                assert stop.count() == 1
+                stop.focus()
+                page.keyboard.press("Shift+Tab")
+                page.keyboard.press("Tab")
+                focused = """track => {
+                  const node = document.activeElement
+                  const box = node.getBoundingClientRect()
+                  const edge = track.getBoundingClientRect()
+                  return { label: node.getAttribute('aria-label'),
+                    inside: box.left >= edge.left - 1 && box.right <= edge.right + 1,
+                    scrollLeft: track.scrollLeft }
+                }"""
+                start = cast("dict[str, Any]", track.evaluate(focused))
+                assert start["label"] == stop.get_attribute("aria-label"), start
+                seen: list[dict[str, Any]] = []
+                for _ in labels:
+                    page.keyboard.press("ArrowRight")
+                    seen.append(cast("dict[str, Any]", track.evaluate(focused)))
+                # The arrows visit every enabled card in order and wrap back.
+                index = labels.index(start["label"])
+                assert [step["label"] for step in seen] == [
+                    labels[(index + offset) % len(labels)]
+                    for offset in range(1, len(labels) + 1)
+                ], seen
+                # Every card keyboard focus reached sat wholly inside the track,
+                # so the ones that started off its edge were scrolled in.
+                assert all(step["inside"] for step in seen), seen
+                assert max(step["scrollLeft"] for step in seen) > start["scrollLeft"]
+                page.wait_for_timeout(300)
+                assert decisions == [], decisions
+                # Record the first card that started off screen.
+                target = offscreen[0]
+                for _ in labels:
+                    if track.evaluate(focused)["label"] == target:
+                        break
+                    page.keyboard.press("ArrowRight")
+                landed = cast("dict[str, Any]", track.evaluate(focused))
+                assert landed["label"] == target and landed["inside"], landed
+                assert decisions == [], decisions
+                page.keyboard.press("Space")
+                deadline = time.monotonic() + 10
+                while not decisions and time.monotonic() < deadline:
+                    page.wait_for_timeout(25)
+                assert len(decisions) == 1, decisions
+                page.wait_for_function(
+                    "() => document.activeElement?.matches("
+                    '\'.decision-canvas [role="radio"][tabindex="0"], .review-complete\')'
+                    " === true"
+                )
+                page.wait_for_timeout(300)
+                assert len(decisions) == 1, decisions
+                expect(page.get_by_role("dialog")).to_have_count(0)
+            browser.close()
+
+
 _CURRENT_FIELD_SELECTOR = '.field-filmstrip button[aria-current="true"]'
 _CURRENT_FIELD_CHANGED = (
     "(previous) => { const cell = document.querySelector("
