@@ -251,15 +251,17 @@ exactly as before, then with the #1260 band productions, and only a page every
 path refused reaches the rule. The asserted lane walks its whole ladder first,
 and the #1255 alternative lane is then asked as before; only when every
 alternative lane the plan carries was asked and ended `no_match`, and no ASIN
-lane (the carried one included) admitted, does the rule read the asserted
+lane (the carried one included) answered with a product, does the rule read the asserted
 lane's refused pages. An exact admission on any lane therefore always comes
 first, and report validation refuses a rule admission beside an alternative
-lane that was not asked or did not end `no_match`, or beside an admitted ASIN
-lane. A rule admission records every rung the walk sent.
+lane that was not asked or did not end `no_match`, or beside an ASIN lane that
+answered with a product. A rule admission records every rung the walk sent.
 
-The three kinds of lane block the rule differently. An admitted ASIN lane,
-the carried one included, blocks it, because an exact path already answered.
-A carried lookup that failed does not: under #1316 a failed carried lookup is
+The three kinds of lane block the rule differently. An ASIN lane that
+answered with a product, the carried one included, blocks it, because an
+exact path already answered; that holds as well when the product was kept
+only as its identifier, such as a carried product out of band or one the
+#1316 narrator gate refused. A carried lookup that failed does not: under #1316 a failed carried lookup is
 no answer, so the rule reads the asserted lane's refused pages as if no ASIN
 had been carried. A failed alternative lane does block it, because that lane
 was never answered as `no_match` and an exact admission there may still be
@@ -267,7 +269,7 @@ waiting.
 
 A provider retry (#1257) sees only the lanes it retries. It keeps the rule
 only when every planned alternative lane is retried with it or already ended
-`no_match`, and no ASIN lane left out of it admitted. An alternative lane
+`no_match`, and no ASIN lane left out of it answered with a product. An alternative lane
 suppressed behind a failed asserted lane was never asked, so a retry of the
 asserted lane alone runs without the rule. The refused pages are not
 retained, so a later retry of the alternative lane alone that ends

@@ -4757,7 +4757,7 @@ class MetadataReport:
             return
         # A rule admission stands only where every exact path refused (#1307):
         # every planned alternative lane was asked and ended `no_match`, and
-        # no ASIN lane admitted.
+        # no ASIN lane answered with a product, stubs included.
         alternatives = tuple(
             identity
             for identity, payload in planned.items()

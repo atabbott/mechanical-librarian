@@ -782,7 +782,9 @@ def corroborated_rule_permitted(
 
     Exact admission wins on every lane (#1307): every alternative WORK lane the
     plan carries must have been observed and ended `no_match`, and no ASIN
-    lane, the carried one included, may have admitted. A lane that failed, was
+    lane, the carried one included, may have answered with a product, even one
+    kept only as its identifier (a narrator-refused carried product, #1316). A
+    failed ASIN lookup is no answer and does not block. A WORK lane that failed, was
     suppressed or is missing from `results` blocks the rule rather than
     standing in for a refusal.
     """

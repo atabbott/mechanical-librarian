@@ -1509,6 +1509,91 @@ def test_an_exact_carried_lane_admission_comes_before_the_rule() -> None:
     )
 
 
+def test_a_narrator_refused_carried_stub_still_comes_before_the_rule() -> None:
+    # The #1316 narrator gate keeps another reader's carried recording only as
+    # its identifier. The carried lane still answered, so the rule waits even
+    # though the asserted lane's page holds a product it would admit.
+    prior = LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed="B000000009",
+        canonical="B000000009",
+        excerpt="B000000009",
+        applicability="not_applicable",
+        basis="prior_admission",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+    )
+    claims = (
+        target_title_claim(_DECORATED),
+        prior,
+        local_runtime_claim(_RUNTIME),
+        audio_claim(ClaimKind.CONTRIBUTOR, _NARRATOR, 3, role="narrator"),
+    )
+    fields = _target_fields(_DECORATED, (_NARRATOR,))
+    plan = m.audiobook_carried_plan(
+        m.audiobook_discovery_plan(
+            m.TargetSnapshot("audiobook", _DECORATED, (), fields=fields),
+            claims,
+            audio=single_track_audio_facts(),
+        )
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "title" in request.url.params:
+            products = (
+                [_product(1, "Synthetic Journey", subtitle="Into the Fold")]
+                if request.url.params["title"] == _DECORATED
+                else []
+            )
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"total_results": len(products), "products": products},
+            )
+        product = _product(9, _DECORATED, narrator="Other Voice")
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json={"product": product}
+        )
+
+    provider = AudibleCatalogMetadataProvider(
+        "audible",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        262_144,
+        5.0,
+        marketplaces=("us",),
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_700_000_000.0,
+        sleep=lambda value: None,
+        jitter=lambda: 0.0,
+    )
+    try:
+        observation = m.observe_provider(
+            "audible", "audible_catalog", provider, plan
+        ).observation
+    finally:
+        provider._client.close()
+
+    assert {"audible-product-B000000009"} == {
+        value.identity for value in observation.candidates
+    }
+    (carried,) = observation.candidates
+    assert all(claim.kind is ClaimKind.ASIN for claim in carried.claims)
+    assert not carried.evidence
+    assert {"audible-product-B000000009"} == {
+        value.identity for value in observation.refused_products
+    }
+    assert ProviderStatus.NO_MATCH in {lane.status for lane in observation.lanes}
+    MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=plan.local_claims,
+        local_reasons=("target_metadata_title",),
+        providers=(recorded_dispatch(observation),),
+        audio=single_track_audio_facts(),
+    )
+
+
 def test_a_band_first_admission_is_recorded_as_its_exact_path_stops() -> None:
     plan = _plan(_DECORATED)
     observation, seen = _walk(

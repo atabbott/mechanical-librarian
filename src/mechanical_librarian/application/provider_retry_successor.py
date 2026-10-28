@@ -877,7 +877,7 @@ def _retry_plan(
     The corroborated rule (#1307) reads only once every exact path refused.
     A retry sees only its own lanes, so it keeps the rule only when every
     alternative WORK lane the plan carries is retried here or already ended
-    `no_match`, and no ASIN lane left out of the retry admitted. Otherwise the
+    `no_match`, and no ASIN lane left out of the retry answered with a product. Otherwise the
     retry runs without it: an alternative lane suppressed behind a failed
     asserted lane was never asked, and a refused page is not retained, so a
     later retry of that lane alone cannot re-arm the rule.
