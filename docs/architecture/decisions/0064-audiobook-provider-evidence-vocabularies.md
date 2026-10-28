@@ -503,3 +503,11 @@ lineage on an alternative lane, on an item with no single local runtime or
 with its candidate outside the tight band does not replay and is refused as an
 inconsistent lineage. The report advances to `metadata-report-v57`. **Clean
 rebuild required** under ADR-0013.
+
+## Carried admission (#1316)
+
+[ADR-0088](0088-carried-recording-admission.md) reuses the tight band and the
+fed-ASIN admission above, with no new constant, for the carried lookup of an
+earlier admission, and adds one gate on that lane alone: a product whose
+narrator cast is disjoint from the recording's own credits is refused, while an
+unknown cast on either side passes.

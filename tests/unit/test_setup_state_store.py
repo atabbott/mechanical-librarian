@@ -1172,7 +1172,8 @@ def test_stale_write_changes_neither_document_nor_secrets() -> None:
     )
 
 
-def test_direct_setup_skip_clears_saved_cover_prices():
+@pytest.mark.parametrize("request_price", ["0", None], ids=["known_fee", "absent_fee"])
+def test_direct_setup_skip_clears_saved_cover_prices(request_price):
     connection = sqlite3.connect(":memory:", isolation_level=None)
     _create_schema(connection)
     setup = SetupStateStore(connection)
@@ -1185,7 +1186,7 @@ def test_direct_setup_skip_clears_saved_cover_prices():
         observed_at=456,
         prompt_price="0",
         completion_price="0",
-        request_price="0",
+        request_price=request_price,
     )
     configured = reviewer_store.replace(
         configured.model_copy(

@@ -1790,6 +1790,64 @@ it('discloses description prices before activation and preserves the cover task 
   expect(document.description_advice.automatic_application).toBe(false)
 })
 
+it('discloses an unavailable description request price and still saves the model', async () => {
+  const http = createHttp()
+  const initial: ReviewerAccessView = {
+    ...reviewerView,
+    mapping: { engine: 'openrouter', model: 'example/cover-a' },
+    openrouter_key_configured: true,
+  }
+  const metadata = {
+    model: 'example/text-b',
+    observed_at: 100,
+    prompt_price: '0.000001',
+    completion_price: '0.000002',
+    request_price: null,
+    text_input: true as const,
+    text_output: true as const,
+    structured_outputs: true as const,
+  }
+  const prices = '0.000001 per input token, 0.000002 per output token, Unavailable per request.'
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => initial)
+  http.testDescriptionModel = vi.fn(async () => metadata)
+  http.configureOpenRouter = vi.fn(async () => ({
+    ...initial,
+    revision: 4,
+    description_mapping: { engine: 'openrouter' as const, model: metadata.model },
+    description_metadata: metadata,
+    description: {
+      engine: 'openrouter' as const,
+      state: 'usable' as const,
+      reason: null,
+      model: metadata.model,
+      tier: 'paid' as const,
+      host_headroom_bytes: null,
+    },
+  }))
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const enable = await screen.findByRole('button', {
+    name: 'Use this OpenRouter model for descriptions',
+  })
+  await user.click(screen.getByRole('combobox', { name: 'Description model' }))
+  await user.click(screen.getByRole('option', { name: 'Custom model ID' }))
+  await user.type(screen.getByRole('textbox', { name: 'Description model ID' }), metadata.model)
+  await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
+  expect(await screen.findByText(prices, { selector: 'dd' })).toBeVisible()
+  await user.click(enable)
+  expect(
+    await screen.findByText('Selected: example/text-b. Advisory availability: ready to use.'),
+  ).toBeVisible()
+  expect(http.configureOpenRouter).toHaveBeenCalledWith({
+    expected_revision: 3,
+    api_key: '',
+    model: metadata.model,
+    task: 'description_rewrite',
+  })
+  expect(screen.getByText(prices, { selector: 'dd' })).toBeVisible()
+})
+
 it('inspects the exact contained description model before selection without starting a request', async () => {
   const http = createHttp()
   http.getSettings = vi.fn(async () => view())

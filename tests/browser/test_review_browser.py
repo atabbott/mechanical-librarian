@@ -1428,6 +1428,8 @@ def _server(
             text = (
                 "Existing description."
                 if description_fixture == "no_change"
+                else "A synthetic reader explores an old library. Its stories bring distant communities together."
+                if description_fixture == "automatic"
                 else "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>"
             )
             if long_descriptions:
@@ -2462,7 +2464,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.get_by_role("button", name=re.compile(r"^Attention ")).click()
                 attention_rail = page.locator(".attention-rail")
                 attention_rail.wait_for()
-                expect(attention_rail).to_be_focused()
+                expect(attention_rail.locator("h2")).to_be_focused()
                 page.get_by_role("link", name="Policy", exact=True).click()
                 page.get_by_role("heading", name="Library policy").wait_for()
                 page.get_by_role("button", name="Curation").click()
@@ -2539,6 +2541,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 for option in page.get_by_role("option").all():
                     assert option.bounding_box()["height"] >= 44
                 page.keyboard.press("Escape")
+                # Tab closes the portaled menu onto its trigger, in both
+                # directions, instead of leaving for the end of the page (#1288).
+                for leaving in ("Tab", "Shift+Tab"):
+                    representation.click()
+                    page.get_by_role("listbox", name="Genres representation").wait_for()
+                    page.keyboard.press(leaving)
+                    expect(representation).to_be_focused()
+                    assert page.locator(".cm-dropdown-menu").count() == 0
                 for control in page.locator(
                     ".cm-policy-sidebar nav button, .cm-segmented button, "
                     ".cm-dropdown-trigger, .cm-finish-actions button"
@@ -2679,7 +2689,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 _assert_primary_fill(review_activation, back_to_editing)
                 dark_mode = page.get_by_role("button", name="Use dark mode")
                 dark_mode.click()
-                page.get_by_role("button", name="Use light mode").wait_for()
+                # The label changes on render and the theme in an effect after
+                # it, so the dark fill check waits for the theme itself.
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 _assert_primary_fill(review_activation, back_to_editing)
                 page.set_viewport_size({"width": 1440, "height": 900})
                 unsupported_description.wait_for()
@@ -5120,7 +5132,8 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     expect(basis).to_contain_text("Audible product B08G9PRS1K")
                     source = basis.locator("summary")
                     desktop_bounds = source.bounding_box()
-                    assert desktop_bounds is not None and desktop_bounds["height"] < 44
+                    # Every disclosure is a full target, at every width (#1288).
+                    assert desktop_bounds is not None and desktop_bounds["height"] >= 44
                     page.set_viewport_size({"width": 390, "height": 844})
                     bounds = source.bounding_box()
                     assert bounds is not None and bounds["height"] >= 44
@@ -5679,7 +5692,13 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                     ]
                                 ),
                                 "active_overflow": 0,
-                                "recent_completions": [],
+                                "recent_completions": [
+                                    {
+                                        "name": "Synthetic finished title",
+                                        "outcome": "ready",
+                                        "completed_at": 100,
+                                    }
+                                ],
                                 "throughput_per_minute": 0,
                                 "started_at": 100,
                                 "updated_at": 101,
@@ -5751,9 +5770,20 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 expect(page.locator(".preparation-run-state")).to_have_text(
                     "Preparation continues"
                 )
-                expect(page.locator(".workspace-detail")).to_have_attribute(
-                    "aria-live", "polite"
+                # Its one status line speaks for it; the detail is no live
+                # region re-read on every poll (#1288).
+                expect(page.locator(".workspace-detail")).not_to_have_attribute(
+                    "aria-live", re.compile(r".*")
                 )
+                expect(page.locator(".preparation-run-state")).to_have_attribute(
+                    "role", "status"
+                )
+                # Find in Works is a full target even though it wraps with the
+                # name it searches for (#1288).
+                find = page.get_by_role("link", name="Find in Works")
+                expect(find).to_have_count(1)
+                find_bounds = find.bounding_box()
+                assert find_bounds is not None and find_bounds["height"] >= 44
                 passage = page.get_by_role("progressbar")
                 expect(passage).to_have_count(4)
                 passage_facts = passage.evaluate_all(
@@ -7861,7 +7891,11 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         page.get_by_role("button", name="Save settings"),
                         page.get_by_role("button", name="Discard all"),
                     )
+                    shown = page.locator("html").get_attribute("data-theme")
                     page.locator(".theme-toggle").click()
+                    expect(page.locator("html")).to_have_attribute(
+                        "data-theme", "light" if shown == "dark" else "dark"
+                    )
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[
@@ -9713,7 +9747,7 @@ def test_the_previous_title_chosen_after_the_library_changed_is_refused():
                 "Not recorded: the work changed. Review it again.", exact=True
             )
         ).to_be_visible()
-        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        expect(page.locator(".decision-canvas > header h3")).to_be_focused()
         _said_nothing_false_while_moving(page)
 
 
@@ -9774,7 +9808,7 @@ def test_an_open_entry_moves_to_the_case_that_superseded_it(library_last, named)
                 "The work changed. Review it again.", exact=True
             )
         ).to_be_visible()
-        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        expect(page.locator(".decision-canvas > header h3")).to_be_focused()
         _said_nothing_false_while_moving(page)
 
 

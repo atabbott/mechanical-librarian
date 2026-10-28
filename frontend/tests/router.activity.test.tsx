@@ -1200,11 +1200,15 @@ describe('Activity route', () => {
     // change, result. The arrow the column shows is hidden from the
     // announcement, which carries the same change as a whole sentence.
     expect(screen.getByText('Title · fiction')).toBeVisible()
-    const announced = screen.getByLabelText(
+    // The sentence is text in the cell, not a label on it (#1288).
+    const announced = screen.getByText(
       'Set Title from Paper Moons: Larkspur to Paper Moons over Larkspur Station',
+    ).parentElement
+    expect(announced).toHaveClass('cm-activity-change')
+    expect(announced).not.toHaveAttribute('aria-label')
+    expect(announced?.querySelector('[aria-hidden="true"]')).toHaveTextContent(
+      'Paper Moons: Larkspur → Paper Moons over Larkspur Station',
     )
-    expect(announced).toHaveTextContent('Paper Moons: Larkspur → Paper Moons over Larkspur Station')
-    expect(announced.querySelector('[aria-hidden="true"]')).not.toBeNull()
     expect(screen.getByText('Verified')).toBeVisible()
 
     // A verified write whose authority was human is an Owner choice, not a
@@ -3577,8 +3581,9 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     // owner keep between members stay rows of their own, in order.
     const order = [...ledger().querySelectorAll(':scope > .cm-activity-event-group > article')].map(
       (article) => {
-        const text = article.querySelector('.cm-activity-change')
-        return text?.getAttribute('aria-label') ?? text?.textContent
+        // The change is announced as its whole sentence, as text (#1288).
+        const change = article.querySelector('.cm-activity-change')
+        return (change?.querySelector('.sr-only') ?? change)?.textContent
       },
     )
     expect(order).toEqual([
@@ -3600,12 +3605,16 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     const list = document.getElementById(`activity-checks-${key}`)
     if (!list) throw new Error('Expected the members')
     expect(list).toHaveClass('cm-activity-checks')
+    expect(screen.getByRole('list', { name: 'Synthetic checked work checks' })).toBe(list)
     expect(list.previousElementSibling).toBe(row)
     expect(row.contains(list)).toBe(false)
     // One row per checked field (#1425).
     const memberRows = [...list.querySelectorAll(':scope > li > article')]
     expect(
-      memberRows.map((article) => article.querySelector('.cm-activity-change')?.textContent),
+      memberRows.map((article) => {
+        const change = article.querySelector('.cm-activity-change')
+        return (change?.querySelector('[aria-hidden]') ?? change)?.textContent
+      }),
     ).toEqual(['Kept Secret History', 'Left ISBN unchanged', 'Kept Mystery'])
     expect(memberRows[2]?.querySelector('time')).toHaveTextContent(dayOf(1785800000))
     expect(memberRows[0]?.querySelector('time')).not.toHaveTextContent(dayOf(1786000000))
@@ -3680,6 +3689,10 @@ describe('Activity checks rows and filter notice (#1281)', () => {
     ).toBeVisible()
     expect(paired).toHaveAccessibleName(/^Details for Title, .*, automatic decision$/u)
     expect(details).toHaveAccessibleName(/^Hide details for Title, /u)
+    // The nested list names what it holds (#1288).
+    expect(
+      within(evidence).getByRole('list', { name: 'Decisions this Title check confirmed' }),
+    ).toContainElement(paired)
     await user.click(paired)
     expect(paired).toHaveAttribute('aria-expanded', 'true')
     // Both open, the field and its decision still name apart (#1286 X4).

@@ -1215,6 +1215,22 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             ".masthead nav a, .shell-actions button"
                         ).all():
                             assert control.bounding_box()["height"] >= 44
+                        # Authority controls and disclosures take no dense
+                        # exception (#1288).
+                        full = [
+                            control
+                            for control in page.locator(
+                                ".cm-activity-authority-actions button, summary"
+                            ).all()
+                            if control.is_visible()
+                        ]
+                        assert full, f"{scheme} {width}: no authority controls"
+                        short = [
+                            (control.inner_text(), box["height"])
+                            for control in full
+                            if (box := control.bounding_box()) and box["height"] < 44
+                        ]
+                        assert short == [], f"{scheme} {width}: {short}"
                         assert (
                             page.get_by_role(
                                 "link", name="Settings", exact=True
@@ -1767,6 +1783,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert lens.bounding_box()["width"] >= 44
         page.locator(".library-work-row").first.wait_for()
         assert overrunning_rail_controls() == []
+        assert page.evaluate(_SHORT_SUMMARIES) == []
         long_title = (
             page.locator(".library-work-row")
             .filter(has_text=LONG_TITLE)
@@ -1825,6 +1842,23 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             page.evaluate("() => getComputedStyle(document.activeElement).outlineStyle")
             == "solid"
         )
+        # The ring is Focus Blue itself, unmixed, in both themes (#1288). The
+        # theme is set on the root directly so the focused row keeps focus.
+        theme = page.evaluate("() => document.documentElement.dataset.theme")
+        for scheme in ("dark", "light", theme):
+            ring, focus = page.evaluate(
+                """scheme => {
+                  document.documentElement.dataset.theme = scheme;
+                  const probe = document.createElement('i');
+                  probe.style.color = 'var(--focus)';
+                  document.body.append(probe);
+                  const focus = getComputedStyle(probe).color;
+                  probe.remove();
+                  return [getComputedStyle(document.activeElement).outlineColor, focus];
+                }""",
+                scheme,
+            )
+            assert ring == focus, f"{scheme}: ring {ring}, Focus Blue {focus}"
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 1440
 
         stage[0] = "library:viewport:900"
@@ -1940,7 +1974,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         page.get_by_role("button", name="Attention 5 works").click()
         expect(page.locator(".attention-rail")).to_be_visible()
-        expect(page.locator(".attention-rail")).to_be_focused()
+        expect(page.locator(".attention-rail h2")).to_be_focused()
         attention_rail_clears_masthead()
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 760
 
@@ -1970,7 +2004,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".library-work-row").first.wait_for()
         page.locator(".attention-toggle").click()
         expect(page.locator(".attention-rail")).to_be_visible()
-        expect(page.locator(".attention-rail")).to_be_focused()
+        expect(page.locator(".attention-rail h2")).to_be_focused()
         expect(page.locator(".library-works")).to_be_hidden()
         expect(page.locator(".workspace-detail")).to_be_hidden()
         page.locator(".attention-queue-item").first.click()
@@ -2443,6 +2477,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "button", name="Curation"
         ).click()
         expect(page.locator("#policy-curation")).to_be_focused()
+        assert page.evaluate(_SHORT_SUMMARIES) == []
         cover_policy = page.get_by_role("region", name="Cover")
         cover_policy.get_by_text(
             "Use a confirmed cover. Audiobooks keep an adequate cover and replace only a small incumbent with a materially larger match.",
@@ -2526,6 +2561,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_text("Draft has unreviewed changes", exact=False).first.wait_for()
         page.get_by_role("button", name="Validate and preview").click()
         page.get_by_text("Impact preview is current.", exact=False).wait_for()
+        # Focus follows the command to its result instead of falling to the
+        # page while it validates (#1288).
+        expect(page.locator(".cm-policy-result")).to_be_focused()
         primary = page.locator(".cm-policy-preview-list")
         assert primary.locator(":scope > div").count() == 6
         assert (
@@ -3508,7 +3546,7 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
         # B2: the rail groups six field rows under four works.
         page.get_by_role("button", name="Attention 5 works").click()
         rail = page.get_by_role("complementary", name="Attention queue")
-        expect(rail).to_be_focused()
+        expect(rail.get_by_role("heading", name="Attention")).to_be_focused()
         groups = rail.locator(".attention-work-group")
         expect(groups).to_have_count(4)
         rows = rail.locator("button.attention-queue-item")
@@ -3645,6 +3683,98 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 assert not page.evaluate(_FOCUS_ON_BODY), where
 
 
+def test_attention_drawer_holds_focus_and_returns_it() -> None:
+    """Opening Attention focuses its heading. Between 761 and 1199px the rail
+    is a drawer: the page behind it, but for the toolbar that toggles it, is
+    inert and Tab wraps inside it, and crossing out of that range while it is
+    open releases the page. Escape or Close shuts it at any width and hands
+    focus back to the toggle, or at 760px and below to the selected work it
+    reveals; whatever takes focus is in view (#1288)."""
+    inert = """() => ['.masthead', '.library-works', '.workspace-detail']
+      .filter(selector => document.querySelector(selector)?.closest('[inert]'))"""
+    inside = """() => Boolean(document.activeElement?.closest('.attention-rail'))"""
+    in_view = """() => {
+      const bounds = document.activeElement.getBoundingClientRect();
+      return bounds.top >= -1 && bounds.bottom <= innerHeight + 1;
+    }"""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        _serve_cohort(page)
+        rail = page.get_by_role("complementary", name="Attention queue")
+        heading = rail.get_by_role("heading", name="Attention")
+        toggle = page.locator(".attention-toggle")
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            for width, drawer, preview in (
+                (1440, False, False),
+                (1100, True, False),
+                (900, True, False),
+                (900, True, True),
+                (390, False, False),
+                (390, False, True),
+                (320, False, False),
+            ):
+                where = f"{scheme} at {width}px{' over a work' if preview else ''}"
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto(
+                    "https://react-platform.invalid/library?lens=all"
+                    + ("&preview=case-1" if preview else "")
+                )
+                page.locator(".attention-toggle strong").filter(
+                    has_text=re.compile(r"works?$")
+                ).wait_for()
+                if preview:
+                    page.locator(".selected-work-header").wait_for()
+                toggle.click()
+                expect(heading).to_be_focused()
+                assert page.evaluate(in_view), f"{where}: heading out of view"
+                assert page.evaluate(inert) == (
+                    [".masthead", ".library-works", ".workspace-detail"]
+                    if drawer
+                    else []
+                ), where
+                # The toolbar that opened the drawer can still close it.
+                assert not toggle.evaluate("node => Boolean(node.closest('[inert]'))")
+                if drawer:
+                    stops = rail.locator("button, a[href], input").count()
+                    for key in ("Tab", "Shift+Tab"):
+                        for _ in range(stops + 1):
+                            page.keyboard.press(key)
+                            assert page.evaluate(inside), (
+                                f"{where}: {key} left the drawer"
+                            )
+                if width == 1100:
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    page.wait_for_function(f"() => ({inert})().length === 0")
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.wait_for_function(f"() => ({inert})().length === 3")
+                    expect(rail).to_be_visible()
+                # Each width leaves once by Escape and once by Close.
+                if scheme == "light":
+                    page.keyboard.press("Escape")
+                else:
+                    rail.get_by_role("button", name="Close", exact=True).click()
+                expect(rail).to_have_count(0)
+                if preview and not drawer and width <= 760:
+                    expect(page.locator(".selected-work-header")).to_be_focused()
+                else:
+                    expect(toggle).to_be_focused()
+                # The close-reveal may still be scrolling; focus must end in view.
+                page.wait_for_function(in_view, timeout=2_000)
+                assert page.evaluate(inert) == [], where
+                assert page.locator("[inert]").count() == 0, where
+
+
+# Every visible disclosure summary under a full 44px target (#1288).
+_SHORT_SUMMARIES = """() => [...document.querySelectorAll('summary')]
+  .filter(node => node.getClientRects().length > 0)
+  .map(node => [node.textContent.trim().slice(0, 40), node.getBoundingClientRect().height])
+  .filter(([, height]) => height < 44)"""
+
+
 # Where the workspace starts on the page, and the toolbar's own height, read
 # once layout has held still for three frames (a restyle can land late).
 _WORKSPACE_GEOMETRY = """async () => {
@@ -3743,12 +3873,39 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                     ".attention-rail header p",
                     ".attention-rail header button",
                     ".attention-work-count",
+                    # The handoff's primary link keeps its words whole (#1288).
+                    ".cm-library-handoff a.button-primary",
                 )
                 for word in page.evaluate(_POLICY_MID_WORD, selector)
             ]
             assert split == [], f"{where}: words split {split}"
             document = page.evaluate("() => document.documentElement.scrollWidth")
             assert document <= width, f"{where}: the page is {document}px wide"
+            # The primary-styled link reads as the primary button beside it would
+            # (#1288): same type, no underline, a full target.
+            parity = page.locator(".cm-library-handoff a.button-primary").evaluate(
+                """link => {
+                  const twin = document.createElement('button');
+                  twin.className = 'button-primary';
+                  twin.textContent = link.textContent;
+                  link.after(twin);
+                  const read = node => {
+                    const style = getComputedStyle(node);
+                    return [style.fontSize, style.fontWeight, style.fontFamily, style.lineHeight];
+                  };
+                  const result = {
+                    same: JSON.stringify(read(link)) === JSON.stringify(read(twin)),
+                    link: read(link), button: read(twin),
+                    underline: getComputedStyle(link).textDecorationLine,
+                    height: link.getBoundingClientRect().height,
+                  };
+                  twin.remove();
+                  return result;
+                }"""
+            )
+            assert parity["same"], f"{where}: primary link type {parity}"
+            assert parity["underline"] == "none", f"{where}: {parity}"
+            assert parity["height"] >= 44, f"{where}: {parity}"
 
         for dark in (False, True):
             page.emulate_media(

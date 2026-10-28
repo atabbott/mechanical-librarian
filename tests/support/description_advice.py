@@ -67,6 +67,7 @@ def _prepared(
     *,
     automatic: bool = True,
     disposition: str = "ready",
+    description: str = "Authored synthetic description.",
     same_current: bool = False,
     pipeline_probe=None,
     output_transform=None,
@@ -109,7 +110,7 @@ def _prepared(
                         if field.destination.value == "description"
                     )
                     if same_current
-                    else "Authored synthetic description.",
+                    else description,
                     "disposition": disposition,
                 },
             }

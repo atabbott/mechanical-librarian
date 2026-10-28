@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Callable, Protocol
 
 from mechanical_librarian.application.configuration import AUDIOBOOK_DISPATCH_ADAPTERS
 from mechanical_librarian.application.metadata_report import (
-    PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     CredentialError,
     CurrentnessError,
     ProviderFailureSnapshot,
@@ -31,6 +30,7 @@ from mechanical_librarian.application.provider_recovery_policy import (
 )
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.domain.metadata_report import (
+    PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     MetadataReport,
     ProviderObservation,
     ProviderRequestAccounting,

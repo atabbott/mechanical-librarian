@@ -6,6 +6,18 @@
   for libraries with ebooks. No audiobook is sent to iTunes, so it was never
   of use to an audiobook library (#1458).
 
+- **Clean rebuild required.** Once an audiobook edition has been matched, the
+  next preparation of the same tracks looks it up directly before searching,
+  so a search that no longer lists it cannot lose it to a sibling edition. One
+  recording's regional ASINs now offer one ASIN choice (#1316).
+
+- Text and field edges meet WCAG AA contrast in both themes, no text is below
+  12px, and every disclosure and authority control is a 44px target. Focus no
+  longer falls to the page after a command, failed retry or read failure;
+  Attention focuses its heading, holds focus as a tablet drawer and returns it
+  on Escape, and Tab closes a dropdown onto its trigger. Headings keep one
+  outline and Activity reads each change as a sentence (#1288).
+
 - Setup now describes iTunes as what it is since audiobooks stopped being sent
   to it: a check of an ebook's title and author against iTunes audiobook
   listings. An audiobook inspection that states no recording facts now fails
@@ -17,6 +29,13 @@
   candidate-limited responses are named apart, an AudioSilo lookup miss is no
   longer a failed request, and an over-bound chapter document no longer starves
   the next lookup (#1308).
+
+- Settings can now test, save and refresh an OpenRouter description model
+  whose catalogue entry has no request fee. The fee is shown as Unavailable;
+  a present invalid fee is still refused. Automatic description application
+  no longer admits or writes a rewrite that is a placeholder, mostly quoted
+  praise, cut off or marked up; you can still choose it yourself. No clean
+  rebuild is needed (#1400).
 
 - Setup and sign-in failures now say what went wrong: an unresolvable name, a
   refused connection, an unverified certificate, a timeout or a rejected key,

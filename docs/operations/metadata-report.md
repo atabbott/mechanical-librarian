@@ -110,7 +110,7 @@ markup only once decoded, or that would decode again, is kept as stored. A
 description also records `restorable`: whether writing its text back would
 store it as it is stored now. Text whose only defect is C1 control characters is refused by the
 validator with its own reason, but the report and UI still show that field only
-as `malformed` (#1251). The report is `metadata-report-v59`. For the title
+as `malformed` (#1251). The report is `metadata-report-v60`. For the title
 specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
@@ -202,15 +202,41 @@ contacted while the report is built, and its observations are retained beside
 the local evidence; Google Books, Inventaire and iTunes Search never are
 (#1247, #1254). Discovery runs in two phases within that one preparation. The first
 is the item's own plan: one product lane per ASIN its tags, sidecars, or path
-carry, or a title-and-author search when it carries none. The second feeds the
-per-ASIN providers the ASINs no local surface named — those the runtime
-corroboration gate promoted from the first phase's candidates, then the one
-Audiobookshelf asserts on the item — and is dispatched only to providers whose
-first-phase observation answered no lane at all. Their first-phase observation
-is replaced rather than merged, so every provider still states exactly one
-observation per report. Across all three origins an item runs at most four ASIN
-lanes, in the order local, promoted, asserted, and there is no second promotion
-round. An item that already carries its own ASIN feeds nothing. Hardcover and
+carry, or a title-and-author search when it carries none. An item with no ASIN
+of its own whose current report for the same track set admitted one edition
+carries that ASIN as a `prior_admission` claim (#1316,
+[ADR-0088](../architecture/decisions/0088-carried-recording-admission.md)), and
+the Audible catalog looks it up directly in the first phase, before its search,
+so a budget or deadline can only starve the search. The second feeds the
+per-ASIN providers the ASINs no local surface named — the carried one first,
+then those the runtime corroboration gate promoted from the first phase's
+search candidates, then the one Audiobookshelf asserts on the item — and is
+dispatched only to providers whose first-phase observation answered no lane at
+all. Their first-phase observation is replaced rather than merged, so every
+provider still states exactly one observation per report. Across every origin
+an item runs at most four ASIN lanes, in the order local, carried, promoted,
+asserted, and there is no second promotion round. A carried lookup is judged as
+an asserted one, except that its product may also admit, under the tight band,
+against the title the alternative discovery lane asks (#1255). That is the
+first discovery title that survives the target's own title, authors and series
+names. A product whose narrators share nobody with the recording's own credits
+is refused on it, and keeps only its identifier, so its runtime cannot
+admit the recording. A carried edition is kept while any audiobook authority
+verifies it. A lookup answers only when it returns products or no match; any
+other ending, recoverable or not, is a failure and refutes nothing. The edition
+is carried again while any carried lookup failed, or while none answered,
+because a disabled provider is not asked. It is dropped only once a carried
+lookup answered, none verified it and none failed. A verified carried edition is the ASIN proposed, and a
+tight search product with another ASIN and a shared or unknown cast is
+withheld. The owner's value always stands. A product naming the item's current
+ASIN is never withheld. When the report admitted that ASIN as a separate
+product, the other edition is no longer carried, whatever the casts. If the
+two casts also overlap, the carried products are withheld in that report too.
+A provider that resolves one recording through two regional ASINs keeps that
+recording once, because copies that differ only in marketplace are not an
+identity conflict. One recording's sibling ASINs offer one value: the item's
+current ASIN when it is one of them, otherwise the one that was looked up, or
+the verified carried ASIN when both it and a sibling were looked up. An item that already carries its own ASIN feeds nothing. Hardcover and
 Open Library have no ASIN lookup, so a plan of ASIN lanes alone, local or fed,
 sends them no request and they record `insufficient_input` with no lane, not a
 failure (#1306). A lane's origin
@@ -223,7 +249,7 @@ assertion obtains evidence and never settles identity, under
 [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md). In
 the field results the asserted ASIN reads as `valid` on the `target_metadata`
 source, which continues to read `unsupported` for every field that surface does
-not carry. Only the Audible catalog's cover is acquired by default: it is the
+not carry; a carried ASIN reads the same way on the `prior_admission` source. Only the Audible catalog's cover is acquired by default: it is the
 one dispatched authority that states a cover asset of its own, and it goes
 through the same bounded cover pipeline an ebook's use, behind its own
 `cover_enabled` switch. iTunes Search also states one but is not dispatched for

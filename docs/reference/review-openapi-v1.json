@@ -585,10 +585,17 @@
             "type": "string"
           },
           "request_price": {
-            "maxLength": 40,
-            "minLength": 1,
-            "title": "Request Price",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Price"
           },
           "structured_outputs": {
             "const": true,

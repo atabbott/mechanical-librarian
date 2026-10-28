@@ -90,7 +90,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v59"
+REPORT_SCHEMA = "metadata-report-v60"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -295,6 +295,7 @@ class FieldSource(StrEnum):
     AUDIO_TAG = "audio_tag"
     AUDIO_SIDECAR = "audio_sidecar"
     AUDIO_PATH = "audio_path"
+    PRIOR_ADMISSION = "prior_admission"
 
 
 # Which local-claim bases each owner-facing source buckets.  This mapping is
@@ -308,11 +309,19 @@ _SOURCE_CLAIM_BASES: Mapping[FieldSource, frozenset[str]] = MappingProxyType(
         FieldSource.AUDIO_TAG: frozenset({"embedded_tag"}),
         FieldSource.AUDIO_SIDECAR: frozenset({"sidecar"}),
         FieldSource.AUDIO_PATH: frozenset({"path"}),
+        FieldSource.PRIOR_ADMISSION: frozenset({"prior_admission"}),
     }
 )
 CLAIM_BASES = frozenset(
     basis for bases in _SOURCE_CLAIM_BASES.values() for basis in bases
 )
+# The bases whose ASIN was stated *about* a recording rather than read off it:
+# the one the target asserts, and the one an earlier preparation of the same
+# track set admitted and this one carries forward (#1316). Neither is one of the
+# item's own identifier surfaces, so neither settles identity or is offered as
+# a local value; each only names a product to look up, whose answer the runtime
+# band and the narrator gate still judge (ADR-0061, ADR-0088).
+ASSERTED_ASIN_BASES = frozenset({"target_metadata", "prior_admission"})
 
 
 class TargetDestination(StrEnum):
@@ -544,6 +553,19 @@ class ProviderStatus(StrEnum):
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
     QUERY_LIMIT_EXCEEDED = "query_limit_exceeded"
+
+
+# A lane that ended in one of these may answer differently when it is asked
+# again, so provider recovery retries it and a carried admission survives it.
+PROVIDER_RECOVERY_ELIGIBLE_STATUSES = frozenset(
+    {
+        ProviderStatus.AUTHENTICATION,
+        ProviderStatus.AUTHORIZATION,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.UNAVAILABLE,
+        ProviderStatus.INCOMPLETE,
+    }
+)
 
 
 class DispatchOutcome(StrEnum):
@@ -1329,6 +1351,11 @@ class LocalClaim:
             ClaimKind.ASIN,
         }:
             raise ReportValueError("target metadata claim kind is invalid")
+        # A carried admission names one edition and nothing else (#1316).
+        if self.basis == "prior_admission" and (
+            self.kind is not ClaimKind.ASIN or self.scope is not ClaimScope.EDITION
+        ):
+            raise ReportValueError("prior admission claim kind is invalid")
         if self.role is not None:
             if self.kind not in {
                 ClaimKind.CREATOR,
@@ -4664,7 +4691,8 @@ def derive_field_results(
         # `unsupported` rather than `absent` keeps "this surface cannot carry
         # the field" distinct from "this surface carried nothing". The reading
         # follows the claims rather than a second list of kinds: a surface that
-        # actually stated this field is reported from what it stated.
+        # actually stated this field is reported from what it stated. A carried
+        # admission (#1316) can only ever carry an ASIN.
         bases = _SOURCE_CLAIM_BASES[source]
         if (
             source is FieldSource.TARGET_METADATA
@@ -4672,7 +4700,7 @@ def derive_field_results(
             and not any(
                 claim.kind is kind and claim.basis in bases for claim in local_claims
             )
-        ):
+        ) or (source is FieldSource.PRIOR_ADMISSION and kind is not ClaimKind.ASIN):
             return FieldState.UNSUPPORTED
         return next(
             (
@@ -6120,6 +6148,10 @@ def _report_from_data(value: object) -> MetadataReport:
             "target",
         },
     )
+    # A predecessor document is refused for what it is before any section of
+    # it is read under the current vocabulary.
+    if root["schema_version"] != REPORT_SCHEMA:
+        raise ReportValueError("report schema is unsupported")
     target = _object(
         root["target"],
         {
@@ -6148,12 +6180,7 @@ def _report_from_data(value: object) -> MetadataReport:
         target["connection"],
         target["library"],
         target["item"],
-        tuple(
-            _target_field_from_data(
-                item, flagged=root["schema_version"] == REPORT_SCHEMA
-            )
-            for item in _list(target["fields"])
-        ),
+        tuple(_target_field_from_data(item) for item in _list(target["fields"])),
     )
     return MetadataReport(
         root["report_id"],
@@ -6304,7 +6331,7 @@ def _audio_chapter_from_data(value: object) -> AudioChapter:
 
 def _target_field_from_data(value: object, *, flagged: bool = True) -> TargetField:
     # A report of an earlier schema is read in its own shape, without the
-    # description's restore flag, so it is refused for its schema as before.
+    # description's restore flag (scripts/qualification_state_bridge.py).
     described = (
         flagged and type(value) is dict and value.get("destination") == "description"
     )
@@ -7048,6 +7075,8 @@ __all__ = [
     "ProviderWorkIdentitySetAdmission",
     "ProviderQueryKind",
     "ProviderStatus",
+    "PROVIDER_RECOVERY_ELIGIBLE_STATUSES",
+    "ASSERTED_ASIN_BASES",
     "WorkIdentityContradiction",
     "REPORT_SCHEMA",
     "ReportValueError",

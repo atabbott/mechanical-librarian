@@ -280,6 +280,8 @@ const preparationPassage = [
 // The compact layout, where the selected work replaces the list.
 const compactWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1024px)').matches
+const narrowWidth = () =>
+  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
 // A search under a lens counts that lens against its whole-library total; the
 // lens link names it visually and the status names it to screen readers (#1425).
@@ -1471,10 +1473,12 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
 // suggestions. Each is offered only where the store would accept it now; the
 // store still decides, and a refusal is said here, beside the control used.
 type OwnerOutcome = 'owner_entered' | 'withdraw'
+// The width range where the Attention rail is a drawer over the workspace.
+const drawerQuery = '(min-width: 761px) and (max-width: 1199px)'
 // The open field's heading, the place focus returns to when the control that
 // was used is gone.
 const focusFieldHeading = () => {
-  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
+  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h3')
   heading?.setAttribute('tabindex', '-1')
   heading?.focus({ preventScroll: true })
 }
@@ -2730,6 +2734,12 @@ export default function LibraryPage({
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
   const attentionRail = useRef<HTMLElement>(null)
+  const attentionHeading = useRef<HTMLHeadingElement>(null)
+  const attentionToggle = useRef<HTMLButtonElement>(null)
+  const attentionRetry = useRef<HTMLButtonElement>(null)
+  // Close and Escape hand focus back to the toggle that opened the rail.
+  const returnToToggle = useRef(false)
+  const returnToWork = useRef(false)
   const revealWorkspace = useRef(false)
   const workSelectionGeneration = useRef(0)
   const selectedIdentityRef = useRef<{
@@ -2749,6 +2759,8 @@ export default function LibraryPage({
   const selectedPreviewRef = useRef<string | undefined>(undefined)
   const selectedDetailRetry = useRef<string | null>(null)
   const selectedDetailRetryButton = useRef<HTMLButtonElement>(null)
+  // The preview whose detail was last shown ready, until the preview changes.
+  const selectedDetailShown = useRef<string | null>(null)
   const pendingSuccessorRef = useRef(new Set<string>())
   const lineageGenerationRef = useRef(0)
   const [reconciledSuccessorIdentity, setReconciledSuccessorIdentity] = useState<string | null>(
@@ -3583,6 +3595,7 @@ export default function LibraryPage({
     !selectedReadError
   useEffect(() => {
     selectedDetailRetry.current = null
+    selectedDetailShown.current = null
   }, [search.preview])
   useEffect(() => {
     const selectedDetailSettled = selectedDetailReady || selectedReadError
@@ -3599,7 +3612,17 @@ export default function LibraryPage({
         workspace?.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     }
     selectedDetailRetry.current = null
+    if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
   }, [selectedReadError, search.preview, selectedDetailReady])
+  // A detail that was shown and then could not be read again, as after a
+  // command whose follow-up reads fail, takes away the control that had focus;
+  // its Try again takes focus rather than the page (#1288).
+  useEffect(() => {
+    if (!search.preview || !selectedReadError || leaving) return
+    if (document.activeElement !== document.body) return
+    if (selectedDetailShown.current !== search.preview) return
+    selectedDetailRetryButton.current?.focus({ preventScroll: true })
+  }, [leaving, search.preview, selectedReadError])
   useEffect(() => {
     currentSearch.current = search
   }, [search])
@@ -3679,16 +3702,73 @@ export default function LibraryPage({
     automaticTrigger.current?.focus()
   }, [automaticPanel])
   useEffect(() => {
-    if (search.attention !== 'open') return
+    const opened = search.attention === 'open'
+    if (!opened && !returnToToggle.current) return
+    returnToToggle.current = false
     let focusFrame = 0
     const routeFrame = requestAnimationFrame(() => {
-      focusFrame = requestAnimationFrame(() =>
-        attentionRail.current?.focus({ preventScroll: true }),
-      )
+      focusFrame = requestAnimationFrame(() => {
+        // Closing returns focus from the rail it left, or from where the
+        // route's own focus put it, never from a field the owner moved to.
+        const active = document.activeElement
+        const routeTarget = document.querySelector('#main-content [data-route-focus]')
+        // At 760px and below closing over a selected work reveals that work,
+        // so focus stays on its header there rather than the toggle above it.
+        if (opened) {
+          attentionHeading.current?.focus({ preventScroll: true })
+          attentionHeading.current?.scrollIntoView({ block: 'nearest' })
+        } else if (
+          !active ||
+          active === document.body ||
+          active === routeTarget ||
+          attentionRail.current?.contains(active)
+        ) {
+          ;(returnToWork.current && routeTarget instanceof HTMLElement
+            ? routeTarget
+            : attentionToggle.current
+          )?.focus({ preventScroll: true })
+        }
+      })
     })
     return () => {
       cancelAnimationFrame(routeFrame)
       cancelAnimationFrame(focusFrame)
+    }
+  }, [search.attention])
+  // From 761 to 1199px the rail is a drawer over the workspace: everything
+  // outside it but the toolbar that toggles it is inert until it closes, and
+  // its own Tab order wraps.
+  useEffect(() => {
+    const rail = attentionRail.current
+    if (search.attention !== 'open' || !rail || typeof window.matchMedia !== 'function') return
+    const drawer = window.matchMedia(drawerQuery)
+    let muted: Element[] = []
+    const restore = () => {
+      for (const node of muted) node.removeAttribute('inert')
+      muted = []
+    }
+    const apply = () => {
+      restore()
+      if (!drawer.matches) return
+      for (let node: Element = rail; node.parentElement && node !== document.body;) {
+        const parent: Element = node.parentElement
+        for (const sibling of parent.children)
+          if (
+            sibling !== node &&
+            !sibling.hasAttribute('inert') &&
+            !(attentionToggle.current && sibling.contains(attentionToggle.current))
+          ) {
+            sibling.setAttribute('inert', '')
+            muted.push(sibling)
+          }
+        node = parent
+      }
+    }
+    apply()
+    drawer.addEventListener('change', apply)
+    return () => {
+      drawer.removeEventListener('change', apply)
+      restore()
     }
   }, [search.attention])
   useEffect(() => {
@@ -3865,8 +3945,15 @@ export default function LibraryPage({
     pendingSearchQuery.current = { ...pendingSearchQuery.current, q }
     scheduleSearchNavigation()
   }
+  const closeAttention = () => {
+    returnToToggle.current = true
+    returnToWork.current = Boolean(search.preview ?? search.work) && narrowWidth()
+    changeAttention(false)
+  }
   const changeAttention = (open: boolean) => {
-    if (!open) revealWorkspace.current = Boolean(search.preview ?? search.work) && compactWidth()
+    // Only a narrow rail covers the work; from 761px it overlays the page,
+    // which stays where it was with the toggle in view.
+    if (!open) revealWorkspace.current = Boolean(search.preview ?? search.work) && narrowWidth()
     pendingSearchQuery.current = {
       q: searchPending ? queryText.trim() : null,
       attention: open,
@@ -4074,6 +4161,7 @@ export default function LibraryPage({
         {...(!hasSelection ? { 'data-route-focus': 'true' } : {})}
       >
         <button
+          ref={attentionToggle}
           className="attention-toggle"
           type="button"
           aria-expanded={search.attention === 'open'}
@@ -4401,7 +4489,9 @@ export default function LibraryPage({
         </section>
         <section
           className="workspace-detail"
-          aria-live="polite"
+          // Preparation states its own progress in one status line; the whole
+          // detail would otherwise be read again on every poll (#1288).
+          aria-live={preparationSelected ? undefined : 'polite'}
           tabIndex={-1}
           {...(!selectedWork &&
           search.preview &&
@@ -4647,7 +4737,7 @@ export default function LibraryPage({
                 >
                   <span className="review-complete-mark">✓</span>
                   <div>
-                    <h2>Review complete</h2>
+                    <h3>Review complete</h3>
                     <span>
                       {String(complete.fields.length)} recorded field outcome
                       {complete.fields.length === 1 ? '' : 's'}
@@ -4740,11 +4830,11 @@ export default function LibraryPage({
                   ) : null}
                   <header>
                     <div>
-                      <h2>
+                      <h3>
                         {selectedActionable
                           ? decisionQuestion(selected.destination)
                           : destinationLabel(selected.destination)}
-                      </h2>
+                      </h3>
                       {selectedActionable ? (
                         <>
                           <p>{`${destinationLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
@@ -5091,7 +5181,7 @@ export default function LibraryPage({
                     >
                       {automaticPanelVisible ? (
                         <>
-                          <h3>Automatic handling is paused for this field</h3>
+                          <h4>Automatic handling is paused for this field</h4>
                           <p>
                             The recorded value remains. Fresh checks are requested first; automatic
                             policy may manage later qualified changes.
@@ -5281,10 +5371,30 @@ export default function LibraryPage({
             aria-busy={attention.isPlaceholderData || undefined}
             tabIndex={-1}
             ref={attentionRail}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                closeAttention()
+                return
+              }
+              if (event.key !== 'Tab' || typeof window.matchMedia !== 'function') return
+              if (!window.matchMedia(drawerQuery).matches) return
+              const stops = [
+                ...event.currentTarget.querySelectorAll<HTMLElement>('button, a[href], input'),
+              ].filter((stop) => !stop.matches(':disabled') && stop.getClientRects().length)
+              const edge = event.shiftKey ? stops[0] : stops.at(-1)
+              const active = document.activeElement
+              if (active === edge || (event.shiftKey && !stops.some((stop) => stop === active))) {
+                event.preventDefault()
+                ;(event.shiftKey ? stops.at(-1) : stops[0])?.focus()
+              }
+            }}
           >
             <header>
               <div>
-                <h2>Attention</h2>
+                <h2 ref={attentionHeading} tabIndex={-1}>
+                  Attention
+                </h2>
                 <p>
                   {search.q && !data
                     ? failed
@@ -5301,7 +5411,7 @@ export default function LibraryPage({
                         : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
                 </p>
               </div>
-              <button onClick={() => changeAttention(false)}>Close</button>
+              <button onClick={closeAttention}>Close</button>
             </header>
             {attention.data === undefined ? (
               <p role={attention.isError ? 'alert' : 'status'}>
@@ -5309,19 +5419,26 @@ export default function LibraryPage({
                   <>
                     Attention could not be loaded.{' '}
                     <button
+                      ref={attentionRetry}
                       type="button"
                       onClick={() =>
                         void attention.refetch().then((result) => {
-                          // A successful retry removes this button, so the
-                          // rail takes focus back from it (#1399).
+                          // The retry removes this button while it reads, so
+                          // the rail's heading takes focus back on success
+                          // (#1399) and Try again does when it fails again.
                           const active = document.activeElement
                           if (
-                            result.isSuccess &&
-                            (!active ||
-                              active === document.body ||
-                              attentionRail.current?.contains(active))
+                            active &&
+                            active !== document.body &&
+                            !attentionRail.current?.contains(active)
                           )
-                            attentionRail.current?.focus({ preventScroll: true })
+                            return
+                          if (result.isSuccess)
+                            attentionHeading.current?.focus({ preventScroll: true })
+                          else
+                            requestAnimationFrame(() =>
+                              attentionRetry.current?.focus({ preventScroll: true }),
+                            )
                         })
                       }
                     >

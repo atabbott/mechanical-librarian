@@ -57,12 +57,12 @@ class DescriptionModelMetadata(_Closed):
     observed_at: Annotated[StrictInt, Field(ge=0)]
     prompt_price: Annotated[StrictStr, Field(min_length=1, max_length=40)]
     completion_price: Annotated[StrictStr, Field(min_length=1, max_length=40)]
-    request_price: Annotated[StrictStr, Field(min_length=1, max_length=40)]
+    request_price: Annotated[StrictStr, Field(min_length=1, max_length=40)] | None
     text_input: Literal[True] = True
     text_output: Literal[True] = True
     structured_outputs: Literal[True] = True
 
-    @field_validator("prompt_price", "completion_price", "request_price")
+    @field_validator("prompt_price", "completion_price")
     @classmethod
     def bounded_price(cls, value: str) -> str:
         try:
@@ -72,6 +72,11 @@ class DescriptionModelMetadata(_Closed):
         if not price.is_finite() or not 0 <= price <= 1_000_000:
             raise ValueError("invalid model price")
         return value
+
+    @field_validator("request_price")
+    @classmethod
+    def bounded_request_price(cls, value: str | None) -> str | None:
+        return None if value is None else cls.bounded_price(value)
 
 
 class CoverModelMetadata(_Closed):

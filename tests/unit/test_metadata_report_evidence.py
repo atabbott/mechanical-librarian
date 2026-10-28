@@ -1001,6 +1001,7 @@ def test_field_results_are_complete_canonical_and_separate_from_claims() -> None
                 FieldSourceResult(FieldSource.AUDIO_TAG, FieldState.ABSENT),
                 FieldSourceResult(FieldSource.AUDIO_SIDECAR, FieldState.ABSENT),
                 FieldSourceResult(FieldSource.AUDIO_PATH, FieldState.ABSENT),
+                FieldSourceResult(FieldSource.PRIOR_ADMISSION, FieldState.UNSUPPORTED),
             ),
         )
         if value.kind is ClaimKind.TITLE
