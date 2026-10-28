@@ -834,9 +834,10 @@ does not defer or replace this baseline.
   `aria-disabled`, while it runs, then moves to its outcome; a retry that fails
   again returns focus to Try again; a detail that can no longer be read hands
   focus to its Try again. Opening Attention focuses its heading. From 761 to
-  1199 pixels Attention is a drawer: the page behind it is inert and Tab stays
-  inside it. Escape or Close returns focus to the Attention toggle, and Tab
-  closes a dropdown onto its trigger.
+  1199 pixels Attention is a drawer: the page behind it is inert, except the
+  toolbar holding the Attention toggle, and Tab stays inside it. Escape or
+  Close returns focus to the Attention toggle, and Tab closes a dropdown onto
+  its trigger.
 - Each surface has one heading outline without skipped levels, and the
   Activity change column is announced as its whole sentence; nested lists of
   checks are named.
