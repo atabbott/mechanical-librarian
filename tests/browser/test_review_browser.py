@@ -4253,6 +4253,29 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 assert all(
                     page.locator(".library-cover-card .cover-sources").all_inner_texts()
                 )
+                # Every visible word in the comparison renders at the 12px floor
+                # or above, including text sized only by the browser's own
+                # `small` rule, which no stylesheet scan can see; and each
+                # Evidence toggle is a 44px target (#1290).
+                under_floor = page.get_by_role(
+                    "region", name="Choose a cover"
+                ).evaluate(
+                    """region => [...region.querySelectorAll('*')]
+                      .filter((node) => node.checkVisibility() && !node.closest('.sr-only')
+                        && [...node.childNodes].some((child) =>
+                          child.nodeType === Node.TEXT_NODE && child.textContent.trim()))
+                      .map((node) => [node.tagName.toLowerCase(), node.textContent.trim().slice(0, 40),
+                        parseFloat(getComputedStyle(node).fontSize)])
+                      .filter(([, , size]) => size < 12)"""
+                )
+                assert under_floor == [], under_floor
+                toggle_heights = page.locator(
+                    ".cover-choice .choice-evidence-toggle"
+                ).evaluate_all(
+                    "nodes => nodes.map((node) => node.getBoundingClientRect().height)"
+                )
+                assert len(toggle_heights) == len(_LIBRARY_SHAPES), toggle_heights
+                assert min(toggle_heights) >= 44, toggle_heights
 
                 # A scrolled pointer must hit disclosure, never a sticky choice
                 # covering it. Keyboard-only tests cannot detect this overlap.
