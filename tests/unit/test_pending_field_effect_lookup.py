@@ -1068,6 +1068,134 @@ def test_description_application_history_breaks_tied_times_as_displayed(
     repository.close()
 
 
+# #1209: every other history source cuts at its limit in the order displayed.
+# Each fixture ties more rows than the limit on one timestamp and stores them in
+# an order other than the displayed one, so a missing tie-break keeps others.
+def test_human_decision_history_breaks_tied_times_by_decision_ordinal(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.review_cases import _report
+
+    repository = open_repository(tmp_path / "application.sqlite3")
+    report = _report()
+    repository.publish(report, lambda: True)
+    proposal_set = evaluate_report(report)
+    repository.publish_proposal(proposal_set)
+    case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(
+        value
+        for value in case.proposals
+        if value["result"]["outcome"] == "unresolved_choice"
+    )
+    recorded = []
+    for index in range(6):
+        decision = HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination=str(proposal["destination"]),
+            actor="owner",
+            outcome=("keep_current", "reject")[index % 2],
+            selected_value=None,
+            idempotency_key=f"tied-decision-{index:04d}",
+            occurred_at=10**9,
+        )
+        repository.record_human_decision(decision)
+        recorded.append(decision.decision_id)
+    events = dict(
+        repository._connection.execute(
+            "SELECT decision_id,event_id FROM human_decision_events"
+        ).fetchall()
+    )
+    # Recording order is the displayed order; event-id order keeps other rows.
+    assert sorted(recorded, key=events.__getitem__)[-3:] != recorded[-3:]
+    limited = repository.get_review_case_history(case_id, 3)
+    assert [event["decision_id"] for event in limited] == recorded[:-4:-1]
+    assert limited == repository.get_review_case_history(case_id, 50)[:3]
+    repository.close()
+
+
+def test_description_advice_history_breaks_tied_times_by_attempt_id(
+    tmp_path: Path,
+) -> None:
+    from tests.support.description_advice import _prepared
+
+    repository, _, binding, _, _ = _prepared(tmp_path)
+    connection = repository._connection
+    # Six attempts tie on one second, stored in ascending attempt-id order.
+    for digit in "123456":
+        connection.execute(
+            "INSERT INTO description_advice_attempts SELECT ?,request_identity,"
+            "binding_document,engine,?,'requested',NULL,?,? "
+            "FROM description_advice_attempts LIMIT 1",
+            ("description_attempt_" + digit * 32, "model-" + digit, 10**9, 10**9),
+        )
+    connection.commit()
+    limited = repository.get_review_case_history(binding.review_case_id, 4)
+    assert [(event["kind"], event["model"]) for event in limited] == [
+        ("description_advice_recorded", "model-" + digit) for digit in "6543"
+    ]
+    assert limited == repository.get_review_case_history(binding.review_case_id, 50)[:4]
+    repository.close()
+
+
+def test_description_decision_history_breaks_tied_times_by_decision_id(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.domain.description_advice import (
+        AuthoredDescriptionDecision,
+    )
+    from tests.support.description_advice import _prepared
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    admitted = store.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    tied = sorted(
+        (
+            AuthoredDescriptionDecision.create(
+                **{
+                    **admitted.model_dump(exclude={"decision_id"}),
+                    "idempotency_digest": digit * 64,
+                    "occurred_at": 10**9,
+                }
+            )
+            for digit in "bcdef0"
+        ),
+        key=lambda decision: decision.decision_id,
+    )
+    # Six decisions tie on one second, stored in ascending decision-id order.
+    for decision in tied:
+        repository._connection.execute(
+            "INSERT INTO description_decisions VALUES(?,?,?,?,?)",
+            (
+                decision.decision_id,
+                binding.review_case_id,
+                candidate.candidate_id,
+                decision.idempotency_digest,
+                decision.to_json(),
+            ),
+        )
+    repository._connection.commit()
+    limited = repository.get_review_case_history(binding.review_case_id, 4)
+    assert [
+        (event["kind"], event["state"], event["decision"]["decision_id"])
+        for event in limited
+    ] == [
+        ("description_selected", "superseded", decision.decision_id)
+        for decision in tied[:-5:-1]
+    ]
+    assert limited == repository.get_review_case_history(binding.review_case_id, 50)[:4]
+    repository.close()
+
+
 # #1205: a pending decision's case must hold a current lineage. Both statements
 # asked that with a correlated EXISTS for each decision, which the planner served
 # by scanning every lineage (the counts owner arm only on older SQLite, such as
