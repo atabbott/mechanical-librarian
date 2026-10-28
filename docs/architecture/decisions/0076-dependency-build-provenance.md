@@ -4,7 +4,7 @@
 - Date: 2026-09-21
 - Owners: project maintainers
 - Supersedes: ADR-0043 fixed Node/npm version selection only
-- Superseded by: ADR-0073 compact current records, for source closure representation only
+- Superseded by: ADR-0073 compact current records, for source closure representation only; ADR-0087, for the semantic source closure
 
 ## Context
 
