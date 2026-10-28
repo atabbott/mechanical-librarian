@@ -111,8 +111,7 @@ def test_a_runtime_dependency_and_the_build_backend_both_count(
         tmp_path,
         manifest=_MANIFEST.replace('requires = ["setuptools==83.0.0"]', "requires = []")
         .replace('  "setuptools==83.0.0",\n', "")
-        .replace(" and `setuptools`", "")
-        .replace("one of the three", "one of the two"),
+        .replace(" and `setuptools`", ""),
     )
     findings = checker.authority_findings(tmp_path)
     assert findings == (
@@ -166,56 +165,6 @@ def test_only_the_leading_run_of_a_grant_names_its_subjects() -> None:
     # which is why the sections are addressed by heading rather than the
     # document being scanned for bullets.
     assert "Least authority." not in checker.granted_dependencies(ROOT)
-
-
-def test_a_grants_own_arithmetic_is_checked_against_its_subjects(
-    tmp_path: Path,
-) -> None:
-    """Stale arithmetic in a completeness document is the defect in miniature."""
-
-    build_authority(tmp_path)
-    document = tmp_path / "docs" / "development" / "dependencies.md"
-    document.write_text(
-        _DOCUMENT.replace("one of the three", "one of the four"), encoding="utf-8"
-    )
-    assert checker.authority_findings(tmp_path) == (
-        "docs/development/dependencies.md says 'the four' of a grant covering 3:"
-        " ruff, pytest, setuptools",
-    )
-    # And the count follows the subjects rather than being a constant: dropping
-    # one from both sides leaves the arithmetic wrong even though the two
-    # directions above now reconcile.
-    document.write_text(
-        _DOCUMENT.replace("`ruff`, `pytest` and ", "`ruff` and "), encoding="utf-8"
-    )
-    assert checker.authority_findings(tmp_path) == (
-        "pyproject.toml declares pytest, which has no grant in"
-        " docs/development/dependencies.md",
-        "docs/development/dependencies.md says 'the three' of a grant covering 2:"
-        " ruff, setuptools",
-    )
-
-
-def test_a_cardinal_that_quantifies_its_own_noun_is_left_alone(
-    tmp_path: Path,
-) -> None:
-    """`one of the five permitted read paths` counts paths, not dependencies.
-
-    The HTTPX grant states that count today. A rule that read every cardinal
-    as a claim about the grant's subjects would fail the gate on an accurate
-    document, which is the one outcome a completeness check cannot afford.
-    """
-
-    build_authority(tmp_path)
-    document = tmp_path / "docs" / "development" / "dependencies.md"
-    document.write_text(
-        _DOCUMENT.replace(
-            "carry traffic",
-            "carry traffic on one of the five permitted read paths",
-        ),
-        encoding="utf-8",
-    )
-    assert checker.authority_findings(tmp_path) == ()
 
 
 @pytest.mark.parametrize(

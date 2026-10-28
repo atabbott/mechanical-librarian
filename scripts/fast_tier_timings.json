@@ -45,7 +45,6 @@
   "tests/unit/test_browse_request_lifecycle.py": 1.1,
   "tests/unit/test_build_frontend.py": 0.4,
   "tests/unit/test_catalogue.py": 1.9,
-  "tests/unit/test_changelog_budget.py": 0.3,
   "tests/unit/test_codex_device_auth.py": 2.5,
   "tests/unit/test_cold_start_report.py": 2.5,
   "tests/unit/test_composition_reopen.py": 3.0,

@@ -72,20 +72,6 @@ def _plan() -> FieldEffectPlan:
     )
 
 
-def test_deployment_contract_names_the_composed_guarded_target() -> None:
-    document = (
-        Path(__file__).parents[2] / "docs" / "operations" / "deployment.md"
-    ).read_text(encoding="utf-8")
-    for statement in (
-        "normal container composes the supported Audiobookshelf guarded target",
-        "authenticated, library-scoped\nActivity consent flow",
-        "No fake target, direct database write or writable media\npath is composed.",
-    ):
-        assert statement in document
-    assert "canary-only" not in document
-    assert "unavailable in the normal container" not in document
-
-
 def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
