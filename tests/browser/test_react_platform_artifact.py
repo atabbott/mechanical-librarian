@@ -3671,6 +3671,24 @@ _WORKSPACE_GEOMETRY = """async () => {
 }"""
 
 
+# An update stream that opens and stays open. The cohort's own `/api/v1/updates`
+# answers 204, which the shell reads as a stream that is down: a second after
+# every load its masthead says it is reconnecting, and at some widths that adds
+# a row above everything else (#1449). A test of what selection moves holds the
+# stream live, the state an owner normally sees, so nothing else moves.
+_LIVE_UPDATE_STREAM = """
+globalThis.EventSource = class extends EventTarget {
+  constructor(url) {
+    super();
+    this.url = url;
+    this.readyState = 1;
+    queueMicrotask(() => this.onopen?.(new Event('open')));
+  }
+  close() { this.readyState = 2; }
+};
+"""
+
+
 def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> None:
     """Selecting or leaving a work never moves the workspace, at every width,
     theme and text size; the toolbar's labels never clip or split (#1284)."""
@@ -3686,6 +3704,7 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
         browser = playwright.chromium.launch(headless=True)
         stack.callback(browser.close)
         page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
         _serve_cohort(page, stylesheet=lambda: styles[text], writes_off_handoff=True)
 
         def load(route: str) -> None:
@@ -3779,6 +3798,8 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                             states.append(("back", page.evaluate(_WORKSPACE_GEOMETRY)))
                     tops = [state["top"] for _, state in states]
                     assert max(tops) - min(tops) <= 1, f"{where}: {states}"
+                    # The stream held live, so no reconnecting row was measured.
+                    expect(page.locator(".live-state")).to_have_count(0)
                     headers = [state["header"] for _, state in states]
                     assert max(headers) - min(headers) <= 1, f"{where}: {states}"
                     small = [
