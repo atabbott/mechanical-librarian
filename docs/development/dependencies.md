@@ -392,11 +392,16 @@ Action references, image tags/digests, pinning and lockfile maintenance. Each
 logical Node, Python, uv and npm tool has one group spanning its native manager
 declarations. The parity tests refuse incomplete updates. The workflow uv pin
 is looked up in the same `ghcr.io/astral-sh/uv` registry as the Dockerfile
-image, so both declarations see one release list. That registry publishes no
-release dates, so the seven-day wait cannot apply to uv: a uv update is
-proposed on the first weekly window after its release and still needs every
-check below. Without that exception the wait would hold the image pin forever
-while the workflow pin moved alone (#1177). A Python update that
+image, and the workflow and `engines` Node pins and the workflow Python pins in
+the same Docker Hub images as their Dockerfile pins, so every declaration of a
+tool sees one release list. Those registries publish no release dates, so the
+seven-day wait cannot apply to uv, Node or Python: an update is proposed on the
+first weekly window after its release and still needs every check below.
+Without that exception the wait would hold the image pins forever while the
+dated pins moved alone, and Renovate drops a pending member from a group branch
+rather than holding the group for it (#1177, #1448). A new Node major line, or
+a new Python minor or major version, also waits for approval on the Dependency
+Dashboard. A Python update that
 changes `unicodedata.unidata_version` requires a clean rebuild of the report
 database ([Schema admission](../architecture/security.md#schema-admission)).
 npm is installed

@@ -23,6 +23,11 @@
   service log now gets the same one-line JSON warning as every other
   operational event; before, its code and exception type were dropped (#1447).
 
+- A managed Node or Python update now moves the Dockerfile, workflow and, for
+  Node, frontend `engines` pins together in one Renovate pull request, instead
+  of moving the dated pins alone into a build that could not pass. A new Node
+  major line or Python minor version waits for approval (#1448).
+
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.
   Automatic decisions recorded under an earlier qualification are refused
