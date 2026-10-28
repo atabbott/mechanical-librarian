@@ -234,6 +234,10 @@ class AudibleCatalogMetadataProvider:
         self._schema_rejections = 0
         self._pacer = pacer
         self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        # Every page the current lane's ladder read, by source, first page
+        # first: the deferred rule may admit from a page before the last
+        # (#1307).
+        self._lane_cover_descriptors: dict[str, ProviderCoverDescriptor] = {}
         # Per-lane diagnostic state for #1258: the asserted lane's nearest
         # loose-band near-miss so far, reset as each lane starts.
         self._work_ladders: list[WorkLadderFacts] = []
@@ -372,6 +376,7 @@ class AudibleCatalogMetadataProvider:
                     )
                     continue
                 self._cover_descriptors = ()
+                self._lane_cover_descriptors = {}
                 self._near_miss = None
                 lookup = _lane_lookup(lane, plan)
                 qualified = self._resolve(ledger, lane, lookup, deadline=deadline)
@@ -385,7 +390,7 @@ class AudibleCatalogMetadataProvider:
                     deferred = (
                         len(results) - 1,
                         qualified.corroborated,
-                        self._cover_descriptors,
+                        tuple(self._lane_cover_descriptors.values()),
                     )
                 merged = merge_provider_cover_descriptors(
                     descriptors,
@@ -586,6 +591,10 @@ class AudibleCatalogMetadataProvider:
                 ProviderQueryKind.WORK,
                 self._cover_wait,
             )
+            for descriptor in self._cover_descriptors:
+                self._lane_cover_descriptors.setdefault(
+                    descriptor.source_id, descriptor
+                )
         except ProviderFailure as error:
             return self._result(lookup, error.status)
         except (
@@ -858,6 +867,7 @@ def _lane_lookup(
         work_title=plan.work_title,
         work_authors=plan.work_authors,
         recording_corroboration=plan.recording_corroboration,
+        corroborated_rule=plan.corroborated_rule,
         requested_asin=lane.canonical_asin,
         title_basis=lane.title_basis,
     )

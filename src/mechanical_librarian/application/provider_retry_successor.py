@@ -880,7 +880,9 @@ def _retry_plan(
     `no_match`, and no ASIN lane left out of the retry answered with a product. Otherwise the
     retry runs without it: an alternative lane suppressed behind a failed
     asserted lane was never asked, and a refused page is not retained, so a
-    later retry of that lane alone cannot re-arm the rule.
+    later retry of that lane alone cannot re-arm the rule. The ladder itself is
+    unchanged, its leading-number rung included, since the report requires
+    every rung of the asserted lane however the rule ends.
     """
     retried = {lane.identity for lane in selected}
     observed = {lane.identity: lane for lane in original.lanes}
@@ -901,7 +903,7 @@ def _retry_plan(
     return replace(
         plan,
         lanes=selected,
-        recording_corroboration=plan.recording_corroboration if keeps_rule else None,
+        corroborated_rule=plan.corroborated_rule and keeps_rule,
     )
 
 

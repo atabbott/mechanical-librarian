@@ -293,6 +293,9 @@ class MetadataLookup:
     # The target's narrators and series an audiobook plan carries for the
     # corroborated admission rule (#1307); `None` on every other plan.
     recording_corroboration: RecordingCorroboration | None = None
+    # A retry that cannot see every exact path withholds the rule itself but
+    # still walks the asserted lane's full ladder (#1307).
+    corroborated_rule: bool = True
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
@@ -303,7 +306,8 @@ class MetadataLookup:
                 or self.audio is None
             )
         ) or (
-            type(self.kind) is not ProviderQueryKind
+            type(self.corroborated_rule) is not bool
+            or type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.authors) is not tuple
@@ -450,6 +454,7 @@ class MetadataDiscoveryPlan:
     work_title: str | None = None
     work_authors: tuple[str, ...] = ()
     recording_corroboration: RecordingCorroboration | None = None
+    corroborated_rule: bool = True
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
@@ -460,7 +465,8 @@ class MetadataDiscoveryPlan:
                 or self.audio is None
             )
         ) or (
-            type(self.local_claims) is not tuple
+            type(self.corroborated_rule) is not bool
+            or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
             or any(type(value) is not MetadataDiscoveryLane for value in self.lanes)
@@ -789,15 +795,19 @@ def corroborated_rule_permitted(
     standing in for a refusal.
     """
     observed = {result.lane.identity: result for result in results}
-    return all(
-        (result := observed.get(lane.identity)) is not None
-        and result.status is ProviderStatus.NO_MATCH
-        for lane in plan.lanes
-        if lane.kind is ProviderQueryKind.WORK and lane.title_basis is not None
-    ) and not any(
-        result.lane.kind is ProviderQueryKind.ASIN
-        and result.status is ProviderStatus.CANDIDATES
-        for result in results
+    return (
+        plan.corroborated_rule
+        and all(
+            (result := observed.get(lane.identity)) is not None
+            and result.status is ProviderStatus.NO_MATCH
+            for lane in plan.lanes
+            if lane.kind is ProviderQueryKind.WORK and lane.title_basis is not None
+        )
+        and not any(
+            result.lane.kind is ProviderQueryKind.ASIN
+            and result.status is ProviderStatus.CANDIDATES
+            for result in results
+        )
     )
 
 
@@ -1192,6 +1202,7 @@ def audiobook_asin_feed_plan(
         work_title=plan.work_title,
         work_authors=plan.work_authors,
         recording_corroboration=plan.recording_corroboration,
+        corroborated_rule=plan.corroborated_rule,
     )
 
 
@@ -2087,7 +2098,9 @@ def _identifier_lane_candidates(
             )
             is not None
         }
-        if carried_lane and lookup.recording_corroboration is not None
+        if carried_lane
+        and lookup.recording_corroboration is not None
+        and lookup.corroborated_rule
         else set()
     )
     alternative_admitted |= corroborated_admitted
@@ -2559,7 +2572,9 @@ def observe_work_ladder(
         work_ladder_diagnostics(empty_rungs, refused_products),
         _bounded_lookup_hints(tight, observation, lookup.local_claims),
         sent,
-        corroborated if corroborate and refused_pages else None,
+        corroborated
+        if corroborate and lookup.corroborated_rule and refused_pages
+        else None,
     )
 
 

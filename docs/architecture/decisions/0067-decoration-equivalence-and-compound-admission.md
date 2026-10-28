@@ -271,10 +271,13 @@ A provider retry (#1257) sees only the lanes it retries. It keeps the rule
 only when every planned alternative lane is retried with it or already ended
 `no_match`, and no ASIN lane left out of it answered with a product. An alternative lane
 suppressed behind a failed asserted lane was never asked, so a retry of the
-asserted lane alone runs without the rule. The refused pages are not
+asserted lane alone runs without the rule. It still walks the asserted
+lane's whole ladder, the leading-number rung included, because the report
+records every rung that lane sends however the rule ends. The refused pages are not
 retained, so a later retry of the alternative lane alone that ends
 `no_match` cannot re-arm the rule; the item waits for its next full
-preparation. The carried
+preparation. A rule admission
+from a page before the ladder's last keeps that page's cover sources. The carried
 lane (#1316, ADR-0088) may verify a refused product through the same rule. The alternative-title lane, every other
 fed ASIN lane, the overflow witness, ebooks and every other authority keep
 their rules unchanged.

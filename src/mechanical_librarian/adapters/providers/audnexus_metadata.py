@@ -460,6 +460,7 @@ def _lane_lookup(
         work_title=plan.work_title,
         work_authors=plan.work_authors,
         recording_corroboration=plan.recording_corroboration,
+        corroborated_rule=plan.corroborated_rule,
         requested_asin=lane.canonical_asin,
     )
 

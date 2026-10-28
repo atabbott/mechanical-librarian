@@ -1405,7 +1405,7 @@ def test_a_retry_of_the_asserted_lane_alone_cannot_admit_by_rule() -> None:
     # The successor narrows the plan to the failed lane and, since the
     # suppressed alternative lane was never asked, drops the rule with it.
     retry = _retry_plan(plan, (asserted,), original)
-    assert retry.recording_corroboration is None
+    assert not retry.corroborated_rule
     observation, _ = _walk_by_title(retry, pages)
     assert [ProviderStatus.NO_MATCH] == [lane.status for lane in observation.lanes]
 
@@ -1432,10 +1432,84 @@ def test_a_retry_keeps_the_rule_once_the_alternative_lane_refused() -> None:
         authority="audible_catalog",
     )
 
-    assert _retry_plan(plan, (asserted,), original).recording_corroboration == (
-        plan.recording_corroboration
+    assert _retry_plan(plan, (asserted,), original).corroborated_rule
+    assert _retry_plan(plan, (asserted, alternative), original).corroborated_rule
+
+
+def test_a_retry_without_the_rule_still_walks_the_leading_number_rung() -> None:
+    title = "12 Synthetic Journey"
+    plan = m.audiobook_discovery_plan(
+        m.TargetSnapshot(
+            "audiobook", title, (), fields=_target_fields(title, (_NARRATOR,))
+        ),
+        (target_title_claim(title), local_runtime_claim(_RUNTIME)),
+        audio=_alternative_audio(),
     )
-    assert _retry_plan(plan, (asserted, alternative), original).recording_corroboration
+    (asserted,) = (lane for lane in plan.lanes if lane.title_basis is None)
+    original = m.provider_observation(
+        "audible",
+        (m.ProviderLaneResult(asserted, ProviderStatus.UNAVAILABLE),),
+        authority="audible_catalog",
+    )
+
+    retry = _retry_plan(plan, (asserted,), original)
+    assert not retry.corroborated_rule
+    observation, seen = _walk_by_title(retry, {})
+
+    # The withheld rule leaves the ladder whole, so the exhausted lane names
+    # every rung the report expects of Audible's asserted lane.
+    assert "Synthetic Journey" in seen
+    assert [ProviderStatus.NO_MATCH] == [lane.status for lane in observation.lanes]
+    MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", _target_fields(title, (_NARRATOR,))
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=plan.local_claims,
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=_alternative_audio(),
+    )
+
+
+def test_a_rule_admission_from_an_earlier_page_keeps_its_cover() -> None:
+    plan = _plan(_DECORATED)
+    joined = _product(1, "Synthetic Journey", subtitle="Into the Fold")
+    joined["product_images"] = {
+        "500": "https://m.media-amazon.com/images/I/joined._SL500_.jpg"
+    }
+    pages = [[joined], []]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        products = pages.pop(0) if pages else []
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"total_results": len(products), "products": products},
+        )
+
+    provider = AudibleCatalogMetadataProvider(
+        "audible",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        262_144,
+        5.0,
+        marketplaces=("us",),
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_700_000_000.0,
+        sleep=lambda value: None,
+        jitter=lambda: 0.0,
+    )
+    try:
+        result = provider.observe(plan)
+    finally:
+        provider._client.close()
+
+    # The rule admits the first page's product after an empty last page, and
+    # that product's cover is the one the result states.
+    assert ProviderStatus.CANDIDATES is result.observation.lanes[0].status
+    (descriptor,) = result.cover_descriptors
+    assert descriptor.url is not None
+    assert descriptor.url.endswith("joined._SL500_.jpg")
 
 
 def test_an_exact_carried_lane_admission_comes_before_the_rule() -> None:
