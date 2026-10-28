@@ -390,7 +390,13 @@ Renovate requests GitHub-native squash auto-merge for existing admitted
 managed dependency updates: major, minor, patch, pre-1.0, runtime, build tools,
 Action references, image tags/digests, pinning and lockfile maintenance. Each
 logical Node, Python, uv and npm tool has one group spanning its native manager
-declarations. The parity tests refuse incomplete updates. A Python update that
+declarations. The parity tests refuse incomplete updates. The workflow uv pin
+is looked up in the same `ghcr.io/astral-sh/uv` registry as the Dockerfile
+image, so both declarations see one release list. That registry publishes no
+release dates, so the seven-day wait cannot apply to uv: a uv update is
+proposed on the first weekly window after its release and still needs every
+check below. Without that exception the wait would hold the image pin forever
+while the workflow pin moved alone (#1177). A Python update that
 changes `unicodedata.unidata_version` requires a clean rebuild of the report
 database ([Schema admission](../architecture/security.md#schema-admission)).
 npm is installed

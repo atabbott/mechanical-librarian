@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A managed uv update now moves the CI workflow and container pins together in
+  one Renovate pull request, instead of moving only the workflow pin (#1177).
+
 - Once a provider failure has earned a wait before its next retry, a later
   throttle can lengthen that wait but no longer shorten it. A one-second Google
   Books pacing hold carried by a retried report no longer brings the next retry
