@@ -389,6 +389,14 @@ def _require_installed_lifecycle_evidence(
     raise QualificationError("installed_lifecycle_evidence_failed")
 
 
+def _database_path(root: Path, name: str) -> Path:
+    # The Linux binding locks a database's directory for that database alone,
+    # so each repository the run opens gets its own owner-only directory.
+    directory = root / name
+    directory.mkdir(mode=0o700)
+    return directory / (name + ".sqlite")
+
+
 def _png(red: int, green: int, blue: int) -> bytes:
     output = io.BytesIO()
     Image.new("RGB", (2, 2), (red, green, blue)).save(output, "PNG")
@@ -3409,7 +3417,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             endpoint=base,
             library_id=library_id,
         )
-        repository = open_repository(root / "effects.sqlite")
+        repository = open_repository(_database_path(root, "effects"))
         current = type("Current", (), {"current": lambda self, value: True})()
         time_value = [100]
 
@@ -3512,7 +3520,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             endpoint=base,
             library_id=second_library_id,
         )
-        beta_repository = open_repository(root / "effects-beta.sqlite")
+        beta_repository = open_repository(_database_path(root, "effects-beta"))
         beta_service = GuardedFieldApplication(
             beta_repository,
             beta_target,
@@ -3564,7 +3572,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             endpoint=base,
             library_id=third_library_id,
         )
-        gamma_repository = open_repository(root / "effects-gamma.sqlite")
+        gamma_repository = open_repository(_database_path(root, "effects-gamma"))
         gamma_service = GuardedFieldApplication(
             gamma_repository,
             gamma_target,
@@ -3599,7 +3607,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
 
         def description_service(case: str):
             description_repository = open_repository(
-                root / ("effects-description-" + case + ".sqlite")
+                _database_path(root, "effects-description-" + case)
             )
             return (
                 GuardedFieldApplication(
