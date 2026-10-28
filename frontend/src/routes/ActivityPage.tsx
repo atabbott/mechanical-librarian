@@ -336,10 +336,20 @@ function ActivityEventRow({
       The arrow in `change` is a glyph most screen readers drop,
       so the announced row carries the same change as a whole
       sentence. Both come from the one projection, so they
-      cannot come to disagree.
+      cannot come to disagree. The sentence is text, not a label
+      on a plain div, which assistive technology may ignore (#1288).
     */}
-      <div className="cm-activity-change" aria-label={event.change_detail}>
-        <span aria-hidden="true">{event.change}</span>
+      <div className="cm-activity-change">
+        {event.change === event.change_detail ? (
+          <span>{event.change}</span>
+        ) : (
+          <>
+            {/* First, so the hidden sentence sits where the cell starts and
+                never past a clipped change. */}
+            <span className="sr-only">{event.change_detail}</span>
+            <span aria-hidden="true">{event.change}</span>
+          </>
+        )}
       </div>
       <b>{result ?? stateLabel(event.state, advice, event.failure)}</b>
       {/* Every disclosure names its row, so a screen reader hears which one (#1368). */}
@@ -1240,7 +1250,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     </button>
                   </article>
                   {open ? (
-                    <ul className="cm-activity-checks" id={`activity-checks-${row.key}`}>
+                    <ul
+                      className="cm-activity-checks"
+                      id={`activity-checks-${row.key}`}
+                      aria-label={`${first.work_label} checks`}
+                    >
                       {[...byField.values()].map((members) => {
                         // A field leads with what its check found; the decision
                         // it checked opens inside that field's Details.
@@ -1271,7 +1285,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                                 </p>
                               ) : null}
                               {paired.length ? (
-                                <ul className="cm-activity-checks">
+                                <ul
+                                  className="cm-activity-checks"
+                                  aria-label={`Decisions this ${member.field_label} check confirmed`}
+                                >
                                   {paired.map((item) => {
                                     const itemId = item.change_id || item.event_id
                                     const itemOpen = expandedId === itemId
