@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Setup now describes iTunes as what it is since audiobooks stopped being sent
+  to it: a check of an ebook's title and author against iTunes audiobook
+  listings. An audiobook inspection that states no recording facts now fails
+  that item instead of being planned without them (#1303).
+
 - **Clean rebuild required.** An AudioSilo answer whose recording lists more
   regions than the ten admitted marketplaces now keeps the queried ASIN's own
   entry instead of failing as malformed. Malformed, oversized and
