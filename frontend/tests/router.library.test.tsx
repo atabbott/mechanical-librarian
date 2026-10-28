@@ -3924,6 +3924,10 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     expect(within(flaggedSummary).getByText('Overlay or marking')).toBeVisible()
+    expect(within(flaggedSummary).getByText('Overlay or marking')).toHaveClass(
+      'status-pill',
+      'is-danger',
+    )
     expect(within(flaggedSummary).getByText('Degraded reproduction')).toBeVisible()
     if (mediaKind === 'epub') {
       expect(within(flaggedSummary).queryByText('Text-edition branding')).not.toBeInTheDocument()

@@ -27,7 +27,7 @@ button, .button-primary { min-height:2.75rem; padding:.6rem .85rem; color:var(--
 button:disabled { cursor:not-allowed; opacity:.55; }
 .button-primary { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); font-weight:700; }
 .button-danger { border-color:var(--danger); color:var(--danger); background:transparent; }
-.status-pill { display:inline-flex; align-items:center; padding:.18rem .45rem; border-radius:999px; color:var(--soft); background:color-mix(in srgb,var(--line) 55%,transparent); font-size:.72rem; font-weight:650; }
+.status-pill { display:inline-flex; align-items:center; padding:.18rem .45rem; border-radius:999px; color:var(--soft); background:color-mix(in srgb,var(--line) 55%,transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb,currentColor 24%,transparent); font-size:.72rem; font-weight:650; }
 .status-pill.is-notice { color:color-mix(in srgb,var(--notice) 80%,var(--ink)); background:var(--notice-soft); }.status-pill.is-accent { color:var(--accent-strong); background:var(--accent-soft); }.status-pill.is-danger { color:var(--danger); background:var(--danger-soft); }
 :focus-visible { outline:3px solid color-mix(in srgb,var(--focus) 75%,white); outline-offset:3px; }
 h1, h2, h3, p { margin-top:0; }
