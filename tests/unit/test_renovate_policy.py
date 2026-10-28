@@ -69,7 +69,7 @@ def test_only_replacements_and_compatibility_policy_remain_manual() -> None:
     [
         (["node"], "Node runtime"),
         (["python"], "Python runtime"),
-        (["astral-sh/uv", "ghcr.io/astral-sh/uv"], "uv resolver"),
+        (["ghcr.io/astral-sh/uv"], "uv resolver"),
         (["npm"], "npm package manager"),
     ],
 )
@@ -111,6 +111,37 @@ def test_application_manifests_remain_exact() -> None:
             for version in frontend[section].values()
         )
     assert frontend["packageManager"] == "npm@" + frontend["engines"]["npm"]
+
+
+def test_workflow_uv_pin_is_looked_up_where_the_image_pin_is() -> None:
+    """Both uv declarations see one release list, so one update moves both (#1177).
+
+    The registry publishes no release dates; without the optional behaviour the
+    release age would hold the image pin forever while the workflow pin moved.
+    """
+    (override,) = [
+        rule for rule in CONFIG["packageRules"] if "overrideDatasource" in rule
+    ]
+    assert override == {
+        "description": override["description"],
+        "matchManagers": ["github-actions"],
+        "matchDepNames": ["astral-sh/uv"],
+        "overrideDatasource": "docker",
+        "overrideDepName": "ghcr.io/astral-sh/uv",
+        "overridePackageName": "ghcr.io/astral-sh/uv",
+    }
+    optional = [
+        rule for rule in CONFIG["packageRules"] if "minimumReleaseAgeBehaviour" in rule
+    ]
+    assert optional == [
+        {
+            "description": optional[0]["description"],
+            "matchDepNames": ["ghcr.io/astral-sh/uv"],
+            "groupName": "uv resolver",
+            "minimumReleaseAgeBehaviour": "timestamp-optional",
+        }
+    ]
+    assert "minimumReleaseAgeBehaviour" not in CONFIG
 
 
 @pytest.mark.parametrize(

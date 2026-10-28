@@ -38,7 +38,16 @@ from mechanical_librarian.bootstrap.composition import (
     _provider_recovery_jobs,
     _record_provider_recovery_observations,
 )
-from mechanical_librarian.domain.metadata_report import ProviderStatus
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ProviderRequestAccounting,
+    ProviderStatus,
+)
 from mechanical_librarian.domain.provider_recovery import (
     MAX_TIMESTAMP,
     ProviderRecovery,
@@ -3945,6 +3954,139 @@ def test_latest_authoritative_deferral_replaces_waiting_deadline(
             "SELECT state,attempt,next_eligible_at,occurred_at "
             "FROM provider_recovery_events ORDER BY sequence"
         ).fetchall()
+        store.close()
+
+
+def _fold_carried_burst(
+    store: SQLiteProviderRecoveryStore, connection: str, now: int
+) -> None:
+    """Fold a carried, undispatched Google Books observation (#1318).
+
+    Its generic rate limit inherits the pacer window, which has expired, so the
+    fold is a one-second ``burst_throttled`` deferral.
+    """
+    limited = SimpleNamespace(status=ProviderStatus.RATE_LIMITED, diagnostics=())
+    report = SimpleNamespace(
+        providers=(
+            SimpleNamespace(
+                provider=connection,
+                status=ProviderStatus.RATE_LIMITED,
+                authority="google_books",
+                diagnostics=(
+                    FailureDiagnostic(
+                        FailureCategory.QUOTA_RATE_LIMIT,
+                        FailureComponent.PROVIDER,
+                        FailureStage.RESPONSE,
+                    ),
+                ),
+                request_accounting=ProviderRequestAccounting(
+                    logical_requests=2, undispatched_incomplete=2
+                ),
+                lanes=(limited, limited),
+            ),
+        ),
+        audio=None,
+    )
+    _record_provider_recovery_observations(
+        store,
+        report,
+        adapters={connection: "google_books"},
+        scope="books",
+        generation=1,
+        now=now,
+        google_burst_remaining=lambda: 0,
+    )
+
+
+def _health(store: SQLiteProviderRecoveryStore) -> list[tuple[object, ...]]:
+    return store._connection.execute(
+        "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+    ).fetchall()
+
+
+def test_expired_pacer_deferral_never_pulls_forward_an_earned_backoff() -> None:
+    """A carried, undispatched Google Books observation spends no attempt (#1318)."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        identity = {
+            "connection": "google-books-main",
+            "adapter": "google_books",
+            "scope": "books",
+            "generation": 1,
+        }
+        # A transient failure, then a failed recovery attempt: attempt 2 has
+        # earned a four-hour backoff.
+        store.observe_failure(**identity, failure="transient", now=0)
+        claimed = store.claim_one(generation=1, now=7_200, token="first")
+        assert claimed is not None
+        store.complete(token="first", recovery=claimed, now=7_200, failure="transient")
+        _fold_carried_burst(store, "google-books-main", 8_000)
+        assert [("waiting", 2, 21_600)] == _health(store)
+        assert store.claim_one(generation=1, now=8_001, token="early") is None
+        # A deferral longer than the backoff still lengthens it.
+        store.observe_failure(
+            **identity, failure="quota_exhausted", now=8_000, retry_after=90_000
+        )
+        assert [("waiting", 2, 98_000)] == _health(store)
+        store.close()
+
+
+def test_failed_canary_backoff_survives_a_carried_burst_deferral() -> None:
+    """The production path: enqueue, canary failure, then the carried fold."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.enqueue_jobs((_job("a"),), enqueued_at=0)
+        claimed = store.claim_one(generation=1, now=7_200, token="owner")
+        assert claimed is not None
+        canary = store.claim_job(recovery=claimed, token="owner", now=7_200)
+        assert canary is not None
+        store.complete_canary_failure(
+            job=canary,
+            token="owner",
+            recovery=claimed,
+            now=7_200,
+            failure="transient",
+            retry_after=None,
+        )
+        assert [("waiting", 2, 21_600)] == _health(store)
+        events = store._connection.execute(
+            "SELECT count(*) FROM provider_recovery_events"
+        ).fetchone()
+        _fold_carried_burst(store, "google", 8_000)
+        # The dropped deferral writes nothing, so the wait keeps its reason.
+        assert [("waiting", 2, 21_600)] == _health(store)
+        assert (
+            events
+            == store._connection.execute(
+                "SELECT count(*) FROM provider_recovery_events"
+            ).fetchone()
+        )
+        assert [("queued", 1)] == store._connection.execute(
+            "SELECT state,attempt FROM provider_recovery_jobs"
+        ).fetchall()
+        assert store.claim_one(generation=1, now=8_001, token="early") is None
+        assert store.claim_one(generation=1, now=21_600, token="due") is not None
+        store.close()
+
+
+@pytest.mark.parametrize(
+    ("outcome", "deadline"),
+    ((None, 1_001), ("transient", 7_200)),
+    ids=("no_recorded_failure_yields", "recorded_transient_holds"),
+)
+def test_enqueue_placeholder_yields_to_a_deferral_only_without_a_failure(
+    outcome: str | None, deadline: int
+) -> None:
+    """A placeholder backed by its report's transient failure holds its wait."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        job = _job("a")
+        store.enqueue_jobs(
+            (job,), enqueued_at=0, outcomes=None if outcome is None else {job: outcome}
+        )
+        assert [("waiting", 1, 7_200)] == _health(store)
+        _fold_carried_burst(store, "google", 1_000)
+        assert [("waiting", 1, deadline)] == _health(store)
         store.close()
 
 

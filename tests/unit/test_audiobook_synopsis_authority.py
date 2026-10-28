@@ -543,22 +543,13 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
                     (root / f"{scenario}-{kind}.json").read_text().removesuffix("\n")
                 )
         from mechanical_librarian.domain.automatic_decision import (
-            qualification_manifest_is_current,
+            AutomaticDecisionError,
         )
 
         for index in range(2):
             file = root / f"{scenario}-automatic-{index}.json"
-            decision = AutomaticDecision.from_json(file.read_text().removesuffix("\n"))
-            from mechanical_librarian.application.field_effects import (
-                authority_from_decision,
-            )
-
-            assert authority_from_decision(decision) is None
-            assert not qualification_manifest_is_current(
-                decision.policy_category,
-                decision.policy_option,
-                decision.qualification_manifest_sha256,
-            )
+            with pytest.raises(AutomaticDecisionError):
+                AutomaticDecision.from_json(file.read_text().removesuffix("\n"))
     report = retained_report_as_current(
         (root / "ebook-report.json").read_text().removesuffix("\n")
     )
@@ -890,6 +881,8 @@ def test_replacement_option_fills_each_empty_target_state(tmp_path, state, value
 def test_historical_automatic_queue_cannot_reach_scheduler_authority(effects):
     from pathlib import Path
 
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
+
     root = Path(__file__).parents[1] / "fixtures/audiobook-synopsis-predecessor"
     documents = tuple(
         p.read_text().removesuffix("\n")
@@ -917,8 +910,9 @@ def test_historical_automatic_queue_cannot_reach_scheduler_authority(effects):
             "resolve",
             side_effect=AssertionError("historical decision reached authority"),
         ),
+        pytest.raises(AutomaticDecisionError),
     ):
-        assert lane.schedule() == 0
+        lane.schedule()
     assert effects.repository._connection.execute(
         "SELECT count(*) FROM field_effects"
     ).fetchone() == (0,)

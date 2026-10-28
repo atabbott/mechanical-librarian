@@ -146,10 +146,11 @@ from tests.unit.test_cover_packets import (
 class _CloseRecordingRepository(FakeReviewRepository):
     """The fake repository with the transport-owned close recorded, not run.
 
-    The fake declares no `close` of its own, and the two shutdown proofs
-    below need one that records the call. Declaring it here keeps the seam a
-    real member of a local double rather than an assignment onto a bound
-    name, so a rename reaches this file instead of passing silently.
+    The shared fake's `close` releases nothing and records nothing, and the
+    two shutdown proofs below need one that records the call. Overriding it
+    here keeps the seam a real member of a local double rather than an
+    assignment onto a bound name, so a rename reaches this file instead of
+    passing silently.
     """
 
     def __init__(self, case: ReviewCase, report) -> None:

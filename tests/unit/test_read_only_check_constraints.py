@@ -13,8 +13,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from scripts import qualification_state_bridge as bridge
 
-import mechanical_librarian.adapters.persistence.qualification_state_bridge as bridge
 from mechanical_librarian.adapters.persistence import catalogue, metadata_reports
 from mechanical_librarian.adapters.persistence import provider_recovery as recovery
 from mechanical_librarian.adapters.persistence.catalogue import (

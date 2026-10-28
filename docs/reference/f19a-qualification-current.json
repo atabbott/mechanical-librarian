@@ -15,15 +15,8 @@
       "title:replace_target:provider_consensus_noise",
       "title_layout:preserve",
       "title_layout:title_and_subtitle"
-    ],
-    "semantic_input_sha256": "2f261cee2b86bfa7b05e208c472051a1ec8762c364df16b9b324073f6f342fcb",
-    "semantic_revision": 79
-  },
-  "predecessor": {
-    "path": "docs/reference/f19a-qualification-current.json",
-    "sha256": "65436adcd96e1958e2a96661f0c6c033d2d95edc70d7515b38316a518cdb5d77",
-    "source_sha": "807cabab051eb06324fc991da2a5f82d4f64ed31"
+    ]
   },
   "provenance": "qualification-provenance-current.json",
-  "schema": "qualification-current-v1"
+  "schema": "qualification-current-v2"
 }

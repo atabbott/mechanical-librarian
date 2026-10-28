@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -284,7 +285,7 @@ def test_retained_qualification_predecessor_bytes_are_frozen():
     "invalid",
     (None, "unknown", "ebook", "null", "bool", "identity", "unqualified_fill"),
 )
-def test_retained_audiobook_cover_binds_recorded_exact_permissions(invalid):
+def test_retained_audiobook_cover_rebinds_only_current_exact_permissions(invalid):
     from mechanical_librarian.application.field_effects import authority_from_decision
     from mechanical_librarian.domain.automatic_decision import (
         F19A_QUALIFICATION_MANIFEST_SHA256,
@@ -300,31 +301,33 @@ def test_retained_audiobook_cover_binds_recorded_exact_permissions(invalid):
             / "support/retained_qualification_predecessors/cover.json"
         ).read_text()
     )
-    document = fixture["decision"]
-    decision = CoverAutomaticDecision.from_json(document)
-    assert decision.to_json() == document
-    assert authority_from_decision(decision) is None
-    if invalid is None:
-        import inspect
+    import inspect
 
-        current = CoverAutomaticDecision.create(
-            **{
-                key: getattr(decision, key)
-                for key in inspect.signature(CoverAutomaticDecision.create).parameters
-            }
-        )
-        assert (
-            current.qualification_manifest_sha256
-            != decision.qualification_manifest_sha256
-        )
-        assert current.decision_id == decision.decision_id
-        assert authority_from_decision(current) is not None
-        assert CoverAutomaticDecision.from_json(current.to_json()) == current
-        assert (
-            "qualification_manifest_sha256"
-            not in inspect.signature(CoverAutomaticDecision.create).parameters
-        )
+    document = fixture["decision"]
+    retained = json.loads(document)
+    # The retained decision's earlier F46 digest no longer decodes (ADR-0087).
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.from_json(document)
+    parameters = inspect.signature(CoverAutomaticDecision.create).parameters
+    assert "qualification_manifest_sha256" not in parameters
+    values: dict[str, Any] = {
+        key: tuple(retained[key])
+        if key in {"rank_key", "citation_ids"}
+        else retained[key]
+        for key in parameters
+    }
+    current = CoverAutomaticDecision.create(**values)
+    assert (
+        current.qualification_manifest_sha256
+        != retained["qualification_manifest_sha256"]
+    )
+    assert current.decision_id == retained["decision_id"]
+    assert authority_from_decision(current) is not None
+    assert CoverAutomaticDecision.from_json(current.to_json()) == current
+    if invalid is None:
         return
+    decision = current
+    document = current.to_json()
     data = json.loads(document)
     if invalid == "identity":
         data["idempotency_digest"] = "0" * 64

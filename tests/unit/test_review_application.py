@@ -23,7 +23,10 @@ from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyRepository,
     PolicyImpactRepository,
 )
-from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.owner_settings import (
+    OwnerSettingsOperations,
+    OwnerSettingsRepository,
+)
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
     ReviewApplicationError,
@@ -94,6 +97,31 @@ def test_composed_policy_store_declares_the_safety_seam() -> None:
     # assertion above is a live check of what the composition declares
     # rather than a restatement of the policy contract.
     assert frozenset() == safety & get_protocol_members(PolicyImpactRepository)
+
+
+@pytest.mark.parametrize(
+    "parameter",
+    (
+        "state_owner",
+        "session_store",
+        "case_store",
+        "decision_store",
+        "library_store",
+        "policy_store",
+    ),
+)
+def test_shared_double_implements_every_port_it_is_composed_into(
+    repository: FakeReviewRepository, parameter: str
+) -> None:
+    # Stated by reflection rather than left to call sites (#780): the served
+    # transport fixture composes the double through an unannotated argument,
+    # so the type gate never sees most of its bindings.
+    port = get_type_hints(compose_review_application)[parameter]
+    assert set() == {
+        name
+        for name in get_protocol_members(port)
+        if not callable(getattr(repository, name, None))
+    }
 
 
 def test_automatic_safety_controls_declare_the_store_they_require() -> None:
@@ -190,7 +218,7 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
-        settings=OwnerSettingsOperations(cast("object", Settings())),
+        settings=OwnerSettingsOperations(cast("OwnerSettingsRepository", Settings())),
         cover_considerations=cast("CoverConsiderationService", covers),
     )
 
@@ -255,7 +283,7 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
-        settings=OwnerSettingsOperations(cast("object", Settings())),
+        settings=OwnerSettingsOperations(cast("OwnerSettingsRepository", Settings())),
         cover_considerations=cast("CoverConsiderationService", Covers()),
     )
 
@@ -831,7 +859,7 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
-        preparation=preparation,
+        preparation=cast("ReviewPreparationSupervisor", preparation),
     )
     probe = threading.Thread(
         target=lambda: application.check_review_preparation_connection("primary")
@@ -955,7 +983,7 @@ def test_library_display_rename_preserves_case_and_target_identity(repository):
         clock=lambda: _NOW,
         session_lifetime_seconds=600,
         graceful_shutdown_seconds=30,
-        settings=OwnerSettingsOperations(cast("object", settings)),
+        settings=OwnerSettingsOperations(cast("OwnerSettingsRepository", settings)),
     )
     before = application.library(
         lens="all", search=None, limit=20, cursor=None

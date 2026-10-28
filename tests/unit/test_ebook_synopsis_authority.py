@@ -233,10 +233,9 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation():
     import hashlib
     from pathlib import Path
 
-    from mechanical_librarian.application.field_effects import authority_from_decision
     from mechanical_librarian.domain.automatic_decision import (
         AutomaticDecision,
-        qualification_manifest_is_current,
+        AutomaticDecisionError,
     )
     from mechanical_librarian.domain.proposal_set import ProposalSet
     from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet
@@ -282,13 +281,8 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation():
                     )
             for index in range(1 if scenario == "concise" else 2):
                 path = capture / f"{scenario}-automatic-{index}.json"
-                decision = AutomaticDecision.from_json(path.read_text().strip())
-                assert authority_from_decision(decision) is None
-                assert not qualification_manifest_is_current(
-                    decision.policy_category,
-                    decision.policy_option,
-                    decision.qualification_manifest_sha256,
-                )
+                with pytest.raises(AutomaticDecisionError):
+                    AutomaticDecision.from_json(path.read_text().strip())
 
 
 def test_genuine_predecessor_store_refuses_before_row_validation(tmp_path):

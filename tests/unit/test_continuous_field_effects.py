@@ -19,7 +19,6 @@ from mechanical_librarian.application.field_effects import (
     TargetServiceUnavailable,
 )
 from mechanical_librarian.domain.automatic_decision import (
-    F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
 from mechanical_librarian.domain.field_effect import (
@@ -835,67 +834,6 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
     assert repository.retired == [(decision.decision_id, 102)]
 
 
-def _prior_qualification_decision(prior_digest: str) -> AutomaticDecision:
-    if prior_digest.startswith("captured:"):
-        from pathlib import Path
-
-        document = json.loads(
-            (
-                Path(__file__).parents[1]
-                / "support/automatic_decision_predecessors/before-dependency-provenance.json"
-            ).read_bytes()
-        )
-        return AutomaticDecision.from_json(
-            document["AutomaticDecision"][int(prior_digest.split(":")[1])]
-        )
-
-    def digest(value: object) -> str:
-        return hashlib.sha256(
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
-
-    f19a = prior_digest in {
-        "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
-        "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014",
-    }
-    current = AutomaticDecision.create(
-        review_case_id="review_case_" + "1" * 64,
-        report_id="report_" + "2" * 64,
-        proposal_set_id="proposal_set_" + "3" * 64,
-        proposal_id="review_proposal_" + "4" * 64,
-        target_fingerprint="b" * 64,
-        destination="title" if f19a else "genres",
-        outcome="candidate",
-        candidate_id="alternative_" + "5" * 64,
-        resolved_policy_id="resolved_policy_" + "6" * 64,
-        policy_generation=1,
-        rule_id="shadow_rule_" + "7" * 64,
-        policy_category="title" if f19a else "genres",
-        policy_option="replace_target:decoration_tidy" if f19a else "add",
-        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256
-        if f19a
-        else F20_QUALIFICATION_CANDIDATE_SHA256,
-        source_outcome_id="shadow_outcome_" + "8" * 64,
-        bundle_id=None,
-        occurred_at=1,
-    )
-    core = {
-        **current._core(),
-        "qualification_manifest_sha256": (prior_digest),
-    }
-    return AutomaticDecision(
-        decision_id="automatic_decision_" + digest({**core, "occurred_at": 1}),
-        **core,
-        idempotency_digest=digest(core),
-        occurred_at=1,
-    )
-
-
 def _bindable_f20_decision(occurred_at: int) -> AutomaticDecision:
     return AutomaticDecision.create(
         review_case_id="review_case_" + f"{occurred_at:064x}",
@@ -984,109 +922,6 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
     assert repository.attempts == 2
     assert service.activity()["last_failure"] is None
     assert transitions[-1] == ("activity", None)
-
-
-@pytest.mark.parametrize(
-    "prior_digest",
-    (
-        *(f"captured:{index}" for index in range(8)),
-        "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff",
-        "7aeaca9b020022b9ab385a9baf249d1b63dc7ffcfcc4a20735d6f6480b5b68e7",
-        "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
-        "47b142cfea8c5d73ed267cb71f85a0edf3ab4b646ad29bba457a1f03b7aa37f2",
-        "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
-        "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
-        "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
-        "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd",
-        "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014",
-        "retained-cover",
-    ),
-)
-def test_schedule_skips_prior_qualification_before_no_change_authority_or_capability(
-    prior_digest: str,
-) -> None:
-    from mechanical_librarian.domain.cover_automatic_decision import (
-        CoverAutomaticDecision,
-    )
-
-    decision: AutomaticDecision | CoverAutomaticDecision
-    if prior_digest == "retained-cover":
-        from pathlib import Path
-
-        fixture = json.loads(
-            (
-                Path(__file__).parents[1]
-                / "support/retained_qualification_predecessors/cover.json"
-            ).read_text()
-        )
-        decision = CoverAutomaticDecision.from_json(fixture["decision"])
-        assert decision.to_json() == fixture["decision"]
-    else:
-        decision = _prior_qualification_decision(prior_digest)
-        assert AutomaticDecision.from_json(decision.to_json()) == decision
-
-    class Repository(_PagedRepository):
-        def record_current_field_effect_no_change(self, *_arguments):
-            raise AssertionError("prior decision reached no-change persistence")
-
-        def pending_field_effect_decision_counts(self):
-            return (
-                {
-                    "connection": "primary",
-                    "library": "alpha",
-                    "origin": "automatic",
-                    "destination": "title",
-                    "count": 1,
-                },
-            )
-
-        def field_effect_activity_data(self, _limit):
-            return {
-                "lapsed_consents": [],
-                "consented_destinations": [],
-                "consented_libraries": [],
-                "counts": {},
-                "events": [],
-                "paused": False,
-                "suspensions": [],
-            }
-
-    class CountingAuthority(_Authority):
-        calls = 0
-
-        def resolve(self, selected):
-            self.calls += 1
-            return super().resolve(selected)
-
-    class CountingCapability(_AllowedCapability):
-        calls = 0
-
-        def observe(self, probe):
-            self.calls += 1
-            return super().observe(probe)
-
-    repository = Repository([decision])
-    authority = CountingAuthority()
-    capability = CountingCapability()
-    service = ContinuousGuardedApplication(
-        repository,
-        cast(
-            "dict[tuple[str, str], GuardedFieldApplication]",
-            {("primary", "alpha"): _Planner()},
-        ),
-        {("primary", "alpha"): capability},
-        authority,
-        (("primary", "alpha"),),
-        lambda: 1,
-        lambda *_: None,
-    )
-
-    assert 0 == service.schedule()
-    assert authority.calls == 0
-    assert capability.calls == 0
-    activity = service.activity()
-    assert "continuous-field-activity-v3" == activity["schema_version"]
-    assert 1 == activity["prepared"]["automatic"]
 
 
 def test_return_to_automatic_releases_only_after_current_scan_completes() -> None:

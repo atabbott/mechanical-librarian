@@ -9,6 +9,33 @@
   on Escape, and Tab closes a dropdown onto its trigger. Headings keep one
   outline and Activity reads each change as a sentence (#1288).
 
+- **Clean rebuild required.** Automatic authority now binds only the operations
+  each qualification permits, so ordinary source changes no longer rotate it.
+  Automatic decisions recorded under an earlier qualification are refused
+  rather than kept as decode-only history, outcomes move to
+  `shadow-outcome-set-v11`, and the qualification-state bridge leaves the
+  installed CLI for `scripts/` (#1396).
+
+- A managed uv update now moves the CI workflow and container pins together in
+  one Renovate pull request, instead of moving only the workflow pin (#1177).
+
+- Once a provider failure has earned a wait before its next retry, a later
+  throttle can lengthen that wait but no longer shorten it. A one-second Google
+  Books pacing hold carried by a retried report no longer brings the next retry
+  forward from hours away, so a pacing pause no longer uses up a recovery
+  attempt (#1318).
+
+- The shared review test double now satisfies every port it is bound into (#780).
+
+- A review case's history now shows the same owner decisions, description
+  advice and description selections on every read when several share one
+  second: each is cut to the history limit in the order it is displayed, rather
+  than in whatever order the database happened to return (#1209).
+
+- The Audiobookshelf field-effect canary runs end to end again: its synthetic
+  catalogues no longer split title and author evidence, and its cover accept is
+  pinned to the decision contract (#1427, #1185).
+
 - The workspace opens in your saved or system theme without a light flash,
   uses its documented Inter typeface (self-hosted, OFL), and its main actions,
   including Confirm write permissions, share one filled style; status chips and

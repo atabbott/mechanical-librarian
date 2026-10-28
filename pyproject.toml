@@ -352,14 +352,14 @@ disable_error_code = ["attr-defined", "index"]
 # enforced above, and suppressing it per module keeps the enforced default
 # correct for every module not on this list. The list can only shrink: fix a
 # module's findings and delete its entry. It is not a judgement that the
-# findings are noise — `tests/unit/test_review_application.py` is here because
-# the shared `FakeReviewRepository` satisfies none of `BrowserStateOwner`'s
-# three members and 12 of `ReviewPolicyStore`'s 19, `automatic_safety_state`
-# among them, which is the member #658's outage was about. Removing an entry
-# is real work with real risk, because a double that starts satisfying a port
-# can change what a test proves: `AutomaticSafetyControls` reports a missing
-# member as "automatic safety is unavailable", so a test proving that state
-# may depend on the double lacking it.
+# findings are noise — `tests/unit/test_review_application.py` was here
+# because the shared `FakeReviewRepository` lacked members of the ports it is
+# composed into, `automatic_safety_state` among them, which is the member
+# #658's outage was about (#780). Removing an entry is real work with real
+# risk, because a double that starts satisfying a port can change what a test
+# proves: `AutomaticSafetyControls` reports a missing member as "automatic
+# safety is unavailable", so a test proving that state may depend on the
+# double lacking it.
 module = [
   "scripts.qualify_audiobookshelf_field_effect",
   "tests.unit.test_audiobookshelf_field_effect",
@@ -395,7 +395,6 @@ module = [
   "tests.unit.test_provider_recovery",
   "tests.unit.test_provider_retry_successor",
   "tests.unit.test_remote_cover",
-  "tests.unit.test_review_application",
   "tests.unit.test_review_case_persistence",
   "tests.unit.test_review_field_classification",
   "tests.unit.test_review_library_persistence",

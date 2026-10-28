@@ -140,6 +140,8 @@ remain outside authority; frozen historical decoding never grants current rights
 The [qualification contract](../../product/rich-metadata-qualification.md#current-compact-authority)
 owns the stable records, inventory and immutable archive. This supersedes the
 cumulative full-record binding representation, preserving every operation and pair.
+[ADR-0087](0087-operation-bound-qualification-authority.md) supersedes the
+semantic/provenance source ownership: authority binds permitted operations only.
 Outcome v9 and its exact SQL/API contract require a clean rebuild, with no adoption
 or migration, because binding-derived identities and live F46 cover rules cannot
 safely reinterpret predecessor stores. Empty predecessor stores also refuse.

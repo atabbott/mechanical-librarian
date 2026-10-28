@@ -84,17 +84,13 @@ describes, and nowhere else. What merging proves today:
   number is the number of the file it links to;
 - no two ADRs share a number;
 - every direct dependency `pyproject.toml` declares carries an authority grant
-  in `docs/development/dependencies.md`, no grant outlives the dependency it
-  covers, and a grant's own spelled count still matches its subjects;
+  in `docs/development/dependencies.md`, and no grant outlives the dependency
+  it covers;
 - the generated `docs/reference/review-openapi-v1.json` matches the routes, and
   `docs/reference/config-v9.schema.json` matches the configuration model;
 - `docs/examples/synthetic-config.json` is executable — the CLI tests load it;
 - `CONTRIBUTING.md`'s check table matches `.github/workflows/public-gate.yml`
   row by row;
-- `docs/operations/deployment.md` states the operational facts
-  `tests/unit/test_operations.py` requires and none it forbids;
-- no `CHANGELOG.md` entry exceeds its line budget, and every entry names its
-  issue apart from the pre-convention entries the guard grandfathers by name;
 - generating everything leaves the tree clean.
 
 The first four are `scripts/verify_documentation_integrity.py`, which the

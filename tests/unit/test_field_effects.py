@@ -49,7 +49,6 @@ from mechanical_librarian.application.continuous_field_effects import (
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
-    authority_from_decision,
 )
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
 from mechanical_librarian.domain import audiobook_decision_qualification
@@ -65,7 +64,6 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
-    project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
@@ -128,7 +126,6 @@ from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
-from tests.unit.test_series_work_applicability import _isbn_series_report
 
 if TYPE_CHECKING:
     # Annotation-only: `TimingCollector` stands in for `TimingRepository`, whose
@@ -2825,167 +2822,6 @@ def test_an_activated_audiobook_tranche_plans_through_the_same_guarded_path(
     assert result.plan.authority.origin == "automatic_policy"
     effects.target.seed(result.plan)
     assert effects.service.apply(result.plan.plan_id).state == "verified"
-
-
-@pytest.mark.parametrize(
-    "prior_digest",
-    (
-        "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff",
-        "7aeaca9b020022b9ab385a9baf249d1b63dc7ffcfcc4a20735d6f6480b5b68e7",
-        "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
-        "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
-        "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
-        "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
-        "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
-        "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
-        "19939b85acb471fb17c076a44c6a0dd173f6c32e5a951986b9e65060458cfd8a",
-    ),
-)
-@pytest.mark.parametrize(
-    "category, option",
-    (
-        ("tags", "fill_empty"),
-        ("series", "primary_narrative"),
-        ("series", "source_order"),
-        ("series", "all_qualified"),
-    ),
-)
-def test_legacy_rich_decision_stays_readable_without_effect_authority(
-    effects: _EffectEnvironment,
-    prior_digest: str,
-    category: str,
-    option: str,
-) -> None:
-    current = next(
-        decision
-        for decision in _automatic_decisions(
-            effects,
-            _isbn_series_report()
-            if category == "series"
-            else _target_work_report(
-                (
-                    (
-                        "catalogue",
-                        "hardcover",
-                        (_target_work_candidate("catalogue", "edition-1", "work-1"),),
-                        True,
-                    ),
-                )
-            ),
-            category,
-            option,
-            qualified=True,
-        )
-        if decision.destination == category and decision.outcome == "candidate"
-    )
-    assert current.qualification_manifest_sha256 != prior_digest
-    assert authority_from_decision(current) is not None
-    legacy_core = {
-        **current._core(),
-        "qualification_manifest_sha256": prior_digest,
-    }
-
-    def digest(value: object) -> str:
-        return hashlib.sha256(
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode()
-        ).hexdigest()
-
-    legacy = AutomaticDecision(
-        decision_id="automatic_decision_"
-        + digest({**legacy_core, "occurred_at": current.occurred_at}),
-        **legacy_core,
-        idempotency_digest=digest(legacy_core),
-        occurred_at=current.occurred_at,
-    )
-    assert legacy == AutomaticDecision.from_json(legacy.to_json())
-    assert authority_from_decision(legacy) is None
-
-    connection = effects.repository._connection
-    connection.execute("DROP TRIGGER automatic_decisions_no_update")
-    connection.execute("DROP TRIGGER automatic_decisions_no_delete")
-    connection.execute(
-        "DELETE FROM automatic_decisions WHERE decision_id=?",
-        (current.decision_id,),
-    )
-    connection.execute(
-        "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-        "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
-        (
-            legacy.decision_id,
-            legacy.review_case_id,
-            legacy.destination,
-            legacy.idempotency_digest,
-            legacy.occurred_at,
-            legacy.to_json(),
-        ),
-    )
-    connection.execute(
-        "CREATE TRIGGER automatic_decisions_no_update BEFORE UPDATE ON "
-        "automatic_decisions BEGIN SELECT RAISE(ABORT, 'automatic decisions are "
-        "append-only'); END"
-    )
-    connection.execute(
-        "CREATE TRIGGER automatic_decisions_no_delete BEFORE DELETE ON "
-        "automatic_decisions BEGIN SELECT RAISE(ABORT, 'automatic decisions are "
-        "append-only'); END"
-    )
-    connection.commit()
-    assert legacy.to_json() in effects.repository.get_review_case_decisions(
-        legacy.review_case_id
-    )
-    snapshot = effects.repository.read_review_library(None, 20, 0, None)
-    assert any(legacy.to_json() in row[2] for row in snapshot.rows)
-
-    source = effects.repository.field_effect_authority_source(legacy)
-    consent = effects.repository.grant_field_effect_consents(
-        cast(str, source["connection"]),
-        (cast(str, source["library"]),),
-        (legacy.destination,),
-        5,
-    )[0]
-    authority = EffectAuthority(
-        legacy.decision_id,
-        legacy.review_case_id,
-        legacy.target_fingerprint,
-        "persisted_review_case",
-        "automatic_policy",
-        "candidate",
-        legacy.resolved_policy_id,
-        legacy.qualification_manifest_sha256,
-    )
-    plan = FieldEffectPlan.create(
-        connection=cast(str, source["connection"]),
-        library=cast(str, source["library"]),
-        work_id=cast(str, source["work_id"]),
-        destination=legacy.destination,
-        pre_value=source["pre_value"],
-        desired_value=project_decision_value(
-            legacy.destination, source["decision_value"]
-        ),
-        target_fingerprint=legacy.target_fingerprint,
-        target_version=cast(str, source["target_version"]),
-        dependency_digests=cast(tuple[str, ...], source["dependency_digests"]),
-        authority=authority,
-        consent=consent,
-        capability_digest=CAPABILITY,
-        created_at=5,
-    )
-    effects.repository.record_field_effect(FieldEffectOperation(plan, updated_at=5))
-
-    assert not effects.repository.field_effect_authority_is_current(authority)
-    with pytest.raises(FieldEffectError, match="^authority$"):
-        effects.repository.claim_field_effect(
-            plan.plan_id,
-            "planned",
-            "a" * 64,
-            6,
-        )
-    assert effects.repository.get_field_effect(plan.plan_id).state == "planned"
 
 
 def test_effect_modules_cannot_construct_audiobookshelf_or_media_writes(
@@ -7890,6 +7726,7 @@ def test_permission_readiness_never_reuses_a_previous_success(
 
 
 def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effects):
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
     from mechanical_librarian.domain.cover_automatic_decision import (
         CoverAutomaticDecision,
     )
@@ -7914,12 +7751,9 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
             selected_options={"cover_order": "replace_if_strictly_better"},
         )
         assert case_id != fixture["consideration"]["review_case_id"]
-        historical_decision = CoverAutomaticDecision.from_json(fixture["decision"])
-        assert historical_decision.to_json() == fixture["decision"]
-        assert (
-            historical_decision.review_case_id
-            == operation.plan.authority.review_case_id
-        )
+        # The retained decision's earlier F46 digest no longer decodes.
+        with pytest.raises(AutomaticDecisionError):
+            CoverAutomaticDecision.from_json(fixture["decision"])
         source.record_field_effect(operation)
         source.close()
         repository = open_repository(path, create=False)

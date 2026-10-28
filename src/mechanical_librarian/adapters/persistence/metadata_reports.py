@@ -182,7 +182,6 @@ from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
-    matches_historical_rich_outcome,
 )
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
@@ -1835,9 +1834,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             proposal,
             media_kind=case.media_kind,
         )
-        if expected.to_json() != row[7] and not matches_historical_rich_outcome(
-            expected, outcome, policy, report, proposal
-        ):
+        if expected.to_json() != row[7]:
             raise MetadataReportError("shadow outcome persistence is invalid")
         return outcome.to_json(), row[6]
 

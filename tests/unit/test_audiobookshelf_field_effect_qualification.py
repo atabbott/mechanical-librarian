@@ -20,6 +20,7 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _audiobook_canary,
     _compose_review_client,
     _epub,
+    _installed_accept_payload,
     _installed_consent_grants,
     _installed_mutation_headers,
     _operator_epub,
@@ -50,7 +51,9 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     FieldEffectPlan,
 )
+from mechanical_librarian.domain.human_decision import validate_cover_confirmation
 from mechanical_librarian.infrastructure.configuration import ConfigurationInput
+from mechanical_librarian.interfaces.web.app import _DecisionRequest
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
 
 
@@ -449,9 +452,7 @@ def test_return_lineage_reads_hold_before_progress() -> None:
 def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane() -> (
     None
 ):
-    client = _qualification_hardcover_client(
-        {}, "synthetic-provider-token-a", {}, {}, {}
-    )
+    client = _qualification_hardcover_client({}, {}, {}, {})
     try:
         isbn_response = client.post(
             "https://qualification.invalid/graphql",
@@ -475,6 +476,31 @@ def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane
     assert isbn_data["books"][0]["id"] != work_data["books"][0]["id"]
 
 
+def test_generated_canary_catalogues_agree_with_the_generated_epub() -> None:
+    # #1427: split title or author evidence is a material conflict the policy
+    # keeps for the owner, so it can never prove an automatic decision.
+    corrections = {"After": "Before", "Guarded qualification title": "Before"}
+    with _qualification_hardcover_client(corrections, {}, {}, {}) as client:
+        responses = (
+            client.post(
+                "https://qualification.invalid/graphql",
+                json={"variables": {"isbns": ["9780306406157"]}},
+            ),
+            client.post(
+                "https://qualification.invalid/graphql",
+                json={"variables": {"title": "After", "authors": ["Seed Author"]}},
+            ),
+        )
+
+    for response in responses:
+        edition = json.loads(response.content)["data"]["editions"][0]
+        assert edition["title"] == "Before"
+        assert [value["author"]["name"] for value in edition["contributions"]] == [
+            "Synthetic Author",
+            "Second Qualified Author",
+        ]
+
+
 def test_missing_installed_destination_fails_full_chain_qualification() -> None:
     expected = {"title": "automatic_policy", "cover": "human"}
     with pytest.raises(
@@ -494,6 +520,56 @@ def test_missing_installed_destination_fails_full_chain_qualification() -> None:
         activity_present=True,
         diagnostics={},
     )
+
+
+@pytest.mark.parametrize(
+    ("current_selection", "match_state", "confirm"),
+    [
+        (None, "match_not_confirmed", True),
+        ("cover_selection_" + "a" * 64, "match_confirmed", False),
+    ],
+)
+def test_installed_cover_accept_satisfies_the_decision_contract(
+    current_selection: str | None, match_state: str, confirm: bool
+) -> None:
+    # #1185: the canary's cover accept drifted from the contract once already.
+    field: dict[str, object] = {
+        "current_cover_selection_id": current_selection,
+        "destination": "cover",
+        "proposal_id": "review_proposal_" + "b" * 64,
+        "target_fingerprint": "c" * 64,
+    }
+    selected_cover: dict[str, object] = {
+        "artifact_id": "artifact",
+        "match_state": match_state,
+    }
+    payload = _installed_accept_payload(
+        field,
+        {"kind": "cover", "value": "artifact"},
+        ("cover_consideration_" + "d" * 64, selected_cover),
+    )
+
+    assert payload["cover_confirmation"] == {
+        "expected_selection_id": current_selection,
+        "confirm_unverified_match": confirm,
+    }
+    assert (
+        validate_cover_confirmation(payload["cover_confirmation"])
+        is (payload["cover_confirmation"])
+    )
+    _DecisionRequest.model_validate(payload)
+
+
+def test_installed_non_cover_accept_carries_no_cover_confirmation() -> None:
+    field: dict[str, object] = {
+        "destination": "description",
+        "proposal_id": "review_proposal_" + "b" * 64,
+        "target_fingerprint": "c" * 64,
+    }
+    payload = _installed_accept_payload(field, {"kind": "text", "value": "x"})
+
+    assert "cover_confirmation" not in payload
+    assert "consideration_id" not in payload
 
 
 def test_missing_persisted_automatic_series_authority_fails_qualification() -> None:
@@ -667,7 +743,6 @@ def test_installed_series_provider_controls_retain_number_and_author_boundaries(
     title = "Synthetic series control"
     with _qualification_hardcover_client(
         {},
-        "synthetic-provider-token-a",
         {},
         {"9780140328721": title},
         {},

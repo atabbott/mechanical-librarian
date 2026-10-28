@@ -397,7 +397,7 @@ def _shadow_outcome(
             f"resolved_policy_{key}",
             json.dumps(
                 {
-                    "schema_version": "shadow-outcome-set-v10",
+                    "schema_version": "shadow-outcome-set-v11",
                     "decision_policy_version": DECISION_POLICY_VERSION,
                     "decision_policy_sha256": DECISION_POLICY_SHA256,
                     "outcomes": [
