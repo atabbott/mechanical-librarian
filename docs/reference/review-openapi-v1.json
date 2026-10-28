@@ -6194,6 +6194,42 @@
         "title": "_LanguageEbookQualification",
         "type": "object"
       },
+      "_LibraryCover": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Height",
+            "type": "integer"
+          },
+          "preview_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Preview Sha256",
+            "type": "string"
+          },
+          "url": {
+            "maxLength": 2048,
+            "pattern": "^/api/v1/library/cover\\?",
+            "title": "Url",
+            "type": "string"
+          },
+          "width": {
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Width",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "height",
+          "preview_sha256",
+          "url",
+          "width"
+        ],
+        "title": "_LibraryCover",
+        "type": "object"
+      },
       "_LibraryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6289,6 +6325,16 @@
             },
             "title": "Authors",
             "type": "array"
+          },
+          "cover": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_LibraryCover"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "detail_kind": {
             "anyOf": [
@@ -11669,6 +11715,113 @@
           }
         ],
         "summary": "Library"
+      }
+    },
+    "/api/v1/library/cover": {
+      "get": {
+        "description": "Read-only: the library cover a work's current report retains.\n\nOnly the preview digest the current report binds to the library's own\ncover is served, so a guessed digest, another work's, or a provider's\nimage is not found.",
+        "operationId": "library_cover_api_v1_library_cover_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "connection",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Connection",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Library",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "item",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Item",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "preview",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Preview",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Library Cover"
       }
     },
     "/api/v1/library/report": {

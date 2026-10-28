@@ -881,10 +881,20 @@ class _LibraryWorkSummary(_ClosedModel):
     ]
 
 
+class _LibraryCover(_ClosedModel):
+    # The library's own cover, retained by the work's current report and served
+    # only by this digest at /api/v1/library/cover (#1290).
+    height: int = Field(ge=1, le=8192)
+    preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    url: str = Field(pattern=r"^/api/v1/library/cover\?", max_length=2048)
+    width: int = Field(ge=1, le=8192)
+
+
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
     attention_state: Literal["needs_attention", "no_attention_needed", "not_matched"]
+    cover: _LibraryCover | None = None
     detail_url: str | None
     # `case` opens a review case, `report` opens the recorded evidence of a
     # work that has none, and `None` means there is nothing to open. Closed
@@ -3847,6 +3857,50 @@ def _register_browse_and_preparation_routes(
         _require_session(sessions, ml_session)
         return _ReportDetailResponse.model_validate(
             _report_call(lambda: application.report_detail(connection, library, item))
+        )
+
+    @app.get(
+        "/api/v1/library/cover",
+        response_class=Response,
+        responses={
+            200: {
+                "content": {
+                    "image/png": {"schema": {"type": "string", "format": "binary"}}
+                }
+            },
+            **{status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)},
+        },
+    )
+    def library_cover(
+        connection: str = Query(max_length=512),
+        library: str = Query(max_length=512),
+        item: str = Query(max_length=512),
+        preview: str = Query(max_length=64),
+        ml_session: str | None = Security(session_cookie),
+    ) -> Response:
+        """Read-only: the library cover a work's current report retains.
+
+        Only the preview digest the current report binds to the library's own
+        cover is served, so a guessed digest, another work's, or a provider's
+        image is not found.
+        """
+        _require_session(sessions, ml_session)
+        try:
+            payload = application.library_cover(connection, library, item, preview)
+        except (ReviewWebError, ReviewApplicationError) as error:
+            status = 404 if error.code == "missing" else 503
+            code = "not_found" if status == 404 else "unavailable"
+            raise HTTPException(status, detail={"code": code}) from None
+        return Response(
+            content=payload,
+            media_type="image/png",
+            headers={
+                # The URL names the preview by its digest, so these bytes
+                # cannot change.
+                "Cache-Control": _IMMUTABLE_CACHE,
+                "Content-Security-Policy": "default-src 'none'",
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @app.get(

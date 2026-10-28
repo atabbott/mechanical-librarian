@@ -71,6 +71,13 @@ from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
@@ -2903,6 +2910,78 @@ def test_every_library_row_names_what_its_address_opens() -> None:
     # Preparation stopped before a report existed, so there is nothing to open
     # and the row says so rather than offering an address that answers nothing.
     assert (stopped["detail_kind"], stopped["detail_url"]) == (None, None)
+
+
+def _library_cover_source(
+    kind: CoverSourceKind,
+    state: CoverSourceState,
+    *,
+    size: tuple[int, int] = (302, 452),
+) -> CoverSource:
+    return CoverSource(
+        cover_source_id(kind, "item-1"),
+        kind,
+        state,
+        CoverArtifact.create(
+            b"original-" + kind.value.encode(),
+            b"preview-" + kind.value.encode(),
+            "image/png",
+            *size,
+        )
+        if state is CoverSourceState.RETRIEVED
+        else None,
+        timeout_scope="attempted" if state is CoverSourceState.TIMEOUT else None,
+    )
+
+
+def test_library_row_names_its_retained_library_cover() -> None:
+    """A row carries the library's own cover only, as its report retained it.
+
+    The ABS source is the cover the library shows; an EPUB's embedded image or
+    a provider's candidate is never presented as the work's cover, and a work
+    whose library cover was absent, timed out or never reported has none
+    (#1290).
+    """
+    library = _library_cover_source(CoverSourceKind.ABS, CoverSourceState.RETRIEVED)
+    epub = _library_cover_source(
+        CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, size=(600, 900)
+    )
+    assert library.artifact is not None
+    expected = {
+        "height": 452,
+        "preview_sha256": library.artifact.preview_digest,
+        "url": "/api/v1/library/cover?connection=primary&library=ebooks&item=item-1"
+        f"&preview={library.artifact.preview_digest}",
+        "width": 302,
+    }
+    retained = _proposal_report(covers=(library, epub))
+    case = ReviewCase.create(evaluate_report(retained), retained)
+
+    assert _library_item(None, retained.to_json(), ())["cover"] == expected
+    assert _library_item(case.to_json(), retained.to_json(), ())["cover"] == expected
+    for covers in (
+        (),
+        (_library_cover_source(CoverSourceKind.ABS, CoverSourceState.ABSENT),),
+        (_library_cover_source(CoverSourceKind.ABS, CoverSourceState.TIMEOUT),),
+        (epub,),
+    ):
+        report = _proposal_report(covers=covers)
+        assert _library_item(None, report.to_json(), ())["cover"] is None
+    terminal = json.dumps(
+        {
+            "attempt": 1,
+            "connection": "primary",
+            "failure_root": None,
+            "item": "item-1",
+            "lane": "extraction",
+            "library": "ebooks",
+            "recovery_attempt": 0,
+            "schema_version": "review-terminal-work-v1",
+            "status": "unreadable_media",
+            "work_id": "review_work_" + "c" * 64,
+        }
+    )
+    assert _library_item(None, terminal, ())["cover"] is None
 
 
 def test_a_terminal_unreadable_item_states_the_track_it_could_not_read() -> None:

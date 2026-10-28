@@ -21,6 +21,13 @@ from mechanical_librarian.application.review_web import (
     _case_and_report,
     _library_item,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
 from mechanical_librarian.domain.identifiers import canonical_json
 from mechanical_librarian.domain.metadata_report import (
@@ -38,6 +45,7 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.review_browse import (
     CaseBrowseFacts,
+    LibraryCoverFacts,
     LibraryReportFacts,
     ProviderLaneFacts,
     ReviewBrowseValueError,
@@ -97,6 +105,18 @@ def _canonical_report_facts(report: MetadataReport) -> LibraryReportFacts:
             )
             for provider in report.providers
             for lane in provider.lanes or (provider,)
+        ),
+        next(
+            (
+                LibraryCoverFacts(
+                    source.artifact.preview_digest,
+                    source.artifact.width,
+                    source.artifact.height,
+                )
+                for source in report.cover_sources
+                if source.kind is CoverSourceKind.ABS and source.artifact is not None
+            ),
+            None,
         ),
     )
 
@@ -319,6 +339,19 @@ def _set(path: Callable[[Pair], dict[str, Any]], key: str, value: object):
     return change
 
 
+def _malformed_library_cover(pair: Pair) -> Pair:
+    """A retrieved library cover whose artifact is outside its closed bounds."""
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "item-1"),
+        CoverSourceKind.ABS,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"original", b"preview", "image/png", 302, 452),
+    ).to_data()
+    cast(dict[str, Any], source["artifact"])["width"] = 0
+    pair[1]["covers"] = [source]
+    return pair
+
+
 # Each mutation breaks one rendered value and is then resealed, so both
 # documents stay canonical JSON inside their closed envelopes and every content
 # address and lineage fact agrees: the narrow read can refuse it only on the
@@ -357,6 +390,11 @@ _RENDERED: dict[str, tuple[str, Callable[[Pair], Pair]]] = {
         "decoration",
         _set(lambda pair: _alternative(pair[0]), "evidence_references", ["x"]),
     ),
+    # The row shows the library's cover, so every cover source is read under
+    # its canonical rule (#1290).
+    "cover list": ("plain", _set(lambda pair: pair[1], "covers", {})),
+    "cover source": ("plain", _set(lambda pair: pair[1], "covers", [{"kind": "abs"}])),
+    "cover artifact": ("plain", _malformed_library_cover),
 }
 
 
