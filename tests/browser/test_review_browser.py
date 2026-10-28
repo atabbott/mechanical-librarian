@@ -5040,7 +5040,7 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                     for destination, keyboard in (("series", False), ("title", True)):
                         button = page.get_by_role(
                             "button",
-                            name=re.compile(f"^{destination.title()} Needs review"),
+                            name=re.compile(f"^{destination.title()} Needs you"),
                         )
                         button.evaluate(
                             """button => {
@@ -5500,12 +5500,8 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     button = page.get_by_role(
                         "button", name=re.compile(f"^{name}")
                     ).first
-                    expect(button).not_to_have_accessible_name(
-                        re.compile("Needs review")
-                    )
-                    expect(button).to_have_accessible_name(
-                        re.compile("Optional choice")
-                    )
+                    expect(button).not_to_have_accessible_name(re.compile("Needs you"))
+                    expect(button).to_have_accessible_name(re.compile("Optional$"))
                 if chapter_runtime:
                     # The compact layout offers the same optional choices.
                     page.set_viewport_size({"width": 390, "height": 844})
@@ -5642,7 +5638,7 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 # still a question the owner answers, and is counted as one (#1249).
                 expect(
                     page.get_by_role(
-                        "button", name=re.compile("^Narrators Needs review")
+                        "button", name=re.compile("^Narrators Needs you")
                     ).first
                 ).to_be_visible()
                 page.get_by_role("button", name=re.compile("^Narrators")).first.click()

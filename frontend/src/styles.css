@@ -796,10 +796,13 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 /* Protected Library review composition: a compact, stable field map and one decision surface. */
 .variant-m-workspace .workspace-detail { padding: 28px clamp(16px, 3vw, 42px) 52px; }
 .variant-m-workspace .field-filmstrip { gap: 0; padding: 0; overflow-x: auto; border-block: 1px solid var(--line); scroll-behavior: smooth; }
-.variant-m-workspace .field-filmstrip button { position: relative; min-width: 0; min-height: 58px; flex: 1 0 64px; place-items: center; gap: 2px; padding: 7px 5px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; text-align: center; }
+.variant-m-workspace .field-filmstrip button { position: relative; min-width: 0; min-height: 58px; flex: 1 0 5.5rem; place-items: center; gap: 2px; padding: 7px 5px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: transparent; text-align: center; }
 .variant-m-workspace .field-filmstrip button:first-child { border-left: 0; }
 .variant-m-workspace .field-filmstrip button > strong { max-width: 100%; overflow: hidden; font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
-.variant-m-workspace .field-filmstrip button > span { position: absolute; top: 5px; right: 7px; color: var(--accent-strong); font-size: .78rem; font-weight: 900; }
+.variant-m-workspace .field-filmstrip button > .field-status { max-width: 100%; color: var(--soft); font-size: .75rem; font-weight: 650; }
+.variant-m-workspace .field-filmstrip .field-status.is-needs { color: color-mix(in srgb, var(--notice) 85%, var(--ink)); }
+.variant-m-workspace .field-filmstrip .field-status:is(.is-decided, .is-automatic) { color: var(--accent-strong); }
+.variant-m-workspace .field-filmstrip .field-more { flex: 0 0 auto; padding-inline: .9rem; color: var(--accent-strong); font-size: .75rem; font-weight: 700; white-space: nowrap; }
 .variant-m-workspace .field-filmstrip button[aria-current='true'] { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 -2px var(--accent-strong); }
 .variant-m-workspace .field-filmstrip button.is-recorded { color: var(--accent-strong); background: color-mix(in srgb, var(--accent-soft) 27%, transparent); }
 .decision-canvas { animation: library-field-arrive 180ms cubic-bezier(.16,1,.3,1); }

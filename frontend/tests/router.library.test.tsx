@@ -2826,9 +2826,7 @@ describe('Library route', () => {
     ).toBeGreaterThan(0)
     expect(screen.queryByText('Different source tag lists')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
-    expect(
-      within(fieldRail).getByRole('button', { name: /Series.*Resolved automatically/u }),
-    ).toBeVisible()
+    expect(within(fieldRail).getByRole('button', { name: /Series.*Automatic/u })).toBeVisible()
   })
 
   it.each(
@@ -3955,7 +3953,7 @@ describe('Library route', () => {
     expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
     expect(comparison.querySelectorAll('.library-cover-card:disabled')).toHaveLength(6)
     expect(screen.queryByText(/1 remaining/u)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Cover Needs review' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cover Needs you' })).not.toBeInTheDocument()
     expect(http.recordDecision).not.toHaveBeenCalled()
     const cleanChecks = within(comparison).getByLabelText('Current cover visual checks')
     expect(within(cleanChecks).getByText('No visual defects flagged')).toBeVisible()
@@ -5092,10 +5090,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    expect(await screen.findByRole('button', { name: /Authors.*Needs review/u })).toBeVisible()
+    expect(await screen.findByRole('button', { name: /Authors.*Needs you/u })).toBeVisible()
     await user.click(screen.getByRole('radio', { name: 'Choose current value: Old title' }))
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: /Authors.*Needs you/u })).toHaveAttribute(
         'aria-current',
         'true',
       ),
@@ -5104,13 +5102,13 @@ describe('Library route', () => {
     // the document to centre the rail cell. The retained attention context in
     // between has no exact action, so it cannot become a phantom next choice.
     expect(screen.getByRole('radio', { name: 'Choose current value: Ada Example' })).toHaveFocus()
-    expect(screen.getByRole('button', { name: /Title.*Decision recorded/u })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Title.*Decided/u })).toBeVisible()
     expect(screen.queryByText('Decision recorded from the authoritative case.')).toBeNull()
     expect(
       within(screen.getByRole('navigation', { name: 'Review fields' }))
         .getAllByRole('button')
         .map((button) => button.textContent),
-    ).toEqual(['Title✓', 'Subtitle✓', 'Authors•'])
+    ).toEqual(['Title Decided', 'Subtitle No change', 'Authors Needs you'])
   })
 
   it('omits an unsupported previous value for a blocked recorded replacement', async () => {
@@ -5791,7 +5789,7 @@ describe('Library route', () => {
     })
 
     expect(await screen.findByRole('heading', { name: 'Title' })).toBeVisible()
-    expect(screen.getAllByLabelText('No eligible change')).toHaveLength(2)
+    expect(screen.getAllByText('No change', { selector: '.field-status' })).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Attention 0 works' })).toBeVisible()
     expect(screen.getByText('There’s no other value to choose from.')).toBeVisible()
     expect(screen.getByLabelText('Title current value')).toHaveTextContent('Current valueOld title')
@@ -5822,7 +5820,7 @@ describe('Library route', () => {
     expect(screen.getByText('1 lookup recorded for this work')).toBeVisible()
     expect(screen.getByText('1 field has context')).toBeVisible()
     expect(screen.queryByText('field with contexts')).toBeNull()
-    await user.click(screen.getByRole('button', { name: /Subtitle.*No eligible change/u }))
+    await user.click(screen.getByRole('button', { name: /Subtitle.*No change/u }))
     expect(await screen.findByRole('heading', { name: 'Subtitle' })).toBeVisible()
     expect(screen.queryByText('This field needs your review.')).toBeNull()
     expect(screen.queryByText('Which subtitle should this work use?')).toBeNull()
@@ -5918,7 +5916,7 @@ describe('Library route', () => {
       expect(document.body.textContent).not.toContain('Recording accept…')
       expect(document.body.textContent).not.toContain('Recording choice…')
       expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
-      expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+      expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toBeVisible()
       const retry = screen.getByRole('button', { name: 'Try the same decision again' })
       expect(retry).toHaveFocus()
       const firstCommand = recordDecision.mock.calls[0]?.[1]
@@ -5983,6 +5981,67 @@ describe('Library route', () => {
       return { decision, settled }
     }
 
+    it("labels each field tab's status in words", async () => {
+      const decided = settle(title, 'keep_current').decision
+      const fields = [
+        title,
+        {
+          ...title,
+          destination: 'authors' as const,
+          classification: 'human_recorded' as const,
+          needsAttention: false,
+          navigationRole: 'inspect' as const,
+          humanDecision: { ...decided, destination: 'authors' as const },
+        },
+        {
+          ...title,
+          destination: 'series' as const,
+          classification: 'automatic_recorded' as const,
+          decisionActions: [],
+          editable: false,
+          needsAttention: false,
+          navigationRole: 'resolved' as const,
+        },
+        asin,
+        {
+          ...title,
+          destination: 'subtitle' as const,
+          classification: 'context_only' as const,
+          decisionActions: [],
+          needsAttention: false,
+          navigationRole: 'inspect' as const,
+          proposedValues: [],
+        },
+      ]
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({ ...detail, fields })),
+      })
+      const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+      expect(
+        within(rail)
+          .getAllByRole('button')
+          .map((tab) => [tab.querySelector('strong')?.textContent, tab.querySelector('span')]),
+      ).toEqual([
+        ['Title', expect.objectContaining({ textContent: 'Needs you' })],
+        ['Authors', expect.objectContaining({ textContent: 'Decided' })],
+        ['Series', expect.objectContaining({ textContent: 'Automatic' })],
+        ['ASIN', expect.objectContaining({ textContent: 'Optional' })],
+        ['Subtitle', expect.objectContaining({ textContent: 'No change' })],
+      ])
+      // The word is the tab's status: visible, part of its name, and no glyph
+      // or hidden label says anything else.
+      for (const tab of within(rail).getAllByRole('button')) {
+        const status = tab.querySelector('span')
+        expect(status).toBeVisible()
+        expect(status).not.toHaveAttribute('aria-label')
+        expect(tab).toHaveAccessibleName(
+          `${tab.querySelector('strong')?.textContent ?? ''} ${status?.textContent ?? ''}`,
+        )
+        expect(tab.textContent).not.toMatch(/[•✓]/u)
+      }
+    })
+
     it('is offered without counting it or naming it for review', async () => {
       const user = userEvent.setup()
       const { decision, settled } = settle(asin, 'accept')
@@ -6008,8 +6067,7 @@ describe('Library route', () => {
       expect(screen.getByText('Needs review').nextElementSibling).toHaveTextContent('1')
       expect(screen.getByText('1 remaining · field 1 of 2')).toBeVisible()
       const rail = screen.getByRole('button', { name: /^ASIN/u })
-      const glyph = within(rail).getByLabelText('Optional choice')
-      expect(glyph).toHaveTextContent('✓')
+      expect(rail).toHaveAccessibleName('ASIN Optional')
 
       await user.click(rail)
       const choices = await screen.findByRole('region', { name: 'ASIN choices' })
@@ -6086,7 +6144,7 @@ describe('Library route', () => {
     expect(proposed).toHaveAttribute('aria-checked', 'false')
     expect(proposed).not.toHaveTextContent('Recording…')
     expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
-    expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toBeVisible()
   })
 
   it.each([
@@ -6300,7 +6358,7 @@ describe('Library route', () => {
         return
       }
       if (other) {
-        expect(await screen.findByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+        expect(await screen.findByRole('button', { name: /Title.*Needs you/u })).toBeVisible()
       } else {
         expect(await screen.findByText('Review complete')).toBeVisible()
       }
@@ -6358,7 +6416,7 @@ describe('Library route', () => {
         await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
       ).toBeVisible()
       scrollTo.mockClear()
-      const authors = screen.getByRole('button', { name: /Authors.*Needs review/u })
+      const authors = screen.getByRole('button', { name: /Authors.*Needs you/u })
       if (input === 'pointer') await user.click(authors)
       else {
         authors.focus()
@@ -6455,7 +6513,7 @@ describe('Library route', () => {
     expect(await screen.findByText('Review complete')).toBeVisible()
     // The same exact current field remains voluntarily revisitable, without
     // returning to the Attention queue. A second choice is a new command.
-    await user.click(screen.getByRole('button', { name: /Title.*Decision recorded/u }))
+    await user.click(screen.getByRole('button', { name: /Title.*Decided/u }))
     const replacement = await screen.findByRole('radio', {
       name: 'Choose proposed value: New title',
     })
@@ -6463,7 +6521,7 @@ describe('Library route', () => {
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
     const [first, second] = vi.mocked(http.recordDecision).mock.calls.map(([, command]) => command)
     expect(first?.idempotencyKey).not.toBe(second?.idempotencyKey)
-    await user.click(screen.getByRole('button', { name: /Title.*Decision recorded/u }))
+    await user.click(screen.getByRole('button', { name: /Title.*Decided/u }))
     expect(screen.getByRole('radio', { name: 'Choose proposed value: New title' })).toHaveAttribute(
       'aria-checked',
       'true',
@@ -8290,7 +8348,7 @@ describe('Library route', () => {
     const caseReadsBefore = vi.mocked(http.getCaseDetail).mock.calls.length
     await user.click(choice)
 
-    expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toHaveAttribute(
       'aria-current',
       'true',
     )
@@ -8306,7 +8364,7 @@ describe('Library route', () => {
       release?.()
     })
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: /Authors.*Needs you/u })).toHaveAttribute(
         'aria-current',
         'true',
       ),
@@ -8358,7 +8416,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     await user.click(await screen.findByRole('radio', { name: 'Choose current value: Old title' }))
-    expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toHaveAttribute(
       'aria-current',
       'true',
     )
@@ -8421,7 +8479,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     await user.click(await screen.findByRole('radio', { name: 'Choose current value: Old title' }))
-    await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
+    await user.click(screen.getByRole('button', { name: /Authors.*Needs you/u }))
     await user.click(await screen.findByRole('radio', { name: 'Choose current value: Old title' }))
     expect(recordDecision).toHaveBeenCalledTimes(1)
 
@@ -8430,7 +8488,7 @@ describe('Library route', () => {
     })
     await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
     const authorsKey = recordDecision.mock.calls[1]?.[1].idempotencyKey
-    await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
+    await user.click(screen.getByRole('button', { name: /Authors.*Needs you/u }))
     await user.click(screen.getByRole('radio', { name: 'Choose current value: Old title' }))
     expect(recordDecision).toHaveBeenCalledTimes(2)
     expect(recordDecision.mock.calls[1]?.[1].idempotencyKey).toBe(authorsKey)
@@ -8487,7 +8545,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     await user.click(await screen.findByRole('radio', { name: 'Choose current value: Old title' }))
-    expect(screen.getByRole('button', { name: /Title.*Needs review/u })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toHaveAttribute(
       'aria-current',
       'true',
     )
@@ -8497,7 +8555,7 @@ describe('Library route', () => {
       release?.()
     })
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: /Authors.*Needs you/u })).toHaveAttribute(
         'aria-current',
         'true',
       ),
@@ -8703,11 +8761,9 @@ describe('Library route', () => {
     expect(within(rail).getByRole('button', { name: /^Authors/u })).toBeVisible()
     expect(within(rail).getByRole('button', { name: /^Description/u })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Subtitle/u })).toBeNull()
-    expect(within(rail).getByRole('button', { name: 'Show 3 additional fields' })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Show 3 more fields' })).toBeVisible()
 
-    await userEvent
-      .setup()
-      .click(within(rail).getByRole('button', { name: 'Show 3 additional fields' }))
+    await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 3 more fields' }))
     const names = within(rail)
       .getAllByRole('button')
       .map((button) => button.querySelector('strong')?.textContent)
@@ -8746,12 +8802,10 @@ describe('Library route', () => {
 
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
     expect(screen.getByText('0 remaining · no field selected')).toBeVisible()
-    expect(within(rail).getByRole('button', { name: 'Show 2 additional fields' })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Show 2 more fields' })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Title/u })).toBeNull()
 
-    await userEvent
-      .setup()
-      .click(within(rail).getByRole('button', { name: 'Show 2 additional fields' }))
+    await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 2 more fields' }))
     expect(within(rail).getByRole('button', { name: /^Title/u })).toHaveFocus()
   })
 
@@ -8785,9 +8839,7 @@ describe('Library route', () => {
     const context = await screen.findByRole('region', { name: 'Whole-work context' })
     expect(within(context).getByText(note)).toBeVisible()
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
-    await userEvent
-      .setup()
-      .click(within(rail).getByRole('button', { name: 'Show 1 additional field' }))
+    await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 1 more field' }))
     expect(within(rail).getByRole('button', { name: /^Series/u })).toBeVisible()
     expect(
       within(screen.getByRole('region', { name: 'Whole-work context' })).getByText(note),
@@ -8797,7 +8849,7 @@ describe('Library route', () => {
     ).toBeNull()
   })
 
-  it('synchronously reveals and selects an additional field named in the URL', async () => {
+  it('synchronously reveals and selects a hidden field named in the URL', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const emptySubtitle = {
@@ -8876,14 +8928,14 @@ describe('Library route', () => {
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1', http)
 
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
-    expect(within(rail).getByRole('button', { name: 'Show 2 additional fields' })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Show 2 more fields' })).toBeVisible()
     authoritative = true
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'] })
     })
     await waitFor(() => expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible())
     expect(within(rail).getByRole('button', { name: /^Subtitle/u })).toBeVisible()
-    expect(within(rail).queryByRole('button', { name: /Show .* additional field/u })).toBeNull()
+    expect(within(rail).queryByRole('button', { name: /Show .* more field/u })).toBeNull()
   })
 
   it('keeps applicable unavailable fields inspectable without making them actionable', async () => {
@@ -10335,13 +10387,8 @@ it.each([
     const first = renderRoute(url, http)
     await screen.findByRole('radio', { name: /^Choose advised value:/ })
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
-    expect(
-      within(rail)
-        .getByRole('button', { name: /^Description/ })
-        .querySelector('span'),
-    ).toHaveAttribute(
-      'aria-label',
-      recorded ? 'Decision recorded' : 'Handled automatically; inspect or override',
+    expect(within(rail).getByRole('button', { name: /^Description/ })).toHaveAccessibleName(
+      recorded ? 'Description Decided' : 'Description Automatic',
     )
     expect(Boolean(screen.queryByText('Choice recorded.'))).toBe(recorded)
     const user = userEvent.setup()
@@ -10634,7 +10681,7 @@ it('shows retained automatic advice during preservation-only retry without addin
   expect(retained).toHaveTextContent('Advised · Authored content · Recorded choice')
   expect(screen.getByText(/Preparing description advice/)).toBeVisible()
   expect(screen.queryByText('Choice recorded.')).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Description Decision recorded' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Description Decided' })).toBeNull()
   expect(screen.getByLabelText('External update status')).toHaveTextContent(
     'Activity shows any recorded application progress.',
   )

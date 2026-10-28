@@ -369,7 +369,7 @@ class _WorkspaceProbe:
                 f"&preview={self._case_id}&field=title"
             )
             recorded_field = page.get_by_role(
-                "button", name=re.compile(r"^Title.*Decision recorded$")
+                "button", name=re.compile(r"^Title.*Decided$")
             )
             expect(recorded_field).to_have_count(1)
             recorded_field.click()

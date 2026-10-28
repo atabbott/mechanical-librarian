@@ -1552,7 +1552,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Cover" in page.locator(".field-filmstrip").inner_text()
         assert "Series" in page.locator(".field-filmstrip").inner_text()
         assert "Publication date" in page.locator(".field-filmstrip").inner_text()
-        genres = page.get_by_role("button", name="Show 1 additional field")
+        genres = page.get_by_role("button", name="Show 1 more field")
         expect(genres).to_be_visible()
         assert not (
             page.locator(".automatic-resolution-details").evaluate("node => node.open")
@@ -1581,9 +1581,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         genres_reappeared = True
         page.reload()
         page.locator(".field-filmstrip").wait_for()
-        expect(
-            page.get_by_role("button", name="Show 1 additional field")
-        ).to_have_count(0)
+        expect(page.get_by_role("button", name="Show 1 more field")).to_have_count(0)
         assert [
             label.splitlines()[0]
             for label in page.locator(".field-filmstrip button").all_inner_texts()
@@ -2023,8 +2021,30 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         compact_context = page.locator(".automatic-resolution-details").inner_text()
         assert "Subtitle" in compact_context
         assert "Series" not in compact_context
-        compact_genres = page.get_by_role("button", name="Show 1 additional field")
+        compact_genres = page.get_by_role("button", name="Show 1 more field")
         expect(compact_genres).to_be_visible()
+        # The more-fields tab reads on one line and is never clipped, down to
+        # 320 px (#1290).
+        for more_width in (390, 320, 390):
+            page.set_viewport_size({"width": more_width, "height": 844})
+            compact_genres.scroll_into_view_if_needed()
+            fit = compact_genres.evaluate(
+                """button => {
+                    const range = document.createRange()
+                    range.selectNodeContents(button)
+                    const lines = new Set(
+                        [...range.getClientRects()].map((rect) => Math.round(rect.top))
+                    ).size
+                    const rail = button.closest('.field-filmstrip').getBoundingClientRect()
+                    const box = button.getBoundingClientRect()
+                    return {
+                        lines,
+                        overflow: button.scrollWidth - button.clientWidth,
+                        inside: box.left >= rail.left - 0.5 && box.right <= rail.right + 0.5,
+                    }
+                }"""
+            )
+            assert fit == {"lines": 1, "overflow": 0, "inside": True}, (more_width, fit)
         compact_genres.click()
         revealed_genres = page.get_by_role("button", name=re.compile(r"^Genres"))
         expect(revealed_genres).to_be_focused()

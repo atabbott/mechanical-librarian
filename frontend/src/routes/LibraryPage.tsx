@@ -611,6 +611,18 @@ const fieldState = (field: ReviewField) =>
         : optionalChoice(field)
           ? 'Optional choice'
           : 'No eligible change'
+// A field tab says where its field stands in words, never a glyph: an
+// undecided optional field and a decided one both drew a check (#1290).
+const fieldStatus = (field: ReviewField) =>
+  actionable(field)
+    ? (['needs', 'Needs you'] as const)
+    : field.humanDecision || authoredOwnerRecorded(field) || field.manualHold
+      ? (['decided', 'Decided'] as const)
+      : field.classification === 'automatic_recorded' || field.automaticDecision
+        ? (['automatic', 'Automatic'] as const)
+        : optionalChoice(field)
+          ? (['optional', 'Optional'] as const)
+          : (['unchanged', 'No change'] as const)
 // Why a field reads as it does when the server gives no reason of its own.
 const humanReasons = {
   accept: 'You chose a proposed value for this field.',
@@ -3533,8 +3545,7 @@ export default function LibraryPage({
   useEffect(() => {
     if (!staleCoverCaseId) return
     const frame = requestAnimationFrame(() => {
-      if (document.activeElement === document.body)
-        staleCoverRecoveryButton.current?.focus()
+      if (document.activeElement === document.body) staleCoverRecoveryButton.current?.focus()
     })
     return () => cancelAnimationFrame(frame)
   }, [staleCoverCaseId, staleCoverIdentityAvailable])
@@ -4843,25 +4854,16 @@ export default function LibraryPage({
                         selectCase(selectedReviewCaseId, field.destination)
                       }}
                     >
-                      <strong>{destinationLabel(field.destination)}</strong>
-                      <span
-                        aria-label={
-                          actionable(field)
-                            ? 'Needs review'
-                            : field.humanDecision || authoredOwnerRecorded(field)
-                              ? 'Decision recorded'
-                              : field.classification === 'automatic_recorded'
-                                ? 'Handled automatically; inspect or override'
-                                : fieldState(field)
-                        }
-                      >
-                        {actionable(field) ? '•' : '✓'}
+                      <strong>{destinationLabel(field.destination)}</strong>{' '}
+                      <span className={`field-status is-${fieldStatus(field)[0]}`}>
+                        {fieldStatus(field)[1]}
                       </span>
                     </button>
                   ))}
                   {omittedFields.length ? (
                     <button
                       type="button"
+                      className="field-more"
                       onClick={() => {
                         setRevealFocusDestination(omittedFields[0]?.destination ?? null)
                         setShownEmptyFields((current) => ({
@@ -4870,7 +4872,7 @@ export default function LibraryPage({
                         }))
                       }}
                     >
-                      {`Show ${String(omittedFields.length)} additional field${omittedFields.length === 1 ? '' : 's'}`}
+                      {`Show ${String(omittedFields.length)} more field${omittedFields.length === 1 ? '' : 's'}`}
                     </button>
                   ) : null}
                 </nav>
