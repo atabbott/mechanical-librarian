@@ -235,7 +235,8 @@ two casts also overlap, the carried products are withheld in that report too.
 A provider that resolves one recording through two regional ASINs keeps that
 recording once, because copies that differ only in marketplace are not an
 identity conflict. One recording's sibling ASINs offer one value: the item's
-current ASIN when it is one of them, otherwise the one that was looked up. An item that already carries its own ASIN feeds nothing. Hardcover and
+current ASIN when it is one of them, otherwise the one that was looked up, or
+the verified carried ASIN when both it and a sibling were looked up. An item that already carries its own ASIN feeds nothing. Hardcover and
 Open Library have no ASIN lookup, so a plan of ASIN lanes alone, local or fed,
 sends them no request and they record `insufficient_input` with no lane, not a
 failure (#1306). A lane's origin

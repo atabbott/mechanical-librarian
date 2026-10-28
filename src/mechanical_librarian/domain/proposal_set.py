@@ -18,6 +18,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_recording_runtime_veto,
     carried_asin_precedence,
     target_current_asin,
+    verified_carried_asin,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -1741,6 +1742,7 @@ def _observations(
     edition_asins = destination is TargetDestination.ASIN and report.audio is not None
     withheld = carried_asin_precedence(report) if edition_asins else frozenset()
     current_asin = target_current_asin(report) if edition_asins else None
+    carried_asin = verified_carried_asin(report) if edition_asins else None
     for provider in report.providers:
         for candidate in provider.candidates:
             if work_only and not _supported_work_source(report, provider, candidate):
@@ -1749,7 +1751,7 @@ def _observations(
                 continue
             # Sibling ASINs of one recording are one edition (#1316).
             edition_asin = (
-                candidate_edition_asin(provider, candidate, current_asin)
+                candidate_edition_asin(provider, candidate, current_asin, carried_asin)
                 if edition_asins
                 else None
             )

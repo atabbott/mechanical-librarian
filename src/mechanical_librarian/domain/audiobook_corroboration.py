@@ -942,6 +942,7 @@ __all__ = [
     "carried_asin_claim",
     "carried_asin_precedence",
     "target_current_asin",
+    "verified_carried_asin",
 ]
 
 
@@ -1324,6 +1325,7 @@ def candidate_edition_asin(
     observation: ProviderObservation,
     candidate: ProviderCandidate,
     current: str | None = None,
+    carried: str | None = None,
 ) -> str | None:
     """Return the one edition ASIN a candidate stands for (#1316).
 
@@ -1331,8 +1333,11 @@ def candidate_edition_asin(
     those siblings are one edition rather than a choice. A candidate stating
     one ASIN stands for it; one stating several stands for `current`, the
     target's own ASIN, when that is among them, and otherwise for the ASIN its
-    lane looked up. A candidate no lane looked up by one of its siblings
-    stands for none.
+    lane looked up. When lanes looked it up by several of its siblings and one
+    of them is `carried`, the verified carried ASIN, it stands for that: the
+    carried ASIN wins (ADR-0088). A candidate no lane looked up by one of its
+    siblings, or looked up by several none of which is the carry, stands for
+    none.
     """
     asins = _edition_asins(candidate)
     if len(asins) <= 1:
@@ -1347,7 +1352,17 @@ def candidate_edition_asin(
         )
         and (value := _queried_asin(lane, asins)) is not None
     }
-    return queried.pop() if len(queried) == 1 else None
+    if len(queried) == 1:
+        return queried.pop()
+    return carried if carried is not None and carried in queried else None
+
+
+def verified_carried_asin(report: MetadataReport) -> str | None:
+    """Return the carried ASIN when a lookup of it verified it, else None."""
+    claim = carried_asin_claim(report.local_claims)
+    if claim is None or not _verified_carried_candidates(report):
+        return None
+    return claim.canonical
 
 
 def _tight_recording(

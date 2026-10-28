@@ -40,6 +40,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
     admitted_recording_asin,
+    candidate_edition_asin,
     carried_asin_precedence,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -1049,6 +1050,46 @@ def test_without_a_carried_lookup_both_editions_are_offered() -> None:
 
     assert frozenset() == carried_asin_precedence(report)
     assert {_CARRIED, _SIBLING} == _asin_values(report)
+
+
+def test_a_recording_reached_through_the_carry_and_a_sibling_offers_the_carry() -> None:
+    """The carried ASIN wins between sibling lookups of one recording (#1316).
+
+    The catalogue's carried lookup is unavailable and its search finds the
+    sibling, so the feed asks AudioSilo for both. AudioSilo resolves both to the
+    one recording that states them, which verifies the carry; the recording
+    offers the carried ASIN, and the withheld search sibling is not the only
+    value lost.
+    """
+    claims = _claims()
+    catalogue = _catalogue(
+        claims,
+        carried=ProviderStatus.UNAVAILABLE,
+        search=(_candidate("audible", (_SIBLING,)),),
+    )
+    feed = audiobook_asin_feed_plan(_snapshot(), _plan(claims), (catalogue,))
+    assert feed is not None
+    assert {_CARRIED, _SIBLING} <= {lane.canonical_asin for lane in feed.lanes}
+    recording = _candidate("silo", (_SIBLING, _CARRIED), identity="silo-recording")
+    silo = provider_observation(
+        "silo",
+        tuple(
+            _lane_result(feed, lane, "silo", "audiosilo", (recording,))
+            for lane in feed.lanes
+            if lane.canonical_asin in {_CARRIED, _SIBLING}
+        ),
+        authority="audiosilo",
+    )
+    report = _report(claims, (catalogue, silo))
+
+    assert _CARRIED == admitted_recording_asin(report)
+    assert ("audible", f"audible-{_SIBLING}") in carried_asin_precedence(report)
+    assert {_CARRIED} == _asin_values(report)
+    # Without a verified carry, two queried siblings still name no one edition.
+    (observed,) = (value for value in report.providers if value.provider == "silo")
+    (stated,) = observed.candidates
+    assert candidate_edition_asin(observed, stated) is None
+    assert _CARRIED == candidate_edition_asin(observed, stated, carried=_CARRIED)
 
 
 def _silo_report(current: str | None) -> MetadataReport:

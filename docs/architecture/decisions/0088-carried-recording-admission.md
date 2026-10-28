@@ -107,7 +107,10 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
 7. **Sibling ASINs.** At the proposal layer only, with no admission change and
    no adapter change, a candidate stating more than one valid edition ASIN
    contributes one value at the ASIN destination: the target's current ASIN if
-   it is one of them, otherwise the ASIN its lane looked up. When one provider
+   it is one of them, otherwise the ASIN its lane looked up. When lanes
+   looked it up by several of its ASINs and one of them is the verified carry,
+   it stands for the carried ASIN (clause 6), so a verified carry always offers
+   a value even when precedence withholds its siblings. When one provider
    resolves the same recording through two regional ASINs, the two copies
    differ only in their marketplace evidence. The observation keeps the
    recording once, under the first lane's marketplace, instead of treating
