@@ -4493,3 +4493,59 @@ def test_activity_ledger_rows_fit_at_two_hundred_percent_text() -> None:
                 for failure in node.evaluate(_NAMED_CLIP)
             ]
             assert clipped == [], f"{where}: {clipped}"
+
+
+def test_policy_sidebar_keeps_its_header_in_view_on_short_screens() -> None:
+    """The Policy sidebar's header and first chapter can each be brought into
+    view and pressed, clear of the masthead and the finish tray, on short
+    phones at both text sizes and on short windows with root font-size 200%
+    (#1291)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    cases = [
+        (text, width, height)
+        for text in styles
+        for width, height in ((320, 568), (375, 667), (320, 640))
+    ] + [
+        ("200%", width, height)
+        for width, height in ((1024, 768), (884, 800), (761, 600))
+    ]
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text, width, height in cases:
+            where = f"{text} text at {width}x{height}"
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto("https://react-platform.invalid/policy?section=identity")
+            expect(page.locator(".cm-finish-tray")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            for target in (
+                ".cm-policy-sidebar > header strong",
+                ".cm-policy-sidebar > header small",
+                ".cm-policy-sidebar nav button",
+            ):
+                found = page.locator(target).first.evaluate(
+                    """node => {
+                      node.scrollIntoView({block: 'nearest'});
+                      const box = node.getBoundingClientRect();
+                      const x = box.left + Math.min(box.width / 2, 20);
+                      const y = box.top + Math.min(box.height / 2, 12);
+                      const hit = y >= 0 && y < innerHeight ? document.elementFromPoint(x, y) : null;
+                      const tray = document.querySelector('.cm-finish-tray').getBoundingClientRect();
+                      const masthead = document.querySelector('.masthead').getBoundingClientRect();
+                      return {
+                        text: node.textContent.trim().slice(0, 24),
+                        height: Math.round(box.height),
+                        pressable: !!hit && (hit === node || node.contains(hit)),
+                        underTray: box.bottom > tray.top + 1 && box.top < tray.bottom - 1,
+                        underMasthead: box.top < masthead.bottom - 1 && box.bottom > masthead.top + 1,
+                      };
+                    }"""
+                )
+                assert found["pressable"], f"{where}: {found}"
+                assert not found["underTray"], f"{where}: {found}"
+                assert not found["underMasthead"], f"{where}: {found}"

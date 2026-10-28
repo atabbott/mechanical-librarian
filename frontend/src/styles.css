@@ -324,6 +324,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 /* The rail is bounded and scrolls itself. Unbounded it grew past the viewport,
    and the sticky finish tray then floated across its safety controls. */
 .cm-policy-sidebar { --policy-sidebar-room:calc(100dvh - var(--sticky-top) - var(--policy-tray-reserve,16rem)); position:sticky; top:var(--sticky-top); display:grid; align-content:start; min-height:min(570px,var(--policy-sidebar-room)); max-height:var(--policy-sidebar-room); overflow:auto; padding:0; border:0; border-right:1px solid var(--line); border-radius:1rem 0 0 1rem; background:var(--surface-strong); }
+/* On a screen too short to keep the masthead, the sidebar flows with the page
+   too: a column bounded above the tray would leave its header no room. */
+html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; min-height:0; max-height:none; overflow:visible; }
 .cm-policy-sidebar > header { display:grid; align-content:center; gap:.16rem; min-height:4.9rem; padding:.95rem 1rem; border-bottom:1px solid var(--line); }
 .cm-policy-sidebar > header span, .cm-policy-sidebar > header small { color:var(--soft); font-size:.75rem; }
 .cm-policy-sidebar > header strong { overflow-wrap:anywhere; font:700 1.08rem/1.25 Georgia,serif; }
@@ -537,7 +540,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 @media (max-width:760px) {
   .cm-policy-editor { grid-template-columns:minmax(0,1fr); overflow:visible; }
   .cm-policy-result { grid-column:1; }
-  .cm-policy-sidebar { position:static; min-height:0; border-right:0; border-bottom:1px solid var(--line); border-radius:1rem 1rem 0 0; }
+  .cm-policy-sidebar { position:static; min-height:0; max-height:none; overflow:visible; border-right:0; border-bottom:1px solid var(--line); border-radius:1rem 1rem 0 0; }
   .cm-policy-sidebar > header { grid-template-columns:minmax(0,1fr) auto; align-items:center; }
   .cm-policy-sidebar > header span { display:none; }
   .cm-policy-sidebar > header small { grid-column:2; grid-row:1; max-width:22ch; text-align:right; }
