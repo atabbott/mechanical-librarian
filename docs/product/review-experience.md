@@ -792,7 +792,8 @@ model picker with an explicit custom entry and an example cost per 1,000 books
 for the exact model, stated as not measured when it is.
 
 Successful store-managed changes are confirmed once at page level as saved and
-in use. Only deployment-managed fields carry a per-field deployment consequence.
+in use, in a notice that floats above the page's end and any finish tray, so
+its arrival moves nothing the owner is reading. Only deployment-managed fields carry a per-field deployment consequence.
 Loading, retry, optional empty, validation, preparation, save
 pending/saved/failed/stale, secret add/replace/confirmed clear, and reconnect
 states are explicit. In file mode the page names
@@ -849,9 +850,21 @@ does not defer or replace this baseline.
 - Text meets 4.5:1 and field boundaries and the focus ring 3:1 on every surface
   in both themes, and no text is set below `0.75rem`. Disclosure summaries,
   owner-authority controls and links styled as actions are 44-pixel targets at
-  every width. At 200% text size Library, Policy and Activity keep every
-  control reachable without document-level horizontal overflow at 1440, 375
-  and 320 pixels.
+  every width. At 200% text size Library, Policy, Activity and Settings keep
+  every control reachable, inside the container that holds it, without
+  document-level horizontal overflow at every ladder width, and Activity rows
+  fold into whole cards. A word breaks inside itself only when it is wider
+  than its whole line; data tokens may break anywhere.
+- The masthead never covers content or focus. It holds still while the stream
+  and preparation status change, and it is sticky only while it takes at most
+  a quarter of the window; taller—on a phone, a short window or with enlarged
+  text—it scrolls away. On short screens Policy's chapter index flows with the
+  page, so its header and first chapter can be brought into view clear of the
+  finish tray.
+- The current destination is marked as the current page; Library stays current
+  while a review or the Attention queue is open. Each Activity Details control
+  names its row's field, work, result and time, so two changes to one work
+  are named apart.
 - Focus never falls to the page. A command keeps focus on its control, marked
   `aria-disabled`, while it runs, then moves to its outcome; a retry that fails
   again returns focus to Try again; a detail that can no longer be read hands
@@ -904,7 +917,9 @@ decision authority. The workspace applies it before its first paint: the saved
 choice, otherwise the system theme, which it follows until a choice is saved.
 
 Activity preserves the Library workspace and Policy hierarchy. Initial entry
-mounts navigation and a useful loading state without waiting for its ledger. An
+mounts navigation and a useful loading state without waiting for its ledger:
+a small line beside a dot that pulses when motion is welcome, not a headline
+the page's own replaces. An
 unavailable initial read keeps navigation and an explicit retry available;
 pending filter changes preserve the mounted page and its editing focus. Once durable
 activity exists, its current guarded state, shared recovery, and recent outcomes

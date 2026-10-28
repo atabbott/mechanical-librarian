@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The masthead holds still as its status changes and scrolls away once taller
+  than a quarter of the window; Library opens with its write handoff in place.
+  Words break only where they must. At 200% text, Activity rows, Policy and
+  Settings controls and setup refusals stay in view. Saving settings moves
+  nothing, loading reads as one quiet line, Library stays current on reviews
+  and Attention, and each Activity Details names its row's time (#1291).
+
 - Text and field edges meet WCAG AA contrast in both themes, no text is below
   12px, and every disclosure and authority control is a 44px target. Focus no
   longer falls to the page after a command, failed retry or read failure;

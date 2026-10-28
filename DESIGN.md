@@ -241,6 +241,12 @@ controls, diagnostics, and operational copy with compact precision.
 decision values, and measured emphasis. Use sans-serif type for everything the
 owner must operate, scan, or verify.
 
+**The Whole Word Rule.** Words break only where they must: a word wraps to the
+next line whole, and breaks inside itself only when it is wider than the whole
+line it sits on. Interface labels are never squeezed into a column narrower
+than their words. Data tokens—identifiers, paths, addresses, unbroken titles—
+may break anywhere.
+
 **The Type Floor Rule.** No text is set below `0.75rem` (12px at the default
 size), including labels, counts, marks, and compact layouts; density comes from
 weight, spacing, and line length, never smaller type. Sizes are in `rem` so they
@@ -251,11 +257,17 @@ initials at 14px.
 
 The application is a bounded editorial workspace rather than an edge-to-edge
 dashboard. Main content is capped at `98rem` and padded with
-`clamp(1rem, 3vw, 2.6rem)`. A sticky 62px masthead holds identity, four permanent
-destinations—Library, Policy, Activity, and Settings—plus the live-update
-status (shown only while it reconnects), preparation status, theme, and sign-out
-controls. Attention stays contextual to Library instead of competing as a
-permanent destination.
+`clamp(1rem, 3vw, 2.6rem)`. A 62px masthead holds identity, four permanent
+destinations—Library, Policy, Activity, and Settings—a status slot, and the
+theme and sign-out controls. The status slot sits between the destinations and
+the actions and holds the live-update status (shown only while it reconnects)
+and preparation status, so whatever it says moves nothing else. The masthead
+is sticky only while it takes at most a quarter of the viewport; taller—a
+phone, a short window, enlarged text—it scrolls away with the page, so it
+never covers what the owner reads or focuses, and sticky regions then sit at
+the top of the window. Between 1025px and 1199px the product name recedes and
+the mark remains. Attention stays contextual to Library instead of competing as
+a permanent destination.
 
 Wide task surfaces use asymmetric grids. Library pairs a sticky 310–380px work
 index with a flexible preview; Policy pairs a 220px chapter index with notebook
@@ -273,9 +285,20 @@ Library drawer. At 1024px, workspace columns tighten, selected Library work
 replaces the index with an explicit back control, and cover comparisons and
 direct choices fold into one scrollable or stacked row. At 760px, grids become
 single-column, sticky side regions become inline or compact pickers, the
-masthead wraps into a horizontally scrollable destination row, and page padding
-becomes `1rem 0.75rem 4rem`. Focused refinements at 390px preserve controls and
-ledger reading order. Nothing assumes a viewport wider than 320px.
+masthead becomes three rows—identity and actions, a status row held open
+whether or not anything is in it, and the four destinations in equal
+columns—and page padding becomes `1rem 0.75rem 4rem`. Focused refinements at
+390px preserve controls and ledger reading order. Nothing assumes a viewport
+wider than 320px.
+
+The masthead's arrangements follow the shell's width in rem at the same
+steps, through container queries rather than width media queries, so enlarged
+text takes the compact arrangements a narrower window would. The same holds
+for surfaces measured by their own width: the Activity ledger folds its rows
+into cards when it is narrower than 47.5rem, Policy's finish tray stacks inside
+a narrow editor, and a Settings field's label and control stack inside a narrow
+sheet. With text at 200%, every route keeps its controls on screen at each
+ladder width.
 
 ## Elevation & Depth
 
@@ -387,11 +410,19 @@ default type, so every call site states its own.
 
 ### Navigation
 
-The sticky masthead uses quiet, bold sans-serif labels in 44px pill targets.
-The active destination alone receives the Archive Teal Wash. At compact widths,
-the product name and secondary shell labels recede while Library, Policy,
-Activity, and Settings remain visible in a horizontally scrollable row. Attention is opened
-from Library as a contextual queue, not represented as permanent navigation.
+The masthead uses quiet, bold sans-serif labels in 44px pill targets. The
+active destination alone receives the Archive Teal Wash and is marked as the
+current page; Library stays current while a review or the Attention queue is
+open, since both belong to it. At compact widths, the product name and
+secondary shell labels recede while Library, Policy, Activity, and Settings
+remain visible as four equal targets, never scrolled out of view. Attention is
+opened from Library as a contextual queue, not represented as permanent
+navigation.
+
+A page still loading says so as a small sans-serif line beside a dot that
+pulses when motion is welcome, not as a display headline the page's own then
+replaces. The Settings saved notice floats at the bottom of the window, above
+any finish tray, so its arrival moves nothing the owner is reading.
 
 ### Work Row and Book Mark
 
