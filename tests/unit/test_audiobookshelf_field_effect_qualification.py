@@ -533,13 +533,16 @@ def test_installed_cover_accept_satisfies_the_decision_contract(
     current_selection: str | None, match_state: str, confirm: bool
 ) -> None:
     # #1185: the canary's cover accept drifted from the contract once already.
-    field = {
+    field: dict[str, object] = {
         "current_cover_selection_id": current_selection,
         "destination": "cover",
         "proposal_id": "review_proposal_" + "b" * 64,
         "target_fingerprint": "c" * 64,
     }
-    selected_cover = {"artifact_id": "artifact", "match_state": match_state}
+    selected_cover: dict[str, object] = {
+        "artifact_id": "artifact",
+        "match_state": match_state,
+    }
     payload = _installed_accept_payload(
         field,
         {"kind": "cover", "value": "artifact"},
@@ -558,7 +561,7 @@ def test_installed_cover_accept_satisfies_the_decision_contract(
 
 
 def test_installed_non_cover_accept_carries_no_cover_confirmation() -> None:
-    field = {
+    field: dict[str, object] = {
         "destination": "description",
         "proposal_id": "review_proposal_" + "b" * 64,
         "target_fingerprint": "c" * 64,
