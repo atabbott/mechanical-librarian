@@ -2393,6 +2393,50 @@ describe('Policy keyboard focus (#1288)', () => {
     )
   })
 
+  it('moves focus to the finish message when a retried transition finishes later', async () => {
+    const user = userEvent.setup()
+    let reads = 0
+    let retried = false
+    const transition = {
+      schema_version: 'metadata-policy-transition-v1' as const,
+      transition_id: 'policy_transition_2',
+      from_policy_id: 'policy-a',
+      to_policy_id: 'policy-b',
+      generation: 2,
+      state: 'completed_with_failures',
+      completed: 9,
+      total: 11,
+      failed: 2,
+      acknowledged: false,
+      origin: 'activation',
+    }
+    const processing = { ...transition, state: 'processing', failed: 0 }
+    const reconciled = { ...transition, state: 'completed', completed: 11, failed: 0 }
+    const policyCommand = vi.fn(async (): Promise<unknown> => {
+      retried = true
+      return processing
+    })
+    renderRoute('/policy', {
+      ...createHttp(),
+      // The first read after the retry is still processing; the poll after it
+      // finds the transition finished, which no longer shows a notice.
+      getPolicyTransition: vi.fn(
+        async () => (!retried ? transition : reads++ === 0 ? processing : reconciled) as never,
+      ),
+      policyCommand: <T,>() => policyCommand() as Promise<T>,
+    })
+    const retry = await screen.findByRole('button', { name: 'Retry failed reconciliation' })
+    retry.focus()
+    await user.keyboard('{Enter}')
+    const notice = await screen.findByRole('region', { name: 'Policy activation progress' })
+    await waitFor(() => expect(notice).toHaveFocus())
+    await waitFor(
+      () => expect(screen.queryByRole('region', { name: 'Policy activation progress' })).toBeNull(),
+      { timeout: 4_000 },
+    )
+    await waitFor(() => expect(document.querySelector('.cm-policy-finish-message')).toHaveFocus())
+  })
+
   it('describes the activation review by its write-permission line', async () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {

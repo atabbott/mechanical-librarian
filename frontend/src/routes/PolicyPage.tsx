@@ -1333,6 +1333,17 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     setRetried(false)
     ;(activationNotice ? cutoverRef : finishMessageRef).current?.focus({ preventScroll: true })
   }, [activationNotice, retried])
+  // A notice that ends under focus, as a retried transition finishing does,
+  // takes the region's focus with it, so the finish message takes it over.
+  const noticeShown = Boolean(activationNotice)
+  const noticeWasShown = useRef(noticeShown)
+  useEffect(() => {
+    const ended = noticeWasShown.current && !noticeShown
+    noticeWasShown.current = noticeShown
+    const active = document.activeElement
+    if (ended && (active === cutoverRef.current || active === document.body))
+      finishMessageRef.current?.focus({ preventScroll: true })
+  }, [noticeShown])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
