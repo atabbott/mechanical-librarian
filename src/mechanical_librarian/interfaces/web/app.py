@@ -1918,7 +1918,7 @@ class _ShadowOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v10"]
+    schema_version: Literal["shadow-outcome-set-v11"]
     source_decision_set_id: str
     target_fingerprint: str
 

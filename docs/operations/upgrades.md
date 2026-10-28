@@ -1,5 +1,13 @@
 # Upgrades and compatibility
 
+#1396 binds qualification authority to the permitted operations alone
+(ADR-0087), so the F19a/F20/F46 digests rotate once and decisions minted under
+any earlier digest no longer decode. Rich outcome action identities embed the F20
+digest, so outcomes advance to `shadow-outcome-set-v11`. **Clean rebuild
+required** for every predecessor application database, including an empty one;
+startup refuses v10 outcomes before mutation. No migration, adoption,
+conversion, import or downgrade is supplied.
+
 #1424 advances the report to `metadata-report-v58`: an Audiobookshelf
 incumbent description is admitted as the text it shows rather than its stored,
 HTML-escaped form. **Clean rebuild required** for every predecessor application
@@ -144,7 +152,7 @@ decodable history without current authority; no adoption or migration is supplie
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v58`, `proposal-set-v8` under
-`fixed-conservative-v36`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
+`fixed-conservative-v36`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
 and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.
@@ -293,11 +301,13 @@ Retain an older database and its matching artifact
 directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.
 
-Maintainers have one separate qualification-only command:
-`qualification-state-bridge retained-library-v26-to-v32`. It accepts only the
+Maintainers have one separate qualification-only contributor script, outside
+the installed package since #1396: `uv run python
+scripts/qualification_state_bridge.py retained-library-v26-to-v32 --database
+PATH --backup PATH --output PATH`. It accepts only the
 exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
-directory. The command name remains the frozen authority identifier from its
+directory. The plan name remains the frozen authority identifier from its
 original plan; its frozen target is
 `metadata-report-v40` with `fixed-conservative-v23`. That target is incompatible
 with the current v25 title policy; this change does not refresh the bridge. It leaves the source

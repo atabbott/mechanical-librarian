@@ -94,11 +94,9 @@ reviewable, the same rule the frontend follows under Prettier.
 lint rules, the analysed platform, every disabled code, and every per-file and
 per-module relaxation. Each one is recorded there with the reason it exists
 beside it; read that reason before changing it, and do not add a silent
-relaxation. Four sources are byte-frozen by the F20 rich-metadata qualification
-manifest and cannot carry an inline suppression at all -- the suppression would
-itself change the bytes the manifest pins -- so they are exempted in
-configuration instead. Do not edit those files to satisfy a linter; changing
-them requires re-qualification.
+relaxation. The per-file exemptions for four sources the F20 qualification once
+byte-froze are lint debt: no qualification binds source bytes any more
+(ADR-0087).
 
 Suppress a finding only where the code is right and the tool is wrong, and
 always inline, named, and justified:

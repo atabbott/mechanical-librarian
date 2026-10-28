@@ -12,10 +12,6 @@ from pathlib import Path
 from typing import NoReturn, TextIO
 
 from mechanical_librarian.application.configuration import ConfigurationError
-from mechanical_librarian.application.qualification_state_bridge import (
-    QUALIFICATION_STATE_BRIDGE_PLANS,
-    QualificationStateBridgeRecoveryRequired,
-)
 from mechanical_librarian.domain.human_decision import validate_cover_confirmation
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
@@ -27,7 +23,6 @@ CoverReviewRunner = Callable[
 ]
 ReviewActivityRunner = Callable[[Path, Path], dict[str, object]]
 ProviderRecoveryRunner = Callable[[Path, Path, Path, Path], None]
-QualificationStateBridgeRunner = Callable[[Path, Path, Path, str], dict[str, str | int]]
 _MAX_PROFILE_BYTES = 16_384
 
 
@@ -118,16 +113,6 @@ def _parser() -> _Parser:
     recovery.add_argument("--database", required=True, metavar="PATH", type=Path)
     recovery.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
     recovery.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
-    bridge = commands.add_parser(
-        "qualification-state-bridge",
-        help="reconstruct one exact retained qualification checkpoint while offline",
-    )
-    bridge.add_argument(
-        "plan", choices=QUALIFICATION_STATE_BRIDGE_PLANS, metavar="PLAN"
-    )
-    bridge.add_argument("--database", required=True, metavar="PATH", type=Path)
-    bridge.add_argument("--backup", required=True, metavar="PATH", type=Path)
-    bridge.add_argument("--output", required=True, metavar="PATH", type=Path)
     return parser
 
 
@@ -139,7 +124,6 @@ def main(
     cover_review_runner: CoverReviewRunner | None = None,
     review_activity_runner: ReviewActivityRunner | None = None,
     provider_recovery_runner: ProviderRecoveryRunner | None = None,
-    qualification_state_bridge_runner: QualificationStateBridgeRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -152,25 +136,6 @@ def main(
         errors.write("Review server failed: invalid invocation.\n")
         return 2
     try:
-        if arguments.command == "qualification-state-bridge":
-            if qualification_state_bridge_runner is None:
-                raise RuntimeError("runtime composition unavailable")
-            bridge_result = qualification_state_bridge_runner(
-                arguments.database,
-                arguments.backup,
-                arguments.output,
-                arguments.plan,
-            )
-            output.write(
-                json.dumps(
-                    bridge_result,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                + "\n"
-            )
-            return 0
         if arguments.command == "review-activity":
             if review_activity_runner is None:
                 raise RuntimeError("runtime composition unavailable")
@@ -270,18 +235,11 @@ def main(
             arguments.host,
             arguments.port,
         )
-    except QualificationStateBridgeRecoveryRequired:
-        errors.write("Qualification-state bridge requires recovery.\n")
-        return 1
     except ConfigurationError:
         errors.write("Review server failed: configuration unavailable.\n")
         return 3
     except Exception:
-        errors.write(
-            {
-                "qualification-state-bridge": "Qualification-state bridge failed safely.\n",
-            }.get(arguments.command, "Review server failed safely.\n")
-        )
+        errors.write("Review server failed safely.\n")
         return 1
     return 0
 

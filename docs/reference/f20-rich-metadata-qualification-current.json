@@ -37,15 +37,8 @@
       "tags:add",
       "tags:fill_empty",
       "tags:replace"
-    ],
-    "semantic_input_sha256": "d3af702adfe01aaaedc2edf67e523fcae7d14824beb093b61cbbd03540eebdf3",
-    "semantic_revision": 81
-  },
-  "predecessor": {
-    "path": "docs/reference/f20-rich-metadata-qualification-current.json",
-    "sha256": "dee07105268a439fad93fa2d63eb46b44f803698dacb1d2abf8e197a9d69f754",
-    "source_sha": "aa8c84d5b0f0b768063ca7974b123584cd42316d"
+    ]
   },
   "provenance": "qualification-provenance-current.json",
-  "schema": "qualification-current-v1"
+  "schema": "qualification-current-v2"
 }

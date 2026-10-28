@@ -215,3 +215,11 @@ it shows, its markup rendered and its character references decoded, where a v57
 report kept the stored form, so a v57 document cannot be read as current. Every
 earlier application database is rejected before mutation and needs a clean
 rebuild; no adoption is supplied.
+
+Issue #1396 also takes the clean-rebuild branch. Under ADR-0087 qualification
+authority binds only the permitted operations, so the F19a, F20 and F46 digests
+rotate once and the historical decoding tables are deleted: an automatic
+decision minted under any earlier digest no longer decodes. Rich outcome action
+identities embed the F20 digest, so outcomes move to `shadow-outcome-set-v11`
+and a v10 outcome cannot be read as current. Every earlier application database
+is rejected before mutation and needs a clean rebuild; no adoption is supplied.

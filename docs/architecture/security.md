@@ -124,8 +124,9 @@ There is no installed schema adoption command. #1245 retired #1232's offline
 reach the current report schema. Every earlier state is rejected before
 mutation and needs a clean rebuild.
 
-The installed qualification-state bridge is a maintainer test-state boundary,
-not upgrade authority. It reads only one exact owner-only retained clone,
+The qualification-state bridge is a maintainer test-state boundary, not
+upgrade authority, and since #1396 a contributor script outside the installed
+package. It reads only one exact owner-only retained clone,
 rejects sidecars, path replacement, unknown schemas, malformed canonical
 evidence, changed target builds, and unverified backups, then publishes a
 fresh exact-current output through an owner-only temporary inode and atomic

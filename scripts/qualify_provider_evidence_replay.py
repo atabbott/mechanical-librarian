@@ -25,9 +25,6 @@ import httpx
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.qualification_state_bridge import (
-    _connect_read_only,
-)
 from mechanical_librarian.adapters.persistence.schema import (
     _validate_report_row,
     _validate_schema,
@@ -71,6 +68,16 @@ from mechanical_librarian.infrastructure.security.credentials import (
     open_library_client,
     read_secret,
 )
+
+# The bridge's read-only connection lives in contributor tooling (#1396). Direct
+# execution puts scripts/ on sys.path; the test import resolves it as the
+# scripts namespace package.
+try:
+    from scripts.qualification_state_bridge import _connect_read_only
+except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+    from qualification_state_bridge import (  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
+        _connect_read_only,
+    )
 
 _BUNDLE_SCHEMA = "provider-replay-bundle-v1"
 _RESULT_SCHEMA = "provider-replay-result-v1"
