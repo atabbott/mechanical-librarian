@@ -1472,7 +1472,7 @@ type OwnerOutcome = 'owner_entered' | 'withdraw'
 // The open field's heading, the place focus returns to when the control that
 // was used is gone.
 const focusFieldHeading = () => {
-  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h2')
+  const heading = document.querySelector<HTMLElement>('.decision-canvas > header h3')
   heading?.setAttribute('tabindex', '-1')
   heading?.focus({ preventScroll: true })
 }
@@ -4642,7 +4642,7 @@ export default function LibraryPage({
                 >
                   <span className="review-complete-mark">✓</span>
                   <div>
-                    <h2>Review complete</h2>
+                    <h3>Review complete</h3>
                     <span>
                       {String(complete.fields.length)} recorded field outcome
                       {complete.fields.length === 1 ? '' : 's'}
@@ -4735,11 +4735,11 @@ export default function LibraryPage({
                   ) : null}
                   <header>
                     <div>
-                      <h2>
+                      <h3>
                         {selectedActionable
                           ? decisionQuestion(selected.destination)
                           : destinationLabel(selected.destination)}
-                      </h2>
+                      </h3>
                       {selectedActionable ? (
                         <>
                           <p>{`${destinationLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
@@ -5086,7 +5086,7 @@ export default function LibraryPage({
                     >
                       {automaticPanelVisible ? (
                         <>
-                          <h3>Automatic handling is paused for this field</h3>
+                          <h4>Automatic handling is paused for this field</h4>
                           <p>
                             The recorded value remains. Fresh checks are requested first; automatic
                             policy may manage later qualified changes.

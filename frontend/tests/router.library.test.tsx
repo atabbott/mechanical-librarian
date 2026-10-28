@@ -1519,6 +1519,38 @@ describe('Library route', () => {
     expect(getCaseSuccessor).not.toHaveBeenCalled()
   })
 
+  it('keeps one heading outline on Library and review (#1288)', async () => {
+    // Page h1, works and the work at h2, the question or completion at h3,
+    // and never a level skipped on the way down.
+    const outline = () => {
+      const levels = [...document.querySelectorAll('main :is(h1, h2, h3, h4, h5, h6)')].map(
+        (heading) => `${heading.tagName.slice(1)} ${heading.textContent.trim()}`,
+      )
+      const skips = levels.filter(
+        (entry, index) => index > 0 && Number(entry[0]) > Number(levels[index - 1]?.[0]) + 1,
+      )
+      return { levels, skips }
+    }
+    const user = userEvent.setup()
+    renderRoute('/library?lens=all&preview=case-1&field=title&attention=open')
+    await screen.findByRole('heading', { level: 3, name: 'Which title should this work use?' })
+    await screen.findByRole('heading', { level: 2, name: 'Attention' })
+    const open = outline()
+    expect(open.skips).toEqual([])
+    expect(open.levels.slice(0, 2)).toEqual(['1 Library', '2 Works'])
+    expect(open.levels).toEqual(
+      expect.arrayContaining(['2 A Book', '3 Which title should this work use?', '2 Attention']),
+    )
+    await user.click(screen.getByRole('button', { name: 'Close' }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Choose proposed value: New title' }),
+    )
+    await screen.findByRole('heading', { level: 3, name: 'Review complete' })
+    const complete = outline()
+    expect(complete.skips).toEqual([])
+    expect(complete.levels).toEqual(expect.arrayContaining(['2 A Book', '3 Review complete']))
+  })
+
   it('keeps the selected-work header as the only Library route-focus target', async () => {
     renderRoute('/library?lens=all&preview=case-1&field=title')
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()

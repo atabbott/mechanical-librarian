@@ -459,7 +459,7 @@ describe('owner command labels', () => {
 })
 
 describe('owner review fixes', () => {
-  const heading = () => screen.getByRole('heading', { level: 2, name: 'Title' })
+  const heading = () => screen.getByRole('heading', { level: 3, name: 'Title' })
 
   it('M1 labels an entered value as the owner’s own', async () => {
     const http = owner(() => [{ ...enteredTitle, editable: false, ownerControl: null }])

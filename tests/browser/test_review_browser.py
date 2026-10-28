@@ -8981,7 +8981,7 @@ def test_the_previous_title_chosen_after_the_library_changed_is_refused():
                 "Not recorded: the work changed. Review it again.", exact=True
             )
         ).to_be_visible()
-        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        expect(page.locator(".decision-canvas > header h3")).to_be_focused()
         _said_nothing_false_while_moving(page)
 
 
@@ -9042,7 +9042,7 @@ def test_an_open_entry_moves_to_the_case_that_superseded_it(library_last, named)
                 "The work changed. Review it again.", exact=True
             )
         ).to_be_visible()
-        expect(page.locator(".decision-canvas > header h2")).to_be_focused()
+        expect(page.locator(".decision-canvas > header h3")).to_be_focused()
         _said_nothing_false_while_moving(page)
 
 
