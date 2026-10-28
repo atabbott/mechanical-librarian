@@ -35,6 +35,7 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyPreviewLibraryCapture,
     PolicyTransition,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineProgress,
 )
@@ -46,6 +47,7 @@ from mechanical_librarian.application.review_web import (
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
 )
+from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.field_effect import LIST_DESTINATIONS
@@ -54,6 +56,7 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -188,6 +191,62 @@ class FakeReviewRepository:
         self.preparation_presentation_value: PreparationPresentation | None = None
         self.dismissed_preparation_runs: list[str] = []
         self.dismiss_preparation_error: Exception | None = None
+        # The durable safety posture a fresh store starts with (#780). The
+        # double previously had none, so every safety read through it was
+        # "automatic safety is unavailable" whether or not a test meant it.
+        self.automatic_safety = AutomaticSafetyState(False, None, ())
+        # Each owner-entry field's value before the work's latest verified
+        # write; empty is the store's answer for a work never written.
+        self.previous_values: tuple[tuple[str, object], ...] = ()
+        # An attribute rather than a method so a test can substitute a
+        # degraded or failing status read; the default is a quiet store.
+        self.operational_snapshot: Callable[[], dict[str, object]] = lambda: {
+            "signals": []
+        }
+
+    def close(self) -> None:
+        # The double holds no connection, so the owner's shutdown has nothing
+        # to release; a test that proves the call is made records it itself.
+        return None
+
+    def automatic_safety_state(self) -> AutomaticSafetyState:
+        return self.automatic_safety
+
+    def set_automatic_safety_state(
+        self, state: AutomaticSafetyState, _updated_at: int
+    ) -> None:
+        self.automatic_safety = state
+
+    def pause_automatic_safety(
+        self, paused: bool, _updated_at: int
+    ) -> AutomaticSafetyState:
+        current = self.automatic_safety
+        self.automatic_safety = AutomaticSafetyState(
+            paused, current.global_suspension, current.category_suspensions
+        )
+        return self.automatic_safety
+
+    def recover_automatic_safety(
+        self, _updated_at: int, category: str | None
+    ) -> AutomaticSafetyState:
+        current = self.automatic_safety
+        self.automatic_safety = AutomaticSafetyState(
+            current.paused,
+            None if category is None else current.global_suspension,
+            tuple(item for item in current.category_suspensions if item[0] != category),
+        )
+        return self.automatic_safety
+
+    def activate_qualified_automatic(self, _updated_at: int) -> str:
+        # Deliberately refused: the double seals no qualification, so it can
+        # never confirm Automatic. Qualified confirmation is proved against
+        # the real persisted store.
+        raise MetadataReportError("automatic posture qualification is unavailable")
+
+    def previous_field_values(
+        self, _connection: str, _library: str, _work_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        return self.previous_values
 
     def preparation_presentation(self, _now: int) -> PreparationPresentation | None:
         return self.preparation_presentation_value
@@ -298,10 +357,13 @@ class FakeReviewRepository:
         return self.policy_transition
 
     def current_resolved_policy_id(self, library):
+        return self.current_resolved_metadata_policy(library).resolved_id
+
+    def current_resolved_metadata_policy(self, library: str) -> ResolvedMetadataPolicy:
         return resolve_policy(
             MetadataPolicyProfile.from_data(json.loads(self.active_metadata_policy())),
             library,
-        ).resolved_id
+        )
 
     def shadow_posture(self):
         return self.shadow_mode
