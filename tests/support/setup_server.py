@@ -16,7 +16,10 @@ from pathlib import Path
 import uvicorn
 
 from mechanical_librarian.bootstrap import composition
-from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+from mechanical_librarian.infrastructure.settings_authority import (
+    BootstrapMount,
+    ReviewBootstrap,
+)
 from mechanical_librarian.interfaces.web.runtime_dispatch import (
     MutableRuntimeDispatcher,
 )
@@ -26,7 +29,9 @@ from tests.support.tls import synthetic_tls_identity
 
 @contextmanager
 def real_setup_server(
-    root: Path, trusted_proxy_ips: tuple[str, ...] = ()
+    root: Path,
+    trusted_proxy_ips: tuple[str, ...] = (),
+    mounts: tuple[BootstrapMount, ...] = (),
 ) -> Iterator[tuple[str, Path, Path]]:
     """Yield the origin, the minted token file and the trusted certificate."""
     certificate, private_key = synthetic_tls_identity(root, "setup")
@@ -41,6 +46,7 @@ def real_setup_server(
         tls_certificate_file=str(certificate),
         tls_private_key_file=str(private_key),
         trusted_proxy_ips=list(trusted_proxy_ips),
+        mounts=list(mounts),
     )
     repository = composition.open_repository(database, create=True, cross_thread=True)
     session_store = composition._open_review_session_store(database)

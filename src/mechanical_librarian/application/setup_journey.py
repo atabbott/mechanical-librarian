@@ -94,7 +94,8 @@ class SetupJourneyOperation:
 
     def discover(self, expected_revision: int) -> tuple[SetupLibraryCandidate, ...]:
         current = self._current(expected_revision)
-        if current.next_step() not in {"libraries", "mounts"}:
+        # Providers reads it too, to suggest those that fit each library.
+        if current.next_step() not in {"providers", "libraries", "mounts"}:
             raise SetupJourneyError("stale")
         try:
             return self._discover_libraries(current)
@@ -104,6 +105,8 @@ class SetupJourneyOperation:
             code = getattr(error, "code", "unavailable")
             if code not in {
                 "unauthorized",
+                "name_resolution",
+                "refused",
                 "tls",
                 "timeout",
                 "unavailable",
@@ -154,6 +157,11 @@ class SetupJourneyOperation:
             ),
             key=lambda value: value.name,
         )
+        # One library carries one name everywhere, so two may not share one,
+        # whatever its case.
+        shown = [str(value.display_name).casefold() for value in canonical]
+        if len(set(shown)) != len(shown):
+            raise SetupJourneyError("invalid_library_display_name_duplicate")
         successor = SetupStateDocument.model_validate(
             {
                 **current.model_dump(),

@@ -46,6 +46,20 @@ class ReviewerProvisioningStatus:
     model: str | None = None
 
 
+# The closed provider failures an owner may see, and what each asks them to change.
+OpenRouterPublicFailure = Literal[
+    "invalid_key",
+    "quota_exhausted",
+    "rate_limited",
+    "model_unavailable",
+    "model_text_only",
+    "malformed_response",
+    "unreachable",
+    "response_too_large",
+    "timed_out",
+    "data_policy_refused",
+    "image_limit_exceeded",
+]
 ReviewerStatus = Literal[
     "not_provisioned",
     "ready",
@@ -61,13 +75,7 @@ ReviewerStatus = Literal[
     "host_unsupported",
     "unconfigured",
     "configured",
-    "invalid_key",
-    "quota_exhausted",
-    "rate_limited",
-    "model_unavailable",
-    "model_text_only",
-    "malformed_response",
-    "unreachable",
+    OpenRouterPublicFailure,
 ]
 ReviewerStatusReason = Literal[
     "profile_not_provisioned",
@@ -81,22 +89,10 @@ ReviewerStatusReason = Literal[
     "protocol_or_process",
     "restart_interrupted",
     "not_selected",
-    "invalid_key",
-    "quota_exhausted",
-    "rate_limited",
-    "model_unavailable",
-    "model_text_only",
-    "malformed_response",
-    "unreachable",
+    OpenRouterPublicFailure,
 ]
 OpenRouterFailure = Literal[
-    "invalid_key",
-    "quota_exhausted",
-    "rate_limited",
-    "model_unavailable",
-    "model_text_only",
-    "malformed_response",
-    "unreachable",
+    OpenRouterPublicFailure,
     "transport",
     "profile_mismatch",
     "malformed_request",
@@ -187,6 +183,7 @@ __all__ = [
     "DeviceAuthStatus",
     "OpenRouterAccountStatus",
     "OpenRouterFailure",
+    "OpenRouterPublicFailure",
     "OpenRouterReviewerError",
     "ReviewerDispatch",
     "ReviewerStatus",

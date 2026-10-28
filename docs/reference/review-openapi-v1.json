@@ -1539,7 +1539,11 @@
                   "model_unavailable",
                   "model_text_only",
                   "malformed_response",
-                  "unreachable"
+                  "unreachable",
+                  "response_too_large",
+                  "timed_out",
+                  "data_policy_refused",
+                  "image_limit_exceeded"
                 ],
                 "type": "string"
               },
@@ -1571,7 +1575,11 @@
               "model_unavailable",
               "model_text_only",
               "malformed_response",
-              "unreachable"
+              "unreachable",
+              "response_too_large",
+              "timed_out",
+              "data_policy_refused",
+              "image_limit_exceeded"
             ],
             "title": "State",
             "type": "string"
@@ -4055,6 +4063,30 @@
               }
             ],
             "title": "Reviewer Engine"
+          },
+          "reviewer_failure_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "invalid_key",
+                  "quota_exhausted",
+                  "rate_limited",
+                  "model_unavailable",
+                  "model_text_only",
+                  "malformed_response",
+                  "unreachable",
+                  "response_too_large",
+                  "timed_out",
+                  "data_policy_refused",
+                  "image_limit_exceeded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Failure Code"
           },
           "reviewer_model": {
             "anyOf": [

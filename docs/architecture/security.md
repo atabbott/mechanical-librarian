@@ -780,7 +780,12 @@ Every response carries a restrictive CSP, frame denial, no-referrer, and
 no-sniff; browser HTTPS additionally receives HSTS. The CSP admits scripts,
 styles and fonts from the same origin only (`font-src 'self'`, #1289): the
 workspace's Inter faces are vendored, content-hashed manifest assets, so no
-untrusted font input is parsed. Every response is
+untrusted font input is parsed. Sign-in and the setup app reuse those faces;
+setup admits `font-src 'self'` and serves only manifest font assets under
+`/assets/review-app/`, under its own no-store policy. Setup reach failures are
+closed codes (`name_resolution`, `refused`, `tls`, `timeout`, `unauthorized`,
+`unavailable`); the page builds the origin it names from the owner's own
+input, so no key, userinfo or password is echoed (#1287). Every response is
 private/no-store except two route-set families whose bytes their URL fixes:
 manifest-admitted hashed scripts, styles and fonts, and session-checked cover previews
 addressed by a content-derived consideration and reference. Those are
@@ -882,8 +887,17 @@ enter the status grammar, logs, or persisted failure identity.
 OpenRouter egress is fixed to `https://openrouter.ai`: key and model capability
 checks precede the one exact-model chat-completions request. Redirect and
 ambient proxy inheritance are disabled. Every response stream is consumed in
-bounded chunks up to its endpoint-specific cap plus one rejection byte,
-including when `Content-Length` is absent or false. Cover previews, the sealed
+chunks and refused as `response_too_large` past its endpoint-specific cap,
+including when `Content-Length` is absent or false. The model catalogue has no
+total cap: it is scanned as one stream and each entry is held, up to 64 KiB, only
+until it is parsed, so memory stays bounded while the catalogue grows. Each
+public call shares one deadline across key, catalogue and chat requests and
+fails `timed_out` at the first check after it is spent: before each request and
+after each read. Each request's own timeout is capped by the time remaining
+when it starts, so one stalled read can overrun the deadline by at most that
+per-phase cap (30 seconds by default); the deadline is not a hard limit. Error bodies are read up to 8 KiB only to
+recognise the data-policy and image-count refusals, and are never retained.
+Cover previews, the sealed
 packet, instruction, and strict schema are the only model inputs; no target
 credential or write authority crosses this boundary.
 

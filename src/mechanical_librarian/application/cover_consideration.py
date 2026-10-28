@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final, Literal, Mapping, Protocol, cast
+from typing import Final, Literal, Mapping, Protocol, cast, get_args
 
 from mechanical_librarian.application.contained_reviewer_contract import (
     is_cover_profile_contract_reason,
@@ -61,7 +61,10 @@ from mechanical_librarian.application.cover_policy import (
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
 )
-from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
+from mechanical_librarian.application.reviewer_contracts import (
+    OpenRouterPublicFailure,
+    ReviewerDispatch,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSourceKind,
@@ -1507,6 +1510,10 @@ class CoverConsiderationService:
         ]
         incumbent = cast("dict[str, object]", value["incumbent"])
         omissions = cast("list[object]", value["omissions"])
+        # The stored failure code is an open string; only a closed OpenRouter
+        # identity reaches the owner, and any other or legacy value reads as none.
+        failure = value["reviewer_failure"]
+        failure_code = failure.get("code") if type(failure) is dict else None
         saved_policy_document = cast("str", value["policy_document"])
         return {
             "candidates": candidates,
@@ -1529,6 +1536,13 @@ class CoverConsiderationService:
             "reviewer_access_revision": value["reviewer_access_revision"],
             "reviewer_status": value["reviewer_status"],
             "reviewer_engine": value["reviewer_engine"],
+            "reviewer_failure_code": (
+                failure_code
+                if value["reviewer_engine"] == "openrouter"
+                and value["reviewer_status"] == "failed"
+                and failure_code in get_args(OpenRouterPublicFailure)
+                else None
+            ),
             "reviewer_model": value["reviewer_model"],
             "reviewer_unavailable_reason": (
                 self._reviewer_unavailable_reason
