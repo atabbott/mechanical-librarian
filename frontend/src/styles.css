@@ -982,8 +982,10 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   .cm-write-consent-summary dl { gap:.3rem 0; }
   .cm-write-consent-summary dl div:first-child { border-left:0; }
   .cm-write-consent-action > button { width:100%; }
-  .cm-library-handoff { align-items:start; }
+  /* Less inset, so the primary link's words stay whole at 320px and 200% text. */
+  .cm-library-handoff { align-items:start; padding-inline:.6rem; }
   .cm-library-handoff-action { align-items:stretch; flex-direction:column; }
+  .cm-library-handoff-action > a.button-primary { padding-inline:.4rem; }
   .cm-library-handoff-action button { width:100%; }
 }
 @media (prefers-reduced-motion:reduce) { .live-state i { animation:none!important; } }

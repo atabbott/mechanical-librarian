@@ -3854,6 +3854,8 @@ def test_library_toolbar_is_one_and_selection_never_moves_the_workspace() -> Non
                     ".attention-rail header p",
                     ".attention-rail header button",
                     ".attention-work-count",
+                    # The handoff's primary link keeps its words whole (#1288).
+                    ".cm-library-handoff a.button-primary",
                 )
                 for word in page.evaluate(_POLICY_MID_WORD, selector)
             ]
