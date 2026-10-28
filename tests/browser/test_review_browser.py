@@ -5363,6 +5363,15 @@ def test_review_choice_group_keyboard_model(width: int) -> None:
                 assert snapshot.startswith(
                     '- radiogroup "Which title should this work use?"'
                 ), snapshot
+                # Each choice's Evidence toggle is a 44px target at every width,
+                # as the cover cards' are (#1290).
+                toggle_heights = page.locator(
+                    ".metadata-choice .choice-evidence-toggle"
+                ).evaluate_all(
+                    "nodes => nodes.map((node) => node.getBoundingClientRect().height)"
+                )
+                assert len(toggle_heights) >= 2, toggle_heights
+                assert min(toggle_heights) >= 44, (width, toggle_heights)
                 radios = group.get_by_role("radio")
                 count = radios.count()
                 assert count >= 2, snapshot

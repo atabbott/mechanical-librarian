@@ -832,7 +832,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .metadata-choice { position:relative; display:grid; align-content:start; min-width:0; border:1px solid transparent; background:var(--surface-strong); }
 .metadata-choice.is-current { border-right-color:var(--line); }
 .metadata-choice .choice-select { min-height:152px; padding:20px 24px; }
-.metadata-choice .choice-evidence-toggle { position:static; justify-self:start; margin:12px 24px; min-height:40px; padding:0 10px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); color:var(--accent-strong); font-size:.75rem; font-weight:700; }
+.metadata-choice .choice-evidence-toggle { position:static; justify-self:start; margin:12px 24px; min-height:44px; padding:0 10px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); color:var(--accent-strong); font-size:.75rem; font-weight:700; }
 .metadata-choice.is-evidence-open { padding-bottom:0; }
 .metadata-choice:hover, .metadata-choice:has(:focus-visible) { background:color-mix(in srgb, var(--accent-soft) 45%, var(--surface-strong)); }
 .metadata-choice:hover .choice-select, .metadata-choice:has(:focus-visible) .choice-select { background:transparent; }
