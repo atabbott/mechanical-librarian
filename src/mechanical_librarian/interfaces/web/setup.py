@@ -47,11 +47,17 @@ from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_DEFAULT,
     owner_password,
 )
+from mechanical_librarian.interfaces.web import review_frontend
 from mechanical_librarian.interfaces.web.app import (
     BodyLimitMiddleware,
     _request_matches_origin,
     client_identity,
     reviewer_failure_response,
+)
+from mechanical_librarian.interfaces.web.react_assets import (
+    ReactAssetError,
+    ReactAssetLoader,
+    ReactAssetRecovery,
 )
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
@@ -277,7 +283,7 @@ def _secure_setup_response(response: Response, *, hsts: bool) -> Response:
     response.headers["cache-control"] = "private, no-store"
     response.headers["content-security-policy"] = (
         "default-src 'none'; script-src 'self'; style-src 'self'; "
-        "img-src 'self'; connect-src 'self'; form-action 'self'; "
+        "img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; "
         "base-uri 'none'; frame-ancestors 'none'"
     )
     response.headers["referrer-policy"] = "no-referrer"
@@ -304,10 +310,12 @@ def create_setup_app(
     trusted_proxy_ips: tuple[str, ...] = (),
     require_forwarding: bool = False,
     retire_claim_token: Callable[[], None] = lambda: None,
+    react_asset_loader: ReactAssetLoader | None = None,
 ) -> FastAPI:
     """Compose no normal route, worker, target client, or write authority."""
 
     app = FastAPI(docs_url=None, openapi_url=None, redoc_url=None)
+    assets = react_asset_loader or ReactAssetLoader()
     app.add_middleware(
         BodyLimitMiddleware,
         hsts=canonical_origin.startswith("https://"),
@@ -406,7 +414,34 @@ def create_setup_app(
 
     @app.get("/assets/setup.css")
     def setup_css() -> Response:
-        return Response(SETUP_CSS, media_type="text/css; charset=utf-8")
+        bundle = assets.load()
+        faces = (
+            ""
+            if isinstance(bundle, ReactAssetRecovery)
+            else review_frontend.inter_font_faces(
+                asset.path for asset in bundle.assets if asset.kind == "font"
+            )
+        )
+        return Response(faces + SETUP_CSS, media_type="text/css; charset=utf-8")
+
+    @app.get("/assets/theme.js")
+    def theme_js() -> Response:
+        return Response(
+            review_frontend.THEME_JS, media_type="text/javascript; charset=utf-8"
+        )
+
+    @app.get("/assets/review-app/{asset_path:path}")
+    def font_asset(asset_path: str) -> Response:
+        """Serve the workspace build's fonts, and nothing else from that build."""
+        bundle = assets.load()
+        if not isinstance(bundle, ReactAssetRecovery) and any(
+            asset.path == asset_path and asset.kind == "font" for asset in bundle.assets
+        ):
+            try:
+                return Response(bundle.read(asset_path), media_type="font/woff2")
+            except (OSError, ReactAssetError):
+                pass
+        return PlainTextResponse("not found\n", status_code=404)
 
     @app.get("/assets/setup-handoff.css")
     def setup_handoff_css() -> Response:

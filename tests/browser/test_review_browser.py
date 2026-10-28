@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager, nullcontext
 from dataclasses import replace
 from functools import partial
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import Mock, patch
@@ -91,6 +92,7 @@ from mechanical_librarian.domain.setup_state import (
     SetupStateDocument,
     claim_token_digest,
 )
+from mechanical_librarian.infrastructure.settings_authority import BootstrapMount
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.support.audiobook_reports import (
@@ -1973,7 +1975,10 @@ def _login(page: Page, origin: str) -> None:
 
 @contextmanager
 def _setup_asset_server(
-    certificate: Path, key: Path, port: ReservedPort
+    certificate: Path,
+    key: Path,
+    port: ReservedPort,
+    react_asset_loader: ReactAssetLoader | None = None,
 ) -> Iterator[str]:
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
@@ -1986,7 +1991,11 @@ def _setup_asset_server(
 
     origin = f"https://127.0.0.1:{port.number}"
     app = create_setup_app(
-        cast(Any, object()), cast(Any, State()), "", canonical_origin=origin
+        cast(Any, object()),
+        cast(Any, State()),
+        "",
+        canonical_origin=origin,
+        react_asset_loader=react_asset_loader,
     )
     server = uvicorn.Server(
         uvicorn.Config(
@@ -2310,7 +2319,7 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 page.get_by_label("Password").fill(old_password)
                 page.get_by_role("button", name="Sign in").click()
                 expect(page.locator("#login-status")).to_have_text(
-                    "Sign in failed. Check the password and try again."
+                    "That password was not accepted. Check it and try again."
                 )
                 page.get_by_label("Password").fill(new_password)
                 page.get_by_role("button", name="Sign in").click()
@@ -5354,6 +5363,103 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
             browser.close()
 
 
+def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -> None:
+    """A long reviewer form must not leave its refusal above a phone viewport."""
+
+    class State:
+        def read(self, _verifier: str) -> SetupStateDocument:
+            return SetupStateDocument(
+                schema_version="setup-state-v4",
+                revision=1,
+                bootstrap_verifier_digest="0" * 64,
+                claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
+            )
+
+    setup_client = TestClient(
+        create_setup_app(cast(Any, object()), cast(Any, State()), ""),
+        base_url="https://testserver",
+    )
+    origin = "https://setup.test"
+    access = {
+        "schema_version": "reviewer-access-view-v2",
+        "cover_metadata": None,
+        "cost_evidence": {"schema_version": "reviewer-cost-evidence-v2", "models": []},
+        "revision": 3,
+        "mapping": None,
+        "codex": {
+            "state": "not_provisioned",
+            "reason": "profile_not_provisioned",
+            "model": None,
+        },
+        "recommendations": ["openai/gpt-6-luna"],
+        "candidates": [
+            {"model": f"synthetic/vision-{index}", "tier": "paid", "suggested": False}
+            for index in range(12)
+        ],
+        "free_tier_caveat": "Account limits apply.",
+        "data_use_caveat": "Cover previews are sent to the selected provider.",
+    }
+
+    def setup_api(route: Any) -> None:
+        path = urlparse(route.request.url).path
+        if path == "/api/setup/state":
+            route.fulfill(
+                json={
+                    "csrf_token": "synthetic-csrf",
+                    "next_step": "reviewer",
+                    "completed_steps": [
+                        "claim",
+                        "connect",
+                        "providers",
+                        "libraries",
+                        "mounts",
+                    ],
+                    "revision": 7,
+                    "providers": [],
+                    "libraries": [],
+                    "mounts": [],
+                }
+            )
+        elif path == "/api/setup/reviewer-access":
+            route.fulfill(json=access)
+        elif path == "/api/setup/reviewer/openrouter":
+            route.fulfill(status=422, json={"detail": {"error": "invalid_key"}})
+        else:
+            route.fulfill(status=404, json={"error": "not_found"})
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 375, "height": 667})
+        with _closing_context(context):
+            page = context.new_page()
+            page_errors: list[str] = []
+            page.on("pageerror", partial(_record_page_error, page_errors))
+            page.route(origin + "/**", partial(_serve_setup_asset, setup_client))
+            page.route(origin + "/api/setup/**", setup_api)
+            page.goto(origin + "/")
+            page.get_by_role("textbox", name="Model ID").fill("synthetic/vision-1")
+            page.get_by_label("API key (write-only)").fill("synthetic-openrouter-key")
+            save = page.get_by_role("button", name="Validate and use OpenRouter")
+            save.click()
+            alert = page.get_by_role("alert")
+            expect(alert).to_have_text(
+                "OpenRouter rejected this key. Replace it and validate again."
+            )
+            key_field = page.get_by_label("API key (write-only)")
+            expect(key_field).to_be_focused()
+            expect(key_field).to_have_value("")
+            assert page.evaluate("document.activeElement !== document.body")
+            # The form is long enough at this width that its top is off screen.
+            assert page.evaluate(
+                "document.querySelector('#setup-main form').getBoundingClientRect().top < 0"
+            )
+            expect(alert).to_be_in_viewport()
+            expect(save).to_be_in_viewport()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            assert page_errors == []
+        browser.close()
+
+
 def test_setup_to_library_preparation_handoff_focuses_and_announces_destination() -> (
     None
 ):
@@ -5424,6 +5530,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 secured_setup_asset = partial(_serve_setup_asset, setup_client)
 
                 page.route(setup_url, secured_setup_asset)
+                page.route(origin + "/assets/theme.js", secured_setup_asset)
                 page.route(origin + "/assets/setup.css", secured_setup_asset)
                 page.route(origin + "/assets/setup-handoff.css", secured_setup_asset)
                 page.route(origin + "/assets/setup.js", secured_setup_asset)
@@ -5454,7 +5561,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         route.fulfill(json={"revision": 7, "mapping": None})
                     elif path == "/api/setup/kick-off":
                         route.fulfill(
-                            json={"message": "Preparation continues in the workspace."}
+                            json={
+                                "message": "Nothing in your library changes. Writes "
+                                "stay off until you turn them on in Activity."
+                            }
                         )
                     else:
                         route.fulfill(status=404, json={"error": "not_found"})
@@ -5480,6 +5590,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 run_id = parse_qs(urlparse(handoff_href).query)["preparation"][0]
                 presentation_state: dict[str, str | None] = {"value": "running"}
                 preparation_requests = {"count": 0}
+                active_name = {"value": "Synthetic active title"}
 
                 def preparation_api(
                     route,
@@ -5487,6 +5598,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     state_ref=presentation_state,
                     expected_run_id=run_id,
                     requests=preparation_requests,
+                    active=active_name,
                 ) -> None:
                     state = state_ref["value"]
                     requests["count"] += 1
@@ -5542,7 +5654,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                     if terminal
                                     else [
                                         {
-                                            "name": "Synthetic active title",
+                                            "name": active["value"],
                                             "stage": "Checking metadata",
                                         }
                                     ]
@@ -5568,6 +5680,29 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     )
 
                 page.route("**/api/v1/review-preparation", preparation_api)
+                # #1240 item 8: a long unbroken title wraps inside the card at
+                # the 320 px floor, and the running state is said only once.
+                page.set_viewport_size({"width": 320, "height": 844})
+                active_name["value"] = "Synthetic" + "unbroken" * 24
+                expect(page.locator(".setup-active strong")).to_have_text(
+                    active_name["value"]
+                )
+                assert page.evaluate(
+                    "[...document.querySelectorAll('.setup-active li, .step-card')]"
+                    ".every(node => node.scrollWidth <= node.clientWidth + 1)"
+                    " && document.documentElement.scrollWidth <= 320"
+                )
+                assert (
+                    page.locator("#setup-main")
+                    .inner_text()
+                    .count("Preparation continues")
+                    == 1
+                )
+                active_name["value"] = "Synthetic active title"
+                expect(page.locator(".setup-active strong")).to_have_text(
+                    active_name["value"]
+                )
+                page.set_viewport_size({"width": 390, "height": 844})
                 source_names = page.evaluate(
                     "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
                     "getComputedStyle(document.querySelector('#setup-ledger')).viewTransitionName,"
@@ -5969,6 +6104,540 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 ).to_be_visible()
                 assert not token_file.exists()
                 assert errors == []
+            browser.close()
+
+
+_FAKE_AUDIOBOOKSHELF_KEY = "synthetic-audiobookshelf-reader-key"
+
+
+class _FakeAudiobookshelf(BaseHTTPRequestHandler):
+    """Answers only the one bounded read setup makes, and only with the key."""
+
+    def do_GET(self) -> None:
+        if self.path != "/api/libraries":
+            self.send_error(404)
+            return
+        if self.headers.get("Authorization") != f"Bearer {_FAKE_AUDIOBOOKSHELF_KEY}":
+            self.send_response(401)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        body = json.dumps(
+            {
+                "libraries": [
+                    {
+                        "id": "lib-reading",
+                        "name": "Reading Shelf",
+                        "mediaType": "book",
+                        "folders": [{"fullPath": "/srv/reading"}],
+                        "settings": {"audiobooksOnly": False},
+                    },
+                    {
+                        "id": "lib-listening",
+                        "name": "Listening Room",
+                        "mediaType": "book",
+                        "folders": [{"fullPath": "/srv/listening"}],
+                        "settings": {"audiobooksOnly": True},
+                    },
+                ]
+            }
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_args: object) -> None:
+        return
+
+
+@contextmanager
+def _fake_audiobookshelf() -> Iterator[str]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeAudiobookshelf)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def _claim_real_setup(page: Page, origin: str, token: str) -> None:
+    page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
+    page.goto(origin)
+    page.get_by_label("Setup claim token", exact=True).fill(token)
+    page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
+    page.get_by_label("Confirm owner password", exact=True).fill(_PASSWORD)
+    page.get_by_role("button", name="Create owner access").click()
+    expect(page.get_by_role("heading", name="Connect Audiobookshelf")).to_be_visible()
+
+
+_LINK_AND_TEAL = """element => {
+  const probe = document.createElement('span');
+  probe.style.color = 'var(--teal)';
+  document.body.append(probe);
+  const teal = getComputedStyle(probe).color;
+  probe.remove();
+  return [getComputedStyle(element).color, teal];
+}"""
+
+
+def test_setup_connection_failures_name_the_address_and_remedy() -> None:
+    """#1287 A1, A4, A6, A7 through the shipped page on the real setup generation.
+
+    Each reach failure is produced for real (an unresolvable name, a closed
+    port, this server's own untrusted certificate, a key the fake service
+    refuses) except the timeout, which is routed so the test does not wait
+    thirty seconds. Every message names only the origin, never the key.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        # Only each declared root is stat'ed; nothing inside is ever read.
+        (root / "reading").mkdir()
+        (root / "listening").mkdir()
+        mounts = (
+            BootstrapMount(
+                name="reading",
+                container_path=str(root / "reading"),
+                service_path="/srv/reading",
+                read_only=True,
+            ),
+            BootstrapMount(
+                name="listening",
+                container_path=str(root / "listening"),
+                service_path="/srv/listening",
+                read_only=True,
+            ),
+        )
+        with (
+            real_setup_server(root, mounts=mounts) as (origin, token_file, _cert),
+            _fake_audiobookshelf() as service,
+            closing(ReservedPort()) as closed_port,
+            sync_playwright() as playwright,
+        ):
+            token = token_file.read_text(encoding="ascii").strip()
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 375, "height": 812}
+            )
+            with _closing_context(context):
+                page = context.new_page()
+                errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, errors))
+                _claim_real_setup(page, origin, token)
+                endpoint = page.get_by_label("Audiobookshelf address", exact=True)
+                key = page.get_by_label("Audiobookshelf API key", exact=True)
+                submit = page.get_by_role("button", name="Verify and continue")
+                closed = f"http://127.0.0.1:{closed_port.number}"
+                cases = [
+                    (
+                        "https://audiobookshelf.invalid:13378",
+                        _FAKE_AUDIOBOOKSHELF_KEY,
+                        "This deployment could not find "
+                        "https://audiobookshelf.invalid:13378: that name does not "
+                        "resolve here.",
+                        endpoint,
+                    ),
+                    (
+                        closed,
+                        _FAKE_AUDIOBOOKSHELF_KEY,
+                        f"{closed} refused the connection.",
+                        endpoint,
+                    ),
+                    (
+                        origin,
+                        _FAKE_AUDIOBOOKSHELF_KEY,
+                        f"The certificate for {origin} could not be verified",
+                        endpoint,
+                    ),
+                    (
+                        service + "/",
+                        "synthetic-wrong-reader-key",
+                        f"Audiobookshelf at {service} did not accept that API key.",
+                        key,
+                    ),
+                ]
+                for address, secret, message, focused in cases:
+                    endpoint.fill(address)
+                    key.fill(secret)
+                    submit.click()
+                    alert = page.get_by_role("alert")
+                    expect(alert).to_contain_text(message)
+                    text = alert.inner_text()
+                    assert secret not in text
+                    assert _PASSWORD not in text
+                    expect(focused).to_be_focused()
+                    expect(focused).to_have_attribute("aria-invalid", "true")
+                    expect(alert).to_be_in_viewport()
+
+                def time_out(route: Any) -> None:
+                    route.fulfill(status=502, json={"detail": {"error": "timeout"}})
+
+                page.route("**/api/setup/connect", time_out)
+                endpoint.fill(service)
+                key.fill(_FAKE_AUDIOBOOKSHELF_KEY)
+                submit.click()
+                expect(page.get_by_role("alert")).to_contain_text(
+                    f"{service} did not answer in time."
+                )
+                expect(endpoint).to_be_focused()
+                page.unroute("**/api/setup/connect", time_out)
+
+                submit.click()
+                expect(
+                    page.get_by_role("heading", name="Choose metadata providers")
+                ).to_be_visible()
+                expect(page.locator(".confirmation")).to_have_text(
+                    f"Connected to Audiobookshelf at {service}."
+                )
+                assert _FAKE_AUDIOBOOKSHELF_KEY not in page.content()
+                books = page.get_by_role("group", name="Books and ebooks")
+                audiobooks = page.get_by_role("group", name="Audiobooks")
+                expect(books).to_have_accessible_description(
+                    "Suggested for Reading Shelf"
+                )
+                expect(audiobooks).to_have_accessible_description(
+                    "Suggested for Reading Shelf, Listening Room"
+                )
+                assert page.locator("fieldset legend").all_inner_texts() == [
+                    "Books and ebooks",
+                    "Audiobooks",
+                ]
+                assert page.locator("input[type=checkbox]:checked").count() == 0
+                open_library = page.locator(".option", has_text="Open Library")
+                expect(open_library).to_contain_text("No account or key.")
+                expect(open_library.locator("a")).to_have_count(0)
+                access = page.locator("a.provider-access")
+                expect(access).to_have_count(2)
+                for scheme in ("light", "dark"):
+                    page.emulate_media(color_scheme=scheme)
+                    for link in access.all():
+                        colour, teal = link.evaluate(_LINK_AND_TEAL)
+                        assert colour == teal, (scheme, colour, teal)
+                page.emulate_media(color_scheme="light")
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= innerWidth"
+                )
+                page.get_by_role("button", name="Skip providers").click()
+
+                expect(
+                    page.get_by_role("heading", name="Choose libraries")
+                ).to_be_visible()
+                expect(page.locator(".confirmation")).to_contain_text(
+                    "No providers recorded."
+                )
+                for name in ("Reading Shelf", "Listening Room"):
+                    expect(
+                        page.get_by_role("button", name=f"Change name of {name}")
+                    ).to_have_count(1)
+                    page.get_by_role("checkbox", name=name).check()
+                page.get_by_role("button", name="Change name of Listening Room").click()
+                expect(
+                    page.get_by_label("New name for Listening Room", exact=True)
+                ).to_be_focused()
+                page.get_by_role("button", name="Continue").click()
+
+                expect(
+                    page.get_by_role("heading", name="Check read-only mounts")
+                ).to_be_visible()
+                expect(page.locator(".confirmation")).to_have_text(
+                    "Libraries recorded: Reading Shelf, Listening Room."
+                )
+                page.get_by_role("button", name="Check mounts").click()
+                expect(
+                    page.get_by_role(
+                        "heading", name="Choose an optional cover reviewer"
+                    )
+                ).to_be_visible()
+                confirmation = page.locator(".confirmation")
+                expect(confirmation).to_contain_text(
+                    "Reading Shelf: found /srv/reading on read-only mount reading"
+                )
+                expect(confirmation).to_contain_text(
+                    "Listening Room: found /srv/listening on read-only mount listening"
+                )
+                assert "file" not in confirmation.inner_text()
+                assert errors == []
+            browser.close()
+
+
+def test_setup_change_in_another_tab_is_named() -> None:
+    """#1240 item 1: a token rotated by another tab reads as a change, not expiry."""
+    with tempfile.TemporaryDirectory() as directory:
+        with (
+            real_setup_server(Path(directory)) as (origin, token_file, _cert),
+            _fake_audiobookshelf() as service,
+            sync_playwright() as playwright,
+        ):
+            token = token_file.read_text(encoding="ascii").strip()
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            with _closing_context(context):
+                first = context.new_page()
+                errors: list[str] = []
+                first.on("pageerror", partial(_record_page_error, errors))
+                _claim_real_setup(first, origin, token)
+                second = context.new_page()
+                second.on("pageerror", partial(_record_page_error, errors))
+                second.route(
+                    "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
+                )
+                second.goto(origin)
+                expect(
+                    second.get_by_role("heading", name="Connect Audiobookshelf")
+                ).to_be_visible()
+                first.get_by_label("Audiobookshelf address", exact=True).fill(service)
+                first.get_by_label("Audiobookshelf API key", exact=True).fill(
+                    _FAKE_AUDIOBOOKSHELF_KEY
+                )
+                first.get_by_role("button", name="Verify and continue").click()
+                expect(first.get_by_role("alert")).to_have_text(
+                    "Setup changed in another tab. The latest recorded step has "
+                    "been restored."
+                )
+                assert "expired" not in first.get_by_role("alert").inner_text()
+                # The restored form carries the fresh token, so a retry records.
+                first.get_by_label("Audiobookshelf address", exact=True).fill(service)
+                first.get_by_label("Audiobookshelf API key", exact=True).fill(
+                    _FAKE_AUDIOBOOKSHELF_KEY
+                )
+                first.get_by_role("button", name="Verify and continue").click()
+                expect(
+                    first.get_by_role("heading", name="Choose metadata providers")
+                ).to_be_visible()
+                assert errors == []
+            browser.close()
+
+
+_GAP_BETWEEN = """element => {
+  const [mark, label] = element.querySelectorAll('span');
+  return label.getBoundingClientRect().left - mark.getBoundingClientRect().right;
+}"""
+
+
+def test_sign_in_failures_are_specific_and_recoverable() -> None:
+    """#1287 A8: each refusal says what happened and leaves the owner ready to retry."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with (
+            sync_playwright() as playwright,
+            closing(ReservedPort()) as reserved_port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=reserved_port,
+            ) as (origin, _case_id),
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            for width in (1440, 375, 320):
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    viewport={"width": width, "height": 800},
+                    color_scheme="light",
+                )
+                with _closing_context(context):
+                    page = context.new_page()
+                    errors: list[str] = []
+                    page.on("pageerror", partial(_record_page_error, errors))
+                    page.route(
+                        "**/favicon.ico",
+                        lambda route: route.fulfill(status=204, body=""),
+                    )
+                    page.goto(f"{origin}/login")
+                    heading = page.get_by_role("heading", level=1)
+                    assert "Georgia" in heading.evaluate(
+                        "element => getComputedStyle(element).fontFamily"
+                    )
+                    toggle = page.locator(".theme-toggle")
+                    expect(toggle).to_have_text(re.compile(r"◐\s+Dark mode"))
+                    assert toggle.evaluate(_GAP_BETWEEN) >= 4
+                    password = page.get_by_label("Password")
+                    status = page.locator("#login-status")
+                    sign_in = page.get_by_role("button", name="Sign in")
+
+                    sign_in.click()
+                    expect(status).to_have_text("Enter the owner password.")
+                    expect(password).to_be_focused()
+
+                    password.fill("synthetic wrong owner password")
+                    sign_in.click()
+                    expect(status).to_have_text(
+                        "That password was not accepted. Check it and try again."
+                    )
+                    expect(password).to_have_value("")
+                    expect(password).to_be_focused()
+                    expect(password).to_have_attribute("aria-invalid", "true")
+                    expect(sign_in).to_be_enabled()
+                    password.fill("x")
+                    expect(password).not_to_have_attribute("aria-invalid", "true")
+
+                    reveal = page.get_by_role("button", name="Show password")
+                    expect(reveal).to_have_attribute("aria-controls", "password")
+                    expect(reveal).to_have_attribute("aria-pressed", "false")
+                    assert reveal.get_attribute("aria-label") is None
+                    reveal.click()
+                    expect(password).to_have_attribute("type", "text")
+                    hide = page.get_by_role("button", name="Hide password")
+                    expect(hide).to_have_attribute("aria-pressed", "true")
+                    hide.click()
+                    expect(password).to_have_attribute("type", "password")
+
+                    def throttle(route: Any) -> None:
+                        route.fulfill(status=429, json={"detail": "throttled"})
+
+                    page.route("**/api/v1/session/login", throttle)
+                    password.fill("synthetic another wrong password")
+                    sign_in.click()
+                    expect(status).to_have_text(
+                        "Too many sign-in attempts from this device. Wait five "
+                        "minutes, then try again."
+                    )
+                    page.unroute("**/api/v1/session/login", throttle)
+
+                    page.get_by_text("Forgotten the owner password?").click()
+                    guide = page.get_by_role(
+                        "link", name="Read the recovery steps in the deployment guide"
+                    )
+                    expect(guide).to_be_visible()
+                    expect(guide).to_have_attribute(
+                        "href",
+                        re.compile(
+                            r"docs/operations/deployment\.md#forgotten-owner-password$"
+                        ),
+                    )
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    )
+                    light_status = status.evaluate(
+                        "element => getComputedStyle(element).color"
+                    )
+                    toggle.click()
+                    expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+                    expect(toggle).to_have_text(re.compile(r"◐\s+Light mode"))
+                    assert light_status == "rgb(140, 52, 52)"
+                    assert (
+                        status.evaluate("element => getComputedStyle(element).color")
+                        == "rgb(243, 155, 155)"
+                    )
+                    password.fill(_PASSWORD)
+                    sign_in.click()
+                    page.wait_for_url(f"{origin}/library")
+                    assert errors == []
+            browser.close()
+
+
+def test_sign_in_and_setup_paint_the_saved_or_system_theme_first() -> None:
+    """#1287 A10: theme before any deferred script runs, and the workspace Inter.
+
+    The page scripts are held back, so whatever is painted comes from the
+    blocking theme.js and the stylesheet alone. Both the system preference
+    with no saved choice and a saved choice against the system are checked.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with (
+            sync_playwright() as playwright,
+            closing(ReservedPort()) as review_port,
+            closing(ReservedPort()) as setup_port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=review_port,
+            ) as (review_origin, _case_id),
+            _setup_asset_server(
+                certificate,
+                key,
+                setup_port,
+                ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+            ) as setup_origin,
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            pages = (
+                (f"{review_origin}/login", "/assets/login.js"),
+                (f"{setup_origin}/", "/assets/setup.js"),
+            )
+            expectations: tuple[
+                tuple[Literal["dark", "light"], str | None, str | None, str], ...
+            ] = (
+                ("dark", None, None, "rgb(15, 21, 18)"),
+                ("light", None, None, "rgb(244, 242, 236)"),
+                ("dark", "light", "light", "rgb(244, 242, 236)"),
+                ("light", "dark", "dark", "rgb(15, 21, 18)"),
+            )
+            for url, script in pages:
+                for system, saved, attribute, background in expectations:
+                    context = browser.new_context(
+                        ignore_https_errors=True, color_scheme=system
+                    )
+                    with _closing_context(context):
+                        if saved is not None:
+                            context.add_cookies(
+                                [{"name": "ml_theme", "value": saved, "url": url}]
+                            )
+                        page = context.new_page()
+                        console: list[str] = []
+                        page.on(
+                            "console",
+                            partial(_record_transition_console, console, []),
+                        )
+                        page.route(
+                            "**/favicon.ico",
+                            lambda route: route.fulfill(status=204, body=""),
+                        )
+                        page.route(f"**{script}", lambda route: route.abort())
+                        page.goto(url)
+                        assert (
+                            page.locator("html").get_attribute("data-theme")
+                            == attribute
+                        ), (url, system, saved)
+                        assert (
+                            page.evaluate(
+                                "getComputedStyle(document.body).backgroundColor"
+                            )
+                            == background
+                        ), (url, system, saved)
+                        faces = page.evaluate(
+                            """async () => {
+                              await document.fonts.ready;
+                              await document.fonts.load('400 1em Inter', 'Library');
+                              return [...document.fonts]
+                                .filter(face => face.family.replaceAll('"', '') === 'Inter')
+                                .map(face => face.status);
+                            }"""
+                        )
+                        assert "loaded" in faces, (url, faces)
+                        loaded = page.evaluate(
+                            "performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname)"
+                        )
+                        assert any(
+                            re.fullmatch(
+                                r"/assets/review-app/assets/inter-latin-wght-normal-[A-Za-z0-9_-]{8,}\.woff2",
+                                path,
+                            )
+                            for path in loaded
+                        ), loaded
+                        assert not [
+                            text
+                            for text in console
+                            if "Content Security Policy" in text
+                        ], console
             browser.close()
 
 

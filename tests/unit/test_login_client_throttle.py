@@ -23,12 +23,22 @@ from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.review_web import _LOGIN_WINDOW_SECONDS
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web.app import client_identity
+from mechanical_librarian.interfaces.web.review_frontend import (
+    LOGIN_CSS,
+    LOGIN_JS,
+    THEME_JS,
+)
+from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS
 from tests.support.review_cases import _report
 from tests.support.review_web_doubles import FakeReviewRepository
-from tests.unit.review_app_fixture import create_transport_test_app
+from tests.unit.review_app_fixture import (
+    create_transport_test_app,
+    font_asset_loader,
+)
 
 _PASSWORD = "correct horse"
 _ORIGIN = "https://review.test"
@@ -244,3 +254,62 @@ def test_client_identity_comes_only_from_trusted_resolution(
     peer: str | None, forwarded: tuple[str, ...], identity: str
 ) -> None:
     assert client_identity(_request(peer, *forwarded), (_PROXY,)) == identity
+
+
+def test_throttled_sign_in_copy_states_the_shipped_window() -> None:
+    """Sign-in and setup tell a throttled client the real wait (#1287)."""
+    # A changed window fails here until both sentences are rewritten for it.
+    minutes = {300: "five"}[_LOGIN_WINDOW_SECONDS]
+    copy = (
+        f"Too many sign-in attempts from this device. Wait {minutes} minutes, "
+        "then try again."
+    )
+    assert f"429: '{copy}'" in LOGIN_JS
+    assert f"throttled:'{copy}'" in SETUP_JS
+
+
+_FONTS = {
+    "assets/inter-latin-wght-normal-Dx4kXJAl.woff2": b"latin",
+    "assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2": b"latin-ext",
+}
+
+
+def test_sign_in_paints_the_saved_theme_first_and_uses_the_workspace_inter(
+    tmp_path: Path,
+) -> None:
+    hash_path = tmp_path / "owner.hash"
+    hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+    os.chmod(hash_path, 0o600)
+    report = _report()
+    app = create_transport_test_app(
+        FakeReviewRepository(
+            ReviewCase.create(evaluate_report(report), report), report
+        ),
+        ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+            canonical_origin=_ORIGIN,
+            owner_password_hash_file=str(hash_path),
+            session_lifetime_seconds=600,
+        ),
+        react_asset_loader=font_asset_loader(_FONTS),
+    )
+    with TestClient(app, base_url=_ORIGIN) as client:
+        page = client.get("/login").text
+        head = page.split("</head>", 1)[0]
+        # No theme is forced on the root; a saved one is applied before paint.
+        assert '<html lang="en">' in page
+        assert head.index('<script src="/assets/theme.js"></script>') < head.index(
+            "/assets/login.css"
+        )
+        theme = client.get("/assets/theme.js")
+        assert theme.status_code == 200
+        assert theme.text == THEME_JS
+        css = client.get("/assets/login.css").text
+        assert css.startswith("@font-face{font-family:Inter;")
+        for path in _FONTS:
+            assert f"src:url(/assets/review-app/{path}) format('woff2')" in css
+        assert css.endswith(LOGIN_CSS)
+        font = client.get(f"/assets/review-app/{next(iter(_FONTS))}")
+        assert font.status_code == 200
+        assert font.headers["content-type"] == "font/woff2"

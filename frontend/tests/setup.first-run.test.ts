@@ -14,14 +14,18 @@ const source = readFileSync(
 const css = /SETUP_CSS = """([\s\S]*?)"""/u.exec(source)?.[1]
 
 if (!css) throw new Error('setup assets are unavailable')
-const script = execFileSync(
-  resolve(process.cwd(), '../.venv/bin/python'),
-  [
-    '-c',
-    "import sys;sys.path.insert(0,'src');from mechanical_librarian.interfaces.web.setup_frontend import SETUP_JS;print(SETUP_JS,end='')",
-  ],
-  { cwd: resolve(process.cwd(), '..'), encoding: 'utf8' },
-)
+const shipped = (name: string) =>
+  execFileSync(
+    resolve(process.cwd(), '../.venv/bin/python'),
+    [
+      '-c',
+      `import sys;sys.path.insert(0,'src');from mechanical_librarian.interfaces.web.${name};print(value,end='')`,
+    ],
+    { cwd: resolve(process.cwd(), '..'), encoding: 'utf8' },
+  )
+const script = shipped('setup_frontend import SETUP_JS as value')
+// The blocking head script that applies a saved theme before first paint.
+const themeScript = shipped('review_frontend import THEME_JS as value')
 
 const response = (body: object, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -58,14 +62,14 @@ const runSetup = () => {
 
 const resetSetupDocument = () => {
   document.head.innerHTML = `<style>${css}</style>`
-  // The shipped shell carries the prerequisites beside the ledger, and the
+  // The shipped shell states the prerequisites ahead of the ledger, and the
   // kickoff step retires them, so the harness has to carry them too.
   document.body.innerHTML = `
-    <ol id="setup-ledger"></ol>
     <section class="prerequisites">
       <h2>Before you start</h2>
       <ul><li>A prepared owner-only review-bootstrap.json.</li></ul>
     </section>
+    <ol id="setup-ledger"></ol>
     <main id="setup-main"></main>
     <div id="setup-status"></div>
   `
@@ -103,6 +107,7 @@ describe('shipped first-run setup script', () => {
       vi.fn(async () => response({ claimed: true, nonce: 'n'.repeat(32), revision: 1 })),
     )
     try {
+      window.eval(themeScript)
       runSetup()
       expect(document.documentElement.dataset.theme).toBe(theme)
     } finally {
@@ -558,13 +563,17 @@ describe('shipped first-run setup script', () => {
   it.each([
     [422, 'invalid_endpoint', 'Enter the full Audiobookshelf address', 'endpoint'],
     [502, 'unauthorized', 'Issue a key that can read your libraries', 'key'],
+    [502, 'name_resolution', 'that name does not resolve here', 'endpoint'],
+    [502, 'refused', 'refused the connection', 'endpoint'],
     [502, 'tls', 'Mechanical Librarian never skips verification.', 'endpoint'],
-    [502, 'timeout', 'Audiobookshelf did not answer in time.', 'endpoint'],
+    [502, 'timeout', 'did not answer in time.', 'endpoint'],
+    [502, 'unavailable', 'could not be read, so nothing was recorded', 'endpoint'],
     [502, 'redirect', 'Enter the direct Audiobookshelf address', 'endpoint'],
     [502, 'malformed', 'not with the supported libraries response', 'endpoint'],
     [502, 'oversize', 'more data than setup can safely read', 'endpoint'],
     [400, 'invalid_origin', 'canonical forwarded host and protocol pair', 'endpoint'],
-    [403, 'csrf', 'This setup form expired.', null],
+    // Another tab rotated the form token: the step reloads and says so.
+    [403, 'csrf', 'Setup changed in another tab.', null],
     [401, 'unauthorized', 'Your setup sign-in expired', null],
     [500, 'unavailable', 'Setup could not finish that step', null],
   ] as const)(
@@ -609,6 +618,36 @@ describe('shipped first-run setup script', () => {
         expect(invalid).toHaveFocus()
         expect(released).not.toHaveAttribute('aria-invalid')
       }
+    },
+  )
+
+  it.each(['name_resolution', 'refused', 'tls', 'timeout', 'unauthorized', 'unavailable'])(
+    'names only the origin the owner entered for a %s failure, never the key or user',
+    async (code) => {
+      const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (requestUrl(request) === '/api/setup/connect' && init?.method === 'POST')
+          return response({ detail: { error: code } }, 502)
+        return response(setupState('connect', { completed_steps: ['claim'], connection: null }))
+      })
+      vi.stubGlobal('fetch', fetch)
+      runSetup()
+
+      const endpoint = await screen.findByLabelText('Audiobookshelf address')
+      fireEvent.input(endpoint, {
+        target: { value: 'https://owner:hunter2@books.invalid:8443/abs/?token=query-secret' },
+      })
+      fireEvent.input(screen.getByLabelText('Audiobookshelf API key'), {
+        target: { value: 'target-key-secret' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
+
+      const alert = await screen.findByRole('alert')
+      await waitFor(() => expect(alert).toHaveTextContent('https://books.invalid:8443'))
+      for (const secret of ['owner', 'hunter2', 'target-key-secret', 'query-secret', '/abs'])
+        expect(alert.textContent).not.toContain(secret)
+      expect(
+        code === 'unauthorized' ? screen.getByLabelText('Audiobookshelf API key') : endpoint,
+      ).toHaveFocus()
     },
   )
 
@@ -763,7 +802,7 @@ describe('shipped first-run setup script', () => {
 
     release(response({ detail: { error: 'timeout' } }, 502))
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Audiobookshelf did not answer in time.',
+      'http://books.invalid:13378 did not answer in time.',
     )
     expect(verify).toBeEnabled()
     expect(attempts).toBe(1)
@@ -1152,26 +1191,15 @@ describe('shipped first-run setup script', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
     await waitFor(() => expect(submitted).toBeDefined())
+    // Only the four the owner ticked: nothing is ticked on the owner's behalf.
     expect(submitted).toEqual({
       expected_revision: 3,
       providers: [
-        {
-          name: 'inventaire',
-          adapter: 'inventaire',
-          enabled: true,
-          cover_enabled: true,
-          contact_email: null,
-          key: null,
-        },
         { name: 'audible', adapter: 'audible_catalog', enabled: true },
         { name: 'audnexus', adapter: 'audnexus', enabled: true },
         { name: 'audiosilo', adapter: 'audiosilo', enabled: true },
         { name: 'itunes', adapter: 'itunes_search', enabled: true },
-      ].map((value) =>
-        'cover_enabled' in value
-          ? value
-          : { ...value, cover_enabled: false, contact_email: null, key: null },
-      ),
+      ].map((value) => ({ ...value, cover_enabled: false, contact_email: null, key: null })),
     })
   })
 
@@ -1184,6 +1212,7 @@ describe('shipped first-run setup script', () => {
         return response({
           libraries: [
             { library_id: 'books', media_kind: 'book', name: 'Books' },
+            { library_id: 'audio', media_kind: 'book', name: 'Audio' },
             { library_id: 'podcasts', media_kind: 'unsupported', name: 'Podcasts' },
           ],
         })
@@ -1215,11 +1244,19 @@ describe('shipped first-run setup script', () => {
     await waitFor(() => expect(heading).toHaveFocus())
     const form = heading.closest('section')?.querySelector('form')
     if (!form) throw new Error('library form missing')
+    // The wizard's own refusal speaks first; no browser bubble precedes it.
+    expect(form.noValidate).toBe(true)
 
     fireEvent.submit(form)
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Select at least one supported book library.',
     )
+    // Each library's controls are named for that library (#1287).
+    expect(
+      screen
+        .getAllByRole('button', { name: /^Change name/u })
+        .map((node) => node.getAttribute('aria-label')),
+    ).toEqual(['Change name of Books', 'Change name of Audio'])
     expect(libraryMutations).toBe(0)
 
     const selected = screen.getByRole('checkbox', { name: 'Books' })
@@ -1227,8 +1264,8 @@ describe('shipped first-run setup script', () => {
     expect(selected).toBeChecked()
     expect(screen.getByText('1 unsupported podcast library excluded.')).toBeVisible()
     expect(document.querySelector('input[name="name-books"]')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Change name' }))
-    const displayName = screen.getByRole('textbox', { name: 'Library name' })
+    fireEvent.click(screen.getByRole('button', { name: 'Change name of Books' }))
+    const displayName = screen.getByRole('textbox', { name: 'New name for Books' })
     expect(displayName).toHaveValue('Books')
     fireEvent.input(displayName, { target: { value: ' My Reading Shelf' } })
     fireEvent.submit(form)
@@ -1243,6 +1280,9 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(displayName, { target: { value: 'My Reading Shelf' } })
     fireEvent.submit(form)
     expect(await screen.findByRole('heading', { name: 'Check read-only mounts' })).toBeVisible()
+    expect(document.querySelector('.confirmation')).toHaveTextContent(
+      'Libraries recorded: My Reading Shelf.',
+    )
     expect(libraryMutations).toBe(1)
     const mutation = fetch.mock.calls.find(
       ([request, init]) =>
@@ -1357,6 +1397,222 @@ describe('shipped first-run setup script', () => {
     expect(within(results).queryByText(/^books: matched$/u)).toBeNull()
   })
 
+  it.each([
+    [
+      'a book library and an audiobook-only library',
+      [
+        { library_id: 'books', media_kind: 'book', name: 'Reading Shelf', audiobooks_only: false },
+        { library_id: 'audio', media_kind: 'book', name: 'Listening Room', audiobooks_only: true },
+        { library_id: 'pods', media_kind: 'unsupported', name: 'Podcasts', audiobooks_only: false },
+      ],
+      ['Books and ebooks', 'Audiobooks'],
+      {
+        'Books and ebooks': 'Suggested for Reading Shelf',
+        Audiobooks: 'Suggested for Reading Shelf, Listening Room',
+      },
+    ],
+    [
+      'only audiobook-only libraries',
+      [{ library_id: 'audio', media_kind: 'book', name: 'Listening Room', audiobooks_only: true }],
+      ['Audiobooks', 'Books and ebooks'],
+      { Audiobooks: 'Suggested for Listening Room' },
+    ],
+    ['a discovery failure', null, ['Books and ebooks', 'Audiobooks'], {}],
+  ] as const)(
+    'groups providers and suggests those that fit %s without ticking any',
+    async (_name, libraries, order, suggestions) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: RequestInfo | URL) => {
+          if (requestUrl(request).startsWith('/api/setup/libraries?'))
+            return libraries === null
+              ? response({ detail: { error: 'refused' } }, 502)
+              : response({ libraries })
+          return response(setupState('providers'))
+        }),
+      )
+      runSetup()
+
+      await screen.findByRole('heading', { name: 'Choose metadata providers' })
+      const groups = await waitFor(() => {
+        const found = [...document.querySelectorAll('fieldset.provider-group')]
+        if (found.length !== 2) throw new Error('provider groups missing')
+        return found
+      })
+      expect(groups.map((group) => group.querySelector('legend')?.textContent)).toEqual(order)
+      for (const group of groups) {
+        const legend = group.querySelector('legend')?.textContent ?? ''
+        const expected = (suggestions as Record<string, string>)[legend]
+        const note = group.querySelector('.suggestion')
+        if (expected) {
+          expect(note).toHaveTextContent(expected)
+          expect(group).toHaveAttribute('aria-describedby', note?.id)
+        } else expect(note).toBeNull()
+      }
+      const books = within(
+        groups.find((group) => group.textContent.includes('Inventaire')) as HTMLElement,
+      )
+      for (const label of ['Inventaire', 'Open Library', 'Hardcover', 'Google Books'])
+        expect(books.getByRole('checkbox', { name: label })).toBeInTheDocument()
+      const audio = within(
+        groups.find((group) => group.textContent.includes('Audible')) as HTMLElement,
+      )
+      for (const label of ['Audible', 'Audnexus', 'AudioSilo', 'iTunes'])
+        expect(audio.getByRole('checkbox', { name: label })).toBeInTheDocument()
+      // A suggestion names libraries; it never ticks a provider for the owner.
+      expect(document.querySelectorAll('input[type=checkbox]:checked')).toHaveLength(0)
+      expect(document.querySelector('[role=alert]')).toBeNull()
+    },
+  )
+
+  it('asks Open Library only for an email and links each key to the page that issues it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(setupState('providers'))),
+    )
+    runSetup()
+
+    const open = (await screen.findByRole('checkbox', { name: 'Open Library' })).closest('.option')
+    expect(open?.querySelector('a')).toBeNull()
+    expect(open).toHaveTextContent(
+      'Needs only a contact email, sent with each request. No account or key.',
+    )
+    expect(screen.getByRole('link', { name: 'Get Hardcover access' })).toHaveAttribute(
+      'href',
+      'https://hardcover.app/account/api',
+    )
+    expect(screen.getByRole('link', { name: 'Get Google Books access' })).toHaveAttribute(
+      'href',
+      'https://console.cloud.google.com/apis/credentials',
+    )
+  })
+
+  it('confirms the mounts it found on the next step and each earlier step in one line', async () => {
+    let current = setupState('mounts', {
+      completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+      libraries: [
+        {
+          connection: 'primary',
+          display_name: 'Reading Shelf',
+          library_id: 'books-id',
+          media_kind: 'book',
+          name: 'books',
+          provider_connections: [],
+        },
+      ],
+      revision: 5,
+    })
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.startsWith('/api/setup/libraries?'))
+        return response({
+          libraries: [
+            {
+              library_id: 'books-id',
+              media_kind: 'book',
+              name: 'Reading Shelf',
+              service_path: '/discovered/books',
+              service_path_state: 'available',
+            },
+          ],
+        })
+      if (url === '/api/setup/mounts' && init?.method === 'POST') {
+        current = setupState('reviewer', {
+          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+          libraries: [
+            {
+              connection: 'primary',
+              display_name: 'Reading Shelf',
+              library_id: 'books-id',
+              media_kind: 'book',
+              mount: 'ebooks',
+              name: 'books',
+              provider_connections: [],
+            },
+          ],
+          mounts: [{ library: 'books', state: 'matched' }],
+          revision: 6,
+        })
+        return response({})
+      }
+      if (url === '/api/setup/reviewer-access')
+        return response({
+          revision: 1,
+          mapping: null,
+          codex: { state: 'host_unsupported', model: null },
+          free_tier_caveat: 'Limits apply.',
+          data_use_caveat: 'Data use applies.',
+          recommendations: [],
+          candidates: [],
+          cost_evidence: { models: [] },
+        })
+      return response(current)
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Check mounts' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Choose an optional cover reviewer' }),
+    ).toBeVisible()
+    const confirmation = document.querySelector('.confirmation')
+    expect(confirmation).toHaveTextContent(
+      'Reading Shelf: found /discovered/books on read-only mount ebooks',
+    )
+    // Stat-only: setup never counts or lists media files.
+    expect(confirmation?.textContent).not.toMatch(/\bfiles?\b/u)
+    await waitFor(() =>
+      expect(document.querySelector('#setup-status')).toHaveTextContent(
+        'Reading Shelf: found /discovered/books on read-only mount ebooks',
+      ),
+    )
+  })
+
+  it('keeps the form-expired copy for a refused claim nonce', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/claim')
+          return response({ claimed: true, nonce: 'n'.repeat(32), revision: 2 })
+        if (url === '/api/setup/session' && init?.method === 'POST')
+          return response({ detail: { error: 'csrf' } }, 403)
+        return response({ detail: { error: 'unauthorized' } }, 401)
+      }),
+    )
+    runSetup()
+
+    fireEvent.input(await screen.findByLabelText('Owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This setup form expired. Reload it and try again.',
+    )
+  })
+
+  it('reads a form token rotated by another tab as a change in another tab', async () => {
+    let reads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/providers' && init?.method === 'POST')
+          return response({ detail: { error: 'csrf' } }, 403)
+        if (url === '/api/setup/state') reads += 1
+        return response(setupState('providers', { csrf_token: `token-${String(reads)}` }))
+      }),
+    )
+    runSetup()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Skip providers' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Setup changed in another tab. The latest recorded step has been restored.',
+    )
+    // The state was read again, which issues this tab a fresh form token.
+    expect(reads).toBe(2)
+  })
+
   it('renders reviewer recommendations, the free catalogue option, and manual entry', async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
@@ -1416,11 +1672,18 @@ describe('shipped first-run setup script', () => {
     expect(
       screen.getByText(/\(free; listed by OpenRouter as capable, not yet qualified here\)/u),
     ).toBeVisible()
-    expect(
-      screen.getByText(
-        '20 requests/minute; 50 requests/day before $10 in lifetime purchases or 1000 after.',
-      ),
-    ).toBeVisible()
+    // Limits and data use are reference detail, folded until the owner opens them.
+    const limits = screen.getByText(
+      '20 requests/minute; 50 requests/day before $10 in lifetime purchases or 1000 after.',
+    )
+    const about = limits.closest('details')
+    if (!about) throw new Error('reviewer detail disclosure missing')
+    expect(about).not.toHaveAttribute('open')
+    expect(about.querySelector('summary')).toHaveTextContent(
+      'OpenRouter limits, data use and key sharing',
+    )
+    about.open = true
+    expect(limits).toBeVisible()
     expect(screen.getByText('Cover previews are sent to the selected provider.')).toBeVisible()
     const model = screen.getByLabelText('Model ID')
     fireEvent.click(screen.getByRole('button', { name: 'Use GPT-6 Luna (openai/gpt-6-luna)' }))
@@ -1436,11 +1699,11 @@ describe('shipped first-run setup script', () => {
 
   it.each([
     [
-      'Preparation continues',
+      'Preparing your library',
       1,
       false,
       false,
-      'Open the workspace while preparation continues.',
+      'Open the workspace to browse works as they are prepared.',
       false,
     ],
     [
@@ -1556,6 +1819,22 @@ describe('shipped first-run setup script', () => {
 
       expect(await screen.findByRole('heading', { name: title })).toBeVisible()
       expect(screen.getByText(expectedCopy)).toBeVisible()
+      const main = document.querySelector('#setup-main')
+      // The state is said once, and every funnel count reads against the run total.
+      expect(main?.textContent.split('Preparation continues')).toHaveLength(
+        title === 'Preparing your library' ? 2 : 1,
+      )
+      if (!dismissed)
+        expect(
+          [...document.querySelectorAll('.setup-passage dd')].map((node) => node.textContent),
+        ).toEqual([
+          '1 of 1',
+          '1 of 1',
+          '1 of 1',
+          '1 of 1',
+          `${String(ready)} of 1`,
+          `${String(terminal && actionable ? 1 : 0)} of 1`,
+        ])
       expect(screen.getByRole('link', { name: 'Open workspace' })).toHaveAttribute(
         'href',
         dismissed
@@ -1677,14 +1956,15 @@ describe('shipped first-run setup script', () => {
       row.querySelector('dd')?.textContent ?? '',
     ])
     expect(passage).toEqual([
-      ['Read from library', '3'],
-      ['Searches finished', '3'],
-      ['Candidates compared', '3'],
-      ['Metadata checked', '2'],
-      ['Prepared', '2'],
-      ['Stopped before finishing', '1'],
+      ['Read from library', '3 of 3'],
+      ['Searches finished', '3 of 3'],
+      ['Candidates compared', '3 of 3'],
+      ['Metadata checked', '2 of 3'],
+      ['Prepared', '2 of 3'],
+      ['Stopped before finishing', '1 of 3'],
     ])
-    const figure = (label: string) => Number(passage.find(([term]) => term === label)?.[1])
+    const figure = (label: string) =>
+      Number(passage.find(([term]) => term === label)?.[1]?.split(' of ')[0])
     expect(figure('Prepared') + figure('Stopped before finishing')).toBe(3)
     const completions = [...document.querySelectorAll('.setup-completions li')].map(
       (item) => item.textContent,
@@ -1936,3 +2216,49 @@ it('keeps validated reviewer prices visible before Continue and on reopen', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Continue with this reviewer' }))
   await waitFor(() => expect(advanced).toBe(true))
 })
+
+it.each([
+  [
+    'invalid_key',
+    'API key (write-only)',
+    'OpenRouter rejected this key. Replace it and validate again.',
+  ],
+  ['model_unavailable', 'Model ID', 'That model is unavailable. Choose another vision model.'],
+])(
+  'places a refused OpenRouter validation (%s) beside the submit button and keeps focus on its field',
+  async (code, fieldName, message) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/reviewer-access')
+          return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+        if (url === '/api/setup/reviewer/openrouter')
+          return response({ detail: { error: code } }, 422)
+        return response(setupState('reviewer'))
+      }),
+    )
+    runSetup()
+    fireEvent.input(await screen.findByRole('textbox', { name: 'Model ID' }), {
+      target: { value: 'provider/model' },
+    })
+    fireEvent.input(screen.getByLabelText('API key (write-only)'), {
+      target: { value: 'synthetic-key' },
+    })
+    const save = screen.getByRole('button', { name: 'Validate and use OpenRouter' })
+    fireEvent.click(save)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(message)
+    const keyField = screen.getByLabelText('API key (write-only)')
+    // The alert sits between the key field and the button that was pressed,
+    // not at the top of a form that runs far above a phone viewport.
+    expect(alert.previousElementSibling).toBe(keyField.closest('.field'))
+    expect(alert.nextElementSibling).toBe(save)
+    const field = screen.getByLabelText(fieldName)
+    expect(field).toHaveFocus()
+    expect(document.activeElement).not.toBe(document.body)
+    expect(field).toHaveAttribute('aria-invalid', 'true')
+    expect(field.getAttribute('aria-describedby')).toContain('setup-error')
+    expect(keyField).toHaveValue('')
+  },
+)

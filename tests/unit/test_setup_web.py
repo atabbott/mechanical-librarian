@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
-from typing import Any, Callable, Literal, TypeVar
+from typing import Any, Callable, Literal, TypeVar, cast
 from unittest.mock import Mock
 
 import pytest
@@ -40,6 +40,10 @@ from mechanical_librarian.interfaces.web.app import (
     owner_password_verifier,
     reviewer_failure_response,
 )
+from mechanical_librarian.interfaces.web.review_frontend import (
+    THEME_JS,
+    inter_font_faces,
+)
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
@@ -49,6 +53,7 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_JS as SHIPPED_SETUP_JS,
 )
+from tests.unit.review_app_fixture import font_asset_loader
 
 # The shipped script sets one statement per indented line. The substring pins
 # below read it with that layout removed, so a pin can span statements.
@@ -488,6 +493,15 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert shell.status_code == 200
     assert 'id="setup-ledger"' in shell.text
     assert 'class="prerequisites"' in shell.text
+    # What setup needs is read before the steps that need it.
+    assert shell.text.index('class="prerequisites"') < shell.text.index(
+        'id="setup-ledger"'
+    )
+    # The saved theme is applied by a blocking same-origin script before the
+    # stylesheet, so the first frame is already in that theme.
+    head = shell.text.split("</head>", 1)[0]
+    assert '<script src="/assets/theme.js"></script>' in head
+    assert head.index("/assets/theme.js") < head.index("/assets/setup.css")
     assert "Before you start" in shell.text
     assert "Bare Compose without this prepared bootstrap is not supported" in shell.text
     assert shell.text.count("<li>") == 5
@@ -512,7 +526,8 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert handoff_css.text == "@view-transition{navigation:auto}"
     assert script.status_code == 200
     assert script.text == SHIPPED_SETUP_JS
-    assert "https://openlibrary.org/account/create" in SETUP_JS
+    # Open Library asks only for a contact email, so it links to no account.
+    assert "openlibrary.org" not in SETUP_JS
     assert "https://hardcover.app/account/api" in SETUP_JS
     assert "localStorage" not in SETUP_JS
     assert "sessionStorage" not in SETUP_JS
@@ -1003,7 +1018,7 @@ def test_unexpected_setup_failure_returns_fixed_secure_response() -> None:
     assert response.headers["cache-control"] == "private, no-store"
     assert response.headers["content-security-policy"] == (
         "default-src 'none'; script-src 'self'; style-src 'self'; "
-        "img-src 'self'; connect-src 'self'; form-action 'self'; "
+        "img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; "
         "base-uri 'none'; frame-ancestors 'none'"
     )
     assert response.headers["referrer-policy"] == "no-referrer"
@@ -1246,6 +1261,12 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         },
         headers=headers,
     )
+    # The providers step reads the libraries too, to suggest what fits them.
+    suggestions = client.get(
+        "/api/setup/libraries",
+        params={"expected_revision": connect.json()["revision"]},
+        headers={"cookie": headers["cookie"]},
+    )
     providers = client.post(
         "/api/setup/providers",
         json={"expected_revision": connect.json()["revision"], "providers": []},
@@ -1299,12 +1320,15 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         headers=headers,
     )
 
+    assert suggestions.status_code == 200
+    assert suggestions.json() == discovery.json()
     assert discovery.json() == {
         "libraries": [
             {
                 "library_id": "books",
                 "name": "Books",
                 "media_kind": "book",
+                "audiobooks_only": False,
                 "service_path": None,
                 "service_path_state": "unavailable",
             },
@@ -1312,6 +1336,7 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
                 "library_id": "podcasts",
                 "name": "Podcasts",
                 "media_kind": "unsupported",
+                "audiobooks_only": False,
                 "service_path": None,
                 "service_path_state": "unavailable",
             },
@@ -1338,14 +1363,16 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "Library kind" not in SETUP_JS
     assert "media_kind:'book'" in SETUP_JS
     assert "displayName.value=item.name" in SETUP_JS
-    assert "field('Library name',displayName)" in SETUP_JS
+    assert "field(`New name for ${item.name}`,displayName)" in SETUP_JS
     assert "display_name:row.querySelector('input[name^=display-]').value" in SETUP_JS
     assert "row.dataset.name=stableName" in SETUP_JS
     assert "name:row.dataset.name" in SETUP_JS
     assert "Preparation will begin in the workspace." in SETUP_JS
     assert "className='provider-access'" in SETUP_JS
     assert "['inventaire','inventaire']" in SETUP_JS
-    assert "enabled.checked=adapter==='inventaire'" in SETUP_JS
+    # Nothing is ticked for the owner; suggestions only name the libraries.
+    assert "enabled.checked=" not in SETUP_JS
+    assert "Suggested for ${suggested[group].join(', ')}" in SETUP_JS
     assert "cover_enabled:row.adapter==='inventaire'" in SETUP_JS
     assert (
         "`${selectedLibrary?shown(selectedLibrary):humanName(item.library)}:"
@@ -1482,7 +1509,11 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
 
     # UX-004/005: every named state carries a safe cause and a remedy.
     assert "failure.status=response.status" in SETUP_JS
-    assert "const code=e.status===401?'session_expired':e.message" in SETUP_JS
+    assert (
+        "const refusal=e=>e.status===401?'session_expired':"
+        "e.status===403&&e.message==='csrf'?'stale':e.message" in SETUP_JS
+    )
+    assert "const code=refusal(e)" in SETUP_JS
     for code in (
         "invalid_endpoint",
         "unavailable",
@@ -1514,12 +1545,12 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
         in SETUP_JS
     )
     assert (
-        "code=>code==='unauthorized'?key:addressCodes.includes(code)?endpoint:null"
-        in SETUP_JS
+        "control:(code,reached)=>code==='unauthorized'?key:"
+        "reached||addressCodes.includes(code)?endpoint:null,address" in SETUP_JS
     )
     assert (
-        "const addressCodes=['invalid_endpoint','invalid_origin','tls','timeout',"
-        "'redirect','malformed','oversize']" in SETUP_JS
+        "const addressCodes=['invalid_endpoint','invalid_origin','name_resolution',"
+        "'refused','tls','timeout','redirect','malformed','oversize']" in SETUP_JS
     )
     assert (
         "const emailInvalid=control=>!control.checkValidity()||"
@@ -1584,9 +1615,10 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
         "settle)},{signal:refusalGuard.signal})" in SETUP_JS
     )
     assert "{once:true,signal:refusalGuard.signal}" in SETUP_JS
-    assert "mutation:true});mountDraft=null;await load()" in SETUP_JS
+    assert "mutation:true});mountDraft=null;confirmation=null;await load()" in SETUP_JS
     assert "for(const action of actions)action.disabled=true" in SETUP_JS
-    assert "submit.disabled=false;error(form," in SETUP_JS
+    assert "submit.disabled=false;if(e.status===403&&e.message==='csrf')" in SETUP_JS
+    assert "error(form,refusal(e))" in SETUP_JS
 
 
 def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() -> None:
@@ -1846,3 +1878,80 @@ def test_setup_states_a_rate_only_while_preparation_moves() -> None:
     assert guard in SETUP_JS
     assert SETUP_JS.count("books/min") == 1
     assert "if(typeof visible.throughput_per_minute==='number')" not in SETUP_JS
+
+
+_SETUP_FONTS = {
+    "assets/inter-latin-wght-normal-Dx4kXJAl.woff2": b"latin",
+    "assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2": b"latin-ext",
+}
+
+
+def test_setup_paints_the_saved_theme_first_and_serves_only_the_workspace_fonts() -> (
+    None
+):
+    state = SimpleNamespace(
+        read=lambda _verifier: SetupStateDocument(
+            schema_version="setup-state-v4",
+            revision=1,
+            bootstrap_verifier_digest="0" * 64,
+            claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
+        )
+    )
+    with TestClient(
+        create_setup_app(
+            cast(Any, object()),
+            cast(Any, state),
+            "",
+            react_asset_loader=font_asset_loader(_SETUP_FONTS),
+        ),
+        base_url="https://testserver",
+    ) as client:
+        shell = client.get("/")
+        assert shell.headers["content-security-policy"] == (
+            "default-src 'none'; script-src 'self'; style-src 'self'; "
+            "img-src 'self'; font-src 'self'; connect-src 'self'; "
+            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        )
+        theme = client.get("/assets/theme.js")
+        assert theme.status_code == 200
+        assert theme.headers["content-type"].startswith("text/javascript")
+        assert theme.text == THEME_JS
+        css = client.get("/assets/setup.css").text
+        assert css.startswith("@font-face{font-family:Inter;")
+        assert css.endswith(SETUP_CSS)
+        for path, payload in _SETUP_FONTS.items():
+            assert f"src:url(/assets/review-app/{path}) format('woff2')" in css
+            font = client.get(f"/assets/review-app/{path}")
+            assert font.status_code == 200
+            assert font.headers["content-type"] == "font/woff2"
+            assert font.content == payload
+        # The workspace's shell and scripts stay unreachable before setup ends.
+        for path in ("index.html", "assets/index-deadbeef.js", "assets/missing.woff2"):
+            assert client.get(f"/assets/review-app/{path}").status_code == 404
+
+
+def test_setup_without_a_workspace_build_keeps_the_fallback_stack() -> None:
+    assert inter_font_faces(()) == ""
+    assert inter_font_faces(("assets/inter-latin-wght-normal.woff2",)) == ""
+
+
+def test_sign_in_and_setup_state_the_workspace_inter_ranges_exactly() -> None:
+    styles = (
+        Path(__file__).resolve().parents[2] / "frontend" / "src" / "styles.css"
+    ).read_text(encoding="utf-8")
+    workspace = dict(
+        re.findall(
+            r"url\('\./fonts/([a-z-]+)\.woff2'\) format\('woff2'\); "
+            r"unicode-range:([^;]+);",
+            styles,
+        )
+    )
+    served = dict(
+        re.findall(
+            r"assets/([a-z-]+)-[A-Za-z0-9_-]{8}\.woff2\) format\('woff2'\);"
+            r"unicode-range:([^}]+)\}",
+            inter_font_faces(_SETUP_FONTS),
+        )
+    )
+    assert len(workspace) == 2
+    assert served == workspace
