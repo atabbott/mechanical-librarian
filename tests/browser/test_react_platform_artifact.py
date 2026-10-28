@@ -1429,7 +1429,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(alternative_evidence).to_have_count(1)
                 expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
                 expect(alternative_evidence).to_have_text("Hide evidence")
-                comparison.get_by_text("Open Library", exact=True).wait_for()
+                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                    "Open Library", exact=True
+                ).wait_for()
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-recommended")
@@ -1444,7 +1446,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 recommended_evidence.click()
                 expect(recommended_evidence).to_have_attribute("aria-expanded", "true")
-                comparison.get_by_text("Open Library", exact=True).wait_for()
+                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                    "Open Library", exact=True
+                ).wait_for()
                 unavailable_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )
