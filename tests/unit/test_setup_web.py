@@ -71,6 +71,16 @@ SETUP_JS = re.sub(r"\n *", "", SHIPPED_SETUP_JS)
             ReviewerAccessApplicationError("credential_clear_failed"),
             (503, "credential_clear_failed"),
         ),
+        (ReviewerAccessApplicationError("unreachable"), (503, "unreachable")),
+        (ReviewerAccessApplicationError("timed_out"), (503, "timed_out")),
+        *(
+            (ReviewerAccessApplicationError(code), (422, code))
+            for code in (
+                "response_too_large",
+                "data_policy_refused",
+                "image_limit_exceeded",
+            )
+        ),
         (
             ReviewerAccessRepositoryError("reviewer access is unavailable"),
             (503, "reviewer_access_unavailable"),

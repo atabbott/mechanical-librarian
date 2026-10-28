@@ -90,7 +90,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v58"
+REPORT_SCHEMA = "metadata-report-v59"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2436,7 +2436,7 @@ _STARVATION_DIAGNOSTIC = (FailureCategory.TIMEOUT, FailureStage.REQUEST, False)
 # The diagnostics an aggregate-byte and a dispatch-count cause become.
 _BUDGET_DIAGNOSTICS = frozenset(
     {
-        (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE, FailureStage.RESPONSE, False),
+        (FailureCategory.OVERSIZED_RESPONSE, FailureStage.RESPONSE, False),
         (FailureCategory.LOOKUP_CONSTRUCTION, FailureStage.LOOKUP, False),
     }
 )
@@ -2770,13 +2770,15 @@ class ProviderConvergence:
 _PROVIDER_DIAGNOSTIC_STAGES = {
     FailureCategory.AUTHENTICATION: FailureStage.RESPONSE,
     FailureCategory.BURST_THROTTLE: FailureStage.RESPONSE,
+    FailureCategory.CANDIDATE_LIMIT_EXCEEDED: FailureStage.RESPONSE,
     FailureCategory.CANCELLATION: FailureStage.EXECUTION,
     FailureCategory.DAILY_QUOTA_EXHAUSTED: FailureStage.RESPONSE,
     FailureCategory.EMPTY_NO_MATCH: FailureStage.RESPONSE,
     FailureCategory.HTTP_NON_SUCCESS: FailureStage.RESPONSE,
     FailureCategory.IDENTITY: FailureStage.IDENTITY,
     FailureCategory.LOOKUP_CONSTRUCTION: FailureStage.LOOKUP,
-    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE: FailureStage.RESPONSE,
+    FailureCategory.MALFORMED_RESPONSE: FailureStage.RESPONSE,
+    FailureCategory.OVERSIZED_RESPONSE: FailureStage.RESPONSE,
     FailureCategory.PROVIDER_DECLARED_ERROR: FailureStage.RESPONSE,
     FailureCategory.QUOTA_RATE_LIMIT: FailureStage.RESPONSE,
     FailureCategory.SCHEMA_CONSTRUCTION: FailureStage.SCHEMA,

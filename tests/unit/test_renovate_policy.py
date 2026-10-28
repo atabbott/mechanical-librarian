@@ -40,7 +40,7 @@ def test_managed_upgrades_use_strict_current_platform_automerge() -> None:
     assert CONFIG["lockFileMaintenance"]["automerge"]
 
 
-def test_only_replacements_and_compatibility_policy_remain_manual() -> None:
+def test_only_replacements_compatibility_and_runtime_lines_remain_manual() -> None:
     restrictions = [
         rule
         for rule in CONFIG["packageRules"]
@@ -54,6 +54,20 @@ def test_only_replacements_and_compatibility_policy_remain_manual() -> None:
             "matchManagers": ["pep621"],
             "matchDepTypes": ["requires-python"],
             "enabled": False,
+        },
+        {
+            "description": "Require approval for a new Node major line",
+            "matchDepNames": ["node"],
+            "matchUpdateTypes": ["major"],
+            "automerge": False,
+            "dependencyDashboardApproval": True,
+        },
+        {
+            "description": "Require approval for a new Python minor or major version",
+            "matchDepNames": ["python"],
+            "matchUpdateTypes": ["minor", "major"],
+            "automerge": False,
+            "dependencyDashboardApproval": True,
         },
         {
             "description": "Require approval for dependency replacements",
@@ -113,34 +127,53 @@ def test_application_manifests_remain_exact() -> None:
     assert frontend["packageManager"] == "npm@" + frontend["engines"]["npm"]
 
 
-def test_workflow_uv_pin_is_looked_up_where_the_image_pin_is() -> None:
-    """Both uv declarations see one release list, so one update moves both (#1177).
+def test_every_runtime_pin_is_looked_up_where_its_image_pin_is() -> None:
+    """Each tool's declarations see one release list, so one update moves all.
 
-    The registry publishes no release dates; without the optional behaviour the
-    release age would hold the image pin forever while the workflow pin moved.
+    The image registries publish no release dates; without the optional
+    behaviour the release age would hold the image pins forever while the dated
+    pins moved alone (#1177, #1448).
     """
-    (override,) = [
-        rule for rule in CONFIG["packageRules"] if "overrideDatasource" in rule
+    overrides = [
+        {key: value for key, value in rule.items() if key != "description"}
+        for rule in CONFIG["packageRules"]
+        if "overrideDatasource" in rule
     ]
-    assert override == {
-        "description": override["description"],
-        "matchManagers": ["github-actions"],
-        "matchDepNames": ["astral-sh/uv"],
-        "overrideDatasource": "docker",
-        "overrideDepName": "ghcr.io/astral-sh/uv",
-        "overridePackageName": "ghcr.io/astral-sh/uv",
-    }
+    assert overrides == [
+        {
+            "matchManagers": ["github-actions", "npm"],
+            "matchDepNames": ["node"],
+            "overrideDatasource": "docker",
+            "overridePackageName": "node",
+        },
+        {
+            "matchManagers": ["github-actions"],
+            "matchDepNames": ["python"],
+            "overrideDatasource": "docker",
+            "overridePackageName": "python",
+        },
+        {
+            "matchManagers": ["github-actions"],
+            "matchDepNames": ["astral-sh/uv"],
+            "overrideDatasource": "docker",
+            "overrideDepName": "ghcr.io/astral-sh/uv",
+            "overridePackageName": "ghcr.io/astral-sh/uv",
+        },
+    ]
     optional = [
-        rule for rule in CONFIG["packageRules"] if "minimumReleaseAgeBehaviour" in rule
+        (rule["matchDepNames"], rule["groupName"])
+        for rule in CONFIG["packageRules"]
+        if rule.get("minimumReleaseAgeBehaviour") == "timestamp-optional"
     ]
     assert optional == [
-        {
-            "description": optional[0]["description"],
-            "matchDepNames": ["ghcr.io/astral-sh/uv"],
-            "groupName": "uv resolver",
-            "minimumReleaseAgeBehaviour": "timestamp-optional",
-        }
+        (["node"], "Node runtime"),
+        (["python"], "Python runtime"),
+        (["ghcr.io/astral-sh/uv"], "uv resolver"),
     ]
+    assert all(
+        rule.get("minimumReleaseAgeBehaviour") in {None, "timestamp-optional"}
+        for rule in CONFIG["packageRules"]
+    )
     assert "minimumReleaseAgeBehaviour" not in CONFIG
 
 

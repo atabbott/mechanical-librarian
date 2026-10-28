@@ -2,16 +2,36 @@
 
 ## Unreleased
 
-- Setup and Settings now describe iTunes as what it is since audiobooks stopped
-  being sent to it: a check of an ebook's title and author against iTunes
-  audiobook listings. An audiobook inspection that states no recording facts
-  now fails that item instead of being planned without them (#1303).
+- Setup now describes iTunes as what it is since audiobooks stopped being sent
+  to it: a check of an ebook's title and author against iTunes audiobook
+  listings. An audiobook inspection that states no recording facts now fails
+  that item instead of being planned without them (#1303).
+
+- **Clean rebuild required.** An AudioSilo answer whose recording lists more
+  regions than the ten admitted marketplaces now keeps the queried ASIN's own
+  entry instead of failing as malformed. Malformed, oversized and
+  candidate-limited responses are named apart, an AudioSilo lookup miss is no
+  longer a failed request, and an over-bound chapter document no longer starves
+  the next lookup (#1308).
 
 - Setup and sign-in failures now say what went wrong: an unresolvable name, a
   refused connection, an unverified certificate, a timeout or a rejected key,
   naming the address and one remedy. Setup suggests providers per library and
   confirms each step; sign-in clears a rejected password, explains a forgotten
   one and opens in your theme with the workspace type (#1287).
+
+- Hardcover and Open Library now send their requests through the same bounded
+  request path as every other metadata provider. Their requests, limits,
+  retries and reported outcomes are unchanged (#984).
+
+- When the review library cannot read the provider-recovery schedule, the
+  service log now gets the same one-line JSON warning as every other
+  operational event; before, its code and exception type were dropped (#1447).
+
+- A managed Node or Python update now moves the Dockerfile, workflow and, for
+  Node, frontend `engines` pins together in one Renovate pull request, instead
+  of moving the dated pins alone into a build that could not pass. A new Node
+  major line or Python minor version waits for approval (#1448).
 
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.
@@ -23,6 +43,14 @@
 - The activity projector's exit events now reach the service log as value-free
   JSON lines on stderr; before, its `info` events were silently dropped. A
   never-shown owner-settings log line is removed (#1304).
+
+- An OpenRouter model is validated however large OpenRouter's model list grows,
+  and a reviewer check or review shares one time limit across its requests,
+  stopping at its first read past it. A too-large answer, a timeout, a
+  data-policy refusal and too many images each get their own reason and remedy
+  in Settings and setup, and a failed cover review says what to change
+  (#1330, #1331, #1332).
+
 - A managed uv update now moves the CI workflow and container pins together in
   one Renovate pull request, instead of moving only the workflow pin (#1177).
 

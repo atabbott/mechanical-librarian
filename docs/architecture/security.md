@@ -887,8 +887,17 @@ enter the status grammar, logs, or persisted failure identity.
 OpenRouter egress is fixed to `https://openrouter.ai`: key and model capability
 checks precede the one exact-model chat-completions request. Redirect and
 ambient proxy inheritance are disabled. Every response stream is consumed in
-bounded chunks up to its endpoint-specific cap plus one rejection byte,
-including when `Content-Length` is absent or false. Cover previews, the sealed
+chunks and refused as `response_too_large` past its endpoint-specific cap,
+including when `Content-Length` is absent or false. The model catalogue has no
+total cap: it is scanned as one stream and each entry is held, up to 64 KiB, only
+until it is parsed, so memory stays bounded while the catalogue grows. Each
+public call shares one deadline across key, catalogue and chat requests and
+fails `timed_out` at the first check after it is spent: before each request and
+after each read. Each request's own timeout is capped by the time remaining
+when it starts, so one stalled read can overrun the deadline by at most that
+per-phase cap (30 seconds by default); the deadline is not a hard limit. Error bodies are read up to 8 KiB only to
+recognise the data-policy and image-count refusals, and are never retained.
+Cover previews, the sealed
 packet, instruction, and strict schema are the only model inputs; no target
 credential or write authority crosses this boundary.
 
@@ -1326,6 +1335,15 @@ no-match. Lane overflow is typed before client construction and causes no
 subset egress. One adapter instance owns lane sequencing, request maxima, the
 aggregate byte ceiling, and the shared pacer and deadline.
 
+Every metadata adapter dispatches through the one bounded session in
+`adapters/providers/sdk.py`, which applies those request, retry, byte and
+deadline bounds and records the attempt evidence; the adapter supplies only its
+fixed request and its status mapping. Moving Hardcover and Open Library onto it
+(#984) changed no method, origin, header, credential, bound or retry authority:
+the Hardcover token still reaches only its GraphQL requests through the client
+built at the credential boundary, and the egress and threat model below are
+unchanged.
+
 Every provider metadata client is constructed in
 `infrastructure/security/credentials.py` with environment and proxy trust off,
 client-level redirect following off, TLS verification on, an explicit timeout,
@@ -1406,8 +1424,12 @@ contract differs by provider and is not provider-wide:
   structured error: a `404` is classified from its status alone, and an HTML
   `200` fails the strict `application/json` check, so no HTML body is ever read
   as evidence on either path. A lookup that does not name both a work and its
-  recording fails closed. It acquires no cover bytes and constructs no cover
-  source.
+  recording fails closed. A recording's regional identifier map over the
+  ten-marketplace bound is read no further than its first 64 entries, and only
+  for the queried ASIN's own entry in an admitted marketplace; nothing else in
+  that map becomes evidence (#1308). A chapter document over its bound is
+  dropped and named `oversized_response`, charging the aggregate budget only for
+  the bytes read. It acquires no cover bytes and constructs no cover source.
 - **iTunes Search** issues `GET` requests only, to the single fixed origin
   `https://itunes.apple.com` on the single fixed path `/search`. The query
   travels entirely in the `term` parameter beside a fixed `media=audiobook` and

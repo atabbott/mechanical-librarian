@@ -106,7 +106,7 @@ have no switch, environment variable or `logging` configuration.
 
 | `event` | Written when |
 |---|---|
-| `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane with no failing attempt. A `http_404` or `region_unavailable` attempt is not one when every lane answered with candidates or no match: that is the provider's ordinary "not found". |
+| `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane with no failing attempt. Its `outcome_class` names `malformed_response`, `oversized_response` and `candidate_limit_exceeded` apart (#1308). An adapter's `not_found` attempt is never one, and a `http_404` or `region_unavailable` attempt is not one when every lane answered with candidates or no match: that is the provider's ordinary "not found". |
 | `provider_throttled` | `quota_rate_limit`, `burst_throttle`, `daily_quota_exhausted`, or `held` for a lane the shared pacer held without a request |
 | `provider_deadline_stop` | `stop: before_dispatch` when the deadline left a request unsent; `stop: in_flight` when it ended a retry |
 | `provider_recovery_job` | A recovery job's `transition`: `started`, `settled`, `failed`, `stale` or `held` |
@@ -140,8 +140,10 @@ thread ends: `{"code":"stopped","event":"activity_projector","level":"info"}`,
 service is closing, or `unexpected` at `warning` with `error` set to the
 exception's type name. Shutdown adds `join_timeout` at `warning` when the
 projector's current step outlasts the join bound; closing still waits for that
-step (#1231, #1304). Nothing configures Python `logging`, so no event depends
-on it.
+step (#1231, #1304). When the review library cannot read the provider-recovery
+schedule, it withdraws the retry promise and writes
+`{"code":"unavailable","error":"<exception type>","event":"provider_recovery_schedule","level":"warning"}`
+(#1407, #1447). Nothing configures Python `logging`, so no event depends on it.
 
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound

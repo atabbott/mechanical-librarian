@@ -13,6 +13,7 @@ import type {
   PreparationFailureStatus,
   ProviderQueryKind,
   ProviderStatus,
+  ReviewerFailureCode,
   ReviewerState,
   ScanState,
   ShadowDisposition,
@@ -539,4 +540,29 @@ export const reviewerStateLabels = {
   model_text_only: 'model reads text only',
   malformed_response: 'unreadable response',
   unreachable: 'unreachable',
+  response_too_large: 'answer too large',
+  timed_out: 'timed out',
+  data_policy_refused: 'refused by data policy',
+  image_limit_exceeded: 'too many images',
 } satisfies Record<ReviewerState, string>
+// What a configured reviewer's failure asks the owner to change, wherever the
+// failure is shown: reviewer access in Settings and a failed cover review.
+export const reviewerFailureCopy = {
+  invalid_key:
+    'The configured reviewer credential is invalid. Replace it in Settings → Reviewer, then retry.',
+  quota_exhausted: 'The configured reviewer has no remaining quota. Restore quota and retry.',
+  rate_limited: 'The configured reviewer is rate limited. Wait, then retry.',
+  model_unavailable:
+    'The configured reviewer model is unavailable. Choose another model in Settings → Reviewer.',
+  model_text_only: 'The configured reviewer model cannot inspect cover images.',
+  malformed_response: 'The configured reviewer returned an invalid response. Retry later.',
+  unreachable: 'The configured reviewer could not be reached. Check network access and retry.',
+  response_too_large:
+    'The configured reviewer returned an answer too large to read. Retry later, or choose another model in Settings → Reviewer.',
+  timed_out:
+    'The configured reviewer did not answer in time. Retry, or choose a faster model in Settings → Reviewer.',
+  data_policy_refused:
+    'No provider for this model accepts your OpenRouter data policy. Change your privacy settings on OpenRouter, or choose a model with a compliant provider in Settings → Reviewer.',
+  image_limit_exceeded:
+    'The configured reviewer model accepts fewer images than this review sends. Choose another vision model in Settings → Reviewer.',
+} satisfies Record<ReviewerFailureCode, string>
