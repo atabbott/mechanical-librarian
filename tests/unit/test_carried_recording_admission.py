@@ -646,6 +646,25 @@ def test_a_recoverable_carried_lane_carries_the_admission_again(
     assert _CARRIED == admitted_recording_asin(report)
 
 
+@pytest.mark.parametrize(
+    "status",
+    (
+        ProviderStatus.MALFORMED,
+        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+        ProviderStatus.OVERSIZED,
+    ),
+    ids=lambda value: value.value,
+)
+def test_a_failed_carried_lane_carries_the_admission_again(
+    status: ProviderStatus,
+) -> None:
+    """A failure is not an answer, recoverable or not, so it refutes nothing."""
+    claims = _claims()
+    report = _report(claims, (_catalogue(claims, carried=status),))
+
+    assert _CARRIED == admitted_recording_asin(report)
+
+
 def test_a_refuted_carried_admission_yields_to_a_fresh_one() -> None:
     claims = _claims()
     absent = _report(claims, (_catalogue(claims, carried=ProviderStatus.NO_MATCH),))

@@ -80,14 +80,16 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
    keeps only its identifier. An ASIN-only stub has no title to admit, so it
    is refused.
 5. **Carrying again.** A carried ASIN that any audiobook authority's lookup
-   verified is carried again. When none verified it, it is carried again
-   unverified if at least one carried lookup ended in a recovery-eligible
-   status, or if no carried lookup answered (none was made, or every one was
-   to a disabled provider). A disabled provider answers nothing, so it can
-   neither keep nor refute a carry. Once at least one carried lookup answered,
-   none verified it and none failed recoverably, it is refuted: it is dropped,
-   that report cannot admit it again, and the search may admit a different
-   edition.
+   verified is carried again. A lookup answers only when it completes with
+   products or with no match. Any other ending is a failure, whether a retry
+   could recover it or not: a malformed or oversized response, a candidate
+   limit, or an identity conflict. A failure is not an answer. When no lookup
+   verified the ASIN, it is carried again unverified if any carried lookup
+   failed, or if none answered (none was made, or every one was to a disabled
+   provider). A disabled provider is not asked, so it neither keeps nor
+   refutes a carry. Only when at least one carried lookup answered, none
+   verified it and none failed is it refuted: it is dropped, that report
+   cannot admit it again, and the search may admit a different edition.
 6. **Precedence (pending owner confirmation).** At the ASIN destination a
    verified carried edition is the ASIN proposed. A tight product naming
    another ASIN whose narrator cast is not disjoint from the carried product's

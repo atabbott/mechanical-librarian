@@ -221,10 +221,11 @@ against the title the alternative discovery lane asks (#1255). That is the
 first discovery title that survives the target's own title, authors and series
 names. A product whose narrators share nobody with the recording's own credits
 is refused on it. A carried edition is kept while any audiobook authority
-verifies it. It is carried again while any carried lookup failed recoverably,
-or while no carried lookup answered, because a disabled provider answers
-nothing. It is dropped once a carried lookup answered, none verified it and
-none failed recoverably. A verified carried edition is the ASIN proposed, and a
+verifies it. A lookup answers only when it returns products or no match; any
+other ending, recoverable or not, is a failure and refutes nothing. The edition
+is carried again while any carried lookup failed, or while none answered,
+because a disabled provider is not asked. It is dropped only once a carried
+lookup answered, none verified it and none failed. A verified carried edition is the ASIN proposed, and a
 tight search product with another ASIN and a shared or unknown cast is
 withheld. The owner's value always stands. A product naming the item's current
 ASIN is never withheld. When the report admitted that ASIN as a separate

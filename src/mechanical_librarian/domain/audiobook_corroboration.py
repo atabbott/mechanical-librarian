@@ -32,7 +32,6 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 from mechanical_librarian.domain.metadata_report import (
     ASSERTED_ASIN_BASES,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
-    PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -1438,6 +1437,13 @@ def _admitted_candidates(
     )
 
 
+# A carried lookup that ended in one of these answered; any other non-disabled
+# status is a failure, which never refutes a carried edition (#1316).
+_DEFINITIVE_LANE_STATUSES: Final = frozenset(
+    {ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH}
+)
+
+
 def admitted_recording_asin(report: MetadataReport) -> str | None:
     """Return the one edition ASIN this report admitted, to carry forward (#1316).
 
@@ -1451,11 +1457,10 @@ def admitted_recording_asin(report: MetadataReport) -> str | None:
 
     An ASIN this report itself carried is kept while any audiobook
     authority's lookup of it verified it, and kept again unverified while at
-    least one of those lookups failed in a way a later one may not (a
-    recovery-eligible status) or none answered (none was made, or every one
-    was disabled). Once one answered, none verified it and none failed
-    recoverably, it is refuted: it is dropped, and this report cannot admit
-    it again.
+    least one of those lookups failed (it ended in anything but products or
+    no match) or none answered (none was made, or every one was disabled).
+    Only when one answered definitively, none verified it and none failed is
+    it refuted: it is dropped, and this report cannot admit it again.
 
     The owner's value is never displaced: when the target already records an
     ASIN this report admitted as a distinct product, no other edition is
@@ -1495,18 +1500,18 @@ def _carried_or_admitted_asin(
         asin = cast("str", carried.canonical)
         if _verified_carried_candidates(report):
             return asin
-        # Verified nowhere: a carried lane that failed in a way a later lookup
-        # may not, or no carried lane that answered at all, leaves the question
-        # open. A disabled provider answers nothing, so it neither keeps nor
-        # refutes. Once a lane answered, none verified and none failed
-        # recoverably, the carried edition is refuted.
+        # Verified nowhere. Only a lane that completed answers: it returned
+        # products or no match. Any other ending, recoverable or not (a
+        # malformed or oversized response, a candidate limit), is a failure
+        # and leaves the question open, as does no answer at all. A disabled
+        # provider is not asked, so it neither keeps nor refutes.
         statuses = tuple(
             lane.status
             for _observation, lane in _carried_lanes(report, carried)
             if lane.status is not ProviderStatus.DISABLED
         )
         if not statuses or any(
-            status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES for status in statuses
+            status not in _DEFINITIVE_LANE_STATUSES for status in statuses
         ):
             return asin
         refuted = asin

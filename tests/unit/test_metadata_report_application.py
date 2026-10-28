@@ -108,6 +108,7 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AudioDiscoveryTitle,
     ClaimKind,
     ClaimScope,
     DispatchOutcome,
@@ -132,6 +133,7 @@ from mechanical_librarian.domain.metadata_report import (
     audio_set_identity,
     default_target_fields,
     finalize_candidate_comparisons,
+    normalize_title,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -4113,3 +4115,40 @@ def test_an_item_that_names_its_own_asin_carries_nothing() -> None:
     assert not any(value.basis == "prior_admission" for value in second.local_claims)
     assert [ProviderQueryKind.ASIN] == order
     assert ["B0OWNASIN1"] == [value.canonical_asin for value in plans[0].lanes]
+
+
+def test_the_persisted_discovery_titles_are_the_ones_a_lane_may_ask() -> None:
+    """The report and every plan hold the surviving discovery titles (#1316).
+
+    The path leaf repeats the target title, so only the tag title survives:
+    that is what the alternative lane asks and a carried lookup admits against.
+    """
+    tag = AudioDiscoveryTitle("title_tag", "Another Recorded Title")
+    inspection = _fed_inspector().result
+    inspector = FakeAudioInspector(
+        replace(
+            inspection,
+            audio=replace(
+                inspection.audio,
+                discovery_titles=(
+                    AudioDiscoveryTitle("path_leaf", normalize_title(_FED_TITLE)),
+                    tag,
+                ),
+            ),
+        )
+    )
+    repository = _PriorReportRepository()
+
+    report, plans, _order, _fed = _carrying_run(
+        repository,
+        _fed_snapshot(TargetFile("a" * 64, "book.m4b", "m4b")),
+        inspector,
+        "B0CW1KL2QD",
+    )
+
+    assert report.audio is not None
+    assert (tag,) == report.audio.discovery_titles
+    assert all(
+        plan.audio is not None and (tag,) == plan.audio.discovery_titles
+        for plan in plans
+    )
