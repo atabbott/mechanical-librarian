@@ -569,3 +569,80 @@ def test_http_title_isolation_preserves_candidate_evidence(
         for claim in claims
     )
     assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)
+
+
+def _sibling_handler(
+    work: dict[str, Any],
+) -> Callable[[httpx.Request], httpx.Response]:
+    def handle(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith(_LOOKUP):
+            return _json(payload("audiosilo_lookup"))
+        if url.endswith("/chapters"):
+            return _json(payload("audiosilo_chapters"))
+        return _json(work)
+
+    return handle
+
+
+def _sibling_plan() -> Any:
+    """Two lanes over regional ASINs of the one recording the work holds."""
+    sibling = next(
+        str(entry["asin"])
+        for entry in payload("audiosilo_work")["recordings"][0]["asin"]
+        if entry["asin"] != _ASIN and entry["region"] == "uk"
+    )
+    plan = audiobook_discovery_plan(
+        audio_target(), (*local_claims(), audio_claim(ClaimKind.ASIN, sibling, 5))
+    )
+    assert 2 == len(plan.lanes)
+    return plan
+
+
+def test_two_regional_asins_of_one_recording_keep_the_one_recording() -> None:
+    """Each region's marketplace is one recording, not an identity conflict (#1316).
+
+    Both lookups resolve the same recording with the same claims, and each
+    states the marketplace its queried ASIN resolved in. The observation keeps
+    the recording once, under the first lane's marketplace.
+    """
+    observation = (
+        _provider(_sibling_handler(payload("audiosilo_work")))
+        .observe(_sibling_plan())
+        .observation
+    )
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
+    assert () == observation.diagnostics
+    (candidate,) = observation.candidates
+    assert 1 == len(_evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE))
+    assert all(
+        (value.edition_identity,) == (candidate.identity,)
+        for lane in observation.lanes
+        for value in lane.candidates
+    )
+
+
+def test_regional_copies_that_disagree_on_a_claim_are_still_a_conflict() -> None:
+    """Only a marketplace may differ between two copies of one recording."""
+    served = {"count": 0}
+    other = copy.deepcopy(payload("audiosilo_work"))
+    other["recordings"][0]["narrators"] = [{"id": "someone", "name": "Someone Else"}]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith(_LOOKUP):
+            return _json(payload("audiosilo_lookup"))
+        if url.endswith("/chapters"):
+            return _json(payload("audiosilo_chapters"))
+        served["count"] += 1
+        return _json(payload("audiosilo_work") if served["count"] == 1 else other)
+
+    observation = _provider(handle).observe(_sibling_plan()).observation
+
+    assert ProviderStatus.MALFORMED is observation.status
+    assert () == observation.candidates
+    assert [FailureCategory.IDENTITY] == [
+        value.category for value in observation.diagnostics
+    ]

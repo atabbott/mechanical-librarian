@@ -41,6 +41,7 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetReader,
     audiobook_asin_feed_plan,
+    audiobook_carried_plan,
     audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
@@ -462,6 +463,11 @@ class GenerateProviderRetrySuccessor:
         feed is rebuilt from the retained observations by the same function
         that built it, and a feed that cannot be rebuilt is refused rather than
         retried against a plan the provider never saw.
+
+        The Audible catalogue may have been handed its plan with the carried
+        product lane added (#1316). That lane is rebuilt from the source's own
+        `prior_admission` claim by the same function, so a retry looks the
+        carried ASIN up again under the lane identity it failed under.
         """
         snapshot = self._target.read(source.target.item)
         audio = _is_audio(source)
@@ -478,6 +484,10 @@ class GenerateProviderRetrySuccessor:
         )
         if plan.overflow:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
+        if audio and original.authority == "audible_catalog":
+            carried = audiobook_carried_plan(plan)
+            if carried.lanes != plan.lanes:
+                return carried
         if (
             audio
             and original.lanes

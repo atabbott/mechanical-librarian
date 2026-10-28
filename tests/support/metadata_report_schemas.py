@@ -239,13 +239,16 @@ def retained_report_as_current(document: str) -> MetadataReport:
     Audiobookshelf incumbent description admits, the visible text rather than
     the stored markup, and added each description's `restorable` flag: false
     here, so no relabelled copy can authorise a restore it was never read for.
+    v60 added the `prior_admission` field-result source: an earlier producer
+    carried no admission, so it reads `absent` for an ASIN and `unsupported`
+    for every other field, as `derive_field_results` states it.
     Nothing is migrated: the copy is never written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v59"
+    data["schema_version"] = "metadata-report-v60"
     for provider in data["providers"]:
         for lane in provider["lanes"]:
             lane["exhausted_dispatch"] = []
@@ -262,6 +265,14 @@ def retained_report_as_current(document: str) -> MetadataReport:
             field["restorable"] = False
     if data.get("audio") is not None:
         data["audio"]["discovery_titles"] = []
+    for result in data["field_results"]:
+        if result["sources"]:
+            result["sources"].append(
+                {
+                    "source": "prior_admission",
+                    "state": "absent" if result["kind"] == "asin" else "unsupported",
+                }
+            )
     data.pop("report_id")
     data["report_id"] = report_content_address(data)
     return MetadataReport.from_json(canonical_json(data))
@@ -342,7 +353,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v59'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v60'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -361,10 +372,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v59'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v60'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v59'", f"= '{version}'"
+            "= 'metadata-report-v60'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

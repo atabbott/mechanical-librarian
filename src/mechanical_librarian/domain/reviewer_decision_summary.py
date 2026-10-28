@@ -8,6 +8,7 @@ from typing import cast
 
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
+    ASSERTED_ASIN_BASES,
     AUDIO_FILE_FORMATS,
     MAX_CONTRIBUTIONS,
     ClaimKind,
@@ -297,7 +298,7 @@ def _manifestation_binding(
     local_correlation, _ = _known_correlations(report)
     if local_correlation in correlations and any(
         claim.reference in references
-        and claim.basis != "target_metadata"
+        and claim.basis not in ASSERTED_ASIN_BASES
         and claim.scope is ClaimScope.EDITION
         for claim in report.local_claims
     ):
