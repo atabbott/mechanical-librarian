@@ -949,9 +949,13 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
                 {(claim.kind === 'duration' && claim.state === 'valid'
                   ? formatRunningTime(claim.value)
                   : null) ?? claim.value}
+                {/* An oversized value is retained as its beginning only, so it
+                    says so rather than reading as the whole (#1290). */}
+                {claim.state === 'oversized' ? '…' : null}
                 <small>
                   {claimBasisLabels[claim.basis]}
                   {claim.state === 'valid' ? '' : ` · ${fieldStateLabels[claim.state]}`}
+                  {claim.state === 'oversized' ? ' · Only the beginning is shown' : null}
                 </small>
               </dd>
             </div>

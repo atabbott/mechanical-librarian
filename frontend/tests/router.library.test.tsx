@@ -1913,6 +1913,75 @@ describe('Library route', () => {
     },
   )
 
+  it('marks an oversized recorded value as truncated', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const detailUrl = '/api/v1/library/report?connection=primary&library=ebooks&item=item-5'
+    const recorded = {
+      ...baseWork,
+      id: 'library_work_long',
+      workId: 'library_work_long',
+      title: 'Long description work',
+      attentionCount: 0,
+      attention: 'no_attention_needed' as const,
+      detailUrl,
+      detailKind: 'report' as const,
+      summary: {
+        state: 'no_decision_recorded' as const,
+        reason: 'No review decision is recorded.',
+        fields: [],
+      },
+    }
+    const claim = (state: 'oversized' | 'valid', value: string) => ({
+      basis: 'package_metadata' as const,
+      excerpt: value,
+      kind: 'description' as const,
+      role: null,
+      state,
+      value,
+    })
+    const previousMatchMedia = window.matchMedia
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    )
+    renderRoute('/library?lens=all&work=library_work_long', {
+      ...createHttp(),
+      getReportDetail: vi.fn<ReviewHttp['getReportDetail']>(async () => ({
+        chapters: [],
+        chaptersTruncated: false,
+        coverPresent: false,
+        coverSurface: null,
+        evidence: [
+          claim('oversized', 'The beginning of a long description'),
+          claim('valid', 'Whole'),
+        ],
+        evidenceTruncated: false,
+        item: 'item-5',
+        library: 'ebooks',
+        mediaHealth: [],
+        mediaKind: 'epub' as const,
+        providerSources: [],
+        providerEvidence: [],
+        providerEvidenceTruncated: false,
+        audiobookReviewScope: null,
+        recordingIdentityBasis: null,
+        reportId: 'report_' + 'b'.repeat(64),
+        title: 'Long description work',
+      })),
+      getLibrary: vi.fn(async () => ({ ...library, works: [...library.works, recorded] })),
+    })
+    const evidence = await screen.findByRole('region', { name: 'Recorded evidence' })
+    const [oversized, whole] = within(evidence).getAllByRole('definition')
+    expect(oversized).toHaveTextContent(/^The beginning of a long description…/u)
+    expect(oversized).toHaveTextContent('Only the beginning is shown')
+    expect(whole).not.toHaveTextContent('…')
+    expect(whole).not.toHaveTextContent('Only the beginning is shown')
+    vi.stubGlobal('matchMedia', previousMatchMedia)
+  })
+
   it('does not let a retained report hide the latest real preparation failure', async () => {
     const firstWork = library.works[0]
     if (!firstWork) throw new Error('library fixture requires one work')
