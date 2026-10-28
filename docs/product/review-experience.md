@@ -837,8 +837,9 @@ does not defer or replace this baseline.
   focus to its Try again. Opening Attention focuses its heading. From 761 to
   1199 pixels Attention is a drawer: the page behind it is inert, except the
   toolbar holding the Attention toggle, and Tab stays inside it. Escape or
-  Close returns focus to the Attention toggle, and Tab closes a dropdown onto
-  its trigger.
+  Close returns focus to the Attention toggle; at 760 pixels and below, closing
+  over a selected work reveals that work and leaves focus on its header. Tab
+  closes a dropdown onto its trigger.
 - Each surface has one heading outline without skipped levels, and the
   Activity change column is announced as its whole sentence; nested lists of
   checks are named.
