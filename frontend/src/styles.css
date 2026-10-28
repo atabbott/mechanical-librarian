@@ -1009,9 +1009,10 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 @container (max-width:47.5rem) {
   .cm-activity-columns { display:none; }
   .cm-activity-event-group > h3 { padding:.55rem .9rem .3rem; }
-  .cm-activity-event-group article { grid-template-columns:minmax(0,auto) minmax(0,1fr) minmax(0,auto); gap:.35rem .55rem; min-height:0; padding:.65rem .75rem; }
+  /* The category's track holds at least its longest word, so a long result beside Details never squeezes it. */
+  .cm-activity-event-group article { grid-template-columns:minmax(0,auto) minmax(auto,1fr) minmax(0,auto); gap:.35rem .55rem; min-height:0; padding:.65rem .75rem; }
   .cm-activity-event-group time { min-width:48px; grid-column:1; grid-row:1; }
-  .cm-activity-category { grid-column:2; grid-row:1; min-width:0; white-space:normal; overflow-wrap:break-word; }
+  .cm-activity-category { grid-column:2; grid-row:1; min-width:auto; white-space:normal; overflow-wrap:break-word; }
   .cm-activity-work { grid-column:1 / -1; grid-row:2; }
   .cm-activity-work > strong { display:-webkit-box; overflow:hidden; white-space:normal; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
   .cm-activity-work > span,.cm-activity-change,.cm-activity-change > span:not(.sr-only) { overflow:visible; text-overflow:clip; white-space:normal; }

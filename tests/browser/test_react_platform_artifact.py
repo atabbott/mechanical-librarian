@@ -4475,40 +4475,50 @@ _ROW_OVERLAPS = """() => [...document.querySelectorAll('.cm-activity-event-group
   })"""
 
 
-def test_activity_ledger_rows_fit_at_two_hundred_percent_text() -> None:
-    """With root font-size 200%, every Activity row -- a check's members open
-    -- keeps its promises and whole labels, with no cell clipped, past its row
-    or over another, from the widest window to the narrowest phone (#1291)."""
+def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
+    """At ordinary text and with root font-size 200%, every Activity row -- a
+    check's members open -- keeps its promises and whole labels, with no cell
+    clipped, past its row or over another, from the widest window to the
+    narrowest phone (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
         stack.callback(browser.close)
         page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
         page.add_init_script(_LIVE_UPDATE_STREAM)
-        _serve_cohort(page, stylesheet=lambda: "html { font-size: 200% !important; }")
-        page.goto(
-            "https://react-platform.invalid/activity"
-            "?eventType=all&rangeDays=30&page=1&pageSize=25"
-        )
-        page.locator("article.is-checks").get_by_role("button").click()
-        expect(page.locator(".cm-activity-checks > li").first).to_be_visible()
-        for width in (1440, 1100, 884, 390, 375, 320):
-            page.set_viewport_size({"width": width, "height": 900})
-            page.evaluate(_TWO_FRAMES)
-            where = f"200% text at {width}px"
-            assert page.evaluate(_ROW_PROMISES, True) == [], where
-            labels = page.evaluate(_ROW_LABELS, True)
-            assert labels == [], f"{where}: {labels}"
-            overlaps = page.evaluate(_ROW_OVERLAPS)
-            assert overlaps == [], f"{where}: {overlaps}"
-            clipped = [
-                failure
-                for node in page.locator(
-                    ".cm-activity-event-group article button"
-                ).all()
-                for failure in node.evaluate(_NAMED_CLIP)
-            ]
-            assert clipped == [], f"{where}: {clipped}"
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text in styles:
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(
+                "https://react-platform.invalid/activity"
+                "?eventType=all&rangeDays=30&page=1&pageSize=25"
+            )
+            page.locator("article.is-checks").get_by_role("button").click()
+            expect(page.locator(".cm-activity-checks > li").first).to_be_visible()
+            for width in (1440, 1100, 884, 761, 760, 390, 375, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.evaluate(_TWO_FRAMES)
+                where = f"{text} text at {width}px"
+                # Cards follow the ledger's own width, not the window's.
+                cards = page.evaluate(
+                    "() => getComputedStyle(document.querySelector('.cm-activity-columns'))"
+                    ".display === 'none'"
+                )
+                assert page.evaluate(_ROW_PROMISES, cards) == [], where
+                labels = page.evaluate(_ROW_LABELS, cards)
+                assert labels == [], f"{where}: {labels}"
+                overlaps = page.evaluate(_ROW_OVERLAPS)
+                assert overlaps == [], f"{where}: {overlaps}"
+                clipped = [
+                    failure
+                    for node in page.locator(
+                        ".cm-activity-event-group article button"
+                    ).all()
+                    for failure in node.evaluate(_NAMED_CLIP)
+                ]
+                assert clipped == [], f"{where}: {clipped}"
 
 
 def test_policy_sidebar_keeps_its_header_in_view_on_short_screens() -> None:
