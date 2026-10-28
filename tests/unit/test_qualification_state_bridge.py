@@ -10,16 +10,17 @@ import sys
 from pathlib import Path
 
 import pytest
+from scripts import qualification_state_bridge as bridge
+from scripts.qualification_state_bridge import (
+    RETAINED_LIBRARY_V26_TO_V32,
+    QualificationStateBridgeRecoveryRequired,
+    main,
+)
 
-import mechanical_librarian.adapters.persistence.qualification_state_bridge as bridge
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.schema import _expected_schema_objects
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.qualification_state_bridge import (
-    RETAINED_LIBRARY_V26_TO_V32,
-    QualificationStateBridgeRecoveryRequired,
-)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSource,
@@ -40,7 +41,6 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
 )
-from mechanical_librarian.interfaces.cli import main
 from tests.support.metadata_report_schemas import synthetic_report
 
 
@@ -1265,13 +1265,12 @@ def test_stale_private_binding_is_rejected_before_backup(
     assert not output.exists()
 
 
-def test_installed_command_reports_public_safe_result() -> None:
+def test_script_reports_public_safe_result() -> None:
     stdout = io.StringIO()
     stderr = io.StringIO()
 
     result = main(
         [
-            "qualification-state-bridge",
             RETAINED_LIBRARY_V26_TO_V32,
             "--database",
             "source.sqlite3",
@@ -1280,7 +1279,7 @@ def test_installed_command_reports_public_safe_result() -> None:
             "--output",
             "current.sqlite3",
         ],
-        qualification_state_bridge_runner=lambda *_: {
+        runner=lambda *_: {
             "plan": RETAINED_LIBRARY_V26_TO_V32,
             "status": "bridged",
             "reports": 1,
@@ -1295,7 +1294,40 @@ def test_installed_command_reports_public_safe_result() -> None:
     assert stderr.getvalue() == ""
 
 
-def test_installed_command_distinguishes_recovery() -> None:
+@pytest.mark.parametrize("omit", ("plan", "--database", "--backup", "--output"))
+def test_script_refuses_each_omitted_argument_before_delegating(omit: str) -> None:
+    calls: list[tuple[object, ...]] = []
+    flags = {
+        "--database": "/s.sqlite3",
+        "--backup": "/b.sqlite3",
+        "--output": "/o.sqlite3",
+    }
+    argv = [] if omit == "plan" else [RETAINED_LIBRARY_V26_TO_V32]
+    for flag, value in flags.items():
+        if flag != omit:
+            argv += [flag, value]
+    stderr = io.StringIO()
+
+    def record(*values: object) -> dict[str, str | int]:
+        calls.append(values)
+        return {}
+
+    assert main(argv, runner=record, stdout=io.StringIO(), stderr=stderr) == 2
+    assert stderr.getvalue() == "Review server failed: invalid invocation.\n"
+    assert calls == []
+    full = [RETAINED_LIBRARY_V26_TO_V32] + [v for f in flags.items() for v in f]
+    assert main(full, runner=record, stdout=io.StringIO()) == 0
+    assert calls == [
+        (
+            Path("/s.sqlite3"),
+            Path("/b.sqlite3"),
+            Path("/o.sqlite3"),
+            RETAINED_LIBRARY_V26_TO_V32,
+        )
+    ]
+
+
+def test_script_distinguishes_recovery() -> None:
     stderr = io.StringIO()
 
     def require_recovery(*values: object) -> dict[str, str | int]:
@@ -1303,7 +1335,6 @@ def test_installed_command_distinguishes_recovery() -> None:
 
     result = main(
         [
-            "qualification-state-bridge",
             RETAINED_LIBRARY_V26_TO_V32,
             "--database",
             "source.sqlite3",
@@ -1312,7 +1343,7 @@ def test_installed_command_distinguishes_recovery() -> None:
             "--output",
             "current.sqlite3",
         ],
-        qualification_state_bridge_runner=require_recovery,
+        runner=require_recovery,
         stderr=stderr,
     )
 
@@ -1400,7 +1431,6 @@ def test_unpatched_bridge_refuses_before_any_filesystem_mutation(
     assert (
         main(
             [
-                "qualification-state-bridge",
                 RETAINED_LIBRARY_V26_TO_V32,
                 "--database",
                 str(source),
@@ -1409,7 +1439,7 @@ def test_unpatched_bridge_refuses_before_any_filesystem_mutation(
                 "--output",
                 str(output),
             ],
-            qualification_state_bridge_runner=bridge.bridge_qualification_state,
+            runner=bridge.bridge_qualification_state,
             stdout=stdout,
             stderr=stderr,
         )

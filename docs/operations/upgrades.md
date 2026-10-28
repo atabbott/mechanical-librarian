@@ -301,11 +301,13 @@ Retain an older database and its matching artifact
 directory offline if it has historical value, then start this build with an
 absent application database and artifact store and repeat first-run setup.
 
-Maintainers have one separate qualification-only command:
-`qualification-state-bridge retained-library-v26-to-v32`. It accepts only the
+Maintainers have one separate qualification-only contributor script, outside
+the installed package since #1396: `uv run python
+scripts/qualification_state_bridge.py retained-library-v26-to-v32 --database
+PATH --backup PATH --output PATH`. It accepts only the
 exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
-directory. The command name remains the frozen authority identifier from its
+directory. The plan name remains the frozen authority identifier from its
 original plan; its frozen target is
 `metadata-report-v40` with `fixed-conservative-v23`. That target is incompatible
 with the current v25 title policy; this change does not refresh the bridge. It leaves the source

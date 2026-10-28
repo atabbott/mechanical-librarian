@@ -79,9 +79,6 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
     ProviderRecoveryStoreError,
     SQLiteProviderRecoveryStore,
 )
-from mechanical_librarian.adapters.persistence.qualification_state_bridge import (
-    bridge_qualification_state,
-)
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
@@ -5014,7 +5011,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         cover_review_runner=run_cover_review,
         review_activity_runner=run_review_activity,
         provider_recovery_runner=run_provider_recovery_once,
-        qualification_state_bridge_runner=bridge_qualification_state,
     )
 
 

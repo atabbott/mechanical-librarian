@@ -5,8 +5,9 @@
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.
   Automatic decisions recorded under an earlier qualification are refused
-  rather than kept as decode-only history, and outcomes move to
-  `shadow-outcome-set-v11` (#1396).
+  rather than kept as decode-only history, outcomes move to
+  `shadow-outcome-set-v11`, and the qualification-state bridge leaves the
+  installed CLI for `scripts/` (#1396).
 
 - A managed uv update now moves the CI workflow and container pins together in
   one Renovate pull request, instead of moving only the workflow pin (#1177).

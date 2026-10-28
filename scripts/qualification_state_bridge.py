@@ -1,4 +1,9 @@
+#!/usr/bin/env python3
 """Closed offline reconstruction of retained maintainer qualification state.
+
+Contributor tooling, not part of the installed product (#1396). Run
+``uv run python scripts/qualification_state_bridge.py PLAN --database PATH
+--backup PATH --output PATH``.
 
 The descriptor binding, verified backup, path recheck, failure classification,
 and cleanup controls recover the implementation immediately before deletion
@@ -9,15 +14,17 @@ are deliberately not restored.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
 import sqlite3
 import stat
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, TextIO, cast
 from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.binding import (
@@ -42,12 +49,8 @@ from mechanical_librarian.adapters.persistence.schema import (
     _register_casefold,
     _validate_schema,
 )
+from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.qualification_state_bridge import (
-    QUALIFICATION_STATE_BRIDGE_PLANS,
-    RETAINED_LIBRARY_V26_TO_V32,
-    QualificationStateBridgeRecoveryRequired,
-)
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     LocalClaim,
@@ -64,6 +67,14 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     derive_identifier_evidence,
 )
+
+RETAINED_LIBRARY_V26_TO_V32 = "retained-library-v26-to-v32"
+QUALIFICATION_STATE_BRIDGE_PLANS = (RETAINED_LIBRARY_V26_TO_V32,)
+
+
+class QualificationStateBridgeRecoveryRequired(MetadataReportError):
+    """A durable output may exist and must be reconciled before retrying."""
+
 
 _SUBJECT = "qualification-state"
 _SOURCE_SCHEMA_OBJECTS_SHA256 = (
@@ -987,3 +998,60 @@ def bridge_qualification_state(
             raise MetadataReportError(
                 "qualification-state bridge cleanup failed"
             ) from cleanup_failure
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        raise ValueError("invalid invocation")
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    runner: Callable[
+        [Path, Path, Path, str], dict[str, str | int]
+    ] = bridge_qualification_state,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    """Run one bridge with the outputs and exit codes of the former CLI command."""
+    output = sys.stdout if stdout is None else stdout
+    errors = sys.stderr if stderr is None else stderr
+    parser = _Parser(
+        description="reconstruct one exact retained qualification checkpoint while offline"
+    )
+    parser.add_argument(
+        "plan", choices=QUALIFICATION_STATE_BRIDGE_PLANS, metavar="PLAN"
+    )
+    parser.add_argument("--database", required=True, metavar="PATH", type=Path)
+    parser.add_argument("--backup", required=True, metavar="PATH", type=Path)
+    parser.add_argument("--output", required=True, metavar="PATH", type=Path)
+    try:
+        arguments = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    except ValueError:
+        errors.write("Review server failed: invalid invocation.\n")
+        return 2
+    try:
+        result = runner(
+            arguments.database, arguments.backup, arguments.output, arguments.plan
+        )
+        output.write(
+            json.dumps(
+                result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            + "\n"
+        )
+    except QualificationStateBridgeRecoveryRequired:
+        errors.write("Qualification-state bridge requires recovery.\n")
+        return 1
+    except ConfigurationError:
+        errors.write("Review server failed: configuration unavailable.\n")
+        return 3
+    except Exception:
+        errors.write("Qualification-state bridge failed safely.\n")
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
