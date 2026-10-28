@@ -7,6 +7,10 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Current compact authority
 
+[ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)
+binds authority to permitted operations only. Until #1396 removes the source
+bindings and history, the procedure below is still enforced.
+
 The stable [F19a](../reference/f19a-qualification-current.json),
 [F20](../reference/f20-rich-metadata-qualification-current.json) and
 [F46](../reference/f46-audiobook-qualification-current.json) records bind canonical
