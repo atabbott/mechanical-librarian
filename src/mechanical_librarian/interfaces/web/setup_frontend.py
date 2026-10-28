@@ -268,8 +268,10 @@ const error=(form,message,control,address)=>{
     control.focus();
     const settle=requestAnimationFrame(()=>{if(control.isConnected)control.focus({preventScroll:true})});
     // The refusal follows its field, so bring it into view too: on a short
-    // screen or with enlarged text it can fall below the fold.
-    node.scrollIntoView({block:'nearest'});
+    // screen or with enlarged text it can fall below the fold. A refusal
+    // taller than the screen begins below its field, which leads.
+    if(node.getBoundingClientRect().height<=innerHeight)node.scrollIntoView({block:'nearest'});
+    else control.scrollIntoView({block:'start'});
     form.addEventListener('focusin',event=>{if(event.target!==control&&event.target.matches('input,select,textarea'))cancelAnimationFrame(settle)},{signal:refusalGuard.signal})
   }
   return node

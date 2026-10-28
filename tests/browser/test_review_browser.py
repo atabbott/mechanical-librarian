@@ -6048,6 +6048,20 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 box = refusal.bounding_box()
                 assert box is not None
                 assert box["y"] >= 0 and box["y"] + box["height"] <= 844, box
+                # On a narrower phone the refusal is taller than the screen:
+                # the field it names leads, in view and focused, and the
+                # refusal begins below it.
+                page.set_viewport_size({"width": 320, "height": 640})
+                page.evaluate("window.scrollTo(0, 0)")
+                page.get_by_role("button", name="Create owner access").click()
+                page.wait_for_function("scrollY > 0")
+                page.evaluate("() => new Promise(requestAnimationFrame)")
+                field = claim_token.bounding_box()
+                box = refusal.bounding_box()
+                assert field is not None and box is not None
+                assert field["y"] >= 0 and box["y"] < 640, (field, box)
+                expect(claim_token).to_be_focused()
+                page.set_viewport_size({"width": 390, "height": 844})
                 assert token_file.exists()
                 claim_token.fill(token)
                 page.get_by_role("button", name="Create owner access").click()
