@@ -18,6 +18,11 @@ from pydantic import (
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
 )
+from mechanical_librarian.domain.field_value_comparison import (
+    mostly_quoted_praise,
+    plain_audiobook_synopsis,
+    recognized_synopsis_placeholder,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -132,6 +137,21 @@ def description_document(value: object) -> str:
 
 def description_digest(value: object) -> str:
     return hashlib.sha256(description_document(value).encode("utf-8")).hexdigest()
+
+
+def automatic_description_floor_met(text: str) -> bool:
+    """Whether a rewrite may be admitted or written without an owner choice.
+
+    The floor is the one qualified automatic description writes already use:
+    valid plain text with no markup or visible cut-off, not a placeholder and
+    not mostly quoted praise. The plain check runs first so invalid text is
+    refused rather than raised (#1400).
+    """
+    return (
+        plain_audiobook_synopsis(text)
+        and not recognized_synopsis_placeholder(text)
+        and not mostly_quoted_praise(text)
+    )
 
 
 DESCRIPTION_OUTPUT_SCHEMA = description_document(

@@ -240,6 +240,46 @@ describe('reviewer access transport vocabulary', () => {
     ).toBe(failure)
   })
 
+  it('admits an unavailable description request price and keeps the other prices required', async () => {
+    const metadata = {
+      model: 'example/text',
+      observed_at: 1,
+      prompt_price: '0.000001',
+      completion_price: '0.000002',
+      request_price: null,
+      text_input: true,
+      text_output: true,
+      structured_outputs: true,
+    }
+    expect(
+      mapReviewerAccess(reviewerAccessPayload({ description_metadata: metadata }))
+        .description_metadata?.request_price,
+    ).toBeNull()
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(async () => Response.json(metadata)),
+      buildIdentity: 'c'.repeat(64),
+    })
+    expect(
+      (
+        await client.testDescriptionModel({
+          expected_revision: 3,
+          api_key: '',
+          model: 'example/text',
+        })
+      ).request_price,
+    ).toBeNull()
+    for (const invalid of [
+      { ...metadata, prompt_price: null },
+      { ...metadata, request_price: '-1' },
+      { ...metadata, request_price: '' },
+    ]) {
+      expect(() =>
+        mapReviewerAccess(reviewerAccessPayload({ description_metadata: invalid })),
+      ).toThrow('invalid_description_metadata')
+    }
+  })
+
   it('accepts only the fixed issued prompt shape', () => {
     const issued = {
       state: 'issued',

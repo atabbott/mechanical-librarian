@@ -1034,3 +1034,50 @@ def test_description_requires_both_token_prices(field):
             reviewer.probe_description()
     finally:
         reviewer.close()
+
+
+@pytest.mark.parametrize(
+    "request_price",
+    ["-1", "NaN", "abc", "1000001", 0, None],
+    ids=["negative", "not_a_number", "malformed", "over_bound", "non_string", "null"],
+)
+def test_description_probe_refuses_present_invalid_request_fee(
+    request_price: object,
+) -> None:
+    posted: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            posted.append(request.url.path)
+        if request.url.path == "/api/v1/key":
+            return httpx.Response(200, json=_key())
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "example/text",
+                        "architecture": {
+                            "input_modalities": ["text"],
+                            "output_modalities": ["text"],
+                        },
+                        "supported_parameters": ["structured_outputs"],
+                        "pricing": {
+                            "prompt": "0.000001",
+                            "completion": "0.000002",
+                            "request": request_price,
+                        },
+                    }
+                ]
+            },
+        )
+
+    reviewer = OpenRouterReviewer(
+        "synthetic-secret", "example/text", transport=httpx.MockTransport(handler)
+    )
+    try:
+        with pytest.raises(OpenRouterReviewerError, match="model_unavailable"):
+            reviewer.probe_description()
+    finally:
+        reviewer.close()
+    assert posted == []

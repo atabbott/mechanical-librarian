@@ -2008,12 +2008,13 @@ const mapDescriptionMetadata = (value: unknown): DescriptionModelMetadata => {
     Number(value.observed_at) < 0 ||
     !['prompt_price', 'completion_price', 'request_price'].every(
       (key) =>
-        typeof value[key] === 'string' &&
-        value[key].length <= 40 &&
-        value[key].trim() !== '' &&
-        Number.isFinite(Number(value[key])) &&
-        Number(value[key]) >= 0 &&
-        Number(value[key]) <= 1000000,
+        (key === 'request_price' && value[key] === null) ||
+        (typeof value[key] === 'string' &&
+          value[key].length <= 40 &&
+          value[key].trim() !== '' &&
+          Number.isFinite(Number(value[key])) &&
+          Number(value[key]) >= 0 &&
+          Number(value[key]) <= 1000000),
     )
   )
     throw new ApiError(502, 'invalid_description_metadata')

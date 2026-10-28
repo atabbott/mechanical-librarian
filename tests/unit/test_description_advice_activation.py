@@ -263,6 +263,65 @@ def test_settings_drift_refuses_previously_admitted_authority(tmp_path: Path) ->
     repository.close()
 
 
+_BELOW_FLOOR = pytest.mark.parametrize(
+    "description",
+    [
+        "n/a",
+        '"A triumph." \u2014 Critic',
+        "A story that ends...",
+        "<p>A story.</p>",
+    ],
+    ids=["placeholder", "praise", "cutoff", "markup"],
+)
+
+
+@_BELOW_FLOOR
+def test_automatic_admission_refuses_rewrite_below_description_floor(
+    tmp_path: Path, description: str
+) -> None:
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, description=description
+    )
+    assert candidate.output.description == description
+    with pytest.raises(ValueError, match="description automatic admission unavailable"):
+        store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
+    advice = store.read(binding.review_case_id)
+    assert advice["candidate"]["candidate_id"] == candidate.candidate_id
+    assert advice["selection"] is None
+    decision = store.admit(candidate.candidate_id, binding, "human", "b" * 64, 12)
+    assert decision.origin == "human"
+    assert PersistedFieldEffectAuthority(repository).resolve(
+        decision
+    ).decision_value == {"kind": "text", "value": description}
+    repository.close()
+
+
+@_BELOW_FLOOR
+def test_authority_refuses_automatic_decision_below_floor(
+    tmp_path: Path, description: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mechanical_librarian.adapters.persistence import description_advice
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, description=description
+    )
+    with monkeypatch.context() as floor:
+        floor.setattr(
+            description_advice, "automatic_description_floor_met", lambda _text: True
+        )
+        decision = store.admit(
+            candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+        )
+    assert decision.origin == "automatic_policy"
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        PersistedFieldEffectAuthority(repository).resolve(decision)
+    repository.close()
+
+
 @pytest.mark.parametrize("origin", ["human", "automatic_policy"])
 def test_authored_same_text_uses_no_change_and_has_permanent_history(
     tmp_path: Path, origin: str

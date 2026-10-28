@@ -10,6 +10,7 @@ from typing import Never, cast
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.reviewer_access import (
     ReviewerAccessStore,
     ReviewerAccessStoreError,
@@ -402,3 +403,39 @@ def test_exact_predecessor_empty_reviewer_table_is_rejected_without_mutation():
         _validate_schema(connection)
     assert tuple(connection.iterdump()) == before
     connection.close()
+
+
+def test_predecessor_description_price_document_reads_as_current() -> None:
+    predecessor = (
+        '{"cover_metadata":null,"cover_observation":null,"description_metadata":'
+        '{"completion_price":"0.000002","model":"example/b","observed_at":1,'
+        '"prompt_price":"0.000001","request_price":"0","structured_outputs":true,'
+        '"text_input":true,"text_output":true},"description_rewrite":'
+        '{"engine":"openrouter","model":"example/b"},"revision":2,'
+        '"schema_version":"reviewer-access-v3"}'
+    )
+    unpriced = predecessor.replace('"request_price":"0"', '"request_price":null')
+    keyless = predecessor.replace('"request_price":"0",', "")
+
+    def stored(payload: str) -> ReviewerAccessStore:
+        connection = sqlite3.connect(":memory:", isolation_level=None)
+        connection.execute(
+            "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,document TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,2,?)",
+            (payload,),
+        )
+        return ReviewerAccessStore(connection)
+
+    for payload, request_price in ((predecessor, "0"), (unpriced, None)):
+        document, configured = stored(payload).read()
+        assert document.description_metadata is not None
+        assert document.description_metadata.request_price == request_price
+        assert not configured
+        assert _canonical_json(document.model_dump()) == payload
+    with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
+        stored(keyless).read()
