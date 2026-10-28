@@ -4549,3 +4549,66 @@ def test_policy_sidebar_keeps_its_header_in_view_on_short_screens() -> None:
                 assert found["pressable"], f"{where}: {found}"
                 assert not found["underTray"], f"{where}: {found}"
                 assert not found["underMasthead"], f"{where}: {found}"
+
+
+# Controls in `selector` that run past the window or past an ancestor that
+# clips or scrolls them, named with how far.
+_ESCAPED_CONTROLS = """selector => [...document.querySelectorAll(selector)].flatMap(node => {
+  const box = node.getBoundingClientRect();
+  if (!box.width || !box.height) return [];
+  const name = `${node.tagName.toLowerCase()} "${(node.textContent || node.getAttribute('aria-label') || node.name || '').trim().slice(0, 30)}"`;
+  const found = [];
+  if (box.left < -1 || box.right > document.documentElement.clientWidth + 1)
+    found.push(`${name} runs past the window (${Math.round(box.left)}..${Math.round(box.right)})`);
+  for (let ancestor = node.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    const edge = ancestor.getBoundingClientRect();
+    if (style.overflowX !== 'visible' && (box.left < edge.left - 1 || box.right > edge.right + 1))
+      found.push(`${name} runs ${Math.round(Math.max(edge.left - box.left, box.right - edge.right))}px past ${ancestor.className || ancestor.tagName}`);
+  }
+  return found;
+})"""
+
+
+def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> None:
+    """With root font-size 200%, no Policy finish step or action and no
+    Settings field, label or control runs past the window or is clipped by
+    the editor or sheet that holds it, at every frozen width (#1291)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: "html { font-size: 200% !important; }")
+        routes = {
+            "/policy?section=identity": ".cm-finish-tray :is(button, ol > li)",
+        } | {
+            f"/settings?group={group}": (
+                ".settings-sheet :is(label, input, select, button, "
+                ".settings-field-control)"
+            )
+            for group in (
+                "connection",
+                "libraries",
+                "providers",
+                "reviewer",
+                "background",
+                "access",
+                "appearance",
+            )
+        }
+        failures = []
+        for width in (1440, 1100, 1024, 884, 760, 390, 375, 320):
+            page.set_viewport_size({"width": width, "height": 900})
+            for route, controls in routes.items():
+                page.goto("https://react-platform.invalid" + route)
+                page.wait_for_load_state("networkidle")
+                expect(page.locator("#main-content h1").first).to_be_visible()
+                page.evaluate(_TWO_FRAMES)
+                assert page.locator(controls).count(), f"{route} has no {controls}"
+                failures += [
+                    f"{route} at {width}px: {failure}"
+                    for failure in page.evaluate(_ESCAPED_CONTROLS, controls)
+                ]
+        assert failures == [], "\n".join(failures)

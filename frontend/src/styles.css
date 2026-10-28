@@ -628,6 +628,22 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-finish-tray ol, .cm-finish-actions { flex-wrap:wrap; }
   .cm-finish-tray > ol > li, .cm-finish-actions button { min-width:0; }
 }
+/* The finish tray also follows the editor's width in rem, so with enlarged
+   text it takes the arrangement a narrower window would give it, and no step
+   or action runs past the editor's edge. */
+.cm-policy-editor { container:policy-editor / inline-size; }
+@container policy-editor (max-width:38rem) {
+  .cm-finish-tray { grid-template-columns:minmax(0,1fr) auto; }
+  .cm-finish-tray > ol { grid-column:1; grid-row:2; }
+  .cm-finish-actions { grid-column:2; grid-row:1 / span 2; }
+}
+@container policy-editor (max-width:27rem) {
+  .cm-finish-tray { grid-template-columns:minmax(0,1fr); }
+  .cm-finish-tray > ol { grid-column:1; grid-row:auto; flex-wrap:wrap; justify-content:space-between; gap:.35rem; }
+  .cm-finish-tray > ol > li small { white-space:normal; }
+  .cm-finish-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr)); grid-column:1; grid-row:auto; width:100%; }
+  .cm-finish-actions button { min-width:0; white-space:normal; overflow-wrap:normal; }
+}
 
 /* Owner settings: a paper-and-ink utility surface beside the three primary
    review destinations, with consequences visible before every write. */
