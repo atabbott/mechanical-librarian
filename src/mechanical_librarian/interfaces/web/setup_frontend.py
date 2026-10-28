@@ -894,6 +894,8 @@ const renderPreparation=(host,visible)=>{
     }
     const node=error(form,code,control);
     if(submitted)submitted.before(node);
+    // Bring the button in first, then its alert, so both end up on screen together.
+    submitted?.scrollIntoView?.({block:'nearest'});
     node.scrollIntoView?.({block:'nearest'})
   };
   let access;try{access=await api('/api/setup/reviewer-access')}catch(e){failed(e);return}
