@@ -4154,8 +4154,8 @@ _PREPARATION_STATES: dict[str, dict[str, object]] = {
 def test_masthead_holds_still_while_status_changes() -> None:
     """Preparation loading, absent and in each of its states, and the update
     stream dropping and returning, never move the masthead or its
-    destinations: nothing outside the status slot shifts, at every width of
-    the ladder. Enlarged text is root font-size 200% (rem and container
+    destinations: nothing outside the status slot shifts and no label in the
+    masthead is clipped, at every width of the ladder. Enlarged text is root font-size 200% (rem and container
     queries respond to it; px media queries do not): there the destinations
     keep their place, and the masthead may change size only while it is
     static, in the page's flow (#1291)."""
@@ -4194,6 +4194,7 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 page.evaluate(_TWO_FRAMES)
                 expect(trigger).to_have_count(0)
                 states = {"loading": page.evaluate(_MASTHEAD_GEOMETRY)}
+                clipped: list[str] = []
                 # The route has painted; from here only status changes.
                 page.evaluate("() => { globalThis.__shifts.length = 0 }")
                 state["preparation"] = "absent"
@@ -4209,15 +4210,24 @@ def test_masthead_holds_still_while_status_changes() -> None:
                     expect(trigger).to_have_text(label)
                     page.evaluate(_TWO_FRAMES)
                     states[label] = page.evaluate(_MASTHEAD_GEOMETRY)
+                    clipped += [
+                        f"{label}: {c}" for c in page.evaluate(_MASTHEAD_CLIPPED)
+                    ]
                     page.evaluate("() => globalThis.__drop()")
                     page.clock.run_for(1_100)
                     expect(notice).to_be_visible()
                     page.evaluate(_TWO_FRAMES)
                     states[f"{label}, reconnecting"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                    clipped += [
+                        f"{label}, reconnecting: {c}"
+                        for c in page.evaluate(_MASTHEAD_CLIPPED)
+                    ]
                     page.evaluate("() => globalThis.__restore()")
                     expect(notice).to_have_count(0)
                 page.evaluate(_TWO_FRAMES)
                 states["restored"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                # Whatever the status says, every control keeps its whole label.
+                assert clipped == [], f"{where}: {clipped}"
                 navs = {state["nav"][0] for state in states.values()}
                 assert len(navs) == 1, f"{where}: the destinations moved {states}"
                 boxes = {
@@ -4232,6 +4242,12 @@ def test_masthead_holds_still_while_status_changes() -> None:
                     assert all(state["static"] for state in states.values()), (
                         f"{where}: a sticky masthead changed size {states}"
                     )
+
+
+# The masthead's links and buttons whose label runs past their box.
+_MASTHEAD_CLIPPED = """() => [...document.querySelectorAll('.masthead :is(a, button)')]
+  .filter((node) => node.getClientRects().length > 0 && node.scrollWidth > node.clientWidth)
+  .map((node) => `${node.textContent.trim()} by ${node.scrollWidth - node.clientWidth}px`)"""
 
 
 # Where the masthead and the focused control are, and every sticky region.

@@ -53,12 +53,14 @@ h2 { margin-bottom:.35rem; }
 /* Status -- the stream notice and preparation -- has a slot of its own between
    the destinations and the actions, so whatever it says moves nothing else: it
    ends at the actions, and a long message wraps inside it rather than widening
-   the masthead or pushing the destinations aside. */
+   the masthead or pushing the destinations aside. Squeezed by the stream's
+   notice, preparation's label wraps too, its two lines within the same 44px. */
 .shell-status { justify-content:flex-end; min-width:0; min-height:2.75rem; }
 .shell-status > * { min-width:0; }
 .masthead nav a { display:inline-flex; min-height:44px; align-items:center; padding:.65rem .8rem; border-radius:999px; color:var(--soft); font-size:.75rem; font-weight:700; text-decoration:none; white-space:nowrap; }
 .masthead nav a[aria-current='page'] { color:var(--accent-strong); background:var(--accent-soft); }
 :is(.shell-status, .shell-actions) button { min-height:44px; padding:.45rem .7rem; background:transparent; white-space:nowrap; }
+.shell-status button { padding-block:0; line-height:1.25; white-space:normal; }
 .theme-toggle { display:inline-flex; min-width:44px; align-items:center; justify-content:center; gap:.4rem; }
 /* The masthead's arrangement follows the shell's width in rem, at the ladder's
    steps, so enlarged text takes the arrangement that text would need on a
