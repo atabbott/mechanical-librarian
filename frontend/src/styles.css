@@ -136,7 +136,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
    key is pending. The count is soft text, which keeps 4.8:1 in light theme only at .9. */
 .library-works-heading > [role='status'] { transition:opacity .12s ease; }
 .library-works-heading > [aria-busy='true'] { opacity:.9; }
-.library-work-row { display:grid; width:100%; min-width:0; grid-template-columns:60px minmax(0,1fr); align-items:center; gap:.75rem; min-height:104px; padding:.7rem; border:1px solid transparent; border-radius:.65rem; color:var(--ink); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+.library-work-row { display:grid; width:100%; min-width:0; grid-template-columns:42px minmax(0,1fr); align-items:center; gap:.75rem; min-height:104px; padding:.7rem; border:1px solid transparent; border-radius:.65rem; color:var(--ink); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .library-work-row:hover { border-color:var(--line-strong); background:color-mix(in srgb,var(--surface) 60%,var(--page)); }
 .library-work-row.active { border-color:var(--accent); border-width:2px; padding:calc(.7rem - 1px); background:var(--accent-soft); }
 .library-work-row.active .library-work-title { color:var(--accent-strong); }
@@ -144,9 +144,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-work-status .terminal-preparation-copy { display:block; max-inline-size:72ch; color:var(--soft); font-size:.75rem; line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
 .library-book-mark { display:grid; width:42px; height:58px; place-items:center; border-radius:2px 5px 5px 2px; color:#f5ead2; background:#3b5550; font-family:Georgia,serif; font-size:.75rem; letter-spacing:.07em; }
 :root[data-theme='dark'] :is(.brand-mark,.library-book-mark,.cm-policy-work-mark) { background:#315c52; }
-/* A work's mark sits centred in one 60 px column; a retained cover fills that
-   column whole, at most 90 px tall, and never sets the row's height (#1290). */
-.library-work-row > .library-book-mark { justify-self:center; }
+/* A retained cover is a work's mark, whole, at most 60 by 90 px; only its own
+   row widens the mark column for it, and it never sets the row's height. On
+   phones it fits the spine's column instead, so no row's text loses width (#1290). */
 :root .library-book-mark.has-cover { position:relative; align-self:stretch; width:60px; height:auto; min-height:58px; max-height:90px; overflow:hidden; border-radius:2px; background:transparent; }
 .library-book-mark.has-cover > img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
 .library-work-copy { display:grid; gap:.15rem; min-width:0; }
@@ -534,7 +534,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .has-selection .library-works { display:none; }
   .selected-work-surface > aside { min-height:0; border-radius:0 0 1rem 1rem; }
   .compact-back { display:block; width:100%; border-radius:1rem 1rem 0 0; text-align:left; }
-  .library-work-row { grid-template-columns:60px minmax(0,1fr); }
+  .library-work-row { grid-template-columns:42px minmax(0,1fr); }
   .preview-button { grid-column:2; justify-self:start; }
   .attention-total { max-width:none; grid-template-columns:auto 1fr; align-items:center; gap:.5rem; border-radius:.75rem; text-align:left; }
   .attention-work > header { align-items:flex-start; flex-direction:column; }
@@ -727,7 +727,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .variant-m-workspace .library-works-heading h2, .selected-work-header h2, .decision-canvas > header h3 { font-family: Georgia, 'Times New Roman', serif; letter-spacing: -.025em; }
 /* The question and the completion are the work's h3s, sized as the h2s they were. */
 .decision-canvas > header h3, .review-complete h3 { margin-bottom:.35rem; font-size:1.5em; }
-.variant-m-workspace .library-work-row { grid-template-columns: 60px minmax(0, 1fr); padding: 14px 8px; border-color: transparent; border-width: 0 0 1px; border-radius: 0; }
+.variant-m-workspace .library-work-row:has(> .library-book-mark.has-cover) { grid-template-columns: 60px minmax(0, 1fr); }
+.variant-m-workspace .library-work-row { grid-template-columns: 48px minmax(0, 1fr); padding: 14px 8px; border-color: transparent; border-width: 0 0 1px; border-radius: 0; }
 /* The whole card is the selection target, so the selected state is the whole
    card: an accent rule down the leading edge and the accent fill together,
    rather than a partial box that stopped at the title. */
@@ -920,7 +921,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 @keyframes library-field-arrive { from { opacity: .28; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes library-complete-arrive { from { opacity: .15; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1024px) { .protected-choice .direct-choice-grid { grid-template-columns: 1fr; }.metadata-choice.is-current { border-right:0; border-bottom:1px solid var(--line); }.metadata-choice .choice-evidence-toggle, .cover-choice .choice-evidence-toggle { min-height:44px; }.cover-track-hint { display: block; }.library-cover-layout, .library-cover-pinned { grid-auto-flow: column; grid-auto-columns: minmax(min(11.875rem, 100%), 62%); grid-template-columns: none; align-items: start; overflow-x: auto; padding-bottom: 6px; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin; }.library-cover-pinned > aside, .library-cover-gallery, .library-cover-gallery > div { display: contents; }.library-cover-pinned > aside > strong, .library-cover-gallery > header { display: none; }.library-cover-pinned .library-cover-card { position: static; width: auto; }.library-cover-layout > .cover-choice, .library-cover-pinned > .cover-choice, .library-cover-pinned .cover-choice { scroll-snap-align: start; } }
-@media (max-width: 760px) { .variant-m-workspace .field-filmstrip button { flex: 0 0 auto; min-width: 86px; }.library-cover-comparison > header { align-items:start; flex-direction:column; gap:4px; }.library-cover-comparison > header small { text-align:left; }.library-cover-layout, .library-cover-pinned { grid-auto-columns: minmax(min(10.625rem, 100%), 58%); }.cover-observation-details dl > div { display:grid; gap:1px; }.cover-observation-details dd { text-align:left; overflow-wrap:break-word; }.review-complete { grid-template-columns: 1fr; }.review-complete-mark { width: 42px; height: 42px; }.review-complete ol, .review-complete > p, .review-complete footer { grid-column: 1; }.review-complete footer { justify-content: stretch; }.review-complete footer button { width: 100%; } }
+@media (max-width: 760px) { .variant-m-workspace .field-filmstrip button { flex: 0 0 auto; min-width: 86px; }.variant-m-workspace .library-work-row, .variant-m-workspace .library-work-row:has(> .library-book-mark.has-cover) { grid-template-columns: 42px minmax(0, 1fr); }:root .library-work-row > .library-book-mark.has-cover { width: 42px; max-height: 63px; }.library-cover-comparison > header { align-items:start; flex-direction:column; gap:4px; }.library-cover-comparison > header small { text-align:left; }.library-cover-layout, .library-cover-pinned { grid-auto-columns: minmax(min(10.625rem, 100%), 58%); }.cover-observation-details dl > div { display:grid; gap:1px; }.cover-observation-details dd { text-align:left; overflow-wrap:break-word; }.review-complete { grid-template-columns: 1fr; }.review-complete-mark { width: 42px; height: 42px; }.review-complete ol, .review-complete > p, .review-complete footer { grid-column: 1; }.review-complete footer { justify-content: stretch; }.review-complete footer button { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .variant-m-workspace .field-filmstrip { scroll-behavior: auto; }.decision-canvas, .review-complete { animation: none; } }
 
 /* Protected Activity ledger */

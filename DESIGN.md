@@ -401,9 +401,11 @@ quiet bibliographic metadata, compact status, and an optional preview action.
 Hover uses a subtle page/surface mix; selection adds an Archive Teal boundary
 and wash. The mark is identity support, never a fake cover. When a work's report
 retains the cover its library holds, that real cover takes the mark's place in
-the row and the open work's header: contained whole in a 60px column, at most
-90px tall, and never setting the row's height. Every other work keeps its spine,
-centred in the same column, and a cover that fails to load falls back to it.
+the row and the open work's header: contained whole, at most 60 by 90px, and
+never setting the row's height. Only that work's row widens its mark column for
+it, so no other row's text loses width; below 760px the cover fits the spine's
+own 42px column, at most 63px tall. Every other work keeps its spine, level with
+the cover's left edge, and a cover that fails to load falls back to it.
 
 ### Direct Value Choice
 
