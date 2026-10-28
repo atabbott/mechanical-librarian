@@ -1228,10 +1228,11 @@ describe('shipped first-run setup script', () => {
     expect(submitted).toEqual({
       expected_revision: 3,
       providers: [
+        // iTunes is listed with the book providers (#1458), so it comes first.
+        { name: 'itunes', adapter: 'itunes_search', enabled: true },
         { name: 'audible', adapter: 'audible_catalog', enabled: true },
         { name: 'audnexus', adapter: 'audnexus', enabled: true },
         { name: 'audiosilo', adapter: 'audiosilo', enabled: true },
-        { name: 'itunes', adapter: 'itunes_search', enabled: true },
       ].map((value) => ({ ...value, cover_enabled: false, contact_email: null, key: null })),
     })
   })
@@ -1547,13 +1548,15 @@ describe('shipped first-run setup script', () => {
       const books = within(
         groups.find((group) => group.textContent.includes('Inventaire')) as HTMLElement,
       )
-      for (const label of ['Inventaire', 'Open Library', 'Hardcover', 'Google Books'])
+      for (const label of ['Inventaire', 'Open Library', 'Hardcover', 'Google Books', 'iTunes'])
         expect(books.getByRole('checkbox', { name: label })).toBeInTheDocument()
       const audio = within(
         groups.find((group) => group.textContent.includes('Audible')) as HTMLElement,
       )
-      for (const label of ['Audible', 'Audnexus', 'AudioSilo', 'iTunes'])
+      for (const label of ['Audible', 'Audnexus', 'AudioSilo'])
         expect(audio.getByRole('checkbox', { name: label })).toBeInTheDocument()
+      // No audiobook is sent to iTunes, so it is never suggested for one (#1458).
+      expect(audio.queryByRole('checkbox', { name: 'iTunes' })).toBeNull()
       // A suggestion names libraries; it never ticks a provider for the owner.
       expect(document.querySelectorAll('input[type=checkbox]:checked')).toHaveLength(0)
       expect(document.querySelector('[role=alert]')).toBeNull()
@@ -2322,6 +2325,10 @@ it.each([
   ['not_provisioned', 'The contained reviewer profile is unavailable'],
   ['unreachable', 'OpenRouter could not be reached'],
   ['timed_out', 'OpenRouter did not answer in time. Check network access, then retry.'],
+  [
+    'malformed_response',
+    'OpenRouter returned an invalid response. Retry later or choose another model.',
+  ],
   [
     'response_too_large',
     'OpenRouter returned an answer too large to read. Retry later, or choose another model.',

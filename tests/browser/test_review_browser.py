@@ -6371,6 +6371,11 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                     "Books and ebooks",
                     "Audiobooks",
                 ]
+                # iTunes only corroborates ebooks, so it sits with them (#1458).
+                expect(books.get_by_role("checkbox", name="iTunes")).to_be_visible()
+                expect(audiobooks.get_by_role("checkbox", name="iTunes")).to_have_count(
+                    0
+                )
                 assert page.locator("input[type=checkbox]:checked").count() == 0
                 open_library = page.locator(".option", has_text="Open Library")
                 expect(open_library).to_contain_text("No account or key.")
@@ -7178,9 +7183,9 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         )
                         != "none"
                     )
-                # ADR-0061 admits the four audiobook providers keyless: the
-                # step offers them with no credential control and no account
-                # link to obtain one (#749).
+                # ADR-0061 admits the audiobook providers and iTunes keyless:
+                # the step offers them with no credential control and no
+                # account link to obtain one (#749).
                 for provider in ("Audible", "Audnexus", "AudioSilo", "iTunes"):
                     expect(page.get_by_role("checkbox", name=provider)).to_be_visible()
                     assert (

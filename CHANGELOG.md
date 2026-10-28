@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Setup now lists iTunes with the book and ebook providers and suggests it only
+  for libraries with ebooks. No audiobook is sent to iTunes, so it was never
+  of use to an audiobook library (#1458).
+
 - **Clean rebuild required.** Once an audiobook edition has been matched, the
   next preparation of the same tracks looks it up directly before searching,
   so a search that no longer lists it cannot lose it to a sibling edition. One
