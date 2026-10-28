@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Setup now lists iTunes with the book and ebook providers and suggests it only
+  for libraries with ebooks. No audiobook is sent to iTunes, so it was never
+  of use to an audiobook library (#1458).
+
 - Setup now describes iTunes as what it is since audiobooks stopped being sent
   to it: a check of an ebook's title and author against iTunes audiobook
   listings. An audiobook inspection that states no recording facts now fails

@@ -522,7 +522,9 @@ const renderConnect=()=>{
   section.append(form);
   endpoint.focus()
 };
-const providerGroups=[['books','Books and ebooks',[['inventaire','inventaire'],['open','open_library'],['hardcover','hardcover'],['google','google_books']]],['audiobooks','Audiobooks',[['audible','audible_catalog'],['audnexus','audnexus'],['audiosilo','audiosilo'],['itunes','itunes_search']]]];
+// itunes_search only corroborates ebooks: no audiobook is sent to it (#1254),
+// so it is grouped, and suggested, with the book providers (#1458).
+const providerGroups=[['books','Books and ebooks',[['inventaire','inventaire'],['open','open_library'],['hardcover','hardcover'],['google','google_books'],['itunes','itunes_search']]],['audiobooks','Audiobooks',[['audible','audible_catalog'],['audnexus','audnexus'],['audiosilo','audiosilo']]]];
 const renderProviders=async()=>{
   const section=card('Choose metadata providers','Each provider you tick adds a source to compare. Tick the ones that fit your libraries; you can add or change them later in Settings.');
   const form=document.createElement('form');
