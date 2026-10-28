@@ -46,6 +46,7 @@ import type {
   LibrarySearch,
   MediaKind,
   LibraryView,
+  LibraryCoverView,
   LibraryWorkView,
   PreparationView,
   ProviderOutcomeView,
@@ -181,13 +182,45 @@ const reviewerUnavailableDetail = (reason: string | null) =>
     : reason === 'profile contract requires process_limit=32'
       ? 'The reviewer profile must set process_limit to 32. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
       : null
+// The first letter of each of the first two words that have one, so a
+// bracket or an ampersand never stands for a word (#1290).
 const initials = (title: string) =>
   title
     .split(/\s+/u)
-    .filter(Boolean)
+    .map((word) => /\p{L}/u.exec(word)?.[0])
+    .filter((letter): letter is string => letter !== undefined)
     .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase())
+    .map((letter) => letter.toUpperCase())
     .join('') || 'ML'
+// A work's mark: the cover the library holds when its report retained one,
+// contained whole and never setting the row's height, else its spine of
+// initials. A cover that fails to load falls back to the spine (#1290).
+function BookMark({ title, cover }: { title: string; cover: LibraryCoverView | undefined }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const shown = cover !== undefined && failedUrl !== cover.url
+  return (
+    <span
+      className={shown ? 'library-book-mark has-cover' : 'library-book-mark'}
+      aria-hidden="true"
+    >
+      {shown ? (
+        <img
+          src={cover.url}
+          alt=""
+          width={cover.width}
+          height={cover.height}
+          loading="lazy"
+          decoding="async"
+          onError={() => {
+            setFailedUrl(cover.url)
+          }}
+        />
+      ) : (
+        initials(title)
+      )}
+    </span>
+  )
+}
 type PreparationPresentation = NonNullable<PreparationView['presentation']>
 // The run's works as they stand now, in the masthead's words (#1366). The
 // latched passage is first-finish history and is labelled Prepared instead.
@@ -964,9 +997,7 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
   return (
     <>
       <header className="selected-work-header" tabIndex={-1} data-route-focus="true">
-        <span className="library-book-mark" aria-hidden="true">
-          {initials(work.title)}
-        </span>
+        <BookMark title={work.title} cover={work.cover} />
         <div>
           <h2>{work.title}</h2>
           <p>
@@ -4522,9 +4553,7 @@ export default function LibraryPage({
                 const preparationId = preparation ? `preparation-${work.id}` : undefined
                 const row = (
                   <>
-                    <span className="library-book-mark" aria-hidden="true">
-                      {initials(work.title)}
-                    </span>
+                    <BookMark title={work.title} cover={work.cover} />
                     <span className="library-work-copy">
                       <strong className="library-work-title">{work.title}</strong>
                       <span className="library-work-author">{authorLine(work)}</span>
@@ -4760,9 +4789,12 @@ export default function LibraryPage({
                   ? { 'data-route-focus': 'true' }
                   : {})}
               >
-                <span className="library-book-mark" aria-hidden="true">
-                  {initials(displayedIdentity.title)}
-                </span>
+                <BookMark
+                  title={displayedIdentity.title}
+                  cover={
+                    currentWorks.find((work) => work.reviewCaseId === selectedReviewCaseId)?.cover
+                  }
+                />
                 <div>
                   <h2>{displayedIdentity.title}</h2>
                   <p>

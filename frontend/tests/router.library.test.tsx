@@ -2323,6 +2323,82 @@ describe('Library route', () => {
     )
   })
 
+  describe('work marks (#1290)', () => {
+    const [first] = library.works
+    if (!first) throw new Error('library fixture requires a work')
+    const preview = 'c'.repeat(64)
+    const cover = {
+      previewSha256: preview,
+      width: 302,
+      height: 452,
+      url: `/api/v1/library/cover?connection=local&library=Books&item=internal-item-1&preview=${preview}`,
+    }
+    const spine = (index: number, title: string) => ({
+      ...first,
+      id: `case-${String(index)}`,
+      reviewCaseId: `case-${String(index)}`,
+      workId: `library_work_${String(index)}`,
+      detailUrl: `/review/case-${String(index)}`,
+      title,
+    })
+    const works: LibraryView = {
+      ...library,
+      counts: { ...library.counts, all: 3 },
+      works: [
+        { ...first, cover },
+        spine(2, 'Persuasion (Penguin Classics)'),
+        spine(3, 'Anansi & the Spider Web'),
+      ],
+    }
+    const mark = (title: string) => {
+      const row = screen
+        .getAllByText(title, { selector: '.library-work-title' })[0]
+        ?.closest('.library-work-row')
+      const found = row?.querySelector('.library-book-mark')
+      if (!(found instanceof HTMLElement)) throw new Error(`no mark for ${title}`)
+      return found
+    }
+
+    it('shows a retained cover in the row and header, and the spine mark otherwise', async () => {
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getLibrary: vi.fn(async () => works),
+      })
+      await screen.findByText('Persuasion (Penguin Classics)')
+      const row = mark('A Book')
+      expect(row).toHaveClass('has-cover')
+      expect(row).toHaveAttribute('aria-hidden', 'true')
+      const image = row.querySelector('img')
+      expect(image).toHaveAttribute('src', cover.url)
+      expect(image).toHaveAttribute('alt', '')
+      expect(image).toHaveAttribute('loading', 'lazy')
+      expect(image).toHaveAttribute('decoding', 'async')
+      expect(row).not.toHaveTextContent(/./u)
+      expect(mark('Persuasion (Penguin Classics)')).not.toHaveClass('has-cover')
+      expect(mark('Persuasion (Penguin Classics)').querySelector('img')).toBeNull()
+
+      // The open case's header shows the same cover its row does.
+      const header = await screen.findByRole('heading', { level: 2, name: 'A Book' })
+      const headerMark = header
+        .closest('.selected-work-header')
+        ?.querySelector('.library-book-mark')
+      expect(headerMark).toHaveClass('has-cover')
+      expect(headerMark?.querySelector('img')).toHaveAttribute('src', cover.url)
+
+      // A cover that cannot be loaded leaves the spine, never a broken image.
+      if (image) fireEvent.error(image)
+      expect(mark('A Book')).not.toHaveClass('has-cover')
+      expect(mark('A Book')).toHaveTextContent('AB')
+    })
+
+    it('builds initials from letters only', async () => {
+      renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(async () => works) })
+      await screen.findByText('Persuasion (Penguin Classics)')
+      expect(mark('Persuasion (Penguin Classics)')).toHaveTextContent(/^PP$/u)
+      expect(mark('Anansi & the Spider Web')).toHaveTextContent(/^AT$/u)
+    })
+  })
+
   it('normalises an unresolvable work selection out of the URL', async () => {
     const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => library) }
     const { router } = renderRoute('/library?lens=all&work=work-that-is-not-on-this-page', http)

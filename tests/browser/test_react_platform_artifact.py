@@ -29,6 +29,8 @@ from tests.browser.fidelity_cohort import (
     TERMINAL_FAILURE_COPY,
     UNBROKEN_TITLE_SEGMENT,
     rich_payload,
+    synthetic_preview,
+    synthetic_preview_key,
 )
 from tests.browser.test_live_updates_browser import _ROW_PROMISES, _WIDER_TEXT
 from tests.browser.test_review_browser import _FOCUSED, _POLICY_MID_WORD, _TWO_FRAMES
@@ -157,6 +159,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 status=200,
                 content_type="image/png",
                 body=synthetic_image("PNG", (120, 180)),
+            )
+            return
+        if path == "/api/v1/library/cover":
+            key = synthetic_preview_key(path, parsed.query)
+            assert key is not None, route.request.url
+            route.fulfill(
+                status=200, content_type="image/png", body=synthetic_preview(key)
             )
             return
         if path.startswith("/api/v1/"):
@@ -775,7 +784,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             ), f"{option.inner_text()} clipped at {width}px"
                     page.set_viewport_size({"width": 390, "height": 844})
             assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
-            assert page.locator("img, script:not([src])").count() == 0
+            # The one image a page may hold is a work's retained cover mark
+            # (#1290); hostile text never becomes markup.
+            assert (
+                page.locator(
+                    "img:not(.library-book-mark.has-cover > img), script:not([src])"
+                ).count()
+                == 0
+            )
             assert page.evaluate("() => window.__metadataExecuted") is None
             if path == "/activity":
                 stage[0] = "activity:compact-initial-geometry"
@@ -2737,6 +2753,10 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                 content_type="application/json",
                 body=json.dumps({"reduced_motion": "follow_system"}),
             )
+        elif (
+            preview := synthetic_preview_key(path, urlsplit(route.request.url).query)
+        ) is not None:
+            route.fulfill(content_type="image/png", body=synthetic_preview(preview))
         elif path.startswith("/api/v1/"):
             payload = rich_payload(route.request.url)
             if checks_gone and path == "/api/v1/activity":
@@ -3145,6 +3165,10 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                     }
                 ),
             )
+        elif (
+            preview := synthetic_preview_key(path, urlsplit(route.request.url).query)
+        ) is not None:
+            route.fulfill(content_type="image/png", body=synthetic_preview(preview))
         elif path.startswith("/api/v1/"):
             try:
                 payload = rich_payload(route.request.url)
@@ -3493,6 +3517,10 @@ def _serve_cohort(
                     content_type="application/json",
                     body=json.dumps(rich_payload(route.request.url)),
                 )
+        elif (
+            preview := synthetic_preview_key(path, urlsplit(route.request.url).query)
+        ) is not None:
+            route.fulfill(content_type="image/png", body=synthetic_preview(preview))
         elif path.startswith("/api/v1/"):
             try:
                 payload = rich_payload(route.request.url)
@@ -3628,6 +3656,82 @@ _BACK_IN_VIEW = """() => {
     top: box.top, bottom: box.bottom, masthead: masthead.bottom, height: innerHeight,
   };
 }"""
+
+
+_COVER_ROW_GEOMETRY = """() => {
+    const row = document.querySelector('button.library-work-row:has(.has-cover)')
+    const spine = document.querySelector(
+        'button.library-work-row .library-book-mark:not(.has-cover)'
+    )
+    const mark = row.querySelector('.library-book-mark')
+    const image = mark.querySelector('img')
+    const box = (node) => node.getBoundingClientRect()
+    const centre = (node) => box(node).left + box(node).width / 2
+    const shown = box(row).height
+    image.style.display = 'none'
+    const hidden = box(row).height
+    image.style.display = ''
+    return {
+        shown,
+        hidden,
+        mark: [box(mark).width, box(mark).height],
+        image: [box(image).width, box(image).height],
+        natural: [image.naturalWidth, image.naturalHeight],
+        fit: getComputedStyle(image).objectFit,
+        loading: image.loading,
+        alt: image.alt,
+        offset: Math.abs(centre(mark) - centre(spine)),
+    }
+}"""
+
+
+def test_works_rows_show_a_retained_cover_without_growing() -> None:
+    """A work's retained cover is its mark: whole, at most 60 by 90 px, centred
+    in the spine marks' column, and never the reason its row is taller (#1290)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text in styles:
+            for width in (1440, 1024, 375, 320):
+                where = f"{text} at {width}px"
+                page.set_viewport_size({"width": width, "height": 900})
+                # The case is open, so its header shows the row's cover too;
+                # where the list cannot fit beside it, the list is one step back.
+                page.goto(
+                    "https://react-platform.invalid/library?lens=all&preview=case-1"
+                )
+                header = page.locator(".selected-work-header .library-book-mark")
+                expect(header).to_have_class(re.compile(r"\bhas-cover\b"))
+                back = page.get_by_role("button", name="Back to works")
+                if back.is_visible():
+                    back.click()
+                row = page.locator("button.library-work-row").filter(
+                    has=page.locator(".library-book-mark.has-cover")
+                )
+                expect(row).to_have_count(1)
+                expect(row).to_be_visible()
+                row.scroll_into_view_if_needed()
+                page.wait_for_function(
+                    "() => document.querySelector('.has-cover img')?.naturalWidth > 0"
+                )
+                geometry = page.evaluate(_COVER_ROW_GEOMETRY)
+                assert geometry["shown"] == geometry["hidden"], (where, geometry)
+                mark_width, mark_height = geometry["mark"]
+                assert mark_width <= 60 and mark_height <= 90, (where, geometry)
+                # The image fills the mark and is contained in it, whole.
+                assert geometry["image"] == geometry["mark"], (where, geometry)
+                assert geometry["fit"] == "contain", (where, geometry)
+                assert geometry["natural"] == [800, 1200], (where, geometry)
+                assert (geometry["loading"], geometry["alt"]) == ("lazy", ""), where
+                assert geometry["offset"] <= 0.5, (where, geometry)
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                ), where
 
 
 def test_compact_selection_brings_back_to_works_into_view() -> None:

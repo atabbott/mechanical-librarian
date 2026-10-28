@@ -136,7 +136,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
    key is pending. The count is soft text, which keeps 4.8:1 in light theme only at .9. */
 .library-works-heading > [role='status'] { transition:opacity .12s ease; }
 .library-works-heading > [aria-busy='true'] { opacity:.9; }
-.library-work-row { display:grid; width:100%; min-width:0; grid-template-columns:42px minmax(0,1fr); align-items:center; gap:.75rem; min-height:104px; padding:.7rem; border:1px solid transparent; border-radius:.65rem; color:var(--ink); background:transparent; font:inherit; text-align:left; cursor:pointer; }
+.library-work-row { display:grid; width:100%; min-width:0; grid-template-columns:60px minmax(0,1fr); align-items:center; gap:.75rem; min-height:104px; padding:.7rem; border:1px solid transparent; border-radius:.65rem; color:var(--ink); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .library-work-row:hover { border-color:var(--line-strong); background:color-mix(in srgb,var(--surface) 60%,var(--page)); }
 .library-work-row.active { border-color:var(--accent); border-width:2px; padding:calc(.7rem - 1px); background:var(--accent-soft); }
 .library-work-row.active .library-work-title { color:var(--accent-strong); }
@@ -144,6 +144,11 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-work-status .terminal-preparation-copy { display:block; max-inline-size:72ch; color:var(--soft); font-size:.75rem; line-height:1.5; overflow-wrap:anywhere; word-break:break-word; }
 .library-book-mark { display:grid; width:42px; height:58px; place-items:center; border-radius:2px 5px 5px 2px; color:#f5ead2; background:#3b5550; font-family:Georgia,serif; font-size:.75rem; letter-spacing:.07em; }
 :root[data-theme='dark'] :is(.brand-mark,.library-book-mark,.cm-policy-work-mark) { background:#315c52; }
+/* A work's mark sits centred in one 60 px column; a retained cover fills that
+   column whole, at most 90 px tall, and never sets the row's height (#1290). */
+.library-work-row > .library-book-mark { justify-self:center; }
+:root .library-book-mark.has-cover { position:relative; align-self:stretch; width:60px; height:auto; min-height:58px; max-height:90px; overflow:hidden; border-radius:2px; background:transparent; }
+.library-book-mark.has-cover > img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
 .library-work-copy { display:grid; gap:.15rem; min-width:0; }
 .library-work-title, .library-title-text { display:-webkit-box; overflow:hidden; overflow-wrap:anywhere; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 .library-work-title { font-family:Georgia,serif; font-size:.9rem; font-weight:700; line-height:1.35; }
@@ -529,7 +534,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .has-selection .library-works { display:none; }
   .selected-work-surface > aside { min-height:0; border-radius:0 0 1rem 1rem; }
   .compact-back { display:block; width:100%; border-radius:1rem 1rem 0 0; text-align:left; }
-  .library-work-row { grid-template-columns:42px minmax(0,1fr); }
+  .library-work-row { grid-template-columns:60px minmax(0,1fr); }
   .preview-button { grid-column:2; justify-self:start; }
   .attention-total { max-width:none; grid-template-columns:auto 1fr; align-items:center; gap:.5rem; border-radius:.75rem; text-align:left; }
   .attention-work > header { align-items:flex-start; flex-direction:column; }
@@ -722,7 +727,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .variant-m-workspace .library-works-heading h2, .selected-work-header h2, .decision-canvas > header h3 { font-family: Georgia, 'Times New Roman', serif; letter-spacing: -.025em; }
 /* The question and the completion are the work's h3s, sized as the h2s they were. */
 .decision-canvas > header h3, .review-complete h3 { margin-bottom:.35rem; font-size:1.5em; }
-.variant-m-workspace .library-work-row { grid-template-columns: 48px minmax(0, 1fr); padding: 14px 8px; border-color: transparent; border-width: 0 0 1px; border-radius: 0; }
+.variant-m-workspace .library-work-row { grid-template-columns: 60px minmax(0, 1fr); padding: 14px 8px; border-color: transparent; border-width: 0 0 1px; border-radius: 0; }
 /* The whole card is the selection target, so the selected state is the whole
    card: an accent rule down the leading edge and the accent fill together,
    rather than a partial box that stopped at the title. */
