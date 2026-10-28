@@ -96,7 +96,15 @@ def test_an_address_beyond_scheme_host_and_port_is_refused_before_probing(
 
 
 @pytest.mark.parametrize(
-    "endpoint", ("http://127.0.0.1:13378", "https://abs.invalid:13378/")
+    "endpoint",
+    (
+        "http://127.0.0.1:13378",
+        "https://abs.invalid:13378/",
+        # A container network alias and a fully qualified name are service
+        # addresses too; only the components beyond the origin are refused.
+        "http://abs_server:13378",
+        "https://abs.invalid.:13378",
+    ),
 )
 def test_an_origin_with_or_without_a_trailing_slash_is_probed(endpoint: str) -> None:
     probes: list[str] = []

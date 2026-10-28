@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from typing import Protocol
+from urllib.parse import urlsplit
 
 from mechanical_librarian.domain.setup_state import (
     SetupConnection,
     SetupStateDocument,
     SetupStateError,
 )
-from mechanical_librarian.domain.validation import credential, http_origin
+from mechanical_librarian.domain.validation import credential
 
 
 class SetupConnectionProbe(Protocol):
@@ -20,6 +21,24 @@ class SetupConnectionError(ValueError):
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(code)
+
+
+def _scheme_host_and_port_only(endpoint: str) -> bool:
+    # Only the URL components are refused here. Host names are left to the
+    # probe, so a service alias such as ``abs_server`` or a fully qualified
+    # ``abs.example.`` still reaches Audiobookshelf.
+    try:
+        parts = urlsplit(endpoint)
+        return (
+            bool(parts.hostname)
+            and parts.username is None
+            and parts.password is None
+            and parts.path in {"", "/"}
+            and "?" not in endpoint
+            and "#" not in endpoint
+        )
+    except ValueError:
+        return False
 
 
 class SetupConnectionVerification:
@@ -34,7 +53,7 @@ class SetupConnectionVerification:
             or not endpoint.startswith(("https://", "http://"))
             # Only scheme, host and port: a path, userinfo, query or fragment
             # is refused here, before any probe, rather than read as a failure.
-            or not http_origin(endpoint)
+            or not _scheme_host_and_port_only(endpoint)
             or type(key) is not str
             or not credential(key)
         ):
