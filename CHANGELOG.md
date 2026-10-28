@@ -15,6 +15,10 @@
   confirms each step; sign-in clears a rejected password, explains a forgotten
   one and opens in your theme with the workspace type (#1287).
 
+- Hardcover and Open Library now send their requests through the same bounded
+  request path as every other metadata provider. Their requests, limits,
+  retries and reported outcomes are unchanged (#984).
+
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.
   Automatic decisions recorded under an earlier qualification are refused

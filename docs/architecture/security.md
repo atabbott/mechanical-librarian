@@ -1335,6 +1335,15 @@ no-match. Lane overflow is typed before client construction and causes no
 subset egress. One adapter instance owns lane sequencing, request maxima, the
 aggregate byte ceiling, and the shared pacer and deadline.
 
+Every metadata adapter dispatches through the one bounded session in
+`adapters/providers/sdk.py`, which applies those request, retry, byte and
+deadline bounds and records the attempt evidence; the adapter supplies only its
+fixed request and its status mapping. Moving Hardcover and Open Library onto it
+(#984) changed no method, origin, header, credential, bound or retry authority:
+the Hardcover token still reaches only its GraphQL requests through the client
+built at the credential boundary, and the egress and threat model below are
+unchanged.
+
 Every provider metadata client is constructed in
 `infrastructure/security/credentials.py` with environment and proxy trust off,
 client-level redirect following off, TLS verification on, an explicit timeout,
