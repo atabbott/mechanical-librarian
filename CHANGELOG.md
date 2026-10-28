@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Clean rebuild required.** Once an audiobook edition has been matched, the
+  next preparation of the same tracks looks it up directly before searching,
+  so a search that no longer lists it cannot lose it to a sibling edition. One
+  recording's regional ASINs now offer one ASIN choice (#1316).
+
 - Text and field edges meet WCAG AA contrast in both themes, no text is below
   12px, and every disclosure and authority control is a 44px target. Focus no
   longer falls to the page after a command, failed retry or read failure;

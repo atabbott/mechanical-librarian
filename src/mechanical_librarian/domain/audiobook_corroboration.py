@@ -26,8 +26,13 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioObservation,
     AudioObservationKind,
 )
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    narrator_cast_disjoint,
+)
 from mechanical_librarian.domain.metadata_report import (
+    ASSERTED_ASIN_BASES,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -931,6 +936,11 @@ __all__ = [
     "runtime_agreement",
     "runtime_corroborated_candidate",
     "runtime_short_of_stated",
+    "admitted_recording_asin",
+    "candidate_edition_asin",
+    "candidate_narrator_disjoint",
+    "carried_asin_claim",
+    "carried_asin_precedence",
 ]
 
 
@@ -995,15 +1005,17 @@ def candidate_recording_runtime_veto(
 def _local_identifier_asins(local_claims: tuple[LocalClaim, ...]) -> frozenset[str]:
     """Return the canonical ASINs the item's own surfaces carry.
 
-    A target assertion is deliberately not one of them. The tag, the sidecar,
-    and the path were read off the recording; the assertion was typed about it,
-    and ADR-0061 keeps those two apart everywhere identity is at stake.
+    A target assertion is deliberately not one of them, and neither is an
+    admission carried from an earlier preparation (#1316). The tag, the
+    sidecar, and the path were read off the recording; the other two were
+    stated about it, and ADR-0061 keeps those apart everywhere identity is at
+    stake.
     """
     return frozenset(
         value
         for claim in local_claims
         if claim.kind is ClaimKind.ASIN
-        and claim.basis != "target_metadata"
+        and claim.basis not in ASSERTED_ASIN_BASES
         and (value := canonical_asin(claim.canonical)) is not None
     )
 
@@ -1215,4 +1227,270 @@ def admitted_audiobook_identity(report: MetadataReport) -> bool:
         raise CorroborationValueError("provider observation is invalid")
     return (
         _stated_runtime_admitted(report) or recording_identity_basis(report) is not None
+    )
+
+
+def candidate_narrator_disjoint(
+    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+) -> bool:
+    """Whether a product credits only narrators the recording's own credits lack.
+
+    An unknown cast on either side is never disjoint, so a recording without
+    local narrator credits, or a product stating none, passes (#1252, #1316).
+    """
+    return narrator_cast_disjoint(
+        _recording_narrators(local_claims), _candidate_narrators(candidate)
+    )
+
+
+def _recording_narrators(local_claims: tuple[LocalClaim, ...]) -> tuple[str, ...]:
+    return tuple(
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role == "narrator"
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+    )
+
+
+def _candidate_narrators(candidate: ProviderCandidate) -> tuple[str, ...]:
+    return tuple(
+        claim.value
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CONTRIBUTOR
+        and claim.role == "narrator"
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+
+
+def carried_asin_claim(local_claims: tuple[LocalClaim, ...]) -> LocalClaim | None:
+    """Return the one admission an earlier preparation carried forward (#1316)."""
+    claims = tuple(
+        claim
+        for claim in local_claims
+        if claim.basis == "prior_admission"
+        and claim.kind is ClaimKind.ASIN
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+        and canonical_asin(claim.canonical) == claim.canonical
+    )
+    return claims[0] if len(claims) == 1 else None
+
+
+def _edition_asins(candidate: ProviderCandidate) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                value
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.ASIN
+                and claim.scope is ClaimScope.EDITION
+                and claim.state is FieldState.VALID
+                and (value := canonical_asin(claim.value)) is not None
+            }
+        )
+    )
+
+
+def _queried_asin(lane: ProviderLaneObservation, asins: tuple[str, ...]) -> str | None:
+    """Name the ASIN one product lane looked up, among the ones offered.
+
+    A lane identity is keyed on the ASIN it asked for, so it is recovered by
+    recomputing that key rather than by trusting any candidate statement.
+    """
+    if lane.kind is not ProviderQueryKind.ASIN:
+        return None
+    return next(
+        (
+            asin
+            for asin in asins
+            if lane.identity
+            == discovery_lane_identity(
+                {
+                    "canonical_asin": asin,
+                    "input_references": list(lane.input_references),
+                    "kind": ProviderQueryKind.ASIN.value,
+                }
+            )
+        ),
+        None,
+    )
+
+
+def candidate_edition_asin(
+    observation: ProviderObservation,
+    candidate: ProviderCandidate,
+    current: str | None = None,
+) -> str | None:
+    """Return the one edition ASIN a candidate stands for (#1316).
+
+    AudioSilo lists one recording under its regional and relisted ASINs, and
+    those siblings are one edition rather than a choice. A candidate stating
+    one ASIN stands for it; one stating several stands for `current`, the
+    target's own ASIN, when that is among them, and otherwise for the ASIN its
+    lane looked up. A candidate no lane looked up by one of its siblings
+    stands for none.
+    """
+    asins = _edition_asins(candidate)
+    if len(asins) <= 1:
+        return asins[0] if asins else None
+    if current is not None and current in asins:
+        return current
+    queried = {
+        value
+        for lane in observation.lanes
+        if any(
+            member.edition_identity == candidate.identity for member in lane.candidates
+        )
+        and (value := _queried_asin(lane, asins)) is not None
+    }
+    return queried.pop() if len(queried) == 1 else None
+
+
+def _tight_recording(
+    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+) -> bool:
+    """A recording the stated runtime admitted inside the tight band.
+
+    Edition marketplace evidence survives only an admission, and the tight
+    band read again over the retained runtime excludes one admitted on its
+    chapter structure alone.
+    """
+    return (
+        any(
+            value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            and value.scope is ClaimScope.EDITION
+            for value in candidate.evidence
+        )
+        and runtime_corroborated_candidate((candidate,), local_claims) is not None
+    )
+
+
+def _carried_lanes(
+    report: MetadataReport, claim: LocalClaim
+) -> tuple[tuple[ProviderObservation, ProviderLaneObservation], ...]:
+    asin = cast("str", claim.canonical)
+    return tuple(
+        (observation, lane)
+        for observation in report.providers
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        for lane in observation.lanes
+        if claim.reference in lane.input_references
+        and _queried_asin(lane, (asin,)) == asin
+    )
+
+
+def _verified_carried_candidates(
+    report: MetadataReport,
+) -> tuple[ProviderCandidate, ...]:
+    """Return the products a direct lookup of the carried ASIN admitted."""
+    claim = carried_asin_claim(report.local_claims)
+    if claim is None or report.audio is None:
+        return ()
+    asin = cast("str", claim.canonical)
+    verified: list[ProviderCandidate] = []
+    for observation, lane in _carried_lanes(report, claim):
+        if lane.status is not ProviderStatus.CANDIDATES:
+            continue
+        by_identity = {value.identity: value for value in observation.candidates}
+        for member in lane.candidates:
+            candidate = by_identity.get(member.edition_identity)
+            if (
+                candidate is not None
+                and asin in _edition_asins(candidate)
+                and _tight_recording(candidate, report.local_claims)
+                and not candidate_narrator_disjoint(candidate, report.local_claims)
+            ):
+                verified.append(candidate)
+    return tuple(verified)
+
+
+def admitted_recording_asin(report: MetadataReport) -> str | None:
+    """Return the one edition ASIN this report admitted, to carry forward (#1316).
+
+    Only an audiobook with no ASIN of its own carries anything: one that has
+    its identifier already looks it up. The admission is a stated runtime
+    inside the tight band at an audiobook authority, with edition marketplace
+    evidence and a narrator cast not disjoint from the recording's own; a
+    chapter-only admission is not carried. Every admitted product must name
+    the same edition, a multi-ASIN statement counting as the ASIN its lane
+    looked up, or nothing is carried.
+
+    An ASIN this report itself carried is kept while a lookup of it verified
+    it, and kept again while the catalogue's lookup of it failed in a way a
+    later one may not (a recovery-eligible status, or a disabled provider) or
+    was never made. Answered any other way and verified nowhere, it is
+    refuted: it is dropped, and this report cannot admit it again.
+    """
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    if report.audio is None or _local_identifier_asins(report.local_claims):
+        return None
+    carried = carried_asin_claim(report.local_claims)
+    refuted: str | None = None
+    if carried is not None:
+        asin = cast("str", carried.canonical)
+        if _verified_carried_candidates(report):
+            return asin
+        # The catalogue's own lookup is the carried lane; a per-ASIN mirror
+        # that lacks the product refutes nothing while the catalogue is there.
+        lanes = _carried_lanes(report, carried)
+        catalogue = tuple(
+            lane
+            for observation, lane in lanes
+            if observation.authority == "audible_catalog"
+        )
+        if all(
+            lane.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
+            or lane.status is ProviderStatus.DISABLED
+            for lane in (catalogue or tuple(lane for _observation, lane in lanes))
+        ):
+            return asin
+        refuted = asin
+    admitted: set[str | None] = set()
+    for observation in report.providers:
+        if (
+            observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+            or observation.status is not ProviderStatus.CANDIDATES
+        ):
+            continue
+        for candidate in observation.candidates:
+            if _tight_recording(
+                candidate, report.local_claims
+            ) and not candidate_narrator_disjoint(candidate, report.local_claims):
+                admitted.add(candidate_edition_asin(observation, candidate))
+    admitted.discard(refuted)
+    if len(admitted) != 1:
+        return None
+    return admitted.pop()
+
+
+def carried_asin_precedence(report: MetadataReport) -> frozenset[tuple[str, str]]:
+    """Name the products a verified carried edition outranks at the ASIN field.
+
+    The one place the precedence rule lives (ADR-0088, pending owner
+    confirmation): once a direct lookup verified the carried ASIN, that is the
+    ASIN proposed, and a tight search product naming another ASIN whose
+    narrator cast is not disjoint from the carried product's is the same
+    recording relisted rather than a second choice, so it is withheld. Search
+    still runs and still feeds every other field. Returned as provider name
+    and candidate identity pairs.
+    """
+    carried = _verified_carried_candidates(report)
+    claim = carried_asin_claim(report.local_claims)
+    if not carried or claim is None:
+        return frozenset()
+    narrators = tuple(
+        value for candidate in carried for value in _candidate_narrators(candidate)
+    )
+    return frozenset(
+        (observation.provider, candidate.identity)
+        for observation in report.providers
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        for candidate in observation.candidates
+        if claim.canonical not in _edition_asins(candidate)
+        and _tight_recording(candidate, report.local_claims)
+        and not narrator_cast_disjoint(narrators, _candidate_narrators(candidate))
     )

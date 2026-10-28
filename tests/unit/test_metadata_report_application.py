@@ -62,6 +62,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
+    provider_discovery_lane_order,
     provider_observation,
     qualify_provider_observation,
     require_report_current,
@@ -117,6 +118,8 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
     ProviderLaneDispatch,
     ProviderObservation,
     ProviderQueryKind,
@@ -1593,6 +1596,7 @@ def test_audiobook_publishes_local_evidence_and_dispatches_its_asin_plan() -> No
         (FieldSource.AUDIO_TAG, FieldState.VALID),
         (FieldSource.AUDIO_SIDECAR, FieldState.ABSENT),
         (FieldSource.AUDIO_PATH, FieldState.ABSENT),
+        (FieldSource.PRIOR_ADMISSION, FieldState.UNSUPPORTED),
     }
     series = next(
         value for value in published.field_results if value.kind is ClaimKind.SERIES
@@ -3880,3 +3884,232 @@ def test_a_broken_stderr_changes_neither_the_report_nor_the_provider_calls(
 
     assert written == broken
     assert output.out == output.err == ""
+
+
+class _PriorReportRepository(FakeReportRepository):
+    """Serves the latest report published for one track set as its current one."""
+
+    def current_optional(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str | None:
+        del connection, library, item
+        return next(
+            (
+                document
+                for document in reversed(tuple(self.values.values()))
+                if MetadataReport.from_json(document).file.identity == file_identity
+            ),
+            None,
+        )
+
+
+class _CarryingCatalogue:
+    """The catalogue: its search admits one ASIN, and a lookup answers the one asked.
+
+    Lanes are answered in the adapter's own dispatch order, which is recorded.
+    """
+
+    def __init__(
+        self,
+        search_asin: str,
+        plans: list[MetadataDiscoveryPlan],
+        order: list[ProviderQueryKind],
+    ) -> None:
+        self._search_asin = search_asin
+        self._plans = plans
+        self._order = order
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        self._plans.append(plan)
+        results: list[ProviderLaneResult] = []
+        for lane in provider_discovery_lane_order(plan):
+            self._order.append(lane.kind)
+            work = lane.kind is ProviderQueryKind.WORK
+            asin = self._search_asin if work else cast("str", lane.canonical_asin)
+            qualified = qualify_provider_observation(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (
+                        replace(
+                            _fed_candidate(plan.local_claims, "catalogue", asin),
+                            evidence=(
+                                ProviderEvidence(
+                                    ProviderEvidenceKind.ASIN_MARKETPLACE,
+                                    "us",
+                                    ClaimScope.EDITION,
+                                ),
+                            ),
+                        ),
+                    ),
+                    lane.kind,
+                    "audible_catalog",
+                    dispatch_lineage=(
+                        WorkDispatchLineage.from_query(
+                            work_query_ladder(cast("str", lane.title), lane.authors)[0]
+                        )
+                        if work
+                        else None
+                    ),
+                ),
+                MetadataLookup(
+                    lane.kind,
+                    plan.local_claims,
+                    lane.title if work else None,
+                    lane.authors if work else (),
+                    audio=plan.audio,
+                    work_title=plan.work_title,
+                    work_authors=plan.work_authors,
+                    requested_asin=lane.canonical_asin,
+                ),
+            )
+            results.append(
+                ProviderLaneResult(
+                    lane,
+                    qualified.status,
+                    qualified.candidates,
+                    dispatch_lineage=qualified.dispatch_lineage,
+                    transformation_lineage=qualified.transformation_lineage,
+                )
+            )
+        return ProviderResult(
+            provider_observation(
+                "catalogue", tuple(results), authority="audible_catalog"
+            )
+        )
+
+
+def _carrying_run(
+    repository: _PriorReportRepository,
+    snapshot: TargetSnapshot,
+    inspector: FakeAudioInspector,
+    search_asin: str,
+) -> tuple[
+    MetadataReport,
+    list[MetadataDiscoveryPlan],
+    list[ProviderQueryKind],
+    list[MetadataDiscoveryPlan],
+]:
+    catalogue_plans: list[MetadataDiscoveryPlan] = []
+    order: list[ProviderQueryKind] = []
+    asin_plans: list[MetadataDiscoveryPlan] = []
+    published = MetadataReport.from_json(
+        _fed_audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            repository,
+            inspector,
+            (
+                ProviderBinding(
+                    "catalogue",
+                    True,
+                    lambda: _CarryingCatalogue(search_asin, catalogue_plans, order),
+                    authority="audible_catalog",
+                ),
+                ProviderBinding(
+                    "audnexus",
+                    True,
+                    lambda: _AsinAnsweringProvider("audnexus", asin_plans),
+                    authority="audnexus",
+                ),
+            ),
+        ).run("item-1", 0)
+    )
+    return published, catalogue_plans, order, asin_plans
+
+
+def _asin_proposals(report: MetadataReport) -> set[str]:
+    result = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.ASIN
+    )
+    return {str(value.value.value) for value in result.alternatives}
+
+
+def test_a_matched_edition_is_carried_to_the_next_preparation_of_its_tracks() -> None:
+    """Search drifted to a sibling; the matched edition is looked up first (#1316)."""
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    repository = _PriorReportRepository()
+    first, _plans, first_order, _fed = _carrying_run(
+        repository, _fed_snapshot(selected), _fed_inspector(), "B0CW1KL2QD"
+    )
+    assert [ProviderQueryKind.WORK] == first_order
+    assert not any(value.basis == "prior_admission" for value in first.local_claims)
+
+    second, plans, order, asin_plans = _carrying_run(
+        repository, _fed_snapshot(selected), _fed_inspector(), "B0SIBLING1"
+    )
+
+    carried = next(
+        value for value in second.local_claims if value.basis == "prior_admission"
+    )
+    assert "B0CW1KL2QD" == carried.canonical
+    # The catalogue looks the carried edition up before it searches.
+    assert [ProviderQueryKind.ASIN, ProviderQueryKind.WORK] == order
+    (lookup,) = (
+        value for value in plans[0].lanes if value.kind is ProviderQueryKind.ASIN
+    )
+    assert ("B0CW1KL2QD", (carried.reference,)) == (
+        lookup.canonical_asin,
+        lookup.input_references,
+    )
+    # The per-ASIN provider is fed the carried ASIN, and asked nothing first.
+    assert not any(
+        value.kind is ProviderQueryKind.ASIN for value in asin_plans[0].lanes
+    )
+    assert (carried.reference,) in {
+        value.input_references for value in asin_plans[1].lanes
+    }
+    # The verified carried edition is the one proposed; the sibling is not.
+    assert {"B0CW1KL2QD"} == _asin_proposals(second)
+    asin = next(value for value in second.field_results if value.kind is ClaimKind.ASIN)
+    assert (FieldSource.PRIOR_ADMISSION, FieldState.VALID) in {
+        (value.source, value.state) for value in asin.sources
+    }
+
+
+def test_a_changed_track_set_carries_no_earlier_admission() -> None:
+    repository = _PriorReportRepository()
+    _carrying_run(
+        repository,
+        _fed_snapshot(TargetFile("a" * 64, "book.m4b", "m4b")),
+        _fed_inspector(),
+        "B0CW1KL2QD",
+    )
+    changed = FakeAudioInspector(
+        audio_result(
+            ((ClaimKind.DURATION, _FED_RUNTIME, "embedded_tag", None),),
+            tracks=(AudioTrackDigest(1, "e" * 64, "d" * 64, "m4b", "book.m4b"),),
+        )
+    )
+
+    second, plans, order, _fed = _carrying_run(
+        repository,
+        _fed_snapshot(TargetFile("e" * 64, "book.m4b", "m4b")),
+        changed,
+        "B0SIBLING1",
+    )
+
+    assert not any(value.basis == "prior_admission" for value in second.local_claims)
+    assert [ProviderQueryKind.WORK] == order
+    assert not any(value.kind is ProviderQueryKind.ASIN for value in plans[0].lanes)
+
+
+def test_an_item_that_names_its_own_asin_carries_nothing() -> None:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    repository = _PriorReportRepository()
+    _carrying_run(repository, _fed_snapshot(selected), _fed_inspector(), "B0CW1KL2QD")
+
+    second, plans, order, _fed = _carrying_run(
+        repository,
+        _fed_snapshot(selected),
+        _fed_inspector((ClaimKind.ASIN, "B0OWNASIN1", "embedded_tag", None)),
+        "B0SIBLING1",
+    )
+
+    assert not any(value.basis == "prior_admission" for value in second.local_claims)
+    assert [ProviderQueryKind.ASIN] == order
+    assert ["B0OWNASIN1"] == [value.canonical_asin for value in plans[0].lanes]

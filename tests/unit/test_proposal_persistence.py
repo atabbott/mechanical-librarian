@@ -319,12 +319,19 @@ def test_actual_v32_baseline_table_refuses_before_rows_without_mutation(
     repository = open_repository(path)
     report = _report("Title", "b" * 64)
     # The capsule's producer wrote metadata-report-v49, which differs from this
-    # provider-less current report only in its schema label (#1245) and in the
-    # description's restore flag v58 added (#1424).
+    # provider-less current report only in its schema label (#1245), in the
+    # description's restore flag v58 added (#1424) and in the field-result
+    # source v60 added (#1316).
     produced = report.to_data()
     produced["schema_version"] = "metadata-report-v49"
     for field in produced["target"]["fields"]:
         field.pop("restorable", None)
+    for result in produced["field_results"]:
+        result["sources"] = [
+            source
+            for source in result["sources"]
+            if source["source"] != "prior_admission"
+        ]
     produced.pop("report_id")
     produced["report_id"] = report_content_address(produced)
     assert produced["report_id"] == capsule["report_id"]

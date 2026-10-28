@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1316 advances the report to `metadata-report-v60` and the proposal policy to
+`fixed-conservative-v37`: an audiobook item carries the edition an earlier
+preparation of the same track set admitted as a `prior_admission` claim under
+its own field-result source, and one recording's sibling ASINs offer one value.
+**Clean rebuild required** for every predecessor application database; startup
+refuses v59 reports before mutation. No migration, adoption, conversion, import
+or downgrade is supplied.
+
 #1308 advances the report to `metadata-report-v59`: the provider diagnostic
 category `malformed_over_bound_response` is replaced by `malformed_response`,
 `oversized_response` and `candidate_limit_exceeded`, and an AudioSilo lookup
@@ -185,8 +193,8 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v59` plus `proposal-set-v8` under
-  `fixed-conservative-v36`, or the separate `catalogue-v2` schema;
+  `metadata-report-v60` plus `proposal-set-v8` under
+  `fixed-conservative-v37`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v23`,

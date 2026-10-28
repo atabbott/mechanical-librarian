@@ -14,7 +14,9 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Self, cast
 
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
+    candidate_edition_asin,
     candidate_recording_runtime_veto,
+    carried_asin_precedence,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -43,6 +45,7 @@ from mechanical_librarian.domain.field_value_comparison import (
 )
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
+    ASSERTED_ASIN_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     ClaimKind,
@@ -105,7 +108,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v36"
+POLICY_VERSION = "fixed-conservative-v37"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1715,7 +1718,7 @@ def _observations(
             and claim.scope is local_scope
             and claim.state is FieldState.VALID
             and claim.canonical is not None
-            and claim.basis != "target_metadata"
+            and claim.basis not in ASSERTED_ASIN_BASES
             and _eligible_identifier(destination, claim.canonical, claim.applicability)
             and _eligible_identifier_reference(report, destination, claim.reference)
             and _eligible_description(destination, claim.canonical)
@@ -1734,11 +1737,28 @@ def _observations(
                     _local_representation(claim.basis),
                 )
             )
+    edition_asins = destination is TargetDestination.ASIN and report.audio is not None
+    withheld = carried_asin_precedence(report) if edition_asins else frozenset()
+    current_asin = _current_asin(report) if edition_asins else None
     for provider in report.providers:
         for candidate in provider.candidates:
             if work_only and not _supported_work_source(report, provider, candidate):
                 continue
+            if (provider.provider, candidate.identity) in withheld:
+                continue
+            # Sibling ASINs of one recording are one edition (#1316).
+            edition_asin = (
+                candidate_edition_asin(provider, candidate, current_asin)
+                if edition_asins
+                else None
+            )
             for claim in candidate.claims:
+                if (
+                    edition_asins
+                    and claim.kind is ClaimKind.ASIN
+                    and canonical_asin(claim.value) != edition_asin
+                ):
+                    continue
                 if (
                     claim.kind in kinds
                     and (
@@ -1804,6 +1824,20 @@ def _observations(
                         )
                     )
     return tuple(values)
+
+
+def _current_asin(report: MetadataReport) -> str | None:
+    """Return the canonical ASIN the target records, if it records one."""
+    return next(
+        (
+            canonical_asin(field.value)
+            for field in report.target.fields
+            if field.destination is TargetDestination.ASIN
+            and field.state is TargetFieldState.VALUE
+            and type(field.value) is str
+        ),
+        None,
+    )
 
 
 def _generic_provider_subtitle(
@@ -2755,7 +2789,7 @@ def _local_contributor_displays(
         {
             claim.basis
             for claim in report.local_claims
-            if claim.basis != "target_metadata"
+            if claim.basis not in ASSERTED_ASIN_BASES
         }
     ):
         claims = tuple(
@@ -2926,7 +2960,7 @@ def _list_observations(
             {
                 claim.basis
                 for claim in report.local_claims
-                if claim.basis != "target_metadata"
+                if claim.basis not in ASSERTED_ASIN_BASES
             }
         )
     )
@@ -3500,7 +3534,7 @@ def provider_candidate_represents_target_work(
             and canonical_asin(claim.value) == claim.value
             and any(
                 local.kind is ClaimKind.ASIN
-                and local.basis != "target_metadata"
+                and local.basis not in ASSERTED_ASIN_BASES
                 and canonical_asin(local.canonical) == claim.value
                 for local in report.local_claims
             )
@@ -3876,7 +3910,7 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 {
                     claim.basis
                     for claim in report.local_claims
-                    if claim.basis != "target_metadata"
+                    if claim.basis not in ASSERTED_ASIN_BASES
                 }
             )
         )

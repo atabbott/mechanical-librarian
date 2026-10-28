@@ -112,3 +112,4 @@ an accepted ADR to make history match current preference; supersede it.
 | [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted | Admit owner-entered values, withdrawal and reselection of an earlier value, and let holds follow the work |
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations, not source bytes |
+| [0088](0088-carried-recording-admission.md) | accepted; precedence clause pending owner confirmation | Carry an admitted audiobook edition into the next preparation |
