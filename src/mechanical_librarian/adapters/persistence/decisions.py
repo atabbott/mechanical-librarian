@@ -1021,10 +1021,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "ORDER BY checkpoint DESC,transition_id DESC LIMIT ?",
                 (review_case_id, review_case_id, limit),
             ).fetchall()
+            # Each source cuts at its limit in the order the history displays.
             event_rows = self._connection.execute(
-                "SELECT event_id,decision_id,review_case_id,destination,actor,"
-                "kind,occurred_at,document FROM human_decision_events "
-                "WHERE review_case_id=? ORDER BY occurred_at DESC,event_id DESC LIMIT ?",
+                "SELECT event.event_id,event.decision_id,event.review_case_id,"
+                "event.destination,event.actor,event.kind,event.occurred_at,"
+                "event.document FROM human_decision_events event "
+                "LEFT JOIN human_decisions decision ON decision.decision_id=event.decision_id "
+                "WHERE event.review_case_id=? ORDER BY event.occurred_at DESC,"
+                "decision.ordinal DESC,event.event_id DESC LIMIT ?",
                 (review_case_id, limit),
             ).fetchall()
             shadow_rows = self._connection.execute(
@@ -1213,7 +1217,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 at,
                 candidate_document,
             ) in self._connection.execute(
-                "SELECT a.attempt_id,a.state,a.engine,a.model,a.updated_at,c.document FROM description_advice_attempts a LEFT JOIN description_advice_candidates c ON c.attempt_id=a.attempt_id WHERE json_extract(a.binding_document,'$.review_case_id')=? ORDER BY a.updated_at DESC LIMIT ?",
+                "SELECT a.attempt_id,a.state,a.engine,a.model,a.updated_at,c.document FROM description_advice_attempts a LEFT JOIN description_advice_candidates c ON c.attempt_id=a.attempt_id WHERE json_extract(a.binding_document,'$.review_case_id')=? ORDER BY a.updated_at DESC,a.attempt_id DESC LIMIT ?",
                 (review_case_id, limit),
             ):
                 events.append(
@@ -1243,7 +1247,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 candidate_document,
                 selected_current,
             ) in self._connection.execute(
-                "SELECT d.document,c.document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC LIMIT ?",
+                "SELECT d.document,c.document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC,d.decision_id DESC LIMIT ?",
                 (review_case_id, limit),
             ):
                 authored = AuthoredDescriptionDecision.from_json(document)

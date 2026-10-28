@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A review case's history now shows the same owner decisions, description
+  advice and description selections on every read when several share one
+  second: each is cut to the history limit in the order it is displayed, rather
+  than in whatever order the database happened to return (#1209).
+
 - The workspace opens in your saved or system theme without a light flash,
   uses its documented Inter typeface (self-hosted, OFL), and its main actions,
   including Confirm write permissions, share one filled style; status chips and
