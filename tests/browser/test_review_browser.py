@@ -2623,11 +2623,13 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 )
                 assert_text_zoom_policy_layout(430)
                 page.get_by_role("button", name="Use dark mode").click()
-                page.get_by_role("button", name="Use light mode").wait_for()
+                # The label changes on render and the theme in an effect after
+                # it, so each measurement waits for the theme itself.
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 assert_text_zoom_policy_layout(390)
                 assert_text_zoom_policy_layout(430)
                 page.get_by_role("button", name="Use light mode").click()
-                page.get_by_role("button", name="Use dark mode").wait_for()
+                expect(page.locator("html")).to_have_attribute("data-theme", "light")
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
                 page.get_by_role("button", name="Validate and preview").click()
@@ -2659,7 +2661,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 _assert_primary_fill(review_activation, back_to_editing)
                 dark_mode = page.get_by_role("button", name="Use dark mode")
                 dark_mode.click()
-                page.get_by_role("button", name="Use light mode").wait_for()
+                expect(page.locator("html")).to_have_attribute("data-theme", "dark")
                 _assert_primary_fill(review_activation, back_to_editing)
                 page.set_viewport_size({"width": 1440, "height": 900})
                 unsupported_description.wait_for()
@@ -2719,7 +2721,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.set_viewport_size({"width": 390, "height": 844})
                 light_mode = page.get_by_role("button", name="Use light mode")
                 light_mode.click()
-                page.get_by_role("button", name="Use dark mode").wait_for()
+                expect(page.locator("html")).to_have_attribute("data-theme", "light")
                 activity_requests = 0
                 held_page_size_response: list[tuple[Any, Any, Any]] = []
 
@@ -6973,6 +6975,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     toggle = page.get_by_role("button", name=requested)
                     if toggle.count():
                         toggle.click()
+                    expect(page.locator("html")).to_have_attribute("data-theme", theme)
                     page.locator(
                         ".settings-sidebar button", has_text="Libraries"
                     ).evaluate("element => element.click()")
@@ -7061,6 +7064,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     toggle = page.get_by_role("button", name=requested)
                     if toggle.count():
                         toggle.click()
+                    expect(page.locator("html")).to_have_attribute("data-theme", theme)
                     for width, height in ((390, 844), (320, 800)):
                         page.set_viewport_size({"width": width, "height": height})
                         choose_section("Libraries")
@@ -7142,7 +7146,11 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         page.get_by_role("button", name="Save settings"),
                         page.get_by_role("button", name="Discard all"),
                     )
+                    shown = page.locator("html").get_attribute("data-theme")
                     page.locator(".theme-toggle").click()
+                    expect(page.locator("html")).to_have_attribute(
+                        "data-theme", "light" if shown == "dark" else "dark"
+                    )
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[
