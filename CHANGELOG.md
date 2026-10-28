@@ -18,6 +18,14 @@
 - The activity projector's exit events now reach the service log as value-free
   JSON lines on stderr; before, its `info` events were silently dropped. A
   never-shown owner-settings log line is removed (#1304).
+
+- An OpenRouter model is validated however large OpenRouter's model list grows,
+  and a reviewer check or review shares one time limit across its requests,
+  stopping at its first read past it. A too-large answer, a timeout, a
+  data-policy refusal and too many images each get their own reason and remedy
+  in Settings and setup, and a failed cover review says what to change
+  (#1330, #1331, #1332).
+
 - A managed uv update now moves the CI workflow and container pins together in
   one Renovate pull request, instead of moving only the workflow pin (#1177).
 

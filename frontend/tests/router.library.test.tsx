@@ -4194,9 +4194,12 @@ describe('Library route', () => {
     ['memory_bytes mismatch', 'profile contract requires memory_bytes=1073741824', 'unavailable'],
     ['process_limit mismatch', 'profile contract requires process_limit=32', 'unavailable'],
     ['reviewer failure', null, 'failed'],
+    ['data policy refusal', null, 'failed', 'data_policy_refused'],
+    ['image limit refusal', null, 'failed', 'image_limit_exceeded'],
+    ['reviewer timeout', null, 'failed', 'timed_out'],
   ] as const)(
     'keeps manual cover decisions usable for a %s',
-    async (_state, reviewerUnavailableReason, reviewerStatus) => {
+    async (_state, reviewerUnavailableReason, reviewerStatus, reviewerFailureCode?) => {
       const user = userEvent.setup()
       const base = detail.fields[0]
       if (!base) throw new Error('cover fixture requires a field')
@@ -4278,6 +4281,7 @@ describe('Library route', () => {
         reviewerModel: null,
         reviewerStatus,
         reviewerUnavailableReason,
+        ...(reviewerFailureCode ? { reviewerFailureCode } : {}),
         targetFingerprint: 'fingerprint-cover',
       } as const
       const coverField = {
@@ -4306,6 +4310,20 @@ describe('Library route', () => {
       if (reviewerUnavailableReason === null) {
         expect(screen.queryByRole('button', { name: 'Retry advisory review' })).toBeNull()
         expect(screen.queryByText(/Regenerate the profile for the current contract/u)).toBeNull()
+        const failureCopy = {
+          data_policy_refused:
+            /Change your privacy settings on OpenRouter, or choose a model with a compliant provider in Settings → Reviewer\./u,
+          image_limit_exceeded: /Choose another vision model in Settings → Reviewer\./u,
+          timed_out: /Retry, or choose a faster model in Settings → Reviewer\./u,
+        } as const
+        if (reviewerFailureCode) {
+          const detail = screen.getByText(failureCopy[reviewerFailureCode])
+          expect(detail).toHaveClass('reviewer-unavailable-detail')
+          // The remedy sits directly under the unavailable line it explains.
+          expect(detail.previousElementSibling).toHaveTextContent(
+            'Visual review is unavailable. Only the eligible choices shown below can be selected.',
+          )
+        } else expect(screen.queryByText(/The configured reviewer/u)).toBeNull()
       } else {
         expect(
           screen.getByText(

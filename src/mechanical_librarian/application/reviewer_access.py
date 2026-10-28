@@ -14,6 +14,7 @@ from mechanical_librarian.application.cover_observation import Reviewer
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     OpenRouterAccountStatus,
+    OpenRouterPublicFailure,
     OpenRouterReviewerError,
     ReviewerDispatch,
     ReviewerProvisioningStatus,
@@ -42,13 +43,7 @@ ReviewerAccessFailure = Literal[
     "host_unsupported",
     "credential_unavailable",
     "access_changed",
-    "invalid_key",
-    "quota_exhausted",
-    "rate_limited",
-    "model_unavailable",
-    "model_text_only",
-    "malformed_response",
-    "unreachable",
+    OpenRouterPublicFailure,
     "credential_clear_failed",
 ]
 

@@ -2321,6 +2321,11 @@ it.each([
   ['reviewer_unconfigured', 'The selected reviewer is no longer ready'],
   ['not_provisioned', 'The contained reviewer profile is unavailable'],
   ['unreachable', 'OpenRouter could not be reached'],
+  ['timed_out', 'OpenRouter did not answer in time. Check network access, then retry.'],
+  [
+    'response_too_large',
+    'OpenRouter returned an answer too large to read. Retry later, or choose another model.',
+  ],
 ])(
   'gives actionable reviewer recovery for %s without losing prior steps',
   async (code, message) => {

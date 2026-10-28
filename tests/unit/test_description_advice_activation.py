@@ -2302,6 +2302,10 @@ def test_automatic_history_values_survive_authored_selection_reversal_and_reopen
                 "transport",
                 "profile_mismatch",
                 "malformed_request",
+                "response_too_large",
+                "timed_out",
+                "data_policy_refused",
+                "image_limit_exceeded",
             )
         ],
         ("access", "host_unsupported", "unavailable"),

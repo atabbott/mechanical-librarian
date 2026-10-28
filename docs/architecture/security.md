@@ -887,8 +887,17 @@ enter the status grammar, logs, or persisted failure identity.
 OpenRouter egress is fixed to `https://openrouter.ai`: key and model capability
 checks precede the one exact-model chat-completions request. Redirect and
 ambient proxy inheritance are disabled. Every response stream is consumed in
-bounded chunks up to its endpoint-specific cap plus one rejection byte,
-including when `Content-Length` is absent or false. Cover previews, the sealed
+chunks and refused as `response_too_large` past its endpoint-specific cap,
+including when `Content-Length` is absent or false. The model catalogue has no
+total cap: it is scanned as one stream and each entry is held, up to 64 KiB, only
+until it is parsed, so memory stays bounded while the catalogue grows. Each
+public call shares one deadline across key, catalogue and chat requests and
+fails `timed_out` at the first check after it is spent: before each request and
+after each read. Each request's own timeout is capped by the time remaining
+when it starts, so one stalled read can overrun the deadline by at most that
+per-phase cap (30 seconds by default); the deadline is not a hard limit. Error bodies are read up to 8 KiB only to
+recognise the data-policy and image-count refusals, and are never retained.
+Cover previews, the sealed
 packet, instruction, and strict schema are the only model inputs; no target
 credential or write authority crosses this boundary.
 

@@ -75,6 +75,7 @@ import {
   preparationOutcomes,
   preparationStageLabels,
   preparationStatusLabels,
+  reviewerFailureCopy,
   sourceStatusLabels,
   writeHoldReasons,
 } from '../labels'
@@ -2303,7 +2304,10 @@ function LibraryCoverChoicesContent({
       : reviewerUnavailable
         ? 'Visual review is unavailable. Only the eligible choices shown below can be selected.'
         : 'Manual cover comparison'
-  const reviewerDetail = reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
+  // A review that failed at chat time says what to change (#1330-#1332).
+  const reviewerDetail = consideration.reviewerFailureCode
+    ? reviewerFailureCopy[consideration.reviewerFailureCode]
+    : reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
   return (
     <section
       className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
@@ -2389,6 +2393,7 @@ function LibraryCoverChoicesContent({
         </small>
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
+      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
       {consideration.reviewerModel ? (
         <p>Reviewer: {coverReviewerLabel(consideration.reviewerModel)}</p>
       ) : null}
@@ -2404,7 +2409,6 @@ function LibraryCoverChoicesContent({
           Automatically selected. Only a strictly better confirmed cover can update this choice.
         </p>
       ) : null}
-      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
       <p className="cover-track-hint">
         Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
         them.

@@ -845,3 +845,25 @@ def test_contained_cli_model_admission_and_failure_stop(
             assert terminal["parsed_result"] is not None
             assert terminal["attempt_evidence"] == [{"dispatched": True}]
             assert (attempt / "supported-envelope.json").is_file()
+
+
+@pytest.mark.parametrize(
+    ("path", "accepted"),
+    (("/api/v1/models", True), ("/api/v1/key", False)),
+)
+def test_capture_bounds_match_the_adapter(tmp_path, path, accepted):
+    # The adapter has no total catalogue bound, only a per-entry one, so the
+    # recorder must not refuse a catalogue for its size; other bodies stay capped.
+    body = b'{"data":[' + b",".join([b'{"id":"x/y"}'] * 200_000) + b"]}"
+    assert len(body) > 1_048_576
+    capture = measure.Capture(
+        httpx.MockTransport(lambda _request: httpx.Response(200, content=body)),
+        tmp_path,
+        paid=False,
+    )
+    request = httpx.Request("GET", "https://openrouter.ai" + path)
+    if accepted:
+        assert capture.handle_request(request).read() == body
+    else:
+        with pytest.raises(ValueError, match="capture bound"):
+            capture.handle_request(request)
