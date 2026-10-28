@@ -54,7 +54,7 @@ typography:
     lineHeight: 1.55
   label:
     fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
-    fontSize: "0.7rem"
+    fontSize: "0.75rem"
     fontWeight: 800
     lineHeight: 1.2
     letterSpacing: "0.08em"
@@ -187,7 +187,12 @@ for refusal, failure, or revocation.
 - **Inkwell** (`#17201e`) and **Quiet Ink** (`#56615e`): primary and supporting
   light-theme text.
 - **Catalogue Line** (`#d9d7cf`) and **Strong Catalogue Line** (`#b9beb9`):
-  dividers, container edges, and stronger field boundaries.
+  dividers and container edges. Neither is a field boundary: against the
+  surfaces fields sit on they fall short of 3:1.
+- **Field Line** (`--field-line`): derived, not a new hue. It is 64% Strong
+  Catalogue Line toward Inkwell (`#7f8581`), or Strong Night Line toward Night
+  Ink (`#85918a`), and holds 3:1 on every surface. It is the border of every
+  text field, search box, and select.
 - **After-Hours Paper** (`#0f1512`), **Deep Stacks** (`#151d19`), and **Raised
   Night Sheet** (`#1b2520`): dark-theme canvas and surface sequence.
 - **Night Ink** (`#edf2ee`) and **Night Quiet Ink** (`#a9b6b0`): dark-theme text.
@@ -224,16 +229,22 @@ controls, diagnostics, and operational copy with compact precision.
   headings that need bibliographic emphasis.
 - **Title** (700, approximately `0.9rem`–`1.05rem`): work titles, field values,
   and compact editorial emphasis.
-- **Body** (400, commonly `0.68rem`–`0.78rem`, 1.45–1.55): bounded operational
+- **Body** (400, commonly `0.75rem`–`0.82rem`, 1.45–1.55): bounded operational
   explanation; introductory copy stays near 68–72 characters per line.
-- **Label** (750–800, `0.58rem`–`0.7rem`, up to `0.08em`, uppercase when used as
-  an eyebrow): state, category, and compact navigation language.
+- **Label** (750–800, `0.75rem`, up to `0.08em`, uppercase when used as an
+  eyebrow): state, category, and compact navigation language.
 
 ### Named Rules
 
 **The Catalogue Voice Rule.** Use serif type for bibliographic identity,
 decision values, and measured emphasis. Use sans-serif type for everything the
 owner must operate, scan, or verify.
+
+**The Type Floor Rule.** No text is set below `0.75rem` (12px at the default
+size), including labels, counts, marks, and compact layouts; density comes from
+weight, spacing, and line length, never smaller type. Sizes are in `rem` so they
+follow the owner's text size; only the fixed-size masthead mark caps its
+initials at 14px.
 
 ## Layout
 
@@ -298,6 +309,8 @@ chips, and count summaries—not general containers.
 
 The signature book mark uses an asymmetric `2px 5px 5px 2px` silhouette so a
 synthetic initial block reads as a book spine without requiring cover imagery.
+In the dark theme every mark (masthead, Library, and Policy) shares one spine,
+`#315c52`, so its paper-colored initial keeps 4.5:1.
 Dashed borders distinguish current-value choices; left rules mark notices,
 status, recovery, and current ledger events.
 
@@ -314,19 +327,25 @@ default type, so every call site states its own.
 - **Shape:** compact rounded rectangle (`0.5rem`) with `0.6rem 0.85rem` default
   padding. Primary task and touch targets are at least `2.75rem`/44px; dense
   desktop inspection and pagination controls may use 40px before returning to
-  44px at compact widths.
+  44px at compact widths. Disclosure summaries and owner-authority controls
+  take no dense exception: they are 44px at every width.
+- **Primary link:** a link styled as the primary action takes the primary
+  button's type, weight, and 44px target, without an underline, so the two
+  read as one control.
 - **Primary:** Deep Archive Teal fill with a paper-colored label; use for the
   next authoritative action, not every available action.
 - **Hover / Focus:** hover shifts borders or surfaces toward Archive Teal and
-  its wash. The default keyboard focus treatment is a three-pixel mixed Focus
-  Blue outline with a three-pixel offset. Compact native fields may use the
+  its wash. The default keyboard focus treatment is a three-pixel Focus Blue
+  outline, unmixed so it holds 3:1 on every surface, with a three-pixel offset. Compact native fields may use the
   implemented two-pixel Archive Teal outline where their local component
   contract requires it.
 - **Secondary / Ghost:** paper-toned or transparent surfaces with catalogue
   borders; secondary is the plain button.
 - **Danger:** transparent with Correction Red text and border until explicitly
   invoked.
-- **Disabled:** every variant keeps its structure at 55% opacity.
+- **Disabled:** every variant keeps its structure at 55% opacity with a
+  not-allowed cursor. A control marked `aria-disabled` while its command runs
+  looks the same but keeps keyboard focus, so focus never falls to the page.
 
 ### Chips and Status Pills
 
@@ -355,8 +374,8 @@ default type, so every call site states its own.
 
 ### Inputs / Fields
 
-- **Style:** Bright Sheet, Strong Catalogue Line, `0.45rem` corners, and a
-  minimum 44px control height where explicitly sized.
+- **Style:** Bright Sheet, Field Line, `0.45rem` corners, and a minimum 44px
+  control height where explicitly sized.
 - **Focus:** the global Focus Blue outline remains visible outside the field;
   focus is never communicated by color fill alone.
 - **Error / Disabled:** error text and boundaries use Correction Red. Disabled
@@ -425,8 +444,8 @@ keeps its own draft, validation and save.
   calm recorded state.
 - **Do** keep primary task and touch targets at least 44px high. Dense desktop
   inspection controls may use 40px when they return to 44px at compact widths;
-  preserve the default three-pixel offset focus outline and documented compact
-  field exceptions.
+  disclosure summaries and authority controls never do. Preserve the default
+  three-pixel offset focus outline and documented compact field exceptions.
 - **Do** keep task identity and direct values in serif type while operational
   controls and evidence remain sans-serif.
 - **Do** collapse wide workspaces into explicit, continuous mobile tasks rather

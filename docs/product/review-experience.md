@@ -287,8 +287,8 @@ review detail load independently. Pending or unavailable counts are never zero;
 a failed collection keeps navigation and a manual retry usable. Superseded
 queries cancel, and an older response cannot replace a newer URL selection.
 While a newer Library, Attention or diagnostic read is pending, the content the
-view last showed stays in place, dimmed and marked busy, and its selection,
-paging and queue controls stay inert; it is cleared rather than revived once
+view last showed stays in place, marked busy but never dimmed below its text
+contrast, and its selection, paging and queue controls stay inert; it is cleared rather than revived once
 that read settles or fails, and the route is announced as loaded only then. The
 selected-work panel never keeps another work's fields while it loads. Its
 identity comes from its own case read when the Library result, page or
@@ -824,6 +824,22 @@ does not defer or replace this baseline.
 - Color is never the only representation of status.
 - Keyboard shortcuts are discoverable, optional, and disabled while editing or
   using an assistive text control.
+- Text meets 4.5:1 and field boundaries and the focus ring 3:1 on every surface
+  in both themes, and no text is set below `0.75rem`. Disclosure summaries,
+  owner-authority controls and links styled as actions are 44-pixel targets at
+  every width. At 200% text size Library, Policy and Activity keep every
+  control reachable without document-level horizontal overflow at 1440, 375
+  and 320 pixels.
+- Focus never falls to the page. A command keeps focus on its control, marked
+  `aria-disabled`, while it runs, then moves to its outcome; a retry that fails
+  again returns focus to Try again; a detail that can no longer be read hands
+  focus to its Try again. Opening Attention focuses its heading. From 761 to
+  1199 pixels Attention is a drawer: the page behind it is inert and Tab stays
+  inside it. Escape or Close returns focus to the Attention toggle, and Tab
+  closes a dropdown onto its trigger.
+- Each surface has one heading outline without skipped levels, and the
+  Activity change column is announced as its whole sentence; nested lists of
+  checks are named.
 
 ## Performance and privacy budgets
 
