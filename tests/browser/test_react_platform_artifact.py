@@ -3734,6 +3734,57 @@ def test_works_rows_show_a_retained_cover_without_growing() -> None:
                 ), where
 
 
+_FIELD_TAB_TEXT = """() => [...document.querySelectorAll(
+    '.field-filmstrip button > strong, .field-filmstrip button > .field-status, '
+    + '.field-filmstrip .field-more'
+)].map((node) => ({
+    text: node.innerText,
+    clipped: node.scrollWidth - node.clientWidth,
+}))"""
+
+
+def test_compact_field_tabs_show_whole_names_and_status_words() -> None:
+    """At phone widths and 200% text every field tab's name and status word
+    is whole: none is clipped and none ends in an ellipsis (#1290)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            for text in styles:
+                for width in (390, 375, 320):
+                    where = f"{scheme} {text} at {width}px"
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.goto(
+                        "https://react-platform.invalid/library?lens=all&preview=case-1"
+                    )
+                    expect(
+                        page.locator(".field-filmstrip .field-status").first
+                    ).to_be_visible()
+                    tabs = page.evaluate(_FIELD_TAB_TEXT)
+                    assert any(tab["text"] == "Needs you" for tab in tabs), (
+                        where,
+                        tabs,
+                    )
+                    assert [tab for tab in tabs if tab["clipped"] > 0] == [], (
+                        where,
+                        tabs,
+                    )
+                    assert [
+                        tab
+                        for tab in tabs
+                        if tab["text"].rstrip().endswith(("…", "..."))
+                    ] == [], (where, tabs)
+                    assert page.evaluate(
+                        "() => document.documentElement.scrollWidth <= window.innerWidth"
+                    ), where
+
+
 def test_compact_selection_brings_back_to_works_into_view() -> None:
     """Choosing a work far down the compact list scrolls the workspace's top,
     where Back to works leads it, to just below the masthead (#1284)."""
