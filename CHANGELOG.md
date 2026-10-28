@@ -12,6 +12,7 @@
   advice and description selections on every read when several share one
   second: each is cut to the history limit in the order it is displayed, rather
   than in whatever order the database happened to return (#1209).
+
 - The Audiobookshelf field-effect canary runs end to end again: its synthetic
   catalogues no longer split title and author evidence, and its cover accept is
   pinned to the decision contract (#1427, #1185).
