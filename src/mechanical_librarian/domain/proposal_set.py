@@ -50,6 +50,7 @@ from mechanical_librarian.domain.metadata_report import (
     ASSERTED_ASIN_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    CORROBORATED_RULE_AUTHORITY,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -66,6 +67,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    RecordingCorroboration,
     ReportValueError,
     TargetDestination,
     TargetField,
@@ -89,6 +91,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_work_identity_contradiction,
     publication_date_is_voting,
     recording_association_references,
+    recording_corroboration,
     recording_variant_conflict,
     target_work_identity_context,
     work_discovery_lane_payloads,
@@ -110,7 +113,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v37"
+POLICY_VERSION = "fixed-conservative-v38"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -3411,6 +3414,7 @@ def _target_backed_lookup_contains(
                     expected_authors,
                     audiobook=report.audio is not None,
                     band_claims=_asserted_lane_band_claims(report, provider, lane),
+                    corroboration=_asserted_lane_corroboration(report, provider, lane),
                 )
                 and lane.identity
                 == discovery_lane_identity(
@@ -3450,6 +3454,7 @@ def _candidate_set_replays_work_qualification(
     *,
     audiobook: bool = False,
     band_claims: tuple[LocalClaim, ...] | None = None,
+    corroboration: RecordingCorroboration | None = None,
 ) -> bool:
     """Replay one unambiguous WORK candidate set before granting authority."""
     candidates_by_identity = {value.identity: value for value in provider.candidates}
@@ -3468,6 +3473,8 @@ def _candidate_set_replays_work_qualification(
         lane.dispatch_lineage,
         audiobook=audiobook,
         band_claims=band_claims,
+        corroboration=corroboration,
+        leading_number=corroboration is not None,
     )
     return (
         admission.admitted
@@ -3499,6 +3506,24 @@ def _asserted_lane_band_claims(
                 report.audio.discovery_titles,
             )
         )
+        else None
+    )
+
+
+def _asserted_lane_corroboration(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    lane: ProviderLaneObservation,
+) -> RecordingCorroboration | None:
+    """Read what a corroborated-rule admission replays against (#1307).
+
+    Only the catalogue's asserted lane has it, beside its band claims, exactly
+    as report construction and report validation pass it.
+    """
+    return (
+        recording_corroboration(report.target.fields)
+        if provider.authority == CORROBORATED_RULE_AUTHORITY
+        and _asserted_lane_band_claims(report, provider, lane) is not None
         else None
     )
 
@@ -3628,6 +3653,12 @@ def provider_candidate_represents_target_work(
                 lane.dispatch_lineage,
                 audiobook=report.audio is not None,
                 band_claims=_asserted_lane_band_claims(report, provider, lane),
+                corroboration=(
+                    corroboration := _asserted_lane_corroboration(
+                        report, provider, lane
+                    )
+                ),
+                leading_number=corroboration is not None,
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
         else:

@@ -220,7 +220,7 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(media, kind):
     report = retained_report_as_current(
         canonical_json(json.loads((root / f"{media}-{kind}-report.json").read_text()))
     )
-    assert evaluate_report(report).policy_version == "fixed-conservative-v37"
+    assert evaluate_report(report).policy_version == "fixed-conservative-v38"
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(
             canonical_json(

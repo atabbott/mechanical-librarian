@@ -1,5 +1,14 @@
 # Upgrades and compatibility
 
+#1307 advances the report to `metadata-report-v61` and the proposal policy to
+`fixed-conservative-v38`: an audiobook ASIN lane keeps each product it refused
+with its own claims, Audible's asserted lane may admit one runtime-, title- and
+narrator- or series-corroborated product every exact path refused, provider
+whole-minute runtimes are read as floors, and the comparison version moves to
+`closed-title-creator-publication-work-identity-v6`. **Clean rebuild required** for every
+predecessor application database; startup refuses v60 reports before mutation.
+No migration, adoption, conversion, import or downgrade is supplied.
+
 #1316 advances the report to `metadata-report-v60` and the proposal policy to
 `fixed-conservative-v37`: an audiobook item carries the edition an earlier
 preparation of the same track set admitted as a `prior_admission` claim under
@@ -167,8 +176,8 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v60`, `proposal-set-v8` under
-`fixed-conservative-v37`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
+The current build uses `metadata-report-v61`, `proposal-set-v8` under
+`fixed-conservative-v38`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
 and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.

@@ -81,8 +81,10 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.operations import OperationsError, StageTiming
 from mechanical_librarian.domain.audiobook_corroboration import (
+    CorroborationOutcome,
     lane_band,
     local_claim_runtime_seconds,
+    stated_runtime_agreement,
 )
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
@@ -358,6 +360,7 @@ _DISPATCH_RANGES = (
 )
 _EVIDENCE_ONLY_REASONS = (
     "no_retained_recording_candidate",
+    "tight_product_refused_by_title",
     "no_comparable_runtime",
     "runtime_contradiction",
     "runtime_near_miss_only_or_mixed",
@@ -447,7 +450,7 @@ def _provider_lane_rows(connection: sqlite3.Connection) -> list[tuple[object, ..
     return rows
 
 
-def _evidence_only_reason(bands: frozenset[str]) -> str:
+def _evidence_only_reason(bands: frozenset[str], refused_tight: bool = False) -> str:
     """Name why an unadmitted, work-quiet audiobook stayed evidence only.
 
     `bands` holds the best runtime band of each audiobook-authority lane that
@@ -455,11 +458,21 @@ def _evidence_only_reason(bands: frozenset[str]) -> str:
     composed local runtime every band is `unstated`. A tight band cannot reach
     here under current admission, which admits it, so it falls in the last
     reason with every other mix.
+
+    Every band `unstated` is mostly an identifier lane whose products work
+    admission refused and cut to their ASIN (#1257). `refused_tight` says one
+    of the refused products the report retains (#1307) stated a runtime inside
+    the tight band: that is a tight product refused by title, and only the
+    rest have no comparable runtime.
     """
     if not bands:
         return "no_retained_recording_candidate"
     if bands == {"unstated"}:
-        return "no_comparable_runtime"
+        return (
+            "tight_product_refused_by_title"
+            if refused_tight
+            else "no_comparable_runtime"
+        )
     if bands == {"outside"}:
         return "runtime_contradiction"
     return "runtime_near_miss_only_or_mixed"
@@ -531,7 +544,15 @@ def _audiobook_rows(
                     if provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
                     for lane in provider.lanes
                 )
-                - {"none"}
+                - {"none"},
+                local is not None
+                and any(
+                    stated_runtime_agreement(local, product).outcome
+                    is CorroborationOutcome.CORROBORATED
+                    for provider in report.providers
+                    if provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+                    for product in provider.refused_products
+                ),
             )
         )
         outcome = (

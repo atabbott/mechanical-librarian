@@ -1,5 +1,14 @@
 # Pre-release compatibility policy
 
+#1307 advances the report to `metadata-report-v61` and the proposal policy to
+`fixed-conservative-v38`: an audiobook ASIN lane keeps each product it refused
+with its own claims, Audible's asserted lane may admit one runtime-, title- and
+narrator- or series-corroborated product every exact path refused, provider
+whole-minute runtimes are read as floors, and the comparison version moves to
+`closed-title-creator-publication-work-identity-v6`. **Clean rebuild required** for every
+predecessor application database; startup refuses v60 reports before mutation.
+No migration, adoption, conversion, import or downgrade is supplied.
+
 #1316 advances the report to `metadata-report-v60` and the proposal policy to
 `fixed-conservative-v37`: an audiobook item carries the edition an earlier
 preparation of the same track set admitted as a `prior_admission` claim under
@@ -193,8 +202,8 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v60` plus `proposal-set-v8` under
-  `fixed-conservative-v37`, or the separate `catalogue-v2` schema;
+  `metadata-report-v61` plus `proposal-set-v8` under
+  `fixed-conservative-v38`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v23`,
@@ -583,6 +592,23 @@ lane refused products v57 admits, so the exact SQLite discriminator requires a
 migration, adoption or relabelling is supplied. The comparison version, the
 proposal and decision policies and the proposal, packet, outcome and review
 envelopes are unchanged.
+
+## Corroborated admission and refused products (#1307)
+
+Report `metadata-report-v61` adds `refused_products` to every provider
+observation: the full product behind each ASIN-only stub on an audiobook ASIN
+lane, with no evidence. A lane's `transformation_lineage` may now name
+`band_corroborated_title_relation` with one `corroborated_title_relation`
+application, and an Audible asserted lane's dispatch lineage may name the
+`leading_number_stripped` rung. Provider whole-minute runtimes are read as
+floors against the tight band. A v60 report cannot state what a v61 report
+records, so the exact SQLite discriminator requires a **clean rebuild** under
+ADR-0013, and the proposal policy moves to `fixed-conservative-v38`. Prior
+stores are refused before mutation. No migration, adoption or relabelling is
+supplied. The comparison version moves to
+`closed-title-creator-publication-work-identity-v6` because a lone apostrophe
+between letters now folds (ADR-0018). The packet, outcome and review envelopes
+are unchanged.
 
 ## Provider log events (#1299)
 

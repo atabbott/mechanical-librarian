@@ -218,6 +218,7 @@ def test_closed_rule_table_has_one_independent_row_per_family() -> None:
         WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
         WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED,
         WorkTitleTransformationFamily.INITIALS_FOLD,
+        WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION,
     }
     assert [] == [
         rule.family
@@ -654,6 +655,7 @@ def test_constituent_families_stay_query_only_in_the_rule_table() -> None:
         WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME,
         WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX,
         WorkTitleTransformationFamily.INITIALS_FOLD,
+        WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION,
     }
     # A trailing sequence names no series a product could corroborate (#1260).
     assert "band_trailing_series_sequence" not in {
@@ -1252,14 +1254,21 @@ def test_audiobook_families_are_query_only_normalized_rows_in_place() -> None:
         for rule in WORK_TITLE_TRANSFORMATION_RULES
         if rule.audiobook_only
     ] == [(True, False, WorkDispatchRung.NORMALIZED)] * 2 + [
-        (False, False, WorkDispatchRung.NORMALIZED)
+        (False, False, WorkDispatchRung.NORMALIZED),
+        (True, False, WorkDispatchRung.LEADING_NUMBER_STRIPPED),
+        (False, False, WorkDispatchRung.NORMALIZED),
     ]
-    # The initials fold (#1260) is the one audiobook-only row that shapes no
-    # query, appended after every query row.
-    assert families[-1] is WorkTitleTransformationFamily.INITIALS_FOLD
+    # The initials fold (#1260) is appended after every query row, and #1307
+    # appends the leading number, on its own rung, and the corroborated title
+    # relation, which shapes no query, after it.
+    assert families[-3:] == (
+        WorkTitleTransformationFamily.INITIALS_FOLD,
+        WorkTitleTransformationFamily.LEADING_NUMBER,
+        WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION,
+    )
     assert {
         rule.family for rule in WORK_TITLE_TRANSFORMATION_RULES if rule.audiobook_only
-    } == {*_AUDIOBOOK_FAMILIES, WorkTitleTransformationFamily.INITIALS_FOLD}
+    } == {*_AUDIOBOOK_FAMILIES, *families[-3:]}
 
 
 @pytest.mark.parametrize(

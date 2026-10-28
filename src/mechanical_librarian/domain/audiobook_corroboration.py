@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import Final, cast
 
@@ -46,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    RecordingCorroboration,
     RecordingLookupHint,
     TargetDestination,
     TargetFieldState,
@@ -54,9 +56,14 @@ from mechanical_librarian.domain.metadata_report import (
     discovery_lane_identity,
     duration_milliseconds,
     provider_candidate_exact_work_identity_admission,
+    provider_candidate_identity_title_claims,
     recording_variant_conflict,
 )
-from mechanical_librarian.domain.work_identity import WorkDispatchLineage
+from mechanical_librarian.domain.work_identity import (
+    WorkDispatchLineage,
+    work_title_extends,
+    work_title_related,
+)
 
 # Ninety whole seconds. A provider states a runtime in whole minutes, so two
 # sources that agree exactly still differ by up to half a minute of rounding on
@@ -70,6 +77,9 @@ RUNTIME_BAND_TIGHT_SECONDS: Final = 90
 # the same recording with a different intro, outro, or end-credit block.
 # Beyond it, two recordings of one work are the ordinary explanation.
 RUNTIME_BAND_LOOSE_SECONDS: Final = 600
+# Every audiobook authority states its runtime in whole minutes, truncated, so
+# the running time a minute states runs up to 59 seconds past it (#1307).
+MINUTE_FLOOR_SECONDS: Final = 59
 # Chapter boundaries are cut once and re-encoded, so two statements of one
 # chapter agree to about a second. Two is the measured tolerance.
 CHAPTER_DURATION_TOLERANCE_SECONDS: Final = 2
@@ -256,15 +266,23 @@ def runtime_corroborated_candidate(
     local = local_claim_runtime_seconds(local_claims)
     if local is None:
         return None
-    admitted: list[tuple[ProviderCandidate, CorroborationSignal]] = []
-    for candidate in candidates:
-        signal = runtime_agreement(local, candidate_runtime_seconds(candidate))
-        if signal.outcome is CorroborationOutcome.CORROBORATED:
-            admitted.append((candidate, signal))
-    if not admitted:
-        return None
-    candidate, signal = min(admitted, key=lambda value: value[0].identity)
-    return candidate, signal.reasons
+    # A product inside the band read exactly keeps its precedence over one the
+    # minute floor alone brings in, so the floor reading (#1307) never changes
+    # which candidate an earlier admission chose.
+    for provider_minutes in (False, True):
+        admitted: list[tuple[ProviderCandidate, CorroborationSignal]] = []
+        for candidate in candidates:
+            signal = runtime_agreement(
+                local,
+                candidate_runtime_seconds(candidate),
+                provider_minutes=provider_minutes,
+            )
+            if signal.outcome is CorroborationOutcome.CORROBORATED:
+                admitted.append((candidate, signal))
+        if admitted:
+            candidate, signal = min(admitted, key=lambda value: value[0].identity)
+            return candidate, signal.reasons
+    return None
 
 
 def loose_band_survivors(
@@ -363,9 +381,8 @@ def lane_band(
         return "none"
     retained = {candidate.identity: candidate for candidate in provider.candidates}
     outcomes = {
-        runtime_agreement(
-            local_runtime,
-            candidate_runtime_seconds(retained[value.edition_identity]),
+        stated_runtime_agreement(
+            local_runtime, retained[value.edition_identity]
         ).outcome
         for value in lane.candidates
     }
@@ -413,7 +430,7 @@ def recording_lookup_hints(
             or asin in held
             # A sub-second statement rounds to no runtime a hint can carry.
             or not stated
-            or runtime_agreement(local, stated).outcome
+            or runtime_agreement(local, stated, provider_minutes=True).outcome
             is not CorroborationOutcome.CORROBORATED
         ):
             continue
@@ -462,12 +479,23 @@ def local_chapter_durations_seconds(audio: AudioFacts | None) -> tuple[int, ...]
 
 
 def runtime_agreement(
-    local_seconds: int | None, provider_seconds: int | None
+    local_seconds: int | None,
+    provider_seconds: int | None,
+    *,
+    provider_minutes: bool = False,
 ) -> CorroborationSignal:
-    """Compare two running times against the two named tolerance bands."""
+    """Compare two running times against the two named tolerance bands.
+
+    `provider_minutes` says the provider's value is a whole-minute statement
+    (#1307, ADR-0064 as amended): a minute is a floor, so the running time it
+    states lies in `[m, m + 59]` seconds, and the tight band measures from
+    that interval rather than from its lower end. The band stays 90 seconds
+    wide, and the loose band still measures from the stated value.
+    """
     if (
         type(local_seconds) is not int
         or type(provider_seconds) is not int
+        or type(provider_minutes) is not bool
         or local_seconds < 0
         or provider_seconds < 0
     ):
@@ -476,7 +504,12 @@ def runtime_agreement(
             CorroborationReason.RUNTIME_UNAVAILABLE,
         )
     difference = abs(local_seconds - provider_seconds)
-    if difference <= RUNTIME_BAND_TIGHT_SECONDS:
+    if (
+        tight_runtime_distance(
+            local_seconds, provider_seconds, provider_minutes=provider_minutes
+        )
+        <= RUNTIME_BAND_TIGHT_SECONDS
+    ):
         return _signal(
             CorroborationOutcome.CORROBORATED,
             CorroborationReason.RUNTIME_WITHIN_TIGHT_BAND,
@@ -489,6 +522,31 @@ def runtime_agreement(
     return _signal(
         CorroborationOutcome.CONTRADICTED,
         CorroborationReason.RUNTIME_OUTSIDE_BANDS,
+    )
+
+
+def tight_runtime_distance(
+    local_seconds: int, provider_seconds: int, *, provider_minutes: bool = False
+) -> int:
+    """Measure a provider running time's distance for the tight band (#1307).
+
+    A whole-minute statement is read as the interval `[m, m + 59]` seconds,
+    and its distance is zero inside that interval; any other value is read
+    exactly.
+    """
+    if not provider_minutes or provider_seconds % 60:
+        return abs(local_seconds - provider_seconds)
+    if local_seconds < provider_seconds:
+        return provider_seconds - local_seconds
+    return max(0, local_seconds - provider_seconds - MINUTE_FLOOR_SECONDS)
+
+
+def stated_runtime_agreement(
+    local_seconds: int | None, candidate: ProviderCandidate
+) -> CorroborationSignal:
+    """Compare a recording with the whole-minute runtime a product states."""
+    return runtime_agreement(
+        local_seconds, candidate_runtime_seconds(candidate), provider_minutes=True
     )
 
 
@@ -918,6 +976,7 @@ __all__ = [
     "CorroborationReason",
     "CorroborationSignal",
     "CorroborationValueError",
+    "MINUTE_FLOOR_SECONDS",
     "RUNTIME_BAND_LOOSE_SECONDS",
     "RUNTIME_BAND_TIGHT_SECONDS",
     "STRONG_CHAPTER_AGREEMENT_MINIMUM",
@@ -936,7 +995,11 @@ __all__ = [
     "runtime_agreement",
     "runtime_corroborated_candidate",
     "runtime_short_of_stated",
+    "stated_runtime_agreement",
+    "tight_runtime_distance",
     "admitted_recording_asin",
+    "band_first_candidate",
+    "corroborated_recording_candidate",
     "candidate_edition_asin",
     "candidate_narrator_disjoint",
     "carried_asin_claim",
@@ -963,7 +1026,7 @@ def recording_runtime_veto(candidate: ProviderCandidate, coverage: int) -> bool:
         duration.state is not FieldState.VALID
         or seconds is None
         or seconds <= 0
-        or runtime_agreement(coverage, seconds).outcome
+        or runtime_agreement(coverage, seconds, provider_minutes=True).outcome
         is not CorroborationOutcome.CORROBORATED
     )
 
@@ -1265,6 +1328,296 @@ def _candidate_narrators(candidate: ProviderCandidate) -> tuple[str, ...]:
         and claim.state is FieldState.VALID
         and claim.value is not None
     )
+
+
+class _Signal(StrEnum):
+    AGREE = "agree"
+    CONTRADICT = "contradict"
+    UNKNOWN = "unknown"
+
+
+# Words a series name carries that say nothing about which series it is.
+_SERIES_NOISE: Final = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "series",
+        "saga",
+        "trilogy",
+        "cycle",
+        "chronicles",
+        "book",
+        "books",
+        "novel",
+        "novels",
+        "sequence",
+    }
+)
+_SEQUENCE_NUMBER: Final = re.compile(r"[0-9]+(?:\.[0-9]+)?")
+
+
+def _series_key(value: str) -> str:
+    folded = re.sub(r"[^\w\s]|_", " ", value.casefold())
+    return " ".join(token for token in folded.split() if token not in _SERIES_NOISE)
+
+
+def _sequence_number(value: str | None) -> Decimal | None:
+    match = None if value is None else _SEQUENCE_NUMBER.search(value)
+    return None if match is None else Decimal(match.group())
+
+
+def _local_series(
+    local_claims: tuple[LocalClaim, ...], corroboration: RecordingCorroboration
+) -> tuple[tuple[str, str | None], ...]:
+    names = tuple(
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.SERIES
+        and claim.state is FieldState.VALID
+        and claim.canonical
+    )
+    sequences = tuple(
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.SERIES_SEQUENCE
+        and claim.state is FieldState.VALID
+        and claim.canonical
+    )
+    tagged = (
+        ((names[0], sequences[0] if len(sequences) == 1 else None),)
+        if len(names) == 1
+        else ()
+    )
+    return (
+        *((value.name, value.sequence) for value in corroboration.series),
+        *tagged,
+    )
+
+
+def _candidate_series(
+    candidate: ProviderCandidate,
+) -> tuple[tuple[str, str | None], ...]:
+    ordered = tuple(sorted(candidate.claims, key=lambda claim: claim.raw_order))
+    memberships: list[tuple[str, str | None]] = []
+    for index, claim in enumerate(ordered):
+        if (
+            claim.kind is not ClaimKind.SERIES
+            or claim.state is not FieldState.VALID
+            or claim.value is None
+        ):
+            continue
+        following = ordered[index + 1] if index + 1 < len(ordered) else None
+        memberships.append(
+            (
+                claim.value,
+                following.value
+                if following is not None
+                and following.kind is ClaimKind.SERIES_SEQUENCE
+                and following.state is FieldState.VALID
+                else None,
+            )
+        )
+    return tuple(memberships)
+
+
+def _series_signal(
+    local: tuple[tuple[str, str | None], ...],
+    product: tuple[tuple[str, str | None], ...],
+) -> _Signal:
+    """Agree on one shared series number, contradict on a different one.
+
+    Two memberships name one series only when their normalized names are
+    equal. A different number on any such pair contradicts, whatever another
+    pair says; otherwise an equal number on one agrees.
+    """
+    agree = False
+    for local_name, local_sequence in local:
+        for product_name, product_sequence in product:
+            left, right = _series_key(local_name), _series_key(product_name)
+            if not left or left != right:
+                continue
+            left_number = _sequence_number(local_sequence)
+            right_number = _sequence_number(product_sequence)
+            if left_number is None or right_number is None:
+                continue
+            if left_number != right_number:
+                return _Signal.CONTRADICT
+            agree = True
+    return _Signal.AGREE if agree else _Signal.UNKNOWN
+
+
+def _narrator_signal(local: tuple[str, ...], candidate: ProviderCandidate) -> _Signal:
+    product = _candidate_narrators(candidate)
+    if not local or not product:
+        return _Signal.UNKNOWN
+    if narrator_cast_disjoint(local, product):
+        return _Signal.CONTRADICT
+    return _Signal.AGREE
+
+
+def _corroborated_distance(
+    candidate: ProviderCandidate,
+    title: str,
+    authors: tuple[str, ...],
+    local_claims: tuple[LocalClaim, ...],
+    corroboration: RecordingCorroboration,
+) -> int | None:
+    """The tight-band distance of one product the rule admits, or ``None``."""
+    local = local_claim_runtime_seconds(local_claims)
+    stated = candidate_runtime_seconds(candidate)
+    claims = provider_candidate_identity_title_claims(candidate)
+    if (
+        local is None
+        or not stated
+        or claims is None
+        or stated_runtime_agreement(local, candidate).outcome
+        is not CorroborationOutcome.CORROBORATED
+        or recording_variant_conflict(candidate, local_claims, title) is not None
+    ):
+        return None
+    provider_title, provider_subtitle, provider_authors = claims
+    if not work_title_related(title, provider_title, provider_subtitle):
+        return None
+    # The author is the query's own term, so it only ever contradicts.
+    if narrator_cast_disjoint(authors, provider_authors):
+        return None
+    narrators = _narrator_signal(
+        (*corroboration.narrators, *_recording_narrators(local_claims)), candidate
+    )
+    series = _series_signal(
+        _local_series(local_claims, corroboration), _candidate_series(candidate)
+    )
+    if _Signal.CONTRADICT in {narrators, series} or _Signal.AGREE not in {
+        narrators,
+        series,
+    }:
+        return None
+    # A title that runs on past the other, on either side, is the shape of a
+    # series neighbour by the same author and narrator, so only an agreeing
+    # series position admits it.
+    if (
+        work_title_extends(
+            title,
+            provider_title,
+            provider_subtitle,
+            decorations=tuple(
+                name
+                for name, _ in (
+                    *_local_series(local_claims, corroboration),
+                    *_candidate_series(candidate),
+                )
+            ),
+            sequences=tuple(
+                sequence
+                for _, sequence in _candidate_series(candidate)
+                if sequence is not None
+            ),
+        )
+        and series is not _Signal.AGREE
+    ):
+        return None
+    return tight_runtime_distance(local, stated, provider_minutes=True)
+
+
+def corroborated_recording_candidate(
+    candidates: tuple[ProviderCandidate, ...],
+    title: str,
+    authors: tuple[str, ...],
+    local_claims: tuple[LocalClaim, ...],
+    corroboration: RecordingCorroboration,
+) -> ProviderCandidate | None:
+    """Choose the one product the corroborated admission rule admits (#1307).
+
+    The rule reads only where exact admission admitted nothing. A product
+    qualifies when its whole-minute runtime is inside the tight band, its
+    title is related to the local one (`work_title_related`, the mandatory
+    guard), its narrator or series number agrees, and nothing contradicts it:
+    no disjoint narrator cast or author set, no different series number, and
+    no recording language or format conflict. When several products qualify,
+    each must state a narrator and share narrators with every other, or none
+    is admitted; of those that do, the closest runtime wins, then the
+    identity.
+    """
+    if (
+        type(candidates) is not tuple
+        or any(type(value) is not ProviderCandidate for value in candidates)
+        or type(corroboration) is not RecordingCorroboration
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    qualified = tuple(
+        (distance, candidate)
+        for candidate in candidates
+        if (
+            distance := _corroborated_distance(
+                candidate, title, authors, local_claims, corroboration
+            )
+        )
+        is not None
+    )
+    # Several qualifying editions are one recording only when each states a
+    # narrator and no two casts are disjoint: an unnarrated edition beside
+    # them could be any recording, so it does not pass by saying nothing.
+    if not qualified or (
+        len(qualified) > 1
+        and (
+            any(not _candidate_narrators(candidate) for _, candidate in qualified)
+            or any(
+                narrator_cast_disjoint(
+                    _candidate_narrators(left), _candidate_narrators(right)
+                )
+                for _, left in qualified
+                for _, right in qualified
+            )
+        )
+    ):
+        return None
+    return min(qualified, key=lambda value: (value[0], value[1].identity))[1]
+
+
+def band_first_candidate(
+    admitted: tuple[ProviderCandidate, ...],
+    title: str,
+    local_claims: tuple[LocalClaim, ...],
+    corroboration: RecordingCorroboration,
+) -> ProviderCandidate | None:
+    """Admit the one tight product of a set of title-admitted ones (#1260, #1307).
+
+    Every product here already passed work-identity admission one by one, but
+    each Audible product is its own work identity, so two of them refuse the
+    set. When exactly one is inside the tight band, every other one is beyond
+    the loose band, and the tight one has no recording conflict and no
+    narrator cast disjoint from the recording's own, that one is the
+    recording and the rest are other cuts of the work.
+    """
+    if type(admitted) is not tuple or any(
+        type(value) is not ProviderCandidate for value in admitted
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    local = local_claim_runtime_seconds(local_claims)
+    if local is None or len(admitted) < 2:
+        return None
+    outcomes = tuple(
+        (stated_runtime_agreement(local, candidate).outcome, candidate)
+        for candidate in admitted
+    )
+    tight = tuple(
+        candidate
+        for outcome, candidate in outcomes
+        if outcome is CorroborationOutcome.CORROBORATED
+    )
+    if (
+        len(tight) != 1
+        or sum(outcome is CorroborationOutcome.CONTRADICTED for outcome, _ in outcomes)
+        != len(admitted) - 1
+        or recording_variant_conflict(tight[0], local_claims, title) is not None
+        or _narrator_signal(
+            (*corroboration.narrators, *_recording_narrators(local_claims)), tight[0]
+        )
+        is _Signal.CONTRADICT
+    ):
+        return None
+    return tight[0]
 
 
 def carried_asin_claim(local_claims: tuple[LocalClaim, ...]) -> LocalClaim | None:

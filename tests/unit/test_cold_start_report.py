@@ -1552,6 +1552,7 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
 
     reasons = {
         "no_retained_recording_candidate": 1,
+        "tight_product_refused_by_title": 0,
         "no_comparable_runtime": 1,
         "runtime_contradiction": 1,
         "runtime_near_miss_only_or_mixed": 1,
@@ -1571,6 +1572,7 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
         },
         "work_only_by_reason": {
             "no_retained_recording_candidate": 1,
+            "tight_product_refused_by_title": 0,
             "no_comparable_runtime": 0,
             "runtime_contradiction": 1,
             "runtime_near_miss_only_or_mixed": 0,
@@ -1683,6 +1685,7 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
     (
         (frozenset(), "no_retained_recording_candidate"),
         (frozenset({"unstated"}), "no_comparable_runtime"),
+        (frozenset({"unstated", "refused_tight"}), "tight_product_refused_by_title"),
         (frozenset({"outside"}), "runtime_contradiction"),
         (frozenset({"loose"}), "runtime_near_miss_only_or_mixed"),
         (frozenset({"loose", "outside"}), "runtime_near_miss_only_or_mixed"),
@@ -1695,7 +1698,9 @@ def test_audiobook_outcomes_cover_reads_and_dispatches_count_exactly() -> None:
 def test_an_evidence_only_audiobook_is_named_by_its_best_bands(
     bands: frozenset[str], reason: str
 ) -> None:
-    assert reason == cold_start._evidence_only_reason(bands)
+    assert reason == cold_start._evidence_only_reason(
+        bands - {"refused_tight"}, "refused_tight" in bands
+    )
 
 
 def test_automatic_decisions_count_per_library_destination_and_outcome(
