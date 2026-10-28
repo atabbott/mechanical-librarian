@@ -6027,7 +6027,11 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 page.route(
                     "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
                 )
+                # A phone with enlarged text, where the refusal falls below
+                # the fold unless it is brought into view (#1291).
+                page.set_viewport_size({"width": 390, "height": 844})
                 page.goto(origin)
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
                 expect(
                     page.get_by_role("heading", name="Create your owner password")
                 ).to_be_visible()
@@ -6035,10 +6039,15 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
                 page.get_by_label("Confirm owner password", exact=True).fill(_PASSWORD)
                 page.get_by_role("button", name="Create owner access").click()
-                expect(page.get_by_role("alert")).to_contain_text(
+                refusal = page.get_by_role("alert")
+                expect(refusal).to_contain_text(
                     "That setup claim token was not accepted"
                 )
                 expect(claim_token).to_have_attribute("aria-invalid", "true")
+                page.evaluate("() => new Promise(requestAnimationFrame)")
+                box = refusal.bounding_box()
+                assert box is not None
+                assert box["y"] >= 0 and box["y"] + box["height"] <= 844, box
                 assert token_file.exists()
                 claim_token.fill(token)
                 page.get_by_role("button", name="Create owner access").click()
@@ -7217,6 +7226,20 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(
                     page.get_by_role("button", name="Show the Hardcover API key")
                 ).to_be_visible()
+                # With 200% text on the narrowest phone, a key and its Show
+                # button share the row or wrap inside it, never past it.
+                page.set_viewport_size({"width": 320, "height": 800})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                overflowing = page.evaluate(
+                    """() => [...document.querySelectorAll('.reveal-row')].filter(row => {
+                      const edge = row.getBoundingClientRect().right;
+                      return row.scrollWidth > row.clientWidth + 1 || [...row.children]
+                        .some(child => child.getBoundingClientRect().right > edge + 1);
+                    }).length"""
+                )
+                assert overflowing == 0
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 1440, "height": 900})
                 expect(
                     page.get_by_text(
                         "Cover evidence from Audible stays off until you turn it on "

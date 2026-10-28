@@ -93,8 +93,8 @@ SETUP_CSS += (
     ".reviewer-detail p{color:var(--quiet);font-size:.8rem}"
     ".reveal-row,.summary-row>*,.prerequisites>*,.rules>*{min-width:0}"
     ".field-label{font-size:.75rem;font-weight:800}"
-    ".reveal-row{display:flex;align-items:stretch;gap:.5rem}"
-    ".reveal-row input{flex:1 1 auto}"
+    ".reveal-row{display:flex;flex-wrap:wrap;align-items:stretch;gap:.5rem}"
+    ".reveal-row input{flex:1 1 10rem;min-width:0}"
     ".reveal{flex:0 0 auto;padding:.65rem .8rem;font-size:.78rem;background:var(--sheet);color:var(--teal);border-color:var(--strong);overflow-wrap:anywhere}"
     ".reveal[aria-pressed=true]{background:var(--wash)}"
     "input[aria-invalid=true],select[aria-invalid=true]{border-color:var(--red);border-width:2px}"
@@ -267,6 +267,9 @@ const error=(form,message,control,address)=>{
     },{once:true,signal:refusalGuard.signal});
     control.focus();
     const settle=requestAnimationFrame(()=>{if(control.isConnected)control.focus({preventScroll:true})});
+    // The refusal follows its field, so bring it into view too: on a short
+    // screen or with enlarged text it can fall below the fold.
+    node.scrollIntoView({block:'nearest'});
     form.addEventListener('focusin',event=>{if(event.target!==control&&event.target.matches('input,select,textarea'))cancelAnimationFrame(settle)},{signal:refusalGuard.signal})
   }
   return node
