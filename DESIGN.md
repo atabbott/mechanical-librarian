@@ -87,6 +87,17 @@ components:
     rounded: "{rounded.control}"
     padding: "0.6rem 0.85rem"
     height: "2.75rem"
+  button-danger:
+    backgroundColor: "transparent"
+    textColor: "{colors.correction-red}"
+    rounded: "{rounded.control}"
+    padding: "0.6rem 0.85rem"
+    height: "2.75rem"
+  status-pill:
+    backgroundColor: "{colors.catalogue-line}"
+    textColor: "{colors.quiet-ink}"
+    rounded: "{rounded.pill}"
+    padding: "0.18rem 0.45rem"
   navigation-active:
     backgroundColor: "{colors.archive-teal-wash}"
     textColor: "{colors.archive-teal-deep}"
@@ -163,6 +174,10 @@ for refusal, failure, or revocation.
   errors, destructive or revocation actions, and blocked status.
 - **Focus Blue** (`#146fba`) and **Night Focus Blue** (`#78bdf2`): keyboard
   focus only; this blue is an accessibility signal, not a decorative accent.
+- **Correction Wash** (`--danger-soft`): derived, not a new hue. It is 10%
+  Correction Red over Porcelain Sheet or Deep Stacks, so each theme resolves its
+  own pair, and it backs danger status pills, stopped preparation rows, clear
+  confirmations, and read failures.
 
 ### Neutral
 
@@ -193,7 +208,9 @@ switching themes.
 
 **Display Font:** Georgia (with Times New Roman and serif fallbacks)
 
-**Body Font:** Inter (with system sans-serif fallbacks)
+**Body Font:** Inter (with system sans-serif fallbacks). The review workspace
+self-hosts Inter's variable latin and latin-ext faces (SIL Open Font License),
+swapped in when loaded; sign-in and setup still render the fallback stack.
 
 **Character:** Georgia gives titles, work identity, values, and metrics the
 cadence of a catalogue or reference edition. Inter carries navigation, labels,
@@ -222,10 +239,11 @@ owner must operate, scan, or verify.
 
 The application is a bounded editorial workspace rather than an edge-to-edge
 dashboard. Main content is capped at `98rem` and padded with
-`clamp(1rem, 3vw, 2.6rem)`. A sticky 62px masthead holds identity, three permanent
-destinations—Library, Policy, and Activity—plus preparation status, theme,
-privacy, and sign-out controls. Attention stays contextual to Library instead
-of competing as a fourth permanent destination.
+`clamp(1rem, 3vw, 2.6rem)`. A sticky 62px masthead holds identity, four permanent
+destinations—Library, Policy, Activity, and Settings—plus the live-update
+status (shown only while it reconnects), preparation status, theme, and sign-out
+controls. Attention stays contextual to Library instead of competing as a
+permanent destination.
 
 Wide task surfaces use asymmetric grids. Library pairs a sticky 310–380px work
 index with a flexible preview; Policy pairs a 220px chapter index with notebook
@@ -234,14 +252,18 @@ full-width ledger. The common rhythm is compact—`0.25rem`, `0.35rem`, `0.5rem`
 `0.75rem`, `1rem`, and `1.25rem`—with larger space reserved for page framing
 rather than individual controls.
 
-At 1300px, detail facts move below the field heading. Between 701px and 1199px,
-attention becomes a contextual Library drawer; by 1024px, workspace columns
-tighten. At 760px, grids become single-column, sticky side regions become inline
-or compact pickers, selected Library work replaces the index with an explicit
-back control, the masthead wraps into a horizontally scrollable destination
-row, and page padding becomes `1rem 0.75rem 4rem`. Focused refinements at 420px
-and 390px preserve controls and ledger reading order. Nothing assumes a viewport
-wider than 320px.
+Width breakpoints follow one ladder: 1200px, 1024px, 760px, and 390px, with a
+320px floor. Every width query uses one of those steps, written as
+`max-width: 1199px` below 1200 and as `min-width` 1025px, 761px, or 391px for the
+range above a step. Below 1200px, detail facts move below the field heading,
+Activity ledger columns tighten, and from 761px attention becomes a contextual
+Library drawer. At 1024px, workspace columns tighten, selected Library work
+replaces the index with an explicit back control, and cover comparisons and
+direct choices fold into one scrollable or stacked row. At 760px, grids become
+single-column, sticky side regions become inline or compact pickers, the
+masthead wraps into a horizontally scrollable destination row, and page padding
+becomes `1rem 0.75rem 4rem`. Focused refinements at 390px preserve controls and
+ledger reading order. Nothing assumes a viewport wider than 320px.
 
 ## Elevation & Depth
 
@@ -286,6 +308,9 @@ substantial enough to trust, and never ornamental for their own sake.
 
 ### Buttons
 
+One `Button` carries three variants: primary, secondary, and danger. It sets no
+default type, so every call site states its own.
+
 - **Shape:** compact rounded rectangle (`0.5rem`) with `0.6rem 0.85rem` default
   padding. Primary task and touch targets are at least `2.75rem`/44px; dense
   desktop inspection and pagination controls may use 40px before returning to
@@ -298,13 +323,20 @@ substantial enough to trust, and never ornamental for their own sake.
   implemented two-pixel Archive Teal outline where their local component
   contract requires it.
 - **Secondary / Ghost:** paper-toned or transparent surfaces with catalogue
-  borders. Danger actions stay transparent with Correction Red text and border
-  until explicitly invoked.
+  borders; secondary is the plain button.
+- **Danger:** transparent with Correction Red text and border until explicitly
+  invoked.
+- **Disabled:** every variant keeps its structure at 55% opacity.
 
-### Chips
+### Chips and Status Pills
 
 - **Style:** fully rounded, compact, and text-led. Lenses have a catalogue-line
-  border; passive status chips use a softly mixed line background.
+  border.
+- **Status pills:** one `StatusPill` describes compact state in four tones:
+  neutral (Quiet Ink on a softly mixed line background), notice (Margin Ochre
+  on its wash), accent (Deep Archive Teal on Archive Teal Wash), and danger
+  (Correction Red on Correction Wash). The words carry the state; the tone only
+  reinforces it. Counts are not status and keep their own badges.
 - **State:** selected chips use Archive Teal borders, Deep Archive Teal text,
   and Archive Teal Wash. Chips filter or describe state; they do not become
   miniature cards.
@@ -334,8 +366,8 @@ substantial enough to trust, and never ornamental for their own sake.
 
 The sticky masthead uses quiet, bold sans-serif labels in 44px pill targets.
 The active destination alone receives the Archive Teal Wash. At compact widths,
-the product name and secondary shell labels recede while Library, Policy, and
-Activity remain visible in a horizontally scrollable row. Attention is opened
+the product name and secondary shell labels recede while Library, Policy,
+Activity, and Settings remain visible in a horizontally scrollable row. Attention is opened
 from Library as a contextual queue, not represented as permanent navigation.
 
 ### Work Row and Book Mark

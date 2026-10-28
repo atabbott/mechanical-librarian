@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The workspace opens in your saved or system theme without a light flash,
+  uses its documented Inter typeface (self-hosted, OFL), and its main actions,
+  including Confirm write permissions, share one filled style; status chips and
+  layout breakpoints follow one design (#1289).
+
 - Labels, states and reasons now read in plain words everywhere; running times
   in hours and minutes with the real difference; languages by name; Settings
   sizes in MB and polling in minutes; one date format with relative times. A

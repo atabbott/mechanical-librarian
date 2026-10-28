@@ -299,6 +299,29 @@ SHA-256
 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`,
 is retained beside the derivative.
 
+## Vendored typeface
+
+The review workspace ships Inter's variable latin and latin-ext faces as two
+files under `frontend/src/fonts/`, copied unmodified from the npm package
+`@fontsource-variable/inter` 5.3.0 (tarball integrity
+`sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==`).
+It is a vendored asset, not an npm dependency, so no lockfile entry, licence
+allowlist entry or Renovate rule covers it.
+
+| File | SHA-256 |
+| --- | --- |
+| `inter-latin-wght-normal.woff2` | `3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62` |
+| `inter-latin-ext-wght-normal.woff2` | `34b9c504cab7a73e37b746343a449132e56cf7b5481af2cb81dc74dcff25c956` |
+
+Inter is OFL-1.1. The package's licence text, SHA-256
+`3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345`, is
+retained beside the faces in `frontend/src/fonts/LICENSE` under a provenance
+header, ships in the sdist, and is a wheel `license-files` entry, so the
+package declares `AGPL-3.0-or-later AND OFL-1.1`. The faces are content-hashed
+into the review asset bundle and served same-origin; they receive no authority.
+Changing their version, subsets, source or checksum is an ordinary tracked
+change that updates this table and the licence header together.
+
 ## Frontend build graph
 
 Node and the explicitly installed manifest-pinned npm are required exactly and neither enters the runtime

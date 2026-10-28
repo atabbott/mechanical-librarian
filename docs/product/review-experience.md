@@ -860,7 +860,8 @@ hierarchy, progressive evidence and current-case history, interaction states,
 and compact navigation. Qualification covers 1440, 884, 390, and 320 CSS-pixel
 widths in both themes without document-level horizontal overflow. The selected
 theme is non-authoritative presentation state and cannot affect review data or
-decision authority.
+decision authority. The workspace applies it before its first paint: the saved
+choice, otherwise the system theme, which it follows until a choice is saved.
 
 Activity preserves the Library workspace and Policy hierarchy. Initial entry
 mounts navigation and a useful loading state without waiting for its ledger. An
