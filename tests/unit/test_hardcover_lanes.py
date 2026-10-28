@@ -435,7 +435,7 @@ def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate() -> Non
             {"data": {"editions": "invalid", "books": [], "tags": []}},
             ProviderStatus.MALFORMED,
             "response_malformed",
-            "malformed_over_bound_response",
+            "malformed_response",
         ),
     ),
     ids=("query_rejection", "response_rejection"),
@@ -512,7 +512,7 @@ def test_hardcover_binds_rejection_diagnostics_to_each_discovery_lane() -> None:
         for lane in observation.lanes
     } == {
         ("unavailable", ("provider_declared_error",)),
-        ("malformed", ("malformed_over_bound_response",)),
+        ("malformed", ("malformed_response",)),
     }
     assert observation.request_accounting.initial_dispatches == 2
     assert observation.request_accounting.logical_requests == 2
@@ -573,7 +573,7 @@ def test_hardcover_oversized_lane_stops_remaining_requests_at_exact_bound(
         )
         assert [diagnostic.to_data() for diagnostic in incomplete.diagnostics] == [
             {
-                "category": "malformed_over_bound_response",
+                "category": "oversized_response",
                 "component": "provider",
                 "count": 1,
                 "current": None,

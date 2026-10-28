@@ -296,6 +296,65 @@ def test_response_bytes_are_charged_once_and_oversize_closes_the_budget() -> Non
     ]
 
 
+def test_an_optional_body_over_its_bound_costs_only_the_bytes_read() -> None:
+    """A dropped optional body leaves the budget for later lanes (#1308)."""
+    declared = _session(
+        lambda _: httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=b"x" * 2_048,
+        ),
+        bounds=_bounds(1_024),
+    )
+    with pytest.raises(ProviderFailure) as failure:
+        declared.request_json(
+            _URL,
+            headers=_HEADERS,
+            deadline=None,
+            classify=_unclassified,
+            oversize_keeps_budget=True,
+        )
+    assert ProviderStatus.OVERSIZED == failure.value.status
+    assert ["response_oversized"] == [
+        record.category for record in declared.attempt_records
+    ]
+    # The declared length refused the body before any of it was read.
+    assert 9_216 == declared.remaining_response_bytes
+
+    def streamed(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            content=iter((b"x" * 1_000, b"x" * 1_000)),
+        )
+
+    chunked = _session(streamed, bounds=_bounds(1_024))
+    with pytest.raises(ProviderFailure):
+        chunked.request_json(
+            _URL,
+            headers=_HEADERS,
+            deadline=None,
+            classify=_unclassified,
+            oversize_keeps_budget=True,
+        )
+    # Every chunk read is charged, and nothing more.
+    assert 9_216 - 2_000 == chunked.remaining_response_bytes
+
+
+def test_the_session_names_its_own_malformed_and_oversized_attempts() -> None:
+    malformed = _session(
+        lambda _: httpx.Response(
+            200, headers={"content-type": "application/json"}, content=b"{"
+        )
+    )
+    with pytest.raises(ProviderFailure) as failure:
+        _request(malformed)
+    assert ProviderStatus.MALFORMED == failure.value.status
+    assert ["response_malformed"] == [
+        record.category for record in malformed.attempt_records
+    ]
+
+
 def _sized(size: int) -> Callable[[httpx.Request], httpx.Response]:
     body = b'{"value":"' + b"x" * (size - 12) + b'"}'
     assert size == len(body)

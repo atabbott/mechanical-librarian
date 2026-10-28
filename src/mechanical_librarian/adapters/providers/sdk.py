@@ -186,12 +186,18 @@ class BoundedProviderSession:
         query_retry: bool = False,
         classify: ProviderResponseClassifier,
         maximum_bytes: int | None = None,
+        oversize_keeps_budget: bool = False,
     ) -> dict[str, Any]:
         """Return one decoded JSON object within the observation's bounds.
 
         `maximum_bytes` replaces the configured per-response bound for this one
         request only. It never lifts the observation's aggregate budget, which
         still caps every body it reads.
+
+        A body over its bound ends the observation's byte budget, unless
+        `oversize_keeps_budget` says the body is optional: then it costs only
+        the bytes actually read, so a later lane can still be answered (#1308).
+        A body that overruns the aggregate budget itself always ends it.
         """
         if maximum_bytes is not None and (
             type(maximum_bytes) is not int or maximum_bytes < 1
@@ -210,6 +216,7 @@ class BoundedProviderSession:
                     is_retry=query_retry or retry_index > 0,
                     classify=classify,
                     maximum_bytes=maximum_bytes,
+                    oversize_keeps_budget=oversize_keeps_budget,
                 )
             except (asyncio.CancelledError, KeyboardInterrupt):
                 if self.attempt_count != attempts_before_dispatch:
@@ -297,6 +304,7 @@ class BoundedProviderSession:
         is_retry: bool,
         classify: ProviderResponseClassifier,
         maximum_bytes: int | None,
+        oversize_keeps_budget: bool,
     ) -> dict[str, Any]:
         if self.remaining_response_bytes <= 0:
             raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
@@ -327,7 +335,9 @@ class BoundedProviderSession:
                     "content-encoding", "identity"
                 ).strip().lower() in {"", "identity"}
                 if response.is_stream_consumed and not identity_encoding:
-                    raise ProviderFailure(ProviderStatus.MALFORMED)
+                    raise ProviderFailure(
+                        ProviderStatus.MALFORMED, category="response_malformed"
+                    )
                 payload = _body(
                     response,
                     min(
@@ -339,7 +349,9 @@ class BoundedProviderSession:
                     consume=self._consume_response_bytes,
                 )
                 if not identity_encoding:
-                    raise ProviderFailure(ProviderStatus.MALFORMED)
+                    raise ProviderFailure(
+                        ProviderStatus.MALFORMED, category="response_malformed"
+                    )
                 if response.status_code != 200:
                     raise self._failure(response, payload, classify=classify)
                 if (
@@ -349,9 +361,11 @@ class BoundedProviderSession:
                     .lower()
                     not in self._accept_content_types
                 ):
-                    raise ProviderFailure(ProviderStatus.MALFORMED)
+                    raise ProviderFailure(
+                        ProviderStatus.MALFORMED, category="response_malformed"
+                    )
         except ProviderFailure as error:
-            if error.status is ProviderStatus.OVERSIZED:
+            if error.status is ProviderStatus.OVERSIZED and not oversize_keeps_budget:
                 self.remaining_response_bytes = 0
             raise
         except httpx.HTTPError as error:
@@ -368,9 +382,13 @@ class BoundedProviderSession:
         try:
             value = decode_json(payload)
         except (TypeError, ValueError, UnicodeError, RecursionError):
-            raise ProviderFailure(ProviderStatus.MALFORMED) from None
+            raise ProviderFailure(
+                ProviderStatus.MALFORMED, category="response_malformed"
+            ) from None
         if type(value) is not dict:
-            raise ProviderFailure(ProviderStatus.MALFORMED)
+            raise ProviderFailure(
+                ProviderStatus.MALFORMED, category="response_malformed"
+            )
         return value
 
     def _failure(
@@ -418,7 +436,9 @@ class BoundedProviderSession:
         self.remaining_response_bytes -= amount
         if self.remaining_response_bytes < 0:
             self.remaining_response_bytes = 0
-            raise ProviderFailure(ProviderStatus.OVERSIZED)
+            raise ProviderFailure(
+                ProviderStatus.OVERSIZED, category="response_oversized"
+            )
 
     def _incomplete(self, cause: ProviderIncompleteCause) -> ProviderFailure:
         self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
@@ -482,11 +502,17 @@ def _body(
         try:
             declared = int(length)
             if declared < 0:
-                raise ProviderFailure(ProviderStatus.MALFORMED)
+                raise ProviderFailure(
+                    ProviderStatus.MALFORMED, category="response_malformed"
+                )
             if declared > maximum:
-                raise ProviderFailure(ProviderStatus.OVERSIZED)
+                raise ProviderFailure(
+                    ProviderStatus.OVERSIZED, category="response_oversized"
+                )
         except ValueError:
-            raise ProviderFailure(ProviderStatus.MALFORMED) from None
+            raise ProviderFailure(
+                ProviderStatus.MALFORMED, category="response_malformed"
+            ) from None
     chunks: list[bytes] = []
     total = 0
     raw_chunks = (
@@ -496,7 +522,9 @@ def _body(
         consume(len(chunk))
         total += len(chunk)
         if total > maximum:
-            raise ProviderFailure(ProviderStatus.OVERSIZED)
+            raise ProviderFailure(
+                ProviderStatus.OVERSIZED, category="response_oversized"
+            )
         chunks.append(chunk)
         if deadline is not None and clock() >= deadline:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE)

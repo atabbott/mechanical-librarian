@@ -14,7 +14,15 @@ from mechanical_librarian.adapters.providers.audiosilo_metadata import (
     AudioSiloMetadataProvider,
     AudioSiloPacer,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    provider_attempt_diagnostics,
+)
+from mechanical_librarian.application.metadata_report import (
+    audiobook_discovery_plan,
+)
+from mechanical_librarian.domain.failure_diagnostics import FailureCategory
 from mechanical_librarian.domain.metadata_report import (
+    AUDIOBOOK_MARKETPLACES,
     ClaimKind,
     Comparison,
     ComparisonMethod,
@@ -24,6 +32,8 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from tests.support.audiobook_providers import (
     asin_plan,
+    audio_claim,
+    audio_target,
     local_claims,
     payload,
     unknown_path_html,
@@ -300,6 +310,161 @@ def test_a_missing_chapter_document_removes_evidence_rather_than_the_candidate()
     assert ("Project Hail Mary",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
+
+
+def _regional_work(entries: list[dict[str, object]]) -> httpx.Response:
+    work = copy.deepcopy(payload("audiosilo_work"))
+    work["recordings"][0]["asin"] = entries
+    return _json(work)
+
+
+def _every_marketplace(queried_region: str = "us") -> list[dict[str, object]]:
+    """One entry per admitted marketplace plus one outside the closed set."""
+    entries: list[dict[str, object]] = [
+        {"region": region, "asin": f"B0{index:08d}"}
+        for index, region in enumerate(AUDIOBOOK_MARKETPLACES)
+        if region != queried_region
+    ]
+    entries.insert(3, {"region": queried_region, "asin": _ASIN})
+    return [*entries, {"region": "br", "asin": "B0BRAZIL00"}]
+
+
+def test_an_over_bound_regional_map_keeps_the_queried_asins_own_entry() -> None:
+    """#1294 lost 24 AudioSilo answers to an 11-region map dropped whole (#1308)."""
+    entries = _every_marketplace()
+    assert len(AUDIOBOOK_MARKETPLACES) + 1 == len(entries)
+    _seen, handle = _recorder(work=_regional_work(entries))
+    observation = _provider(handle).observe(asin_plan()).observation
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    candidate = observation.candidates[0]
+    assert (_ASIN,) == tuple(
+        claim.value for claim in _claims(candidate, ClaimKind.ASIN)
+    )
+    assert ("us",) == tuple(
+        value.value
+        for value in _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
+    )
+    # The over-bound map is still one stated schema rejection.
+    assert [(FailureCategory.SCHEMA_CONSTRUCTION, 1)] == [
+        (value.category, value.count) for value in observation.diagnostics
+    ]
+
+
+def test_a_regional_map_at_the_bound_keeps_every_admitted_entry() -> None:
+    entries = _every_marketplace()[:-1]
+    _seen, handle = _recorder(work=_regional_work(entries))
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
+
+    assert sorted(str(entry["asin"]) for entry in entries) == sorted(
+        claim.value for claim in _claims(candidate, ClaimKind.ASIN)
+    )
+
+
+@pytest.mark.parametrize(
+    "entries",
+    (
+        # The queried product only beyond the bounded scan.
+        [{"region": "br", "asin": f"B1{index:08d}"} for index in range(64)]
+        + [{"region": "us", "asin": _ASIN}],
+        # The queried product held only by a marketplace outside the closed set:
+        # the scan never widens the marketplaces.
+        [{"region": "br", "asin": _ASIN}]
+        + [{"region": "us", "asin": f"B1{index:08d}"} for index in range(11)],
+        # The queried product absent from an over-bound map.
+        [{"region": "us", "asin": f"B1{index:08d}"} for index in range(11)],
+    ),
+    ids=("beyond_the_scan", "outside_the_marketplaces", "absent"),
+)
+def test_an_over_bound_regional_map_without_its_own_entry_still_fails_closed(
+    entries: list[dict[str, object]],
+) -> None:
+    _seen, handle = _recorder(work=_regional_work(entries))
+
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
+
+
+def test_an_unknown_identifier_is_named_a_miss_rather_than_an_http_failure() -> None:
+    _seen, handle = _recorder(lookup=_json({"message": "not found"}, 404))
+    result = _provider(handle).observe(asin_plan())
+
+    assert result.evidence.attempt_records is not None
+    assert ("not_found",) == tuple(
+        record.category for record in result.evidence.attempt_records
+    )
+    assert (FailureCategory.EMPTY_NO_MATCH,) == tuple(
+        value.category
+        for value in provider_attempt_diagnostics(
+            result.evidence.attempt_records, status=result.observation.status.value
+        )
+    )
+
+
+def test_an_over_bound_chapter_document_is_stated_and_spares_the_next_lane() -> None:
+    """A dropped chapter body no longer zeroes the observation's byte budget."""
+    second = "B08G9RZBTT"
+    plan = audiobook_discovery_plan(
+        audio_target(), (*local_claims(), audio_claim(ClaimKind.ASIN, second, 5))
+    )
+    assert 2 == len(plan.lanes)
+    oversized = httpx.Response(
+        200,
+        headers={"content-type": "application/json"},
+        content=b'{"chapters": []}' + b" " * 262_144,
+    )
+    # The second ASIN names another work, so the two lanes are two candidates.
+    other_lookup = copy.deepcopy(payload("audiosilo_lookup"))
+    other_lookup["work"]["id"] = "other-work"
+    other_work = copy.deepcopy(payload("audiosilo_work"))
+    other_work["id"] = "other-work"
+    other_work["recordings"][0]["asin"] = [{"region": "de", "asin": second}]
+    served: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        served.append(url)
+        if url.startswith(_LOOKUP):
+            return _json(
+                payload("audiosilo_lookup") if url.endswith(_ASIN) else other_lookup
+            )
+        if url == _CHAPTERS:
+            return _json(payload("audiosilo_chapters"))
+        if url.endswith("/chapters"):
+            return oversized
+        return _json(payload("audiosilo_work") if url == _WORK else other_work)
+
+    provider = _provider(handle)
+    result = provider.observe(plan)
+
+    # The over-bound body comes first, and the other lane is still answered in
+    # full, chapters included.
+    assert served[2].endswith("/other-work/recordings/ray-porter-2021/chapters")
+    assert 6 == len(served)
+    assert {ProviderStatus.CANDIDATES} == {
+        lane.status for lane in result.observation.lanes
+    }
+    chapters = {
+        candidate.identity: _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)
+        for candidate in result.observation.candidates
+    }
+    assert 1 == sum(bool(value) for value in chapters.values())
+    assert result.evidence.incomplete_causes == ()
+    assert result.evidence.attempt_records is not None
+    assert ["response_oversized"] == [
+        record.category
+        for record in result.evidence.attempt_records
+        if record.category != "none"
+    ]
+    assert (FailureCategory.OVERSIZED_RESPONSE,) == tuple(
+        value.category
+        for value in provider_attempt_diagnostics(
+            result.evidence.attempt_records, status=result.observation.status.value
+        )
+    )
+    assert 0 < provider._remaining_response_bytes
 
 
 def test_every_request_stays_under_the_one_fixed_base_path() -> None:

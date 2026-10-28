@@ -559,7 +559,7 @@ class HardcoverMetadataProvider:
                 else _parse_edition_enrichment_overflow(payload, self._name)
             )
             if overflow is not None:
-                self._mark_response_attempt("response_oversized")
+                self._mark_response_attempt("candidate_limit_exceeded")
                 return result(
                     ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
                     edition_enrichment_overflow=overflow,
@@ -589,7 +589,7 @@ class HardcoverMetadataProvider:
                 ):
                     return result(ProviderStatus.MALFORMED)
         except _CandidateLimit:
-            self._mark_response_attempt("response_oversized")
+            self._mark_response_attempt("candidate_limit_exceeded")
             return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         except (
             ValueError,

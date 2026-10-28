@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Clean rebuild required.** An AudioSilo answer whose recording lists more
+  regions than the ten admitted marketplaces now keeps the queried ASIN's own
+  entry instead of failing as malformed. Malformed, oversized and
+  candidate-limited responses are named apart, an AudioSilo lookup miss is no
+  longer a failed request, and an over-bound chapter document no longer starves
+  the next lookup (#1308).
+
 - Setup and sign-in failures now say what went wrong: an unresolvable name, a
   refused connection, an unverified certificate, a timeout or a rejected key,
   naming the address and one remedy. Setup suggests providers per library and
