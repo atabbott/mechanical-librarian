@@ -165,7 +165,7 @@
   "source_bindings": {
     ".github/renovate.json": "73410ae39e3bf61dd070c43b12b754bcb92d505660828947500f5243965ae64b",
     "AGENTS.md": "dc647576bb6ed878734e5013172143169c387f6c03dd98706067062660950bb1",
-    "CHANGELOG.md": "24887fa1bb7b80326f6fcae910b382edf661448763cdddab67aaa7e471f528b2",
+    "CHANGELOG.md": "1b62e86971f0d6d71230948f3a810e1b6b34203262dd8edbf0ad2d62b97a06a6",
     "CONTRIBUTING.md": "95dea6457d3b73e65cd8d7068c8ff47e32af817b187aab64f1a1df8bf87c716b",
     "README.md": "4929e584e0d129196d96355475169fd61fcd276cbec9047e003c645b8e1525f8",
     "docs/architecture/decisions/0021-coherent-bibliographic-combinations.md": "49f7d24c918482138007a0c41547519e9f036814fea0be66bbe12977871abc69",
@@ -248,7 +248,7 @@
     "scripts/audit_sqlite_row_deltas.py": "fe4e032d7a5429ad5dfa7c5dcd25abdcb542ff57bff4a33eb59b8071d4509f9d",
     "scripts/build_frontend.py": "26a7e6c1ff3fd09c9f56de2934937e6781cebacf9a00ecd2e821d0767692338e",
     "scripts/generate_contained_reviewer_profile.py": "b578726526ec74d325228084a4a79ac390abce5847387bfd2b8a3f1fdf7fa6e2",
-    "scripts/qualify_audiobookshelf_field_effect.py": "8d954fb8c8598eb13270bcedbdcc53b4eec32d2d72332a21ccf55bc071e3d3c1",
+    "scripts/qualify_audiobookshelf_field_effect.py": "ca3a998702cd041e749be97a906cec0c9e02e39367a6a362218e4881ac6e94fb",
     "scripts/qualify_container_lifecycle.py": "b4f8aaa6c82c4a22255ce1eacfd874d6aeef50c7ac50ce4345e653ec9003c964",
     "scripts/qualify_exact_artifact.py": "b7bedea0391876786237499c692fb762476a9682bbb4d146024e7e45aaaf98fc",
     "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",

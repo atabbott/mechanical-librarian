@@ -347,6 +347,36 @@ def _compose_review_client(
     )
 
 
+def _installed_accept_payload(
+    field: dict[str, object],
+    selected_value: object,
+    cover: tuple[str, dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Shape an installed accept exactly as the browser sends it (#1185).
+
+    A separate function so the decision contract can be tested against it: a
+    cover accept carries the prepared consideration and the owner's explicit
+    confirmation, which the decision refuses as `invalid_choice` without since
+    #1123.
+    """
+    payload: dict[str, object] = {
+        "destination": field["destination"],
+        "outcome": "accept",
+        "proposal_id": field["proposal_id"],
+        "selected_value": selected_value,
+        "target_fingerprint": field["target_fingerprint"],
+    }
+    if cover is not None:
+        consideration_id, selected_cover = cover
+        payload["consideration_id"] = consideration_id
+        payload["cover_confirmation"] = {
+            "expected_selection_id": field.get("current_cover_selection_id"),
+            "confirm_unverified_match": selected_cover.get("match_state")
+            == "match_not_confirmed",
+        }
+    return payload
+
+
 def _require_installed_full_chain_coverage(
     coverage: dict[str, str],
     expected: dict[str, str],
@@ -387,6 +417,14 @@ def _require_installed_lifecycle_evidence(
     ):
         return
     raise QualificationError("installed_lifecycle_evidence_failed")
+
+
+def _database_path(root: Path, name: str) -> Path:
+    # The Linux binding locks a database's directory for that database alone,
+    # so each repository the run opens gets its own owner-only directory.
+    directory = root / name
+    directory.mkdir(mode=0o700)
+    return directory / (name + ".sqlite")
 
 
 def _png(red: int, green: int, blue: int) -> bytes:
@@ -1288,7 +1326,6 @@ def _wait_for_preparation(
 
 def _qualification_hardcover_client(
     title_corrections: dict[str, str],
-    provider_identity: str,
     observations: dict[str, int],
     isbn_titles: dict[str, str],
     isbn_authors: dict[str, str],
@@ -1328,7 +1365,13 @@ def _qualification_hardcover_client(
                 requested_title = isbn_titles.get(
                     requested_isbn, "Guarded qualification title"
                 )
-                authors = [isbn_authors.get(requested_isbn, "Synthetic Author")]
+                # The generated EPUB's complete author list: since #1094 a
+                # partial provider list competes with it rather than corroborating.
+                authors = (
+                    [isbn_authors[requested_isbn]]
+                    if requested_isbn in isbn_authors
+                    else ["Synthetic Author", "Second Qualified Author"]
+                )
                 contribution_authors = tuple(authors)
             else:
                 observations["title"] = observations.get("title", 0) + 1
@@ -1367,12 +1410,6 @@ def _qualification_hardcover_client(
                 operator_title
                 and operator_correction == requested_title
                 and requested_title != "Before"
-            )
-            else "After"
-            if requested_title in title_corrections
-            and (
-                provider_identity == "synthetic-provider-token-a"
-                or provider_identity.endswith("provider-a.secret")
             )
             else title_corrections.get(requested_title, requested_title)
         )
@@ -1683,10 +1720,10 @@ def _installed_continuous_qualification(
     provider_observations: dict[str, int] = {}
 
     def provider_client(*args: object, **kwargs: object) -> httpx.Client:
-        provider_identity = str(args[0]) if args else str(kwargs.get("token", ""))
+        # Both catalogues answer alike: split evidence is a material conflict
+        # that keeps title and authors manual (#1040, #1094; #1427).
         return _qualification_hardcover_client(
             title_corrections,
-            provider_identity,
             provider_observations,
             isbn_titles,
             isbn_authors,
@@ -1886,7 +1923,7 @@ def _installed_continuous_qualification(
                         continue
                     selected_value = field["proposed_values"][0]
                     consideration_id = None
-                    cover_confirmation = None
+                    selected_cover = None
                     if field["destination"] == "cover":
                         prepared = client.post(
                             f"/api/v1/review-cases/{case_id}/cover-considerations/retry",
@@ -1939,28 +1976,13 @@ def _installed_continuous_qualification(
                             raise QualificationError(
                                 "installed_cover_preparation_invalid"
                             )
-                        # The owner's explicit confirmation, shaped exactly as
-                        # the browser sends it: a cover decision without one is
-                        # refused as `invalid_choice` since #1123.
-                        cover_confirmation = {
-                            "expected_selection_id": field.get(
-                                "current_cover_selection_id"
-                            ),
-                            "confirm_unverified_match": selected_cover.get(
-                                "match_state"
-                            )
-                            == "match_not_confirmed",
-                        }
-                    payload = {
-                        "destination": field["destination"],
-                        "outcome": "accept",
-                        "proposal_id": field["proposal_id"],
-                        "selected_value": selected_value,
-                        "target_fingerprint": field["target_fingerprint"],
-                    }
-                    if consideration_id is not None:
-                        payload["consideration_id"] = consideration_id
-                        payload["cover_confirmation"] = cover_confirmation
+                    payload = _installed_accept_payload(
+                        field,
+                        selected_value,
+                        None
+                        if consideration_id is None
+                        else (consideration_id, selected_cover),
+                    )
                     decided = client.post(
                         f"/api/v1/review-cases/{case_id}/decisions",
                         headers={
@@ -2655,7 +2677,6 @@ def _installed_automatic_series_qualification(
     def provider_client(*args: object, **kwargs: object) -> httpx.Client:
         return _qualification_hardcover_client(
             {},
-            "synthetic-provider-token-a",
             observations,
             isbn_titles,
             {},
@@ -2791,7 +2812,16 @@ def _installed_automatic_series_qualification(
                     if len(decisions) > 1:
                         raise QualificationError("installed_series_decision_ambiguous")
                     before = target.read(
-                        type("Read", (), {"work_id": item, "destination": "series"})()
+                        type(
+                            "Read",
+                            (),
+                            {
+                                "work_id": item,
+                                "destination": "series",
+                                # A read outside a plan has no subtitle companion.
+                                "subtitle_plan": lambda _self: None,
+                            },
+                        )()
                     ).value
                     cases[scenario] = (
                         item,
@@ -2887,7 +2917,16 @@ def _installed_automatic_series_qualification(
                         if operation.plan.work_id == item
                     )
                     after = target.read(
-                        type("Read", (), {"work_id": item, "destination": "series"})()
+                        type(
+                            "Read",
+                            (),
+                            {
+                                "work_id": item,
+                                "destination": "series",
+                                # A read outside a plan has no subtitle companion.
+                                "subtitle_plan": lambda _self: None,
+                            },
+                        )()
                     ).value
                     _require_installed_automatic_series_evidence(
                         scenario,
@@ -3409,7 +3448,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             endpoint=base,
             library_id=library_id,
         )
-        repository = open_repository(root / "effects.sqlite")
+        repository = open_repository(_database_path(root, "effects"))
         current = type("Current", (), {"current": lambda self, value: True})()
         time_value = [100]
 
@@ -3512,7 +3551,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             endpoint=base,
             library_id=second_library_id,
         )
-        beta_repository = open_repository(root / "effects-beta.sqlite")
+        beta_repository = open_repository(_database_path(root, "effects-beta"))
         beta_service = GuardedFieldApplication(
             beta_repository,
             beta_target,
@@ -3564,7 +3603,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             endpoint=base,
             library_id=third_library_id,
         )
-        gamma_repository = open_repository(root / "effects-gamma.sqlite")
+        gamma_repository = open_repository(_database_path(root, "effects-gamma"))
         gamma_service = GuardedFieldApplication(
             gamma_repository,
             gamma_target,
@@ -3599,7 +3638,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
 
         def description_service(case: str):
             description_repository = open_repository(
-                root / ("effects-description-" + case + ".sqlite")
+                _database_path(root, "effects-description-" + case)
             )
             return (
                 GuardedFieldApplication(
@@ -3638,7 +3677,9 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 payload={
                     "metadata": {
                         "authors": [{"name": "Seed Author"}],
-                        "language": "en",
+                        # Empty, so Language is an automatic fill: replacing a
+                        # different populated language stays manual (#1097).
+                        "language": None,
                         "publishedDate": "2020-01-01",
                         "publishedYear": "2020",
                         "publisher": "Seed Press",
