@@ -171,12 +171,20 @@ describe('Design tokens', () => {
 
   it('keeps busy retained content at its text contrast', () => {
     // A busy list is marked busy, not dimmed below 4.5:1 for its soft text.
+    // Its retained rows are aria-disabled, so neither a busy rule nor one on
+    // every aria-disabled button may dim them.
+    const reachesBusy = (selector: string) =>
+      selector
+        .split(',')
+        .map((part) => part.trim())
+        .some(
+          (part) =>
+            part.includes("[aria-busy='true']") ||
+            /^(?:button)?\[aria-disabled='true'\]$/.test(part),
+        )
     const dimmed = (css: string) =>
       rules(css)
-        .filter(
-          ({ selector, body }) =>
-            selector.includes("[aria-busy='true']") && property(body, 'opacity'),
-        )
+        .filter(({ selector, body }) => reachesBusy(selector) && property(body, 'opacity'))
         .flatMap(({ selector, body }) => {
           const tokens = theme(false)
           const [soft, surface] = [color('var(--soft)', tokens), color('var(--surface)', tokens)]
@@ -186,6 +194,14 @@ describe('Design tokens', () => {
         })
     expect(dimmed(styles)).toEqual([])
     expect(dimmed(".list[aria-busy='true'] { opacity:.7; }")).toEqual([".list[aria-busy='true']"])
+    expect(
+      dimmed(
+        "button:disabled, button[aria-disabled='true'] { opacity:.55; } .list[aria-busy='true'] button[aria-disabled='true'] { opacity:.55; } .cm-policy-route button[aria-disabled='true'] { opacity:.55; }",
+      ),
+    ).toEqual([
+      "button:disabled, button[aria-disabled='true']",
+      ".list[aria-busy='true'] button[aria-disabled='true']",
+    ])
   })
 
   it('sets no type below the .75rem floor', () => {
