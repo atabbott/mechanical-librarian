@@ -1,5 +1,14 @@
 # Pre-release compatibility policy
 
+#1286 changes owner-facing copy only: evidence observations no longer repeat
+their label or name internal scope, state and applicability codes; media
+health states running times in hours and minutes; and an owner decision's
+Activity row names the value its own plan replaced. No public schema, API
+version or persisted document changes, so no clean rebuild is required.
+F19a/F20/F46 records are displaced because the application read model, audio
+health and Activity persistence adapter they bind changed, with permission
+sets unchanged.
+
 #1424 advances the report to `metadata-report-v58`: an Audiobookshelf
 incumbent description is admitted as the text it shows, and a description
 write Audiobookshelf stored escaped or sanitised verifies when the stored form

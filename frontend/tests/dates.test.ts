@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'vitest'
+
+import { formatClock, formatDay, formatRunningTime, formatWhen, nextChange } from '../src/dates'
+
+// The formatter's own tests fix the locale and zone; the application reads the
+// browser's (#1286).
+const zone = { locale: 'en-GB', timeZone: 'UTC' } as const
+const at = (iso: string) => Date.parse(iso) / 1000
+const now = new Date('2026-10-28T14:05:00Z')
+
+describe('formatWhen (#1286)', () => {
+  it.each([
+    ['2026-10-28T14:05:00Z', 'now'],
+    ['2026-10-28T14:04:50Z', 'now'],
+    ['2026-10-28T14:03:30Z', '2 minutes ago'],
+    ['2026-10-28T14:00:00Z', '5 minutes ago'],
+    ['2026-10-28T13:06:00Z', '59 minutes ago'],
+  ])('reads %s, within the past hour, relative to now as %j', (iso, shown) => {
+    expect(formatWhen(at(iso), now, zone)).toBe(shown)
+  })
+
+  it('never reads a time still ahead relative to now, so it cannot turn false (#1286 C3)', () => {
+    expect(formatWhen(at('2026-10-28T14:05:20Z'), now, zone)).toBe('14:05')
+    expect(formatWhen(at('2026-10-28T14:10:00Z'), now, zone)).toBe('14:10')
+    expect(formatWhen(at('2026-10-29T08:00:00Z'), now, zone)).toBe('Thu 29 Oct, 8:00')
+  })
+
+  it('says when a reading next changes, so a page re-reads it as it ages (#1286 C3)', () => {
+    const local = new Date(2026, 9, 28, 14, 5, 0)
+    const ago = (milliseconds: number) => (local.getTime() - milliseconds) / 1000
+    // `now` until a minute, then each rounded minute moves at its half minute.
+    expect(nextChange(ago(10_000), local)).toBe(50_000)
+    expect(nextChange(ago(60_000), local)).toBe(30_000)
+    expect(nextChange(ago(90_000), local)).toBe(60_000)
+    expect(nextChange(ago(3_590_000), local)).toBe(10_000)
+    // A time ahead changes when it arrives; an older one at local midnight.
+    expect(nextChange(ago(-120_000), local)).toBe(120_000)
+    expect(nextChange(ago(7_200_000), local)).toBe(
+      new Date(2026, 9, 29).getTime() - local.getTime(),
+    )
+    for (const elapsed of [10_000, 60_000, 90_000, 3_590_000]) {
+      const before = formatWhen(ago(elapsed), local)
+      const changeAt = new Date(local.getTime() + nextChange(ago(elapsed), local))
+      expect(formatWhen(ago(elapsed), new Date(changeAt.getTime() - 1))).toBe(before)
+      expect(formatWhen(ago(elapsed), changeAt)).not.toBe(before)
+    }
+  })
+
+  it('reads a time earlier or later the same day as its clock time', () => {
+    expect(formatWhen(at('2026-10-28T09:30:00Z'), now, zone)).toBe('9:30')
+    expect(formatWhen(at('2026-10-28T23:59:00Z'), now, zone)).toBe('23:59')
+  })
+
+  it('adds the weekday and date on another day, and the year in another year', () => {
+    expect(formatWhen(at('2026-10-27T14:05:00Z'), now, zone)).toBe('Tue 27 Oct, 14:05')
+    expect(formatWhen(at('2026-10-29T08:00:00Z'), now, zone)).toBe('Thu 29 Oct, 8:00')
+    expect(formatWhen(at('2025-12-31T23:00:00Z'), now, zone)).toBe('Wed, 31 Dec 2025, 23:00')
+  })
+
+  it('reads the clock time alone where the day is already shown', () => {
+    expect(formatWhen(at('2026-10-20T07:15:00Z'), now, { ...zone, dayShown: true })).toBe('7:15')
+    // Recent times stay relative even under a day heading.
+    expect(formatWhen(at('2026-10-28T14:00:00Z'), now, { ...zone, dayShown: true })).toBe(
+      '5 minutes ago',
+    )
+  })
+
+  it('decides the day in the reader’s zone, not in UTC', () => {
+    const tokyo = { locale: 'en-GB', timeZone: 'Asia/Tokyo' } as const
+    // 23:30 UTC on the 27th is the 28th in Tokyo, the same day as now there.
+    expect(formatWhen(at('2026-10-27T23:30:00Z'), now, tokyo)).toBe('8:30')
+  })
+
+  it('names a ledger day with its weekday and year, and reads the 24-hour clock', () => {
+    expect(formatDay(at('2026-10-28T14:05:00Z'), zone)).toBe('Wed, 28 Oct 2026')
+    const clock = formatClock(at('2026-10-28T14:05:00Z'), { locale: 'en-US', timeZone: 'UTC' })
+    expect(clock).toBe('14:05')
+    expect(clock).not.toMatch(/ /u)
+  })
+
+  it('reads a recorded running time in hours and minutes', () => {
+    expect(formatRunningTime('43200.000')).toBe('12 h')
+    expect(formatRunningTime('30846.400')).toBe('8 h 34 min')
+    expect(formatRunningTime('90')).toBe('1 min 30 s')
+    expect(formatRunningTime('0.000')).toBe('0 s')
+    // An exact half minute rounds to even, as the server rounds it.
+    expect(formatRunningTime('3630')).toBe('1 h')
+    expect(formatRunningTime('3690')).toBe('1 h 2 min')
+    // Negative controls: a value that is no running time stays as recorded.
+    expect(formatRunningTime('')).toBeNull()
+    expect(formatRunningTime('unstated')).toBeNull()
+    expect(formatRunningTime('-5')).toBeNull()
+  })
+})

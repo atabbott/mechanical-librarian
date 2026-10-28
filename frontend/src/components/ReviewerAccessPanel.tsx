@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
 import { ModelPicker } from './ModelPicker'
-import { coverReviewerLabel } from '../labels'
+import { coverReviewerLabel, reviewerStateLabels } from '../labels'
 import { ApiError, CsrfRenewedError, sessionRefreshedCopy } from '../api/http'
 import type {
   CodexDeviceAuthState,
@@ -25,6 +25,11 @@ type Action =
   | { kind: 'openrouter-clear'; revision: number }
   | { kind: 'openrouter-refresh' }
 
+// Memory headroom in MB, or GB from one gigabyte (2^30 bytes) up.
+const headroom = (bytes: number) =>
+  bytes >= 1_073_741_824
+    ? `${(bytes / 1_073_741_824).toLocaleString(undefined, { maximumFractionDigits: 1 })} GB`
+    : `${Math.round(bytes / 1_048_576).toLocaleString()} MB`
 const failureCopy: Readonly<Record<string, string>> = {
   invalid_key: 'OpenRouter rejected this key. Replace it and validate again.',
   quota_exhausted: 'OpenRouter credits are exhausted. Add credits, then retry the status test.',
@@ -64,9 +69,9 @@ const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
   host_evidence_unavailable:
     'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
   cgroup_limit_below_1_gib:
-    'The container memory limit is below 1 GiB. Increase it before using Codex.',
+    'The container memory limit is below 1 GB. Increase it before using Codex.',
   headroom_below_1_gib:
-    'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+    'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
   permission_or_profile:
     'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
   permission_or_process: 'Codex could not complete sign-in. Restart the sign-in flow.',
@@ -258,19 +263,17 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             separately below.
           </p>
           <p>Model: {view.codex.model ?? 'Unavailable until provisioning is corrected'}</p>
-          <p aria-live="polite">Advisory availability: {codexState.replaceAll('_', ' ')}</p>
+          <p aria-live="polite">Advisory availability: {reviewerStateLabels[codexState]}</p>
           {codexReason ? <p role="alert">{codexReason}</p> : null}
           {view.codex.host_headroom_bytes !== null ? (
-            <small>
-              Available reviewer headroom: {view.codex.host_headroom_bytes.toLocaleString()} bytes
-            </small>
+            <small>Available reviewer headroom: {headroom(view.codex.host_headroom_bytes)}</small>
           ) : null}
         </div>
         <div className="settings-field-control">
           {waiting ? (
             <>
               <p role="status" aria-live="polite">
-                Device sign-in: {(device?.state ?? view.codex.state).replaceAll('_', ' ')}.
+                Device sign-in: {reviewerStateLabels[device?.state ?? view.codex.state]}.
               </p>
               {device?.verification_url ? (
                 <p>
@@ -563,8 +566,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             >
               Advisory availability:{' '}
               {mutation.isPending && mutation.variables.kind === 'openrouter'
-                ? 'validating'
-                : view.openrouter.state.replaceAll('_', ' ')}
+                ? reviewerStateLabels.validating
+                : reviewerStateLabels[view.openrouter.state]}
             </p>
             {view.openrouter.reason && failureCopy[view.openrouter.reason] ? (
               <p role="alert">{failureCopy[view.openrouter.reason]}</p>

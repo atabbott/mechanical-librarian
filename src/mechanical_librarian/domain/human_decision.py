@@ -36,7 +36,7 @@ _OUTCOMES = {
     "owner_entered",
     "withdraw",
 }
-_VALUE_OUTCOMES = frozenset({"accept", "owner_entered"})
+VALUE_OUTCOMES = frozenset({"accept", "owner_entered"})
 # The owner may type a value only for these, and choose a genre subset; every
 # other destination keeps the proposal-only choices (ADR-0085).
 OWNER_TEXT_DESTINATIONS = ("title", "subtitle", "publisher")
@@ -946,7 +946,7 @@ class HumanDecision:
                         value.target_fingerprint,
                     )
                 )
-                or (value.outcome in _VALUE_OUTCOMES)
+                or (value.outcome in VALUE_OUTCOMES)
                 != (type(value.selected_value) is dict)
             ):
                 raise ValueError

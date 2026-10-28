@@ -368,6 +368,11 @@ describe('owner settings route', () => {
       expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Discard all' })).not.toBeInTheDocument()
     }
+    // The locked view reads a size as the editable field does (#1286 X13).
+    await user.click(screen.getByRole('button', { name: /Background work/ }))
+    await user.click(screen.getByText('Response and file size limits'))
+    expect(screen.getByText('0.0625 MB (64 KB)')).toBeVisible()
+    expect(screen.getByText('8,192 MB (8 GB)')).toBeVisible()
   })
 
   it('owns group navigation in the URL and restores it with browser history', async () => {
@@ -715,7 +720,7 @@ describe('owner settings route', () => {
       }),
     )
     expect(key).toHaveValue('')
-    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
   })
 
   it.each([
@@ -854,6 +859,14 @@ describe('owner settings route', () => {
     expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   })
 
+  // Each terminal state reads in words, never as its code (#1286).
+  const terminalWords = {
+    usable: 'ready to use',
+    expired: 'sign-in expired',
+    cancelled: 'sign-in cancelled',
+    interrupted: 'interrupted',
+    failed: 'failed',
+  } as const
   it.each([
     ['usable', null],
     ['expired', null],
@@ -878,7 +891,7 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
-    expect(await screen.findByText(`Advisory availability: ${state}`)).toBeVisible()
+    expect(await screen.findByText(`Advisory availability: ${terminalWords[state]}`)).toBeVisible()
     expect(http.recheckCodex).toHaveBeenCalledOnce()
     if (failure) expect(screen.getByRole('alert')).toBeVisible()
   })
@@ -924,7 +937,7 @@ describe('owner settings route', () => {
     await pickModel(user, 'Cover model', 'dots-studio/dots-3-note-preview:free')
     await user.type(screen.getByLabelText('OpenRouter API key'), 'secret-key')
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
-    expect(screen.getByText('Advisory availability: validating')).toBeVisible()
+    expect(screen.getByText('Advisory availability: checking')).toBeVisible()
     finish({
       ...reviewerView,
       revision: 4,
@@ -940,7 +953,7 @@ describe('owner settings route', () => {
         tier: 'free',
       },
     })
-    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
   })
 
   it('uses the replacement deselection revision before Codex reselection', async () => {
@@ -982,7 +995,7 @@ describe('owner settings route', () => {
     await user.click(await screen.findByRole('button', { name: 'Replace Codex sign-in' }))
     await user.click(screen.getByRole('button', { name: 'Confirm replace Codex sign-in' }))
     expect(await screen.findByText(/Current selection:/u)).toHaveTextContent('No reviewer')
-    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Use Codex for cover observations' }))
     expect(http.selectReviewer).toHaveBeenCalledWith('codex', 4)
   })
@@ -1012,13 +1025,13 @@ describe('owner settings route', () => {
       'host_unsupported',
       'cgroup_limit_below_1_gib',
       true,
-      'The container memory limit is below 1 GiB. Increase it before using Codex.',
+      'The container memory limit is below 1 GB. Increase it before using Codex.',
     ],
     [
       'host_unsupported',
       'headroom_below_1_gib',
       true,
-      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+      'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
     ],
   ] as const)(
     'keeps mapped unhealthy Codex state %s manageable',
@@ -1103,7 +1116,7 @@ describe('owner settings route', () => {
       },
     }))
     const { queryClient } = renderRoute('/settings?group=reviewer', http)
-    await screen.findByText('Advisory availability: host unsupported')
+    await screen.findByText('Advisory availability: not supported on this host')
 
     act(() => {
       queryClient.setQueryData(['reviewer-access', 'codex-device'], {
@@ -1117,11 +1130,14 @@ describe('owner settings route', () => {
 
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Less than 1 GiB of memory headroom is available. Free memory or raise the container limit.',
+      'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
     )
     expect(
       screen.queryByText(/installed Codex sign-in could not be validated/u),
     ).not.toBeInTheDocument()
+    // The bound and the headroom beside it read in one unit (#1286).
+    expect(screen.getByText('Available reviewer headroom: 2 GB')).toBeVisible()
+    expect(window.document.body).not.toHaveTextContent(/GiB|MiB/u)
   })
 
   it('evicts a checked usable device result after credential clear', async () => {
@@ -1147,10 +1163,10 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
-    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: ready to use')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Clear Codex sign-in' }))
     await user.click(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' }))
-    expect(await screen.findByText('Advisory availability: ready')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: ready to sign in')).toBeVisible()
     expect(
       screen.queryByRole('button', { name: 'Use Codex for cover observations' }),
     ).not.toBeInTheDocument()
@@ -1463,6 +1479,171 @@ describe('owner settings route', () => {
     expect(screen.getByText('1 unsaved change')).toBeVisible()
   })
 
+  // Sizes read in MB (1,048,576 bytes) and polling and sign-in length in
+  // minutes; the document still keeps whole bytes and seconds (#1286, A5).
+  it('shows sizes in MB and polling in minutes', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    const { router } = renderRoute('/settings?group=background', http)
+
+    const polling = await screen.findByRole('spinbutton', { name: 'Library polling interval' })
+    expect(polling).toHaveValue(15)
+    expect(polling).toHaveAttribute('min', '1')
+    expect(polling).toHaveAttribute('max', '1440')
+    expect(polling.parentElement).toHaveTextContent('minutes')
+    expect(screen.getByRole('spinbutton', { name: 'Request timeout' })).toHaveValue(30)
+    await user.click(screen.getByText('Response and file size limits'))
+    expect(screen.getByRole('spinbutton', { name: 'Audiobookshelf response limit' })).toHaveValue(1)
+    // 64 KiB is exactly 0.0625 MB, and the hint says 64 KB beside it.
+    const source = screen.getByRole('spinbutton', { name: 'Source response limit' })
+    expect(source).toHaveValue(0.0625)
+    expect(source.parentElement).toHaveTextContent('MB (64 KB)')
+    // The unit beside each number is announced with it, not only seen.
+    const spinbuttons = screen.getAllByRole('spinbutton')
+    expect(spinbuttons.length).toBeGreaterThan(3)
+    for (const input of spinbuttons) {
+      const unit = input.parentElement?.querySelector('small')
+      expect(unit?.textContent).toMatch(/^(MB|seconds|minutes)/u)
+      expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(unit?.id)
+      expect(input).toHaveAccessibleDescription(
+        expect.stringMatching(
+          new RegExp(`^${(unit?.textContent ?? '').replace(/[()]/gu, '\\$&')} `, 'u'),
+        ),
+      )
+    }
+    expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveValue(256)
+    expect(
+      screen.getByRole('spinbutton', { name: 'Source archive limit' }).parentElement,
+    ).toHaveTextContent('MB')
+    expect(window.document.body).not.toHaveTextContent(/\bbytes\b|KiB|MiB/u)
+
+    await act(async () => router.navigate({ to: '/settings', search: { group: 'access' } }))
+    expect(await screen.findByRole('spinbutton', { name: 'Owner session lifetime' })).toHaveValue(
+      43_200,
+    )
+  })
+
+  it('saves an untouched document byte-identically', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    // Values no display unit divides evenly survive a save they were not part of.
+    const awkward = {
+      ...document,
+      limits: { ...document.limits, provider_response_bytes: 65_537, target_response_bytes: 1_025 },
+      server: { ...document.server, library_polling_interval_seconds: 901 },
+    }
+    let saved: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => ({ ...view(), document: awkward }))
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      saved = request
+      return { ...view(), document: request.document }
+    })
+    renderRoute('/settings', http)
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await user.type(endpoint, '/edited')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(saved?.document.limits).toEqual(awkward.limits)
+    expect(saved?.document.server).toEqual(awkward.server)
+  })
+
+  it('writes an edited MB or minute value as exact whole bytes or seconds', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let saved: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      saved = request
+      return { ...view(), document: request.document }
+    })
+    renderRoute('/settings?group=background', http)
+
+    const polling = await screen.findByRole('spinbutton', { name: 'Library polling interval' })
+    await user.clear(polling)
+    await user.type(polling, '2.5')
+    await user.click(screen.getByText('Response and file size limits'))
+    const provider = screen.getByRole('spinbutton', { name: 'Source response limit' })
+    await user.clear(provider)
+    await user.type(provider, '0.2')
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    expect(screen.getByRole('list')).toHaveTextContent('15 minutes')
+    expect(screen.getByRole('list')).toHaveTextContent('2.5 minutes')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(saved?.document.server.library_polling_interval_seconds).toBe(150)
+    expect(saved?.document.limits.provider_response_bytes).toBe(209_715)
+    expect(Number.isInteger(saved?.document.limits.provider_response_bytes)).toBe(true)
+    expect(saved?.document.limits.target_response_bytes).toBe(document.limits.target_response_bytes)
+  })
+
+  it('reads a size below one MB exactly, with its KB beside it, and keeps its bytes', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let saved: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      saved = request
+      return { ...view(), document: request.document }
+    })
+    renderRoute('/settings?group=background', http)
+
+    await user.click(await screen.findByText('Response and file size limits'))
+    const source = screen.getByRole('spinbutton', { name: 'Source response limit' })
+    expect(source).toHaveValue(0.0625)
+    expect(source.parentElement).toHaveTextContent('MB (64 KB)')
+    expect(source.parentElement).not.toHaveTextContent('0.063')
+    // A whole MB needs no KB beside it.
+    expect(
+      screen.getByRole('spinbutton', { name: 'Audiobookshelf response limit' }).parentElement,
+    ).not.toHaveTextContent('KB')
+    // An edit to 0.125 MB writes exactly 128 KB, and the hint follows the edit.
+    await user.clear(source)
+    await user.type(source, '0.125')
+    expect(source.parentElement).toHaveTextContent('MB (128 KB)')
+    // The range error reads in the field's own unit, its exact MB reading back
+    // to 1,024 bytes, with the KB beside it.
+    await user.clear(source)
+    await user.type(source, '0.0001')
+    expect(source).toHaveAccessibleDescription(
+      /Source response limit must be from 0\.000977 MB \(1 KB\) to 0\.25 MB \(256 KB\)\./u,
+    )
+    // What the field shows is what it saves: 0.123 MB stays 0.123, never 0.12.
+    await user.clear(source)
+    await user.type(source, '0.123')
+    expect(source).toHaveValue(0.123)
+    expect(source.parentElement).toHaveTextContent('MB (125.952 KB)')
+    await user.clear(source)
+    await user.type(source, '0.125')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(saved?.document.limits.provider_response_bytes).toBe(131_072)
+  })
+
+  it('states range errors in display units', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=background', http)
+
+    const polling = await screen.findByRole('spinbutton', { name: 'Library polling interval' })
+    await user.clear(polling)
+    await user.type(polling, '0.5')
+    expect(polling).toHaveAttribute('aria-invalid', 'true')
+    expect(polling).toHaveAccessibleDescription(
+      /Library polling interval must be from 1 to 1,440 minutes\./u,
+    )
+    await user.clear(polling)
+    await user.type(polling, '1')
+    expect(polling).not.toHaveAttribute('aria-invalid', 'true')
+    const timeout = screen.getByRole('spinbutton', { name: 'Request timeout' })
+    await user.clear(timeout)
+    await user.type(timeout, '61')
+    expect(timeout).toHaveAccessibleDescription(/Request timeout must be from 1 to 60 seconds\./u)
+  })
+
   it('renders and range-validates the audiobook source limit beside the archive one', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -1471,29 +1652,48 @@ describe('owner settings route', () => {
 
     await user.click(await screen.findByText('Response and file size limits'))
     const audio = screen.getByRole('spinbutton', { name: 'Audiobook source limit' })
-    expect(audio).toHaveValue(8_589_934_592)
+    // Sizes read in MB (1,048,576 bytes), never as raw bytes (#1286).
+    expect(audio).toHaveValue(8192)
     // Its own ceiling, not the EPUB archive's: an audiobook is read by header
     // and is routinely larger than any archive this build admits.
-    expect(audio).toHaveAttribute('max', '17179869184')
+    expect(audio).toHaveAttribute('max', '16384')
     expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveAttribute(
       'max',
-      '268435456',
+      '256',
     )
 
     await user.clear(audio)
-    await user.type(audio, '1023')
+    await user.type(audio, '0.0009')
     expect(audio).toHaveAttribute('aria-invalid', 'true')
-    expect(audio).toHaveAccessibleDescription(/Audiobook source limit must be from 1,024/)
+    expect(audio).toHaveAccessibleDescription(
+      /Audiobook source limit must be from 0\.000977 MB \(1 KB\) to 16,384 MB \(16 GB\)\./u,
+    )
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
     await waitFor(() => expect(audio).toHaveFocus())
     expect(http.writeSettings).not.toHaveBeenCalled()
 
+    // A GB aside stops at two decimals; the MB value beside it stays exact.
     await user.clear(audio)
-    await user.type(audio, '17179869185')
+    await user.type(audio, '1025.3115')
+    expect(audio).toHaveValue(1025.3115)
+    expect(audio.parentElement).toHaveTextContent('MB (1 GB)')
+    await user.clear(audio)
+    await user.type(audio, '1536.5')
+    expect(audio.parentElement).toHaveTextContent('MB (1.5 GB)')
+    expect(audio).toHaveAccessibleDescription(/^MB \(1\.5 GB\) /u)
+    await user.clear(audio)
+    await user.type(audio, '2047.99')
+    expect(audio.parentElement).toHaveTextContent(/MB \(2 GB\)$/u)
+    await user.clear(audio)
+    await user.type(audio, '1100.123')
+    expect(audio.parentElement).toHaveTextContent(/MB \(1\.07 GB\)$/u)
+
+    await user.clear(audio)
+    await user.type(audio, '16385')
     expect(audio).toHaveAttribute('aria-invalid', 'true')
 
     await user.clear(audio)
-    await user.type(audio, '17179869184')
+    await user.type(audio, '16384')
     expect(audio).not.toHaveAttribute('aria-invalid', 'true')
     expect(screen.queryByText(/need fixing before saving/u)).toBeNull()
   })
@@ -1758,7 +1958,7 @@ it.each([
     expect(await screen.findByText(message)).toBeVisible()
     expect(http.getCodexDevice).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Replace or create Codex sign-in' })).toBeDisabled()
-    expect(screen.getByText('Advisory availability: not provisioned')).toBeVisible()
+    expect(screen.getByText('Advisory availability: not set up on this host')).toBeVisible()
   },
 )
 

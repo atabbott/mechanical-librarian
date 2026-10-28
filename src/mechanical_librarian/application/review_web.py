@@ -6,16 +6,18 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import re
 import secrets
 import threading
 import unicodedata
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
+from types import MappingProxyType
 from typing import Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
@@ -32,6 +34,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.audio_health import (
     derive_audio_health,
+    hours_minutes,
     media_unreadable_observation,
 )
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
@@ -68,6 +71,7 @@ from mechanical_librarian.domain.human_decision import (
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     FieldState,
     MetadataReport,
     TargetDestination,
@@ -2495,6 +2499,35 @@ def _choice_is_local(evidence: dict[str, str | None]) -> bool:
     )
 
 
+_OBSERVATION_KINDS: Mapping[str, str] = MappingProxyType(
+    {
+        ClaimKind.TITLE: "Title",
+        ClaimKind.SUBTITLE: "Subtitle",
+        ClaimKind.CREATOR: "Author",
+        ClaimKind.CONTRIBUTOR: "Contributor",
+        ClaimKind.SERIES: "Series membership",
+        ClaimKind.SERIES_SEQUENCE: "Series position",
+        ClaimKind.ISBN: "ISBN",
+        ClaimKind.ASIN: "ASIN",
+        ClaimKind.PUBLICATION_DATE: "Publication date",
+        ClaimKind.DATE_EVENT: "Dated event",
+        ClaimKind.CONTEXTUAL_CREDIT: "Other credit",
+        ClaimKind.PUBLISHER: "Publisher",
+        ClaimKind.DESCRIPTION: "Description",
+        ClaimKind.LANGUAGE: "Language",
+        ClaimKind.SUBJECT: "Subject",
+        ClaimKind.IMPRINT: "Imprint",
+        ClaimKind.GENRE: "Genre",
+        ClaimKind.TAG: "Tag",
+        ClaimKind.DURATION: "Running time",
+        ClaimKind.PERFORMANCE_TYPE: "Performance",
+        ClaimKind.ADULT_PRODUCT: "Adult content",
+        # A provider's author list reads as the Library's Author.
+        "authors": "Author",
+    }
+)
+
+
 def _choice_observation(evidence: dict[str, str | None]) -> str:
     try:
         fact = json.loads(evidence["fact"] or "{}")
@@ -2504,25 +2537,41 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         return "The retained observation has no readable value."
     if evidence["source"] == "identifier" and "relation" in fact:
         return "Identifier relationship retained; no value observation is available."
-    kind = cast(
-        "dict[object, str]",
-        {
-            "authors": "Contributors",
-            "contributor": "Narration credit",
-            "description": "Description",
-            "duration": "Running time",
-            "isbn": "ISBN",
-            "asin": "ASIN",
-            "performance_type": "Performance",
-            "publication_date": "Publication date",
-            "series": "Series membership",
-            "title": "Title",
-        },
-    ).get(fact.get("kind"), "Metadata")
+    # Every claim kind is named as the Library's recorded evidence names it
+    # (#1286); a narrator's credit keeps its own name.
+    claim_kind = fact.get("kind")
+    if claim_kind == "contributor" and fact.get("role") in {None, "narrator"}:
+        kind = "Narration credit"
+    elif type(claim_kind) is str:
+        kind = _OBSERVATION_KINDS.get(claim_kind, "Metadata")
+    else:
+        kind = "Metadata"
     value = fact.get("value", fact.get("observed"))
+    if (
+        fact.get("kind") == "duration"
+        and (seconds := _duration_seconds(value)) is not None
+    ):
+        # A running time reads in hours and minutes, never as raw seconds (#1286).
+        return f"{kind}: {hours_minutes(seconds)}"
     if type(value) in {str, int, float}:
-        return f"{kind}: {_choice_text(cast('str | int | float', value))}"
+        text = _choice_text(cast("str | int | float", value))
+        # A local record can carry its own label ("ISBN: 978…"); it is named
+        # once (#1286).
+        if text.casefold().startswith(kind.casefold() + ":"):
+            text = text[len(kind) + 1 :].strip() or text
+        return f"{kind}: {text}"
     return f"{kind} observation retained."
+
+
+def _duration_seconds(value: object) -> int | None:
+    """Whole seconds from a recorded running time, or None when unreadable."""
+    if type(value) not in {str, int, float}:
+        return None
+    try:
+        seconds = float(cast("str | int | float", value))
+    except ValueError:
+        return None
+    return round(seconds) if math.isfinite(seconds) and seconds >= 0 else None
 
 
 def _choice_text(value: str | int | float) -> str:
@@ -2647,9 +2696,12 @@ def _review_unselectable_evidence(
                         "observation": (
                             f"{label}: {value}. Retained for review only; "
                             f"not an eligible choice. {reason}"
-                            f"Scope: {claim.scope.value}; state: {claim.state.value}; "
-                            f"applicability: {claim.applicability}."
-                        ),
+                            + (
+                                "Edition-level detail."
+                                if claim.scope is ClaimScope.EDITION
+                                else ""
+                            )
+                        ).strip(),
                     },
                 )
     return observations

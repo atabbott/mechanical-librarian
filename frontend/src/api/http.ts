@@ -183,7 +183,14 @@ export const workSummaryStates = [
 export type WorkSummaryState = (typeof workSummaryStates)[number]
 export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
-export type DecisionOutcome = 'accept' | 'keep_current' | 'reject' | 'owner_entered' | 'withdraw'
+export const DECISION_OUTCOMES = [
+  'accept',
+  'keep_current',
+  'reject',
+  'owner_entered',
+  'withdraw',
+] as const
+export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number]
 export type DecisionAction = Extract<DecisionOutcome, 'accept' | 'keep_current'>
 
 export interface LibrarySearch {
@@ -217,10 +224,10 @@ export interface PolicySearch {
 
 export interface ProviderOutcomeView {
   providerRequests: number
-  laneKind: string
+  laneKind: ProviderQueryKind
   provider: string
   reason: string
-  status: string
+  status: ProviderStatus
 }
 // Every statement this build can make about an item's media. The set is
 // closed on the wire too, so a view switches on it exhaustively and a value
@@ -243,6 +250,248 @@ export const MEDIA_HEALTH_KINDS = [
   'media_unreadable',
 ] as const
 export type MediaHealthKind = (typeof MEDIA_HEALTH_KINDS)[number]
+// The closed code sets an owner surface names. Each tuple restates its
+// producer's StrEnum or literal set, is checked where its mapper reads it, and
+// keys a label map that `satisfies` a Record over it, so a code the server can
+// send and the browser cannot name fails the type check rather than reaching
+// the owner as a raw code (#1286).
+export const TARGET_DESTINATIONS = [
+  'title',
+  'subtitle',
+  'authors',
+  'narrators',
+  'series',
+  'genres',
+  'publishedYear',
+  'publishedDate',
+  'publisher',
+  'description',
+  'isbn',
+  'asin',
+  'language',
+  'explicit',
+  'tags',
+  'cover',
+] as const
+export type TargetDestination = (typeof TARGET_DESTINATIONS)[number]
+export const TARGET_FIELD_STATES = [
+  'value',
+  'missing',
+  'null',
+  'empty',
+  'unloaded',
+  'malformed',
+  'oversized',
+] as const
+export type TargetFieldState = (typeof TARGET_FIELD_STATES)[number]
+// A file format, or for a work whose preparation stopped before its file was
+// read, `audio` (an audiobook) or `unknown`.
+export const MEDIA_KINDS = ['epub', 'm4b', 'm4a', 'mp3', 'audio', 'unknown'] as const
+export type MediaKind = (typeof MEDIA_KINDS)[number]
+export const PROVIDER_QUERY_KINDS = ['isbn', 'work', 'asin', 'discovery', 'none'] as const
+export type ProviderQueryKind = (typeof PROVIDER_QUERY_KINDS)[number]
+export const PROVIDER_STATUSES = [
+  'disabled',
+  'insufficient_input',
+  'candidates',
+  'no_match',
+  'authentication',
+  'authorization',
+  'rate_limited',
+  'unavailable',
+  'incomplete',
+  'malformed',
+  'oversized',
+  'candidate_limit_exceeded',
+  'query_limit_exceeded',
+] as const
+export type ProviderStatus = (typeof PROVIDER_STATUSES)[number]
+export const CLAIM_KINDS = [
+  'title',
+  'subtitle',
+  'creator',
+  'contributor',
+  'series',
+  'series_sequence',
+  'isbn',
+  'asin',
+  'publication_date',
+  'date_event',
+  'contextual_credit',
+  'publisher',
+  'description',
+  'language',
+  'subject',
+  'imprint',
+  'genre',
+  'tag',
+  'duration',
+  'performance_type',
+  'adult_product',
+] as const
+export type ClaimKind = (typeof CLAIM_KINDS)[number]
+export const CLAIM_BASES = [
+  'opening_matter',
+  'package_metadata',
+  'target_metadata',
+  'embedded_tag',
+  'sidecar',
+  'path',
+] as const
+export type ClaimBasis = (typeof CLAIM_BASES)[number]
+export const FIELD_STATES = [
+  'valid',
+  'absent',
+  'malformed',
+  'oversized',
+  'unsupported',
+  'untyped',
+  'inapplicable',
+] as const
+export type FieldState = (typeof FIELD_STATES)[number]
+export const AUDIO_SURFACES = [
+  'container_format',
+  'container_stream',
+  'mp4_ilst',
+  'mp4_freeform',
+  'mp4_freeform_tone',
+  'id3_frame',
+  'id3_user_text',
+  'sidecar_audiobookshelf',
+  'sidecar_libation',
+  'sidecar_opf',
+  'sidecar_nfo',
+  'sidecar_cue',
+  'path_folder',
+  'path_file',
+] as const
+export type AudioSurface = (typeof AUDIO_SURFACES)[number]
+export const PREPARATION_FAILURE_STATUSES = [
+  'provider',
+  'configuration',
+  'authentication',
+  'stale',
+  'transient',
+  'projection',
+  'failed',
+  'currentness',
+  'persistence',
+  'unsupported_media',
+  'unreadable_media',
+  'parser_refused',
+  'multi_file_budget_exceeded',
+  'missing_required_input',
+  'malformed_retained_data',
+  'internal_failure',
+  'unknown',
+] as const
+export type PreparationFailureStatus = (typeof PREPARATION_FAILURE_STATUSES)[number]
+export const PREPARATION_FAILURE_STAGES = [
+  'extraction',
+  'provider',
+  'proposal',
+  'admission',
+  'projection',
+  'complete',
+] as const
+export type PreparationFailureStage = (typeof PREPARATION_FAILURE_STAGES)[number]
+export const PROPOSAL_OUTCOMES = [
+  'propose_change',
+  'acceptable_choice',
+  'unresolved_choice',
+  'keep',
+  'reject',
+  'defer',
+  'ineligible',
+] as const
+export type ProposalOutcome = (typeof PROPOSAL_OUTCOMES)[number]
+export const AUTOMATIC_OUTCOMES = ['candidate', 'keep_current', 'ignore'] as const
+export type AutomaticOutcome = (typeof AUTOMATIC_OUTCOMES)[number]
+// Why writes to one destination, or a whole connection, are held.
+export const SUSPENSION_REASONS = [
+  'connection_unavailable',
+  'insufficient_permission',
+  'field_unavailable',
+  'unexpected_effect_behavior',
+] as const
+export type SuspensionReason = (typeof SUSPENSION_REASONS)[number]
+export const EFFECT_CAPABILITIES = ['allowed', 'unavailable', ...SUSPENSION_REASONS] as const
+export type EffectCapability = (typeof EFFECT_CAPABILITIES)[number]
+export const DESTINATION_STATES = ['allowed', 'not_ready', ...SUSPENSION_REASONS] as const
+export type DestinationState = (typeof DESTINATION_STATES)[number]
+export const CAPABILITY_STATES = [
+  'allowed',
+  'partially_allowed',
+  'connection_unavailable',
+  'not_ready',
+] as const
+export type CapabilityState = (typeof CAPABILITY_STATES)[number]
+export const SCAN_STATES = [
+  'idle',
+  'queued',
+  'discovering',
+  'processing',
+  'completed',
+  'completed_with_failures',
+] as const
+export type ScanState = (typeof SCAN_STATES)[number]
+export const SHADOW_DISPOSITIONS = [
+  'abstention',
+  'candidate',
+  'conflict',
+  'ignore',
+  'keep_current',
+  'manual',
+  'unsupported',
+] as const
+export type ShadowDisposition = (typeof SHADOW_DISPOSITIONS)[number]
+export const TRANSITION_OUTCOMES = [
+  'admitted',
+  'superseded',
+  'no_case',
+  'retired',
+  'tombstoned',
+] as const
+export type TransitionOutcome = (typeof TRANSITION_OUTCOMES)[number]
+export const COVER_HISTORY_OUTCOMES = [
+  'automatic_prepared',
+  'owner_retry_prepared',
+  'superseded',
+  'selected',
+  'kept_incumbent',
+  'no_action',
+  'stale',
+] as const
+export type CoverHistoryOutcome = (typeof COVER_HISTORY_OUTCOMES)[number]
+// A recorded description's lifecycle: its advice, then the guarded write.
+export const DESCRIPTION_STATES = [
+  'requested',
+  'running',
+  'succeeded',
+  'failed',
+  'interrupted',
+  'planned',
+  'claimed',
+  'applying',
+  'reconciling',
+  'retryable',
+  'verified',
+  'stale',
+  'superseded',
+  'abandoned',
+  'no_change_required',
+] as const
+export type DescriptionState = (typeof DESCRIPTION_STATES)[number]
+export const COVER_SOURCE_KINDS = [
+  'abs',
+  'epub',
+  'hardcover',
+  'open_library',
+  'inventaire',
+  'audible_catalog',
+  'itunes_search',
+] as const
+export type CoverSourceKind = (typeof COVER_SOURCE_KINDS)[number]
 // One typed statement about an item's media, in the closed shape both the
 // report detail and the terminal row carry. `cited` names what the statement
 // was read from and `bound` names the rule it says the media broke, so the
@@ -263,12 +512,12 @@ export interface PreparationFailureView {
   reason: string
   recovery: string
   recoveryAttempt: number
-  stage: string
-  status: string
+  stage: PreparationFailureStage
+  status: PreparationFailureStatus
 }
 export interface WorkSummaryFieldView {
-  destination: string
-  state: string
+  destination: TargetDestination
+  state: TargetFieldState
   value: string
 }
 export interface WorkSummaryView {
@@ -277,11 +526,11 @@ export interface WorkSummaryView {
   state: WorkSummaryState
 }
 export interface ReportEvidenceView {
-  basis: string
+  basis: ClaimBasis
   excerpt: string
-  kind: string
+  kind: ClaimKind
   role: string | null
-  state: string
+  state: FieldState
   value: string
 }
 export interface ReportChapterView {
@@ -309,14 +558,14 @@ export interface ReportDetailView {
   chapters: readonly ReportChapterView[]
   chaptersTruncated: boolean
   coverPresent: boolean
-  coverSurface: string | null
+  coverSurface: AudioSurface | null
   evidence: readonly ReportEvidenceView[]
   evidenceTruncated: boolean
   item: string
   library: string
   libraryDisplayName?: string
   mediaHealth: readonly MediaHealthObservationView[]
-  mediaKind: string
+  mediaKind: MediaKind
   providerSources: readonly ProviderOutcomeView[]
   providerEvidence: readonly ReportProviderEvidenceView[]
   providerEvidenceTruncated: boolean
@@ -331,7 +580,7 @@ export interface LibraryWorkView {
   authors: readonly string[]
   library: string
   libraryDisplayName?: string
-  mediaKind: string
+  mediaKind: MediaKind
   attentionCount: number
   attention: AttentionState
   // Where this work opens, and what opens there. A work with a review case
@@ -356,12 +605,12 @@ export interface LibraryView {
 }
 export interface AttentionItemView {
   id: string
-  destination: string
+  destination: TargetDestination
   title: string
   authors: readonly string[]
   library: string
   libraryDisplayName?: string
-  mediaKind: string
+  mediaKind: MediaKind
   classificationReason?: string
   notices: readonly string[]
   provenance: readonly string[]
@@ -393,11 +642,11 @@ export type DescriptionAdviceView = Schema<'_DescriptionAdviceResponse'>
 export interface ReviewFieldView {
   classification: string
   classificationReason: string
-  destination: string
+  destination: TargetDestination
   decisionActions: readonly DecisionAction[]
   editable: boolean
-  disposition: string
-  effectCapability: string
+  disposition: ProposalOutcome
+  effectCapability: EffectCapability
   needsAttention: boolean
   navigationRole: string
   manualHold: boolean
@@ -407,10 +656,12 @@ export interface ReviewFieldView {
   choiceContexts: readonly ChoiceContextView[]
   proposalId: string
   targetFingerprint: string
-  humanDecision: Schema<'_DecisionProjection'> | null
+  humanDecision: (Schema<'_DecisionProjection'> & { outcome: DecisionOutcome }) | null
   inventoryRole?: 'primary' | 'contextual'
   automaticDecision:
-    Schema<'_AutomaticDecisionProjection'> | Schema<'_CoverAutomaticDecisionProjection'> | null
+    | (Schema<'_AutomaticDecisionProjection'> & { outcome: AutomaticOutcome })
+    | Schema<'_CoverAutomaticDecisionProjection'>
+    | null
   automaticWithheldReason: string | null
   automaticSelectionSources?: readonly string[]
   notices: readonly string[]
@@ -465,8 +716,8 @@ export interface CoverCandidateView {
   reference: string
   selectable: boolean
   manualEligible: boolean
-  sourceKinds: readonly string[]
-  state: string
+  sourceKinds: readonly CoverSourceKind[]
+  state: 'acceptable' | 'available' | 'excluded' | 'recommended'
   width: number
 }
 export interface CoverConsiderationView {
@@ -509,19 +760,18 @@ export interface CaseDetailView {
     library: string
     libraryDisplayName?: string
     item: string
-    mediaKind: string
+    mediaKind: MediaKind
     title: string
   }
   title: string
   authors: readonly string[]
-  subtitle: string
   comparisonNotices: readonly string[]
   mediaHealth: readonly MediaHealthObservationView[]
   writesConsented: boolean
   fields: readonly ReviewFieldView[]
 }
 export interface EvidenceObservationView {
-  destinations: readonly string[]
+  destinations: readonly TargetDestination[]
   observation: string
   role: EvidenceRole
   source: string
@@ -540,7 +790,7 @@ export type HistoryItemView = (
   | {
       category: 'description'
       outcome: string
-      state: string
+      state: DescriptionState
       model: string
       engine: string
       candidate: Schema<'DescriptionAdviceCandidate'> | null
@@ -552,36 +802,36 @@ export type HistoryItemView = (
       // before audiobook writes existed is never applied, and the owner reads
       // that here (#968).
       applicationReason: string | null
-      destination: string
-      outcome: string
+      destination: TargetDestination
+      outcome: DecisionOutcome
       previousValue: HistoryValueView | null
       selectedValue: HistoryValueView | null
     }
   | {
       category: 'automatic'
-      destination: string
-      outcome: string
+      destination: TargetDestination
+      outcome: AutomaticOutcome
       previousValue: HistoryValueView | null
       selectedValue: HistoryValueView | null
     }
   | {
       category: 'preview'
-      dispositions: readonly { count: number; outcome: string }[]
+      dispositions: readonly { count: number; outcome: ShadowDisposition }[]
     }
   | {
       category: 'cover'
-      automaticOutcome?: string
+      automaticOutcome?: 'candidate'
       candidateCount: number
-      outcome: string
-      ownerOutcome?: string
+      outcome: CoverHistoryOutcome
+      ownerOutcome?: 'accept' | 'keep_current' | 'reject'
       ownerMatchUnconfirmed?: boolean
       policyReasons: readonly string[]
-      policyStatus?: string
-      reviewerStatus: string
+      policyStatus?: 'recommended' | 'abstained'
+      reviewerStatus: 'completed' | 'failed' | 'unavailable'
       reviewerModel?: string
       supersedesAutomatic: boolean
     }
-  | { category: 'transition'; outcome: string; reason: string }
+  | { category: 'transition'; outcome: TransitionOutcome; reason: string }
 ) & { occurredAt: number | null }
 export interface HistoryView {
   items: readonly HistoryItemView[]
@@ -616,10 +866,10 @@ export interface ActivityLibraryView {
 }
 export interface ActivityDestinationView {
   consented: boolean
-  destination: string
+  destination: TargetDestination
   /** Prepared changes this destination's permission would carry, and no other. */
   prepared: number
-  state: string
+  state: DestinationState
 }
 /**
  * Why prepared work is not moving, split into the four different next steps an
@@ -637,7 +887,7 @@ export interface ActivityCapabilityView {
   connection: string
   destinations: readonly ActivityDestinationView[]
   library: string
-  state: string
+  state: CapabilityState
 }
 export type ActivityEventType = 'review' | 'policy' | 'metadata' | 'safety' | 'unknown'
 /** How a record reached the ledger, in the owner's terms rather than the event's. */
@@ -714,7 +964,7 @@ export interface ActivityLedgerView {
   total: number
 }
 export interface ActivityWaitingView {
-  destination: string
+  destination: TargetDestination
   library: string
   state: string
   work_id: string
@@ -723,7 +973,7 @@ export interface ActivityWaitingView {
 export interface ActivityExampleView {
   after: unknown
   before: unknown
-  destination: string
+  destination: TargetDestination
   library: string
   work_id: string
   work_label: string
@@ -731,7 +981,7 @@ export interface ActivityExampleView {
 export interface ActivitySuspensionView {
   connection: string
   destination: string | null
-  reason: string
+  reason: SuspensionReason
   scope: string
   updated_at: number
 }
@@ -2132,11 +2382,6 @@ export const mapSettings = (value: unknown): SettingsView => {
     throw new ApiError(502, 'invalid_settings_response')
   return value as unknown as SettingsView
 }
-const mediaHealthKind = (value: unknown, field: string): MediaHealthKind => {
-  if (typeof value !== 'string' || !(MEDIA_HEALTH_KINDS as readonly string[]).includes(value))
-    throw new ApiError(502, `invalid_${field}`)
-  return value as MediaHealthKind
-}
 // `tracks` is required by review-report-detail-v5. A missing or non-array
 // member is a malformed document, not an observation about the whole item:
 // coercing it to no tracks would print "this item's audio files" where the
@@ -2158,7 +2403,11 @@ const mapMediaHealth = (value: unknown, field: string): MediaHealthObservationVi
         observation.expected == null
           ? null
           : boundedStringValue(observation.expected, `${field}_${String(index)}_expected`, 256),
-      kind: mediaHealthKind(observation.kind, `${field}_${String(index)}_kind`),
+      kind: coverObservationValue(
+        observation.kind,
+        `${field}_${String(index)}_kind`,
+        MEDIA_HEALTH_KINDS,
+      ),
       observed:
         observation.observed == null
           ? null
@@ -2175,10 +2424,18 @@ const mapProviderOutcome = (value: unknown, index: number): ProviderOutcomeView 
       value.provider_requests,
       `provider_outcome_${String(index)}_requests`,
     ),
-    laneKind: boundedStringValue(value.lane_kind, `provider_outcome_${String(index)}_lane`, 64),
+    laneKind: coverObservationValue(
+      value.lane_kind,
+      `provider_outcome_${String(index)}_lane`,
+      PROVIDER_QUERY_KINDS,
+    ),
     provider: boundedStringValue(value.provider, `provider_outcome_${String(index)}_provider`, 128),
     reason: boundedStringValue(value.reason, `provider_outcome_${String(index)}_reason`, 512),
-    status: boundedStringValue(value.status, `provider_outcome_${String(index)}_status`, 64),
+    status: coverObservationValue(
+      value.status,
+      `provider_outcome_${String(index)}_status`,
+      PROVIDER_STATUSES,
+    ),
   }
 }
 const decisionAction = (value: unknown): DecisionAction => {
@@ -2219,6 +2476,14 @@ export const displayValue = (value: unknown): string =>
         : record(value) && typeof value.name === 'string'
           ? `${value.name}${typeof value.sequence === 'string' ? ` · ${value.sequence}` : ''}`
           : 'Unavailable'
+// A target field that holds no value says whether Audiobookshelf has none or
+// could not be read, in Audiobookshelf's own name (#1286).
+export const targetValueText = (state: TargetFieldState, value: unknown) =>
+  state === 'value'
+    ? displayValue(value)
+    : state === 'missing' || state === 'null' || state === 'empty'
+      ? 'Not set in Audiobookshelf'
+      : 'Couldn’t be read from Audiobookshelf'
 
 const validateObject = (value: unknown, name: string): Record<string, unknown> => {
   if (!record(value) || typeof value.schema_version !== 'string')
@@ -2277,8 +2542,9 @@ const mapDecisionAcknowledgement = (
 const preparationProgress = (value: unknown): PreparationProgress => {
   if (!record(value)) throw new ApiError(502, 'invalid_preparation_progress')
   if (value.scan_id !== null) stringValue(value.scan_id, 'preparation_scan_id')
-  for (const field of ['connection', 'library', 'library_id', 'state'])
+  for (const field of ['connection', 'library', 'library_id'])
     stringValue(value[field], `preparation_${field}`)
+  coverObservationValue(value.state, 'preparation_state', SCAN_STATES)
   for (const field of ['checked', 'total', 'ready', 'blocked', 'recorded', 'not_matched'])
     integerValue(value[field], `preparation_${field}`)
   if (typeof value.rescan_requested !== 'boolean')
@@ -2536,7 +2802,11 @@ const activityExample = (value: unknown): ActivityExampleView | null => {
   return {
     after: value.after,
     before: value.before,
-    destination: stringValue(value.destination, 'activity_example_destination'),
+    destination: coverObservationValue(
+      value.destination,
+      'activity_example_destination',
+      TARGET_DESTINATIONS,
+    ),
     library: stringValue(value.library, 'activity_example_library'),
     work_id: stringValue(value.work_id, 'activity_example_work_id'),
     work_label: 'Work details unavailable',
@@ -2552,7 +2822,7 @@ const activitySuspensions = (value: unknown): ActivitySuspensionView[] => {
         item.destination === null
           ? null
           : stringValue(item.destination, 'activity_suspension_destination'),
-      reason: stringValue(item.reason, 'activity_suspension_reason'),
+      reason: coverObservationValue(item.reason, 'activity_suspension_reason', SUSPENSION_REASONS),
       scope: stringValue(item.scope, 'activity_suspension_scope'),
       updated_at: integerValue(item.updated_at, 'activity_suspension_updated_at'),
     }
@@ -2583,13 +2853,21 @@ const activityCapabilities = (raw: unknown): ActivityCapabilityView[] => {
     return {
       connection: stringValue(item.connection, 'activity_connection'),
       library: stringValue(item.library, 'activity_library'),
-      state: stringValue(item.state, 'activity_state'),
+      state: coverObservationValue(item.state, 'activity_state', CAPABILITY_STATES),
       destinations: item.destinations.map((destination, destinationIndex) => {
         if (!record(destination) || typeof destination.consented !== 'boolean')
           throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`)
         return {
-          destination: stringValue(destination.destination, 'activity_destination'),
-          state: stringValue(destination.state, 'activity_destination_state'),
+          destination: coverObservationValue(
+            destination.destination,
+            'activity_destination',
+            TARGET_DESTINATIONS,
+          ),
+          state: coverObservationValue(
+            destination.state,
+            'activity_destination_state',
+            DESTINATION_STATES,
+          ),
           consented: destination.consented,
           prepared: integerValue(destination.prepared, 'activity_destination_prepared'),
         }
@@ -2908,9 +3186,10 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         : (() => {
             if (!record(value.current_waiting)) throw new ApiError(502, 'invalid_activity_waiting')
             return {
-              destination: stringValue(
+              destination: coverObservationValue(
                 value.current_waiting.destination,
                 'activity_waiting_destination',
+                TARGET_DESTINATIONS,
               ),
               library: stringValue(value.current_waiting.library, 'activity_waiting_library'),
               state: stringValue(value.current_waiting.state, 'activity_waiting_state'),
@@ -3000,15 +3279,18 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
     }),
     chaptersTruncated: value.chapters_truncated,
     coverPresent: cover.present,
-    coverSurface: cover.surface == null ? null : stringValue(cover.surface, 'report_cover_surface'),
+    coverSurface:
+      cover.surface == null
+        ? null
+        : coverObservationValue(cover.surface, 'report_cover_surface', AUDIO_SURFACES),
     evidence: (value.evidence as unknown[]).map((claim, index) => {
       if (!record(claim)) throw new ApiError(502, `invalid_report_evidence_${String(index)}`)
       return {
-        basis: stringValue(claim.basis, 'report_evidence_basis'),
+        basis: coverObservationValue(claim.basis, 'report_evidence_basis', CLAIM_BASES),
         excerpt: stringValue(claim.excerpt, 'report_evidence_excerpt'),
-        kind: stringValue(claim.kind, 'report_evidence_kind'),
+        kind: coverObservationValue(claim.kind, 'report_evidence_kind', CLAIM_KINDS),
         role: claim.role == null ? null : stringValue(claim.role, 'report_evidence_role'),
-        state: stringValue(claim.state, 'report_evidence_state'),
+        state: coverObservationValue(claim.state, 'report_evidence_state', FIELD_STATES),
         value: stringValue(claim.value, 'report_evidence_value'),
       }
     }),
@@ -3025,7 +3307,7 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
       value.media_kind,
       value.recording_identity_basis,
     ),
-    mediaKind: stringValue(value.media_kind, 'report_media_kind'),
+    mediaKind: coverObservationValue(value.media_kind, 'report_media_kind', MEDIA_KINDS),
     providerSources: (value.provider_sources as unknown[]).map(mapProviderOutcome),
     providerEvidence: (value.provider_evidence as unknown[]).map((claim, index) => {
       if (!record(claim)) throw new ApiError(502, `invalid_report_provider_${String(index)}`)
@@ -3097,8 +3379,16 @@ export const mapLibrary = (value: unknown): LibraryView => {
                 item.preparation.recovery_attempt,
                 'preparation_recovery_attempt',
               ),
-              stage: stringValue(item.preparation.stage, 'preparation_stage'),
-              status: stringValue(item.preparation.status, 'preparation_status'),
+              stage: coverObservationValue(
+                item.preparation.stage,
+                'preparation_stage',
+                PREPARATION_FAILURE_STAGES,
+              ),
+              status: coverObservationValue(
+                item.preparation.status,
+                'preparation_status',
+                PREPARATION_FAILURE_STATUSES,
+              ),
             }
       if (!Array.isArray(item.preparation_outcomes))
         throw new ApiError(502, 'invalid_preparation_outcomes')
@@ -3111,13 +3401,19 @@ export const mapLibrary = (value: unknown): LibraryView => {
               fields: (Array.isArray(item.summary.fields) ? item.summary.fields : []).map(
                 (field, index) => {
                   if (!record(field)) throw new ApiError(502, `invalid_summary_${String(index)}`)
+                  const state = coverObservationValue(
+                    field.state,
+                    `summary_${String(index)}_state`,
+                    TARGET_FIELD_STATES,
+                  )
                   return {
-                    destination: stringValue(
+                    destination: coverObservationValue(
                       field.destination,
                       `summary_${String(index)}_destination`,
+                      TARGET_DESTINATIONS,
                     ),
-                    state: stringValue(field.state, `summary_${String(index)}_state`),
-                    value: displayValue(field.value),
+                    state,
+                    value: targetValueText(state, field.value),
                   }
                 },
               ),
@@ -3134,7 +3430,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
         libraryDisplayName:
           optionalString(item.library_display_name, 'library_display_name') ??
           stringValue(item.library, 'library'),
-        mediaKind: stringValue(item.media_kind, 'media_kind'),
+        mediaKind: coverObservationValue(item.media_kind, 'media_kind', MEDIA_KINDS),
         attentionCount: integerValue(item.attention_count, 'attention_count'),
         attention: coverObservationValue(item.attention_state, 'attention_state', attentionStates),
         detailUrl: item.detail_url === null ? null : stringValue(item.detail_url, 'detail_url'),
@@ -3170,14 +3466,14 @@ export const mapAttention = (value: unknown): AttentionView => {
     total: integerValue(dto.total, 'attention_total'),
     items: dto.items.map((item) => ({
       id: stringValue(item.review_case_id, 'review_case_id'),
-      destination: stringValue(item.destination, 'destination'),
+      destination: coverObservationValue(item.destination, 'destination', TARGET_DESTINATIONS),
       title: stringValue(item.title, 'title'),
       authors: stringArray(item.authors, 'authors'),
       library: stringValue(item.library, 'library'),
       libraryDisplayName:
         optionalString(item.library_display_name, 'library_display_name') ??
         stringValue(item.library, 'library'),
-      mediaKind: stringValue(item.media_kind, 'media_kind'),
+      mediaKind: coverObservationValue(item.media_kind, 'media_kind', MEDIA_KINDS),
       classificationReason: stringValue(
         item.classification_reason,
         'attention_classification_reason',
@@ -3406,7 +3702,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (authors.length > 128 || authors.some((author) => codePointLength(author) > 512))
     throw new ApiError(502, 'invalid_target_authors')
   const library = boundedStringValue(dto.target.library, 'target_library', 512)
-  const mediaKind = boundedStringValue(dto.target.media_kind, 'target_media_kind', 64)
+  const mediaKind = coverObservationValue(dto.target.media_kind, 'target_media_kind', MEDIA_KINDS)
   const libraryDisplayName =
     optionalString(dto.target.library_display_name, 'library_display_name') ?? library
   return {
@@ -3422,7 +3718,6 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
     },
     title: boundedStringValue(dto.target.title, 'target_title', 512),
     authors,
-    subtitle: `${libraryDisplayName} · ${mediaKind}`,
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
     mediaHealth: mapMediaHealth(value.media_health, 'case_media_health'),
     recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
@@ -3455,23 +3750,56 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
       return {
         classification: classificationValue(field.classification),
         classificationReason: stringValue(field.classification_reason, 'classification_reason'),
-        destination: stringValue(field.destination, 'destination'),
+        destination: coverObservationValue(field.destination, 'destination', TARGET_DESTINATIONS),
         decisionActions,
-        disposition: stringValue(field.deterministic_disposition, 'disposition'),
+        disposition: coverObservationValue(
+          field.deterministic_disposition,
+          'disposition',
+          PROPOSAL_OUTCOMES,
+        ),
         editable: booleanValue(field.editable, 'editable'),
-        effectCapability: stringValue(field.effect_capability, 'effect_capability'),
+        effectCapability: coverObservationValue(
+          field.effect_capability,
+          'effect_capability',
+          EFFECT_CAPABILITIES,
+        ),
         needsAttention: booleanValue(field.needs_attention, 'needs_attention'),
         manualHold: booleanValue(field.manual_hold, 'manual_hold'),
         navigationRole: navigationRole(field.navigation_role),
-        currentValue: displayValue(field.current.value),
+        // An empty or unreadable current value says which, in Audiobookshelf's
+        // name, rather than one word for both (#1286).
+        currentValue: targetValueText(
+          coverObservationValue(field.current.state, 'current_state', TARGET_FIELD_STATES),
+          field.current.value,
+        ),
         currentRaw: field.current.value,
         proposedValues: field.proposed_values,
         choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
         proposalId: stringValue(field.proposal_id, 'proposal_id'),
         targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'),
-        humanDecision: field.human_decision,
+        humanDecision:
+          field.human_decision === null
+            ? null
+            : {
+                ...field.human_decision,
+                outcome: coverObservationValue(
+                  field.human_decision.outcome,
+                  'human_decision_outcome',
+                  DECISION_OUTCOMES,
+                ),
+              },
         inventoryRole: inventoryRole(field.inventory_role),
-        automaticDecision: field.automatic_decision,
+        automaticDecision:
+          field.automatic_decision?.destination === 'cover' || field.automatic_decision == null
+            ? (field.automatic_decision ?? null)
+            : {
+                ...field.automatic_decision,
+                outcome: coverObservationValue(
+                  field.automatic_decision.outcome,
+                  'automatic_decision_outcome',
+                  AUTOMATIC_OUTCOMES,
+                ),
+              },
         automaticWithheldReason:
           field.automatic_withheld_reason == null
             ? null
@@ -3601,10 +3929,10 @@ export const mapEvidence = (value: unknown): EvidenceView => {
           )
             throw new ApiError(502, `invalid_evidence_item_${String(index)}_destinations`)
           const destinations = item.destinations.map((destination, destinationIndex) =>
-            boundedStringValue(
+            coverObservationValue(
               destination,
               `evidence_item_${String(index)}_destination_${String(destinationIndex)}`,
-              64,
+              TARGET_DESTINATIONS,
             ),
           )
           if (new Set(destinations).size !== destinations.length)
@@ -3688,7 +4016,7 @@ export const mapHistory = (value: unknown): HistoryView => {
           category: 'description',
           occurredAt,
           outcome: kind,
-          state: boundedStringValue(item.state, 'description_state', 32),
+          state: coverObservationValue(item.state, 'description_state', DESCRIPTION_STATES),
           model: boundedStringValue(item.model, 'description_model', 256),
           engine: boundedStringValue(item.engine, 'description_engine', 32),
           candidate: mapDescriptionCandidate(item.candidate),
@@ -3697,21 +4025,14 @@ export const mapHistory = (value: unknown): HistoryView => {
       }
       if (kind === 'human_decision_recorded' || kind === 'automatic_decision_recorded') {
         integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
-        const outcome = stringValue(item.outcome, `history_item_${String(index)}_outcome`)
-        const allowed =
-          kind === 'human_decision_recorded'
-            ? ['accept', 'keep_current', 'reject', 'owner_entered', 'withdraw']
-            : ['candidate', 'keep_current', 'ignore']
-        if (!allowed.includes(outcome))
-          throw new ApiError(502, `invalid_history_item_${String(index)}_outcome`)
+        const outcome = `history_item_${String(index)}_outcome`
         const decision = {
           occurredAt,
-          destination: boundedStringValue(
+          destination: coverObservationValue(
             item.destination,
             `history_item_${String(index)}_destination`,
-            64,
+            TARGET_DESTINATIONS,
           ),
-          outcome,
           previousValue: mapHistoryValue(
             item.previous_value,
             `history_item_${String(index)}_previous_value`,
@@ -3731,9 +4052,14 @@ export const mapHistory = (value: unknown): HistoryView => {
                   item.application_reason,
                   `history_item_${String(index)}_application_reason`,
                 ) ?? null,
+              outcome: coverObservationValue(item.outcome, outcome, DECISION_OUTCOMES),
               ...decision,
             }
-          : { category: 'automatic' as const, ...decision }
+          : {
+              category: 'automatic' as const,
+              outcome: coverObservationValue(item.outcome, outcome, AUTOMATIC_OUTCOMES),
+              ...decision,
+            }
       }
       if (kind === 'shadow_preview_recorded') {
         integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
@@ -3744,10 +4070,10 @@ export const mapHistory = (value: unknown): HistoryView => {
           occurredAt,
           dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
             count: integerValue(count, `history_item_${String(index)}_disposition`),
-            outcome: boundedStringValue(
+            outcome: coverObservationValue(
               outcome,
               `history_item_${String(index)}_disposition_name`,
-              64,
+              SHADOW_DISPOSITIONS,
             ),
           })),
         }
@@ -3782,7 +4108,9 @@ export const mapHistory = (value: unknown): HistoryView => {
             )
           : undefined
         const ownerOutcome =
-          decisionOutcome && ['accept', 'keep_current', 'reject'].includes(decisionOutcome)
+          decisionOutcome === 'accept' ||
+          decisionOutcome === 'keep_current' ||
+          decisionOutcome === 'reject'
             ? decisionOutcome
             : undefined
         const automaticOutcome = decisionOutcome === 'candidate' ? decisionOutcome : undefined
@@ -3802,13 +4130,11 @@ export const mapHistory = (value: unknown): HistoryView => {
           policyReasons.some((reason) => codePointLength(reason) > 128)
         )
           throw new ApiError(502, `invalid_history_item_${String(index)}_policy_reasons`)
-        const reviewerStatus = boundedStringValue(
+        const reviewerStatus = coverObservationValue(
           item.consideration.reviewer_status,
           `history_item_${String(index)}_reviewer_status`,
-          64,
+          ['completed', 'failed', 'unavailable'] as const,
         )
-        if (!['completed', 'failed', 'unavailable'].includes(reviewerStatus))
-          throw new ApiError(502, `invalid_history_item_${String(index)}_reviewer_status`)
         return {
           category: 'cover',
           occurredAt,
@@ -3823,7 +4149,11 @@ export const mapHistory = (value: unknown): HistoryView => {
                   256,
                 ),
               }),
-          outcome: kind,
+          outcome: coverObservationValue(
+            kind,
+            `history_item_${String(index)}_kind`,
+            COVER_HISTORY_OUTCOMES,
+          ),
           ...(ownerOutcome
             ? {
                 ownerOutcome,
@@ -3844,10 +4174,10 @@ export const mapHistory = (value: unknown): HistoryView => {
           policyReasons,
           ...(policy
             ? {
-                policyStatus: boundedStringValue(
+                policyStatus: coverObservationValue(
                   policy.status,
                   `history_item_${String(index)}_policy_status`,
-                  64,
+                  ['recommended', 'abstained'] as const,
                 ),
               }
             : {}),
@@ -3856,12 +4186,14 @@ export const mapHistory = (value: unknown): HistoryView => {
         }
       }
       integerValue(item.checkpoint, `history_item_${String(index)}_checkpoint`)
-      if (!['admitted', 'superseded', 'no_case', 'retired', 'tombstoned'].includes(kind))
-        throw new ApiError(502, `invalid_history_item_${String(index)}_kind`)
       return {
         category: 'transition',
         occurredAt,
-        outcome: boundedStringValue(kind, `history_item_${String(index)}_kind`, 64),
+        outcome: coverObservationValue(
+          kind,
+          `history_item_${String(index)}_kind`,
+          TRANSITION_OUTCOMES,
+        ),
         reason: boundedStringValue(item.reason, `history_item_${String(index)}_reason`, 512),
       }
     }),
@@ -4075,7 +4407,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     throw new ApiError(502, 'invalid_cover_readiness')
   const providerFetching = value.provider_fetching
   const ready = value.ready
-  const candidates = value.candidates.map((candidate, index) => {
+  const candidates = value.candidates.map((candidate, index): CoverCandidateView => {
     if (
       !record(candidate) ||
       !record(candidate.identity) ||
@@ -4083,7 +4415,12 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     )
       throw new ApiError(502, `invalid_cover_candidate_${String(index)}`)
     const state = stringValue(candidate.state, 'cover_state')
-    if (!['acceptable', 'available', 'excluded', 'recommended'].includes(state))
+    if (
+      state !== 'acceptable' &&
+      state !== 'available' &&
+      state !== 'excluded' &&
+      state !== 'recommended'
+    )
       throw new ApiError(502, 'invalid_cover_candidate_state')
     const matchStateRaw = stringValue(candidate.match_state, 'cover_match_state')
     if (!['same_edition', 'same_book', 'match_not_confirmed'].includes(matchStateRaw))
@@ -4169,7 +4506,9 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       reference,
       selectable,
       manualEligible,
-      sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'),
+      sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds').map((kind) =>
+        coverObservationValue(kind, 'cover_source_kind', COVER_SOURCE_KINDS),
+      ),
       state,
       width: integerValue(candidate.width, 'cover_width'),
     }

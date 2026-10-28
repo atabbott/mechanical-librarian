@@ -134,7 +134,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         LONG_TITLE,
         ["Aster Vale"],
         "Spoken stories",
-        "audiobook",
+        "m4b",
         case="case-2",
         attention=2,
         dispositions=["unresolved_choice", "no_safe_proposal"],
@@ -144,7 +144,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Paper Moons over Larkspur Station",
         ["Nia Calder"],
         "Household ebooks",
-        "ebook",
+        "epub",
         case="case-3",
         attention=1,
         dispositions=["unresolved_choice"],
@@ -154,7 +154,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "A Field Guide to Borrowed Weather",
         ["Rowan Pike"],
         "Research shelf",
-        "pdf",
+        "epub",
         case="case-4",
         attention=1,
         dispositions=["manual_hold"],
@@ -164,7 +164,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "The Glass Orchard",
         ["Tamsin Reed"],
         "Spoken stories",
-        "audiobook",
+        "m4b",
         case="case-5",
         attention=0,
         dispositions=["automatic"],
@@ -175,7 +175,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Resolved work with retained history",
         ["Juniper Ash"],
         "Research shelf",
-        "ebook",
+        "epub",
         case="case-7",
         attention=0,
         dispositions=["human_decision"],
@@ -195,7 +195,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Pre-admission observation",
         ["Ember Lane"],
         "Incoming shelf",
-        "ebook",
+        "epub",
         case=None,
         attention=0,
         dispositions=["pre_admission"],
@@ -237,7 +237,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Retired exact-current case",
         ["Cedar Moss"],
         "Spoken stories",
-        "audiobook",
+        "m4b",
         case="case-stale",
         attention=0,
         dispositions=["superseded"],
@@ -257,7 +257,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Unicode shelves: 雨の地図 · خريطة هادئة · 🧭",
         ["Renée D'Arcy"],
         "Family archive — shared",
-        "ebook",
+        "epub",
         case="case-12",
         attention=0,
         dispositions=["resolved"],
@@ -269,7 +269,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Frankenstein; or, The Modern Prometheus",
         ["Mary Shelley"],
         "Local collection",
-        "ebook",
+        "epub",
         case="case-13",
         attention=1,
         dispositions=["unresolved_choice", "duplicate"],
@@ -279,7 +279,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Pride and Prejudice",
         ["Jane Austen"],
         "Project Gutenberg",
-        "audiobook",
+        "m4b",
         case="case-14",
         attention=0,
         dispositions=["automatic"],
@@ -289,7 +289,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Moby-Dick; or, The Whale",
         ["Herman Melville"],
         "Google Books catalogue",
-        "ebook",
+        "epub",
         case="case-15",
         attention=0,
         dispositions=["corroborated"],
@@ -299,7 +299,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "Dracula",
         ["Bram Stoker"],
         "Open Library catalogue",
-        "audiobook",
+        "m4b",
         case="case-16",
         attention=0,
         dispositions=["missing"],
@@ -309,7 +309,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "The Time Machine",
         ["H. G. Wells"],
         "Local collection",
-        "ebook",
+        "epub",
         case="case-17",
         attention=0,
         dispositions=["conflict"],
@@ -319,7 +319,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "The Adventures of Sherlock Holmes",
         ["Arthur Conan Doyle"],
         "Project Gutenberg",
-        "audiobook",
+        "m4b",
         case="case-18",
         attention=0,
         dispositions=["duplicate"],
@@ -329,7 +329,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "The Republic",
         ["Plato"],
         "Google Books catalogue",
-        "ebook",
+        "epub",
         case="case-19",
         attention=0,
         dispositions=["unknown"],
@@ -339,7 +339,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         "The Odyssey",
         ["Homer"],
         "Open Library catalogue",
-        "audiobook",
+        "m4b",
         case="case-20",
         attention=0,
         dispositions=["pagination"],
@@ -352,7 +352,7 @@ def _field(
     current: object,
     proposed: list[object],
     *,
-    disposition: str = "review",
+    disposition: str = "unresolved_choice",
     needs_attention: bool = True,
     human_decision: dict[str, object] | None = None,
     automatic_decision: dict[str, object] | None = None,
@@ -399,7 +399,9 @@ def _field(
         "destination": destination,
         "decision_actions": decision_actions,
         "deterministic_disposition": disposition,
-        "effect_capability": "manual",
+        # A producer suspension reason: the cohort's fields are guarded from
+        # external update (#1286).
+        "effect_capability": "insufficient_permission",
         "editable": editable
         if editable is not None
         else (
@@ -417,7 +419,11 @@ def _field(
             if resolved_classification == "unsupported" and not proposed
             else "primary"
         ),
-        "current": {"kind": "synthetic", "value": current},
+        "current": {
+            "kind": "synthetic",
+            "state": "missing" if current is None else "value",
+            "value": current,
+        },
         "proposed_values": [
             {"kind": "synthetic", "value": value} for value in proposed
         ],
@@ -487,7 +493,7 @@ def _case(case_id: str) -> dict[str, object]:
             "target": {
                 "connection": "primary",
                 "library": "Spoken stories",
-                "media_kind": "audiobook",
+                "media_kind": "m4b",
                 "authors": ["Cedar Moss"],
                 "item": "internal-retired-case",
                 "title": "Retired exact-current case",
@@ -581,7 +587,11 @@ def _case(case_id: str) -> dict[str, object]:
             needs_attention=not (resolved or automatic or current_only),
             manual_hold=case_id == "case-4",
             disposition=(
-                "automatic" if automatic else "ineligible" if current_only else "review"
+                "propose_change"
+                if automatic
+                else "ineligible"
+                if current_only
+                else "unresolved_choice"
             ),
             human_decision=(
                 {
@@ -621,7 +631,7 @@ def _case(case_id: str) -> dict[str, object]:
                 else [["Mara Venn"], ["Mara Venn", "Ivo North", "Pax Rill"]]
             ),
             needs_attention=not (resolved or automatic or current_only),
-            disposition="ineligible" if current_only else "review",
+            disposition="ineligible" if current_only else "unresolved_choice",
             human_decision=(
                 {
                     "outcome": "keep_current",
@@ -682,7 +692,7 @@ def _case(case_id: str) -> dict[str, object]:
             "series",
             {"name": "Atlas Cycle", "sequence": "2.5"},
             [],
-            disposition="ineligible" if current_only else "automatic",
+            disposition="ineligible" if current_only else "propose_change",
             needs_attention=False,
             automatic_decision=(
                 None
@@ -699,7 +709,7 @@ def _case(case_id: str) -> dict[str, object]:
             "publishedDate",
             "2024-08",
             [] if current_only else ["2024-08"],
-            disposition="ineligible" if current_only else "automatic",
+            disposition="ineligible" if current_only else "propose_change",
             needs_attention=False,
             automatic_decision=(
                 {
@@ -719,7 +729,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "isbn",
                 None,
                 ["9780306406157"],
-                disposition="automatic",
+                disposition="propose_change",
                 needs_attention=False,
                 automatic_decision={
                     "decision_id": "automatic-isbn",
@@ -742,7 +752,7 @@ def _case(case_id: str) -> dict[str, object]:
                     "cover",
                     "cover-current-synthetic",
                     ["cover-choice-synthetic"],
-                    disposition="review",
+                    disposition="unresolved_choice",
                     needs_attention=True,
                     notices=["Cover comparison remains an owner choice."],
                 ),
@@ -783,7 +793,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "reference": "cover-ref-current",
                                     "selectable": False,
                                     "manual_eligible": False,
-                                    "source_kinds": ["synthetic"],
+                                    "source_kinds": ["abs"],
                                     "state": "excluded",
                                     "width": 800,
                                 }
@@ -824,7 +834,7 @@ def _case(case_id: str) -> dict[str, object]:
                             "reference": "cover-ref-choice",
                             "selectable": True,
                             "manual_eligible": True,
-                            "source_kinds": ["synthetic"],
+                            "source_kinds": ["hardcover"],
                             "state": "recommended",
                             "width": 800,
                         },
@@ -852,7 +862,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "reference": "cover-ref-unconfirmed",
                                     "selectable": False,
                                     "manual_eligible": True,
-                                    "source_kinds": ["synthetic"],
+                                    "source_kinds": ["open_library"],
                                     "state": "excluded",
                                     "width": 700,
                                 }
@@ -873,7 +883,12 @@ def _case(case_id: str) -> dict[str, object]:
                                     "observation": "Local library cover retained.",
                                 }
                             ],
-                            "limitations": ["preview_unavailable"]
+                            # The producer's own sentence for an unavailable
+                            # incumbent preview (cover_consideration), never a
+                            # code the owner would read raw (#1286).
+                            "limitations": [
+                                "Preview unavailable for this retained cover."
+                            ]
                             if case_id == "case-3"
                             else [],
                             "rationale": "Keep the cover currently held by the local library.",
@@ -1396,11 +1411,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             {
                 "connection": "archive",
                 "library": "Research shelf",
-                "state": "blocked",
+                "state": "not_ready",
                 "destinations": [
                     {
                         "destination": "title",
-                        "state": "recovery_required",
+                        "state": "unexpected_effect_behavior",
                         "consented": False,
                         "prepared": 2,
                     },
@@ -1508,21 +1523,21 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ],
         "suspensions": [
             {
-                "reason": "readback",
+                "reason": "unexpected_effect_behavior",
                 "connection": "archive",
                 "destination": "authors",
                 "scope": "destination",
                 "updated_at": 1_754_858_700,
             },
             {
-                "reason": "readback",
+                "reason": "unexpected_effect_behavior",
                 "connection": "archive",
                 "destination": "title",
                 "scope": "destination",
                 "updated_at": 1_754_858_700,
             },
             {
-                "reason": "consent_revoked",
+                "reason": "insufficient_permission",
                 "connection": "primary",
                 "destination": None,
                 "scope": "connection",
@@ -1612,7 +1627,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "not_matched": 0,
                     "rescan_requested": False,
                     "scan_id": "scan-1",
-                    "state": "ready",
+                    "state": "completed",
                     "total": 12,
                 },
                 {
@@ -1626,7 +1641,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     "not_matched": 0,
                     "rescan_requested": False,
                     "scan_id": "scan-2",
-                    "state": "scanning",
+                    "state": "processing",
                     "total": 16,
                 },
             ],
@@ -1688,14 +1703,14 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "source_ledger": [
                     {
                         "provider_requests": 1,
-                        "lane_kind": "identity",
+                        "lane_kind": "work",
                         "provider": "Open Library",
                         "reason": "Returned matching metadata for this work.",
                         "status": "candidates",
                     },
                     {
                         "provider_requests": 2,
-                        "lane_kind": "cover",
+                        "lane_kind": "isbn",
                         "provider": "Hardcover",
                         "reason": "Returned no matching metadata, so nothing was retained.",
                         "status": "no_match",
@@ -1752,7 +1767,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 },
                 {
                     "authority": "none",
-                    "dispositions": {"would_accept": 2, "would_ignore": 1},
+                    "dispositions": {"candidate": 2, "ignore": 1},
                     "kind": "shadow_preview_recorded",
                     "occurred_at": 1_754_858_300,
                     "origin": "policy_preview",

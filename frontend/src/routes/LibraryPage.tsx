@@ -37,25 +37,46 @@ import type {
   CaseDetailView,
   ChoiceContextView,
   CoverObservationView,
+  AutomaticOutcome,
   CoverCandidateView,
   DecisionCommand,
+  DecisionOutcome,
   EvidenceView,
+  LibraryLens,
   LibrarySearch,
+  MediaKind,
   LibraryView,
   LibraryWorkView,
   PreparationView,
   ProviderOutcomeView,
+  ProposalOutcome,
+  TargetDestination,
   WorkSummaryState,
 } from '../api/http'
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import {
+  audioSurfaceLabels,
+  claimBasisLabels,
+  claimKindLabels,
+  coverNoteLabel,
   coverReviewerLabel,
+  coverSourceLabels,
+  destinationLabel,
+  destinationPhrase,
   evidenceRoleLabel,
-  fieldLabel,
-  labelWords,
+  fieldStateLabels,
+  languageName,
+  observationText,
+  lookupLabels,
+  materialReasonLabel,
+  mediaKindLabels,
   opaqueSource,
   preparationOutcomes,
+  preparationStageLabels,
+  preparationStatusLabels,
+  sourceStatusLabels,
+  writeHoldReasons,
 } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
@@ -78,8 +99,9 @@ import {
   writtenRefusal,
 } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
-import { ownerChoiceCount } from '../reviewChoiceCounts'
+import { emptyUnproposed, ownerChoiceCount, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
+import { formatRunningTime } from '../dates'
 
 type ReviewField = CaseDetailView['fields'][number]
 const authoredOwnerRecorded = (field: ReviewField) =>
@@ -131,29 +153,25 @@ const chapterSpan = (start: number, end: number) => {
   }
   return `${clock(start)} – ${clock(end)}`
 }
-// The server's closed lane status is an audit token, not something an owner can
-// read: `candidates` and `candidate_limit_exceeded` differ by one word and mean
-// opposite things. The consequence beside it is the server's own owner-facing
-// sentence; this names the outcome the owner is looking for.
-// The static map is exercised directly by the source-status content proof.
-// eslint-disable-next-line react-refresh/only-export-components
-export const sourceStatusLabel = (status: string) =>
-  ({
-    __proto__: null,
-    candidates: 'Candidates found',
-    no_match: 'No match',
-    disabled: 'Not enabled',
-    insufficient_input: 'Not enough identity',
-    authentication: 'Authentication failed',
-    authorization: 'Access denied',
-    rate_limited: 'Rate limited',
-    unavailable: 'Unavailable',
-    incomplete: 'Incomplete evidence',
-    malformed: 'Malformed evidence',
-    oversized: 'Response too large',
-    candidate_limit_exceeded: 'Too many candidates',
-    query_limit_exceeded: 'Query allowance reached',
-  })[status] ?? 'Provider failure'
+// A claim's role is the source's own words, shown as written; a role the
+// source supplied as unsafe or oversized text reads as such, never as its digest.
+// A language value reads by its name beside its code, `English (en)` (#1286).
+const valueText = (destination: TargetDestination, value: string) =>
+  destination === 'language' ? languageName(value) : value
+const claimRole = (role: string) =>
+  /^(?:unsafe|oversized)-source-text-sha256:/u.test(role) ? 'role not shown' : role
+const coverStateLabels = {
+  acceptable: 'Acceptable',
+  available: 'Available',
+  excluded: 'Excluded',
+  recommended: 'Recommended',
+} satisfies Record<CoverCandidateView['state'], string>
+const lensLabels = {
+  all: 'All',
+  needs_attention: 'Needs attention',
+  no_attention_needed: 'No attention needed',
+  not_matched: 'Not matched',
+} satisfies Record<LibraryLens, string>
 const reviewerUnavailableDetail = (reason: string | null) =>
   reason === 'profile contract requires memory_bytes=1073741824'
     ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
@@ -570,9 +588,10 @@ const decisionValue = (field: ReviewField) => {
         ? `Alternative ${String(candidates.filter((item) => !item.incumbent).indexOf(candidate) + 1)} cover`
         : 'Selected cover'
   }
-  return selected === null || selected === undefined
-    ? field.currentValue
-    : displayValue(selected.value)
+  return valueText(
+    field.destination,
+    selected === null || selected === undefined ? field.currentValue : displayValue(selected.value),
+  )
 }
 // A recording's settled fill stays choosable without asking for review (#1249).
 const optionalChoice = (field: ReviewField) =>
@@ -587,17 +606,36 @@ const fieldState = (field: ReviewField) =>
         : optionalChoice(field)
           ? 'Optional choice'
           : 'No eligible change'
+// Why a field reads as it does when the server gives no reason of its own.
+const humanReasons = {
+  accept: 'You chose a proposed value for this field.',
+  keep_current: 'You kept the current value for this field.',
+  reject: 'You declined the proposed change for this field.',
+  owner_entered: 'You entered a value for this field.',
+  withdraw: 'You withdrew your decision for this field.',
+} satisfies Record<DecisionOutcome, string>
+const automaticReasons = {
+  candidate: 'Automatic policy chose a proposed value.',
+  keep_current: 'Automatic policy kept the current value.',
+  ignore: 'Automatic policy leaves this field unchanged.',
+} satisfies Record<AutomaticOutcome, string>
+const dispositionReasons = {
+  reject: 'The proposed change was set aside; compare the values yourself.',
+  propose_change: 'A change is proposed; compare it with the current value.',
+  acceptable_choice: 'More than one value is acceptable; choose the one this work should use.',
+  unresolved_choice: 'The evidence does not settle one value; compare the values yourself.',
+  keep: 'The current value is proposed to stay; compare the alternatives.',
+  defer: 'This field waits for your comparison of the values.',
+  ineligible: 'No value here can be applied automatically; compare the values yourself.',
+} satisfies Record<ProposalOutcome, string>
 const fieldReason = (field: ReviewField) =>
   bounded(
     field.humanDecision
-      ? field.classificationReason ||
-          `${fieldLabel(field.humanDecision.outcome)} recorded for this field.`
+      ? field.classificationReason || humanReasons[field.humanDecision.outcome]
       : field.automaticDecision
-        ? field.classificationReason ||
-          `${fieldLabel(field.automaticDecision.outcome)} selected by deterministic policy.`
+        ? field.classificationReason || automaticReasons[field.automaticDecision.outcome]
         : actionable(field)
-          ? field.classificationReason ||
-            `${fieldLabel(field.disposition)} requires an owner comparison of the retained values.`
+          ? field.classificationReason || dispositionReasons[field.disposition]
           : field.classificationReason &&
               !/needs (?:your )?review/iu.test(field.classificationReason)
             ? field.classificationReason
@@ -639,7 +677,7 @@ const effectSummary = (field: ReviewField) => {
           }
         : {
             state: 'Choice recorded · External update guarded',
-            detail: `${fieldLabel(field.effectCapability)} currently prevents an external update. Activity shows any recorded application progress.`,
+            detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}. Activity shows any recorded application progress.`,
           }
   }
   return field.effectCapability === 'allowed'
@@ -656,7 +694,7 @@ const effectSummary = (field: ReviewField) => {
         }
       : {
           state: 'Guarded from external update',
-          detail: `${fieldLabel(field.effectCapability)} currently prevents an external update.`,
+          detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}.`,
         }
 }
 const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
@@ -720,51 +758,12 @@ const choiceSelected = (
     recordedSelected(field, outcome, selectedValue))
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
-const materialComparisonReasons = new Set([
-  'isbn_creator_supported_title',
-  'isbn_title_material_conflict',
-  'bibliographic_combination_unresolved',
-  'competing_evidence',
-  'date_refinement_requires_corroboration',
-  'date_year_conflict',
-  'field_policy_conflict',
-  'insufficient_independent_corroboration',
-  'no_safe_bibliographic_combination',
-  'populated_subjective_field',
-  'provider_consensus_title_bracket_source_tag',
-  'provider_consensus_title_explicit_identifier',
-  'provider_consensus_title_parenthesized_bare_number',
-  'provider_consensus_title_parenthesized_series_name',
-  'provider_consensus_title_parenthesized_year',
-  'provider_consensus_title_subtitle_segment',
-  'provider_consensus_title_colon_unused',
-  'provider_consensus_title_series_unpreserved',
-  'decoration_equivalent_bracket_source_tag',
-  'decoration_equivalent_explicit_identifier',
-  'decoration_equivalent_parenthesized_bare_number',
-  'decoration_equivalent_parenthesized_series_name',
-  'decoration_equivalent_parenthesized_year',
-  'decoration_equivalent_subtitle_segment',
-  'decoration_tidy_bracket_source_tag',
-  'decoration_tidy_explicit_identifier',
-  'decoration_tidy_parenthesized_bare_number',
-  'decoration_tidy_parenthesized_series_name',
-  'decoration_tidy_parenthesized_year',
-  'decoration_tidy_subtitle_segment',
-  'decoration_tidy_series_unpreserved',
-  'decoration_equivalence_provider_dissent',
-  'decoration_equivalence_decorated_consensus',
-  'subtitle_segment_uncorroborated',
-  'subtitle_segment_provider_dissent',
-  'subtitle_segment_decorated_consensus',
-  'provider_consensus_contributor_display',
-])
 const comparisonNotices = (field: ReviewField) =>
   field.choiceContexts.some((context) =>
-    context.limitations.some((limitation) => materialComparisonReasons.has(limitation)),
+    context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
   )
     ? []
-    : field.notices.filter((notice) => materialComparisonReasons.has(notice))
+    : field.notices.filter((notice) => materialReasonLabel(notice) !== undefined)
 
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
 const limitingProviderStatuses = new Set([
@@ -798,11 +797,11 @@ const providerGroup = (work: LibraryWorkView) =>
 const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
   const counts = new Map<string, number>()
   for (const outcome of outcomes) {
-    const label = sourceStatusLabel(outcome.status)
+    const label = sourceStatusLabels[outcome.status]
     counts.set(label, (counts.get(label) ?? 0) + 1)
   }
   return [...counts]
-    .map(([label, count]) => `${label}${count > 1 ? ` × ${String(count)}` : ''}`)
+    .map(([label, count]) => (count > 1 ? `${String(count)} sources: ${label}` : label))
     .join(' · ')
 }
 
@@ -834,11 +833,11 @@ function WorkSources({
         {outcomes.map((outcome, index) => (
           <li key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}>
             <strong>{outcome.provider}</strong>
-            <b>{sourceStatusLabel(outcome.status)}</b>
+            <b>{sourceStatusLabels[outcome.status]}</b>
             <span>{outcome.reason}</span>
             <small>
-              {fieldLabel(outcome.laneKind)} lookup · {String(outcome.providerRequests)} bounded
-              request{outcome.providerRequests === 1 ? '' : 's'}
+              {lookupLabels[outcome.laneKind]} · {String(outcome.providerRequests)}{' '}
+              {outcome.providerRequests === 1 ? 'request' : 'requests'}
             </small>
           </li>
         ))}
@@ -882,6 +881,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
       <RecordingIdentityBasis
         value={data.recordingIdentityBasis}
         scope={data.audiobookReviewScope}
+        offered={[]}
       />
       {data.evidence.length === 0 ? (
         <p role="status">No local evidence was recorded for this work.</p>
@@ -890,14 +890,18 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
           {data.evidence.map((claim, index) => (
             <div key={`${claim.kind}-${claim.basis}-${String(index)}`}>
               <dt>
-                {fieldLabel(claim.kind)}
-                {claim.role ? ` · ${fieldLabel(claim.role)}` : ''}
+                {claimKindLabels[claim.kind]}
+                {claim.role ? ` · ${claimRole(claim.role)}` : ''}
               </dt>
               <dd>
-                {claim.value}
+                {/* Only a valid running time reads in hours and minutes; any
+                    other claim keeps its recorded text. */}
+                {(claim.kind === 'duration' && claim.state === 'valid'
+                  ? formatRunningTime(claim.value)
+                  : null) ?? claim.value}
                 <small>
-                  {fieldLabel(claim.basis)}
-                  {claim.state === 'valid' ? '' : ` · ${fieldLabel(claim.state)}`}
+                  {claimBasisLabels[claim.basis]}
+                  {claim.state === 'valid' ? '' : ` · ${fieldStateLabels[claim.state]}`}
                 </small>
               </dd>
             </div>
@@ -913,7 +917,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
       <p className="library-work-cover-presence">
         {data.coverPresent
           ? `Embedded cover art is present${
-              data.coverSurface ? ` (${fieldLabel(data.coverSurface)})` : ''
+              data.coverSurface ? ` (${audioSurfaceLabels[data.coverSurface]})` : ''
             }.`
           : 'No embedded cover art was recorded.'}
       </p>
@@ -950,7 +954,7 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
           <h2>{work.title}</h2>
           <p>
             {authorLine(work)} · {work.libraryDisplayName ?? work.library} ·{' '}
-            {labelWords(work.mediaKind)}
+            {mediaKindLabels[work.mediaKind]}
           </p>
         </div>
       </header>
@@ -961,7 +965,8 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
         <aside className="comparison-notice" aria-label="Preparation condition">
           <p>
             <strong>
-              {fieldLabel(work.preparation.status)} at {fieldLabel(work.preparation.stage)}
+              {preparationStatusLabels[work.preparation.status]}{' '}
+              {preparationStageLabels[work.preparation.stage]}
             </strong>
           </p>
           <p>
@@ -973,8 +978,10 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
         <dl className="library-work-values">
           {summary.fields.map((field) => (
             <div key={field.destination}>
-              <dt>{fieldLabel(field.destination)}</dt>
-              <dd>{field.state === 'value' ? field.value : fieldLabel(field.state)}</dd>
+              <dt>{destinationLabel(field.destination)}</dt>
+              <dd>
+                {field.state === 'value' ? valueText(field.destination, field.value) : field.value}
+              </dd>
             </div>
           ))}
         </dl>
@@ -1014,7 +1021,7 @@ function ChoiceEvidencePanel({
             <li key={`${row.source}:${row.observation}:${String(index)}`}>
               <strong>{row.source}</strong>
               <span>{evidenceRoleLabel(row.role)}</span>
-              <p>{row.observation}</p>
+              <p>{observationText(row.observation)}</p>
             </li>
           ))}
         </ul>
@@ -1025,7 +1032,14 @@ function ChoiceEvidencePanel({
         <aside>
           <strong>Limitation</strong>
           {context.limitations.map((limitation) => (
-            <p key={limitation}>{fieldLabel(limitation)}</p>
+            <p key={limitation}>
+              {materialReasonLabel(limitation) ??
+                // A limitation is a comparison condition or the server's own
+                // sentence; an unnamed condition code is never shown.
+                (/^[a-z0-9_]+$/u.test(limitation)
+                  ? 'Another comparison condition applies'
+                  : limitation)}
+            </p>
           ))}
         </aside>
       ) : null}
@@ -1052,8 +1066,8 @@ const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
 const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280
 
-const decisionQuestion = (destination: string) =>
-  `Which ${labelWords(destination)} should this work use?`
+const decisionQuestion = (destination: TargetDestination) =>
+  `Which ${destinationPhrase(destination)} should this work use?`
 
 function DescriptionText({ value }: { value: string }) {
   const [expanded, setExpanded] = useState(false)
@@ -1106,7 +1120,7 @@ function RecordedFieldObservations({
         <ul className="evidence-values">
           {observations.map((item, index) => (
             <li key={`${item.source}:${item.observation}:${String(index)}`}>
-              <p>{item.observation}</p>
+              <p>{observationText(item.observation)}</p>
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
               </small>
@@ -1267,7 +1281,7 @@ function ContextValue({
   return (
     <section
       className="context-value"
-      aria-label={`${fieldLabel(field.destination)} current value`}
+      aria-label={`${destinationLabel(field.destination)} current value`}
     >
       <dl>
         <div>
@@ -1276,7 +1290,7 @@ function ContextValue({
             {field.destination === 'description' ? (
               <DescriptionText key={field.currentValue} value={field.currentValue} />
             ) : (
-              displayValue(field.currentValue)
+              valueText(field.destination, field.currentValue)
             )}
           </dd>
         </div>
@@ -1294,7 +1308,7 @@ function ContextValue({
         <ChoiceEvidencePanel
           context={context}
           evidenceId={evidenceId}
-          label={`${fieldLabel(field.destination)} current value`}
+          label={`${destinationLabel(field.destination)} current value`}
         />
       ) : null}
     </section>
@@ -1487,7 +1501,7 @@ function OwnerControls({
   submit: (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => string
 }) {
   const control = field.ownerControl ?? null
-  const label = fieldLabel(field.destination)
+  const label = destinationLabel(field.destination)
   const [mode, setMode] = useState<'idle' | 'entry' | 'subset'>('idle')
   const [draft, setDraft] = useState('')
   const [typed, setTyped] = useState(false)
@@ -1788,7 +1802,7 @@ function RecordedOutcome({
   return (
     <section
       className="recorded-outcome"
-      aria-label={`${fieldLabel(field.destination)} recorded outcome`}
+      aria-label={`${destinationLabel(field.destination)} recorded outcome`}
     >
       <p>
         <strong>
@@ -1871,7 +1885,7 @@ function RecordedOutcome({
           <ChoiceEvidencePanel
             context={context}
             evidenceId={evidenceId}
-            label={`${fieldLabel(field.destination)} recorded outcome`}
+            label={`${destinationLabel(field.destination)} recorded outcome`}
           />
         )
       ) : null}
@@ -1900,32 +1914,39 @@ function LibraryCoverChoices(props: {
   )
 }
 
-const coverObservationLabel = (value: string) =>
-  ({
-    absent: 'Absent',
-    audiobook: 'Audiobook branding',
-    clean: 'Clean reproduction',
-    degraded: 'Degraded reproduction',
-    english: 'English',
-    explicit: 'Explicit',
-    illustrated: 'Illustrated',
-    illegible: 'Illegible',
-    legible: 'Legible',
-    minimal: 'Minimal',
-    mixed: 'Mixed media',
-    multiple: 'Multiple languages',
-    no_visible_title: 'No visible title',
-    non_english: 'Non-English',
-    omnibus_or_set: 'Omnibus or set',
-    photographic: 'Photographic',
-    present: 'Present',
-    series_branded: 'Series branded',
-    standalone: 'Standalone',
-    suggestive: 'Suggestive',
-    text_edition: 'Text-edition branding',
-    typographic: 'Typographic',
-    unknown: 'Uncertain',
-  })[value] ?? fieldLabel(value)
+type CoverObservationValue = CoverObservationView[Exclude<
+  keyof CoverObservationView,
+  'candidateReference' | 'previewSha256' | 'previewVariant'
+>]
+const coverObservationLabel = (value: CoverObservationValue) =>
+  (
+    ({
+      dense: 'Dense',
+      absent: 'Absent',
+      audiobook: 'Audiobook branding',
+      clean: 'Clean reproduction',
+      degraded: 'Degraded reproduction',
+      english: 'English',
+      explicit: 'Explicit',
+      illustrated: 'Illustrated',
+      illegible: 'Illegible',
+      legible: 'Legible',
+      minimal: 'Minimal',
+      mixed: 'Mixed media',
+      multiple: 'Multiple languages',
+      no_visible_title: 'No visible title',
+      non_english: 'Non-English',
+      omnibus_or_set: 'Omnibus or set',
+      photographic: 'Photographic',
+      present: 'Present',
+      series_branded: 'Series branded',
+      standalone: 'Standalone',
+      suggestive: 'Suggestive',
+      text_edition: 'Text-edition branding',
+      typographic: 'Typographic',
+      unknown: 'Uncertain',
+    }) satisfies Record<CoverObservationValue, string>
+  )[value]
 
 function CoverObservationEvidence({
   label,
@@ -2156,9 +2177,9 @@ function LibraryCoverChoicesContent({
         ? 'Reviewer observations unavailable; deterministic match evidence is retained.'
         : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
           ? policyReasons.length
-            ? policyReasons.map(fieldLabel).join(', ')
-            : fieldLabel(policyStatus)
-          : fieldLabel(candidate.state)
+            ? policyReasons.map(coverNoteLabel).join(', ')
+            : 'Not among the covers your policy accepts'
+          : coverStateLabels[candidate.state]
   const card = (candidate: (typeof candidates)[number], index: number) => {
     const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
     const source = cover.imageSource(consideration.id, candidate.reference)
@@ -2234,7 +2255,7 @@ function LibraryCoverChoicesContent({
             </strong>
             <em>
               {context?.rationale ??
-                `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map(fieldLabel).join(', ')}`}
+                `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(', ')}`}
             </em>
             <span className="choice-recommendation">
               {!eligibleCandidate || candidate.matchState === 'match_not_confirmed'
@@ -2490,7 +2511,7 @@ function LibraryCoverChoicesContent({
           {consideration.omissions.map((omission, index) => (
             <p key={String(index)}>
               {typeof omission.reason === 'string'
-                ? fieldLabel(omission.reason)
+                ? coverNoteLabel(omission.reason)
                 : 'Unavailable source retained in history'}
             </p>
           ))}
@@ -2708,7 +2729,7 @@ export default function LibraryPage({
     authors: readonly string[]
     library: string
     libraryDisplayName?: string
-    mediaKind: string
+    mediaKind: MediaKind
   } | null>(null)
   const selectedTargetRef = useRef<{
     caseId: string
@@ -2745,7 +2766,7 @@ export default function LibraryPage({
       authors: readonly string[]
       library: string
       libraryDisplayName?: string
-      mediaKind: string
+      mediaKind: MediaKind
     }
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
@@ -3271,7 +3292,6 @@ export default function LibraryPage({
     (reading && !failed && pendingIdentity !== null && pendingIdentity.id === search.preview
       ? pendingIdentity.identity
       : undefined)
-  const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
   const visibleFields = detail.data?.fields.filter(primaryField) ?? []
   const currentActionableDestinations = visibleFields.map((field) => field.destination)
   const frozenDestinations =
@@ -3279,11 +3299,6 @@ export default function LibraryPage({
   const railFields = frozenDestinations
     .map((destination) => visibleFields.find((field) => field.destination === destination))
     .filter((field): field is ReviewField => field !== undefined)
-  const emptyUnproposed = (field: ReviewField) =>
-    (field.currentRaw === null ||
-      field.currentRaw === '' ||
-      (Array.isArray(field.currentRaw) && field.currentRaw.length === 0)) &&
-    field.proposedValues.length === 0
   const urlSelected = visibleFields.find((field) => field.destination === search.field)
   const revealEmptyFields =
     shownEmptyFields[selectedReviewCaseId] === true ||
@@ -4142,7 +4157,7 @@ export default function LibraryPage({
                   onFocus={() => lensIntent(lens)}
                   activeProps={{ 'aria-current': 'page' }}
                 >
-                  {fieldLabel(lens === 'no_attention_needed' ? 'No attention needed' : lens)}
+                  {lensLabels[lens]}
                 </Link>
               ),
             )}
@@ -4258,7 +4273,8 @@ export default function LibraryPage({
                       <strong className="library-work-title">{work.title}</strong>
                       <span className="library-work-author">{authorLine(work)}</span>
                       <span className="library-work-origin">
-                        {work.libraryDisplayName ?? work.library} · {fieldLabel(work.mediaKind)}
+                        {work.libraryDisplayName ?? work.library} ·{' '}
+                        {mediaKindLabels[work.mediaKind]}
                       </span>
                       {summary ? (
                         <span id={summaryId} className="library-provider-summary">
@@ -4361,7 +4377,7 @@ export default function LibraryPage({
               </button>
               <span>
                 Page {String(data.page)}
-                {data.nextCursor ? '' : ' · end of the bounded current result'}
+                {data.nextCursor ? '' : ' · Last page'}
               </span>
               <button
                 type="button"
@@ -4498,7 +4514,7 @@ export default function LibraryPage({
                       ? displayedIdentity.authors.join(', ')
                       : 'Author details unavailable'}{' '}
                     · {displayedIdentity.libraryDisplayName ?? displayedIdentity.library} ·{' '}
-                    {labelWords(displayedIdentity.mediaKind)}
+                    {mediaKindLabels[displayedIdentity.mediaKind]}
                   </p>
                 </div>
                 <dl className="selected-work-status">
@@ -4582,7 +4598,7 @@ export default function LibraryPage({
                         selectCase(selectedReviewCaseId, field.destination)
                       }}
                     >
-                      <strong>{fieldLabel(field.destination)}</strong>
+                      <strong>{destinationLabel(field.destination)}</strong>
                       <span
                         aria-label={
                           actionable(field)
@@ -4649,7 +4665,7 @@ export default function LibraryPage({
                           }}
                         >
                           <small>
-                            {fieldLabel(field.destination)} · {completionOutcome(field)}
+                            {destinationLabel(field.destination)} · {completionOutcome(field)}
                           </small>
                           <strong>{decisionValue(field)}</strong>
                         </button>
@@ -4719,11 +4735,11 @@ export default function LibraryPage({
                       <h2>
                         {selectedActionable
                           ? decisionQuestion(selected.destination)
-                          : fieldLabel(selected.destination)}
+                          : destinationLabel(selected.destination)}
                       </h2>
                       {selectedActionable ? (
                         <>
-                          <p>{`${fieldLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
+                          <p>{`${destinationLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
                         </>
                       ) : selectedRevisitable ? (
                         <p>
@@ -4777,8 +4793,8 @@ export default function LibraryPage({
                           selectedActionable
                             ? decisionQuestion(selected.destination)
                             : selectedOptional
-                              ? `${fieldLabel(selected.destination)} choices`
-                              : `${fieldLabel(selected.destination)} recorded choices`
+                              ? `${destinationLabel(selected.destination)} choices`
+                              : `${destinationLabel(selected.destination)} recorded choices`
                         }
                       >
                         {selectedRevisitable ? (
@@ -4838,7 +4854,7 @@ export default function LibraryPage({
                               }
                               selected={choiceSelected(selected, selectedProgress, 'keep_current')}
                               toggle={() => toggleChoiceEvidence(`${selected.destination}:current`)}
-                              value={selected.currentValue}
+                              value={valueText(selected.destination, selected.currentValue)}
                             />
                           ) : null}
                           {(selected.decisionActions.includes('accept') &&
@@ -4896,7 +4912,10 @@ export default function LibraryPage({
                                       value,
                                     )}
                                     toggle={() => toggleChoiceEvidence(key)}
-                                    value={displayValue(value.value)}
+                                    value={valueText(
+                                      selected.destination,
+                                      displayValue(value.value),
+                                    )}
                                     key={key}
                                   />
                                 )
@@ -5142,7 +5161,7 @@ export default function LibraryPage({
                             : notice === 'competing_evidence' &&
                                 selectedAutomaticSynopsis(selected, detail.data.target.mediaKind)
                               ? 'Different source descriptions'
-                              : fieldLabel(notice)}
+                              : materialReasonLabel(notice)}
                         </p>
                       ))}
                     </aside>
@@ -5206,6 +5225,9 @@ export default function LibraryPage({
                   <RecordingIdentityBasis
                     value={detail.data.recordingIdentityBasis}
                     scope={detail.data.audiobookReviewScope}
+                    offered={detail.data.fields
+                      .filter(railOffers)
+                      .map((field) => field.destination)}
                   />
                 </section>
               ) : null}
@@ -5226,7 +5248,7 @@ export default function LibraryPage({
                           ✓
                         </span>
                         <div>
-                          <strong>{fieldLabel(field.destination)}</strong>
+                          <strong>{destinationLabel(field.destination)}</strong>
                           <small>
                             {fieldState(field)} · {decisionValue(field)}
                           </small>
@@ -5320,7 +5342,8 @@ export default function LibraryPage({
                               : 'Author details unavailable'}
                           </small>
                           <small>
-                            {work.libraryDisplayName ?? work.library} · {fieldLabel(work.mediaKind)}
+                            {work.libraryDisplayName ?? work.library} ·{' '}
+                            {mediaKindLabels[work.mediaKind]}
                           </small>
                         </span>
                         <span className="attention-work-count">
@@ -5345,7 +5368,7 @@ export default function LibraryPage({
                             >
                               <span className="attention-queue-copy">
                                 <b>
-                                  {fieldLabel(item.destination)} ·{' '}
+                                  {destinationLabel(item.destination)} ·{' '}
                                   {item.classificationReason ?? 'Needs your decision'}
                                 </b>
                               </span>

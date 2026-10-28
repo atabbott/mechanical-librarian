@@ -1,7 +1,7 @@
 import { invalidateForegroundQueries } from '../queryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
-import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AmbiguousMutationError,
@@ -19,15 +19,25 @@ import type {
   ActivitySearch,
   ActivityTransitionView,
   ActivityView,
+  CapabilityState,
   ProviderRecoveryDispatchReason,
   ProviderRecoveryFailureReason,
 } from '../api/http'
 import { activityOutcome, ledgerRows } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
-import { fieldLabel, writeFieldLabel } from '../labels'
+import { RecordedTime } from '../components/RecordedTime'
+import { formatDay, formatWhen } from '../dates'
+import { destinationLabel, destinationPhrase, writeHoldReasons, writeStateLabels } from '../labels'
 import { useLibraryName } from '../libraryNames'
-import { consentBasis, destinationReason, readWriteConsent } from '../writeConsent'
+import {
+  consentBasis,
+  destinationReason,
+  readWriteConsent,
+  libraryWritesHeld,
+  writesEnabled,
+  writesOffSentence,
+} from '../writeConsent'
 import {
   activityRoute,
   normalizeActivitySearch,
@@ -39,15 +49,31 @@ import {
 // The activity response is validated into `ActivityDisplayView` at the
 // transport boundary, so this route reads it as the typed view it already is
 // rather than re-deriving `unknown` shapes a second time (#636).
-const capabilityLabel = (state: string) =>
-  ({
-    allowed: 'Ready for consent',
-    partially_allowed: 'Some destinations are ready',
-    connection_unavailable: 'Connection needs checking',
-    insufficient_permission: 'Permission is unavailable',
-    field_unavailable: 'A field is unavailable',
-    not_ready: 'Not ready yet',
-  })[state] ?? 'Not ready yet'
+// A library whose every destination already holds permission has writes
+// enabled; it is not still waiting for consent (#1286).
+const capabilityLabel = (state: CapabilityState, consented: boolean) =>
+  consented
+    ? 'Writes enabled'
+    : {
+        allowed: 'Ready for consent',
+        partially_allowed: 'Some destinations are ready',
+        connection_unavailable: 'Connection needs checking',
+        not_ready: 'Not ready yet',
+      }[state]
+// The ledger's result words. A ledger state is open on the wire, since the
+// ledger also carries records of a type this build does not know, so a state
+// outside these reads as `Recorded`. A withdrawal reads `Recorded` beside the
+// server's own `Withdrawn` change, so the row does not say it twice (#1286).
+const ledgerStateLabels: Readonly<Record<string, string>> = {
+  ...writeStateLabels,
+  accept: 'Accepted',
+  keep_current: 'Kept current',
+  reject: 'Rejected',
+  owner_entered: 'Owner-entered',
+  withdraw: 'Recorded',
+  completed: 'Completed',
+  unavailable: 'Unavailable',
+}
 // A change stopped only by a lost connection is still waiting to be prepared
 // again, so it reads as waiting rather than as a stopped stale (#1402).
 const stateLabel = (state: string, advice?: 'description' | 'cover', failure?: string | null) =>
@@ -67,26 +93,7 @@ const stateLabel = (state: string, advice?: 'description' | 'cover', failure?: s
           retry: 'Manual cover retry',
         }[state]
       : undefined) ??
-  {
-    accept: 'Accepted',
-    keep_current: 'Kept current',
-    reject: 'Rejected',
-    owner_entered: 'Owner-entered',
-    withdraw: 'Withdrawn',
-    completed: 'Completed',
-    unavailable: 'Unavailable',
-    failed: 'Failed safely',
-    no_change_required: 'No change required',
-    applying: 'Applying',
-    claimed: 'Preparing',
-    planned: 'Planned',
-    reconciling: 'Checking',
-    retryable: 'Waiting safely',
-    verified: 'Verified',
-    stale: 'Stale',
-    superseded: 'Superseded',
-    abandoned: 'Stopped safely',
-  }[state] ??
+  ledgerStateLabels[state] ??
   'Recorded'
 // What the owner calls a record, on the row and on the control that filters
 // for it, so a chip and the rows it selects never use different words. The
@@ -136,22 +143,11 @@ const typeOptions = [
 type ActivitySearchUpdate = Partial<Omit<ActivitySearch, 'q'>> & { q?: string | undefined }
 const locationIdentity = (location: { href: string; state: { __TSR_key?: string } }) =>
   `${location.href}\u0000${location.state.__TSR_key ?? ''}`
-const dateParts = (value: number | null) => {
-  if (value === null) return { day: 'Date not recorded', time: '—' }
-  const date = new Date(value * 1000)
-  if (Number.isNaN(date.getTime())) return { day: 'Date not recorded', time: '—' }
-  return {
-    day: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date),
-    time: new Intl.DateTimeFormat(undefined, {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).format(date),
-  }
-}
-// A label inside a sentence reads lowercased, unless it is an acronym, as the
-// ledger's own sentences do.
-const fieldPhrase = (label: string) => (/^[A-Z]+$/u.test(label) ? label : label.toLowerCase())
+// A row sits under its day's heading, so it states only its time.
+const dayHeading = (value: number | null) =>
+  value === null ? 'Date not recorded' : formatDay(value)
+const rowTime = (value: number | null) =>
+  value === null ? '—' : <RecordedTime seconds={value} dayShown />
 function PageJump({
   page,
   pageCount,
@@ -257,7 +253,7 @@ function ActivityTransitions({
         // One flow; the no-break space keeps each separator off a line start.
         <li key={transition.event_id}>
           <time>
-            {dateParts(transition.occurred_at).day}&nbsp;· {dateParts(transition.occurred_at).time}
+            <RecordedTime seconds={transition.occurred_at} />
           </time>
           &nbsp;· {stateLabel(transition.state, advice, transition.failure)}
         </li>
@@ -294,6 +290,8 @@ function ActivityEventRow({
   expanded,
   onToggle,
   day,
+  library,
+  result,
   children,
 }: {
   event: ActivityEventView
@@ -301,6 +299,10 @@ function ActivityEventRow({
   onToggle: () => void
   /** A member recorded on another day than its checks row says so. */
   day?: string
+  /** The library as Settings names it. */
+  library: string
+  /** A result in place of the row's own state, for a decision its check confirmed. */
+  result?: string
   /** Records shown inside this row's Details, after its own. */
   children?: ReactNode
 }) {
@@ -317,7 +319,7 @@ function ActivityEventRow({
     <article className={expanded ? 'is-expanded' : ''}>
       <time>
         {day === undefined ? null : <span className="cm-activity-day">{day} </span>}
-        {dateParts(event.occurred_at).time}
+        {rowTime(event.occurred_at)}
       </time>
       <span className={`cm-activity-category is-${event.category}`}>
         {categoryLabel[event.category]}
@@ -325,7 +327,7 @@ function ActivityEventRow({
       <div className="cm-activity-work">
         <strong title={event.work_label}>{event.work_label}</strong>
         <span>
-          {event.field_label} · {event.library}
+          {event.field_label} · {library}
         </span>
       </div>
       {/*
@@ -337,11 +339,13 @@ function ActivityEventRow({
       <div className="cm-activity-change" aria-label={event.change_detail}>
         <span aria-hidden="true">{event.change}</span>
       </div>
-      <b>{stateLabel(event.state, advice, event.failure)}</b>
+      <b>{result ?? stateLabel(event.state, advice, event.failure)}</b>
+      {/* Every disclosure names its row, so a screen reader hears which one (#1368). */}
       <button
         data-activity-focus={`details-${changeId}`}
         aria-expanded={expanded}
         aria-controls={`activity-evidence-${event.event_id}`}
+        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}${result ? `, ${result.toLowerCase()}` : ''}`}
         onClick={onToggle}
       >
         {expanded ? 'Hide details' : 'Details'}
@@ -542,6 +546,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   })
   const data = query.data
   const preparation = usePreparation().data
+  // A source that limits lookups, or needs an owner's key, is never calm (#1286).
+  const throttles = (preparation?.provider_throttling?.entries ?? []).filter(
+    (entry) => entry.remedy !== null || entry.state !== 'checking',
+  )
+  const throttled = throttles.length > 0
+  const throttleRemedy = throttles.some((entry) => entry.remedy !== null)
   const connectionConditions = preparation?.connections ?? []
   const connection = connectionConditions.find((item) => item.state !== 'recovered')
   const ledger = data.ledger
@@ -946,7 +956,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // routes into the decision can never disagree about it (#639).
   // A lapse is stated by Settings name; the live card waits for that read so
   // it is announced once (#1370).
-  const names = useLibraryName(http, data.lapsed_consents.length > 0)
+  // Every library is named as Settings names it: in the ledger, the consent
+  // card, permission review and the authority controls alike (#1286).
+  const names = useLibraryName(
+    http,
+    data.configured_libraries.length > 0 || data.events.length > 0 || enabled.length > 0,
+  )
   const consent = readWriteConsent(permission ? { ...data, ...permission } : data, {
     libraryName: names.name,
     enabling,
@@ -956,6 +971,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     connectionUnavailable: Boolean(connection),
   })
   const offer = consent.scopes
+  // Beside a library that holds permission, writes are off only for the ones
+  // still waiting, so the heading says which is which (#1286).
+  const writesOff = writesOffSentence(
+    permission ? { ...data, ...permission } : data,
+    enabled.map((item) => item.library),
+    names.name,
+  )
   const offeredChanges = consent.changes
   const consentState = consent.state
   const consentBlocked = consent.blocked
@@ -982,7 +1004,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const cardOffers = consentActionable && (consentState === 'off' || consentState === 'enabling')
   const statusEntry = needsConsent && !cardOffers
   const showOperationalSummary =
-    !permissionNeeded || Boolean(connection) || recoveryCount > 0 || data.paused
+    !permissionNeeded || Boolean(connection) || recoveryCount > 0 || throttled || data.paused
   const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
   // Pause, resume and revoke report beside the controls that issued them. The
   // authority and page lines both stay mounted, so a live region is never
@@ -1038,19 +1060,23 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ? 'Connection paused'
               : recoveryCount
                 ? 'Recovery available'
-                : permissionNeeded
+                : throttleRemedy
                   ? 'Action needed'
-                  : consentState === 'enabling'
-                    ? 'Enabling writes'
-                    : consentState === 'enabled' || consentState === 'applying'
-                      ? 'Writes enabled'
-                      : data.paused
-                        ? 'New work paused'
-                        : !writesHeld
-                          ? 'Writes are off'
-                          : consent.lapsed
-                            ? 'Action needed'
-                            : 'No action required'}
+                  : throttled
+                    ? 'A source is limited'
+                    : permissionNeeded
+                      ? 'Action needed'
+                      : consentState === 'enabling'
+                        ? 'Enabling writes'
+                        : consentState === 'enabled' || consentState === 'applying'
+                          ? 'Writes enabled'
+                          : data.paused
+                            ? 'New work paused'
+                            : !writesHeld
+                              ? 'Writes are off'
+                              : consent.lapsed
+                                ? 'Action needed'
+                                : 'No action required'}
         </span>
       </header>
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
@@ -1151,13 +1177,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             rows.map((row, index) => {
               const first = row.kind === 'event' ? row.event : row.members[0]
               if (!first) return null
-              const day = dateParts(first.occurred_at).day
+              const day = dayHeading(first.occurred_at)
               const previous = rows[index - 1]
               const previousDay = previous
-                ? dateParts(
+                ? dayHeading(
                     (previous.kind === 'event' ? previous.event : previous.members[0])
                       ?.occurred_at ?? null,
-                  ).day
+                  )
                 : null
               const heading = day !== previousDay ? <h3>{day}</h3> : null
               if (row.kind === 'event') {
@@ -1170,6 +1196,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       event={row.event}
                       expanded={expanded}
                       onToggle={() => setExpandedId(expanded ? null : changeId)}
+                      library={names.name(row.event.library)}
                     />
                   </div>
                 )
@@ -1188,13 +1215,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 <div className="cm-activity-event-group" key={`checks-${row.key}`}>
                   {heading}
                   <article className={`is-checks${open ? ' is-expanded' : ''}`}>
-                    <time>{dateParts(first.occurred_at).time}</time>
+                    <time>{rowTime(first.occurred_at)}</time>
                     <span className="cm-activity-category is-automatic">
                       {categoryLabel.automatic}
                     </span>
                     <div className="cm-activity-work">
                       <strong title={first.work_label}>{first.work_label}</strong>
-                      <span>{first.library}</span>
+                      <span>{names.name(first.library)}</span>
                     </div>
                     <div className="cm-activity-change">
                       <span>{sentence}</span>
@@ -1204,6 +1231,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       data-activity-focus={`checks-${row.key}`}
                       aria-expanded={open}
                       aria-controls={`activity-checks-${row.key}`}
+                      aria-label={`${open ? 'Hide details' : 'Details'} for ${first.work_label} checks`}
                       onClick={() => setExpandedChecks(open ? null : row.key)}
                     >
                       {open ? 'Hide details' : 'Details'}
@@ -1221,7 +1249,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                         const expanded = members.some(
                           (item) => (item.change_id || item.event_id) === expandedId,
                         )
-                        const memberDay = dateParts(member.occurred_at).day
+                        const memberDay = dayHeading(member.occurred_at)
                         const paired = members.filter((item) => item !== member)
                         return (
                           <li key={leadId}>
@@ -1229,20 +1257,31 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                               event={member}
                               expanded={expanded}
                               onToggle={() => setExpandedId(expanded ? null : leadId)}
+                              library={names.name(member.library)}
                               {...(memberDay === day ? {} : { day: memberDay })}
                             >
+                              {paired.length ? (
+                                // The decision this check confirmed reads as
+                                // that decision, not as a second record (#1368).
+                                <p className="cm-activity-pair-note">
+                                  This check confirmed the automatic decision below; nothing was
+                                  written.
+                                </p>
+                              ) : null}
                               {paired.length ? (
                                 <ul className="cm-activity-checks">
                                   {paired.map((item) => {
                                     const itemId = item.change_id || item.event_id
                                     const itemOpen = expandedId === itemId
-                                    const itemDay = dateParts(item.occurred_at).day
+                                    const itemDay = dayHeading(item.occurred_at)
                                     return (
                                       <li key={itemId}>
                                         <ActivityEventRow
                                           event={item}
                                           expanded={itemOpen}
                                           onToggle={() => setExpandedId(itemOpen ? leadId : itemId)}
+                                          library={names.name(item.library)}
+                                          result="Automatic decision"
                                           {...(itemDay === day ? {} : { day: itemDay })}
                                         />
                                       </li>
@@ -1350,8 +1389,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               <h2 id="write-consent-title">
                 {consentState === 'off'
                   ? permission?.backup_ready === true && offeredChanges > 0
-                    ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. Writes are off.`
-                    : 'Writes are off. Review permissions when you are ready.'
+                    ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. ${writesOff}`
+                    : `${writesOff} Review permissions when you are ready.`
                   : consentState === 'enabling'
                     ? 'Enabling writes…'
                     : consentState === 'enabled'
@@ -1395,12 +1434,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             ? offer.map((item) => (
                 <div className="cm-write-consent-scope" key={item.library}>
                   <div>
-                    <strong>{item.library}</strong>
+                    <strong>{names.name(item.library)}</strong>
                     <span>
                       {item.eligible
                         .map(
                           (entry) =>
-                            `${String(entry.prepared)} ${fieldPhrase(writeFieldLabel(entry.destination))} ${entry.prepared === 1 ? 'change' : 'changes'}`,
+                            `${String(entry.prepared)} ${destinationPhrase(entry.destination)} ${entry.prepared === 1 ? 'change' : 'changes'}`,
                         )
                         .join(' · ') || 'No eligible destination'}
                     </span>
@@ -1408,13 +1447,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   <dl>
                     {[...item.eligible, ...item.excluded].map((entry) => (
                       <div key={entry.destination}>
-                        <dt>{writeFieldLabel(entry.destination)}</dt>
+                        <dt>{destinationLabel(entry.destination)}</dt>
                         <dd>
                           {entry.state === 'allowed'
                             ? consentState === 'off' || consentState === 'enabling'
                               ? 'Writes off'
                               : 'Writes enabled'
-                            : `Excluded — ${destinationReason(entry.state)}`}
+                            : `Excluded — ${destinationReason(entry.state, consent.lapsed !== null)}`}
                         </dd>
                       </div>
                     ))}
@@ -1480,18 +1519,35 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             onClick={checking ? undefined : checkPermissions}
             aria-disabled={checking || undefined}
           >
-            {permissionRequest === null ? 'Check write permissions' : 'Retry permission check'}
+            {permissionRequest === null
+              ? 'Check write permissions'
+              : permissions.isError || permission?.backup_ready === null
+                ? 'Retry permission check'
+                : 'Check again'}
           </button>
           {permission?.example ? (
             <p>
-              Example: {writeFieldLabel(permission.example.destination)} for{' '}
-              {permission.example.library} — {displayValue(permission.example.before)} →{' '}
+              Example: {destinationLabel(permission.example.destination)} for{' '}
+              {names.name(permission.example.library)} — {displayValue(permission.example.before)} →{' '}
               {displayValue(permission.example.after)}
             </p>
           ) : null}
           {configured.map((library) => {
             const name = library.library
             const state = capability(name)?.state ?? 'not_ready'
+            const destinations = capability(name)?.destinations ?? []
+            // Consented once nothing is left to grant: every destination that
+            // can be given permission holds it. One that can never be written
+            // here (a field the service lacks, a hold) does not keep the
+            // library reading as partly ready. Consent outlives a later
+            // suspension, so only a consented destination that is still
+            // allowed has writes enabled (#1286).
+            const consented =
+              destinations.some(writesEnabled) &&
+              !destinations.some(
+                (destination) => destination.state === 'allowed' && !destination.consented,
+              )
+            const displayName = names.name(name)
             const disabled = !selectableNames.has(name)
             return (
               <div className="activity-consent-library" key={name}>
@@ -1502,22 +1558,26 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     checked={selected.has(name)}
                     onChange={() => toggle(name)}
                   />
-                  <strong>{name}</strong>
+                  <strong>{displayName}</strong>
                   <small>
                     {preparedCount(library)} prepared ·{' '}
-                    {permission?.backup_ready === true
-                      ? capabilityLabel(state)
-                      : 'Readiness unconfirmed'}
+                    {permission?.backup_ready !== true
+                      ? 'Readiness unconfirmed'
+                      : libraryWritesHeld(destinations)
+                        ? 'Writes held'
+                        : capabilityLabel(state, consented)}
                   </small>
                 </label>
-                <ul aria-label={`${name} included and excluded destinations`}>
+                <ul aria-label={`${displayName} included and excluded destinations`}>
                   {capability(name)?.destinations.map((entry) => (
                     <li key={entry.destination}>
-                      <span>{writeFieldLabel(entry.destination)}</span>
+                      <span>{destinationLabel(entry.destination)}</span>
                       <small>
-                        {entry.state === 'allowed'
-                          ? `Included · ${String(entry.prepared)} prepared`
-                          : `Excluded — ${destinationReason(entry.state)}`}
+                        {writesEnabled(entry)
+                          ? `Writes enabled · ${String(entry.prepared)} prepared`
+                          : entry.state === 'allowed'
+                            ? `Included · ${String(entry.prepared)} prepared`
+                            : `${entry.consented ? 'Writes held' : 'Excluded'} — ${destinationReason(entry.state, consent.lapsed !== null)}`}
                       </small>
                     </li>
                   ))}
@@ -1591,13 +1651,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   ? 'Library connection is paused'
                   : recoveryCount
                     ? 'Recovery needs attention'
-                    : data.paused
-                      ? 'New work is paused'
-                      : !writesHeld
-                        ? 'Writes are off'
-                        : lapse
-                          ? 'Some writes are off'
-                          : 'No intervention needed'}
+                    : throttleRemedy
+                      ? 'A metadata source needs attention'
+                      : throttled
+                        ? 'A metadata source is limiting lookups'
+                        : data.paused
+                          ? 'New work is paused'
+                          : !writesHeld
+                            ? 'Writes are off'
+                            : lapse
+                              ? 'Some writes are off'
+                              : 'No intervention needed'}
             </h2>
             <p>
               {connection?.state === 'checking'
@@ -1608,15 +1672,22 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
                     : recoveryCount
                       ? 'Affected work remains held until its current state can be reconciled safely.'
-                      : data.paused
-                        ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                        : (lapse ??
-                          (writesHeld
-                            ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
-                            : cardLapse
-                              ? 'Nothing is written to your libraries until you give permission again.'
-                              : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
+                      : throttled
+                        ? `${throttleRemedy ? 'A source needs an API key added or checked; until then its lookups wait.' : 'Some lookups wait until the source allows them again; nothing is lost.'} Settings shows each source.`
+                        : data.paused
+                          ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
+                          : (lapse ??
+                            (writesHeld
+                              ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
+                              : cardLapse
+                                ? 'Nothing is written to your libraries until you give permission again.'
+                                : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
             </p>
+            {throttled && !connection && !recoveryCount ? (
+              <Link to="/settings" search={{ group: 'providers' }}>
+                Review metadata sources in Settings
+              </Link>
+            ) : null}
             {statusEntry ? (
               <button
                 type="button"
@@ -1663,12 +1734,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <span className="cm-activity-pulse" aria-hidden="true" />
             <div>
               <strong>
-                {waitingEvent.work_label} · {writeFieldLabel(waitingEvent.destination)} update
+                {waitingEvent.work_label} · {destinationLabel(waitingEvent.destination)} update
               </strong>
               <span>
                 {data.paused
                   ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
-                  : 'Next exact-current check runs automatically. No action is required.'}
+                  : 'The library is checked again automatically before anything is written. No action is required.'}
               </span>
             </div>
           </div>
@@ -1701,7 +1772,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     : 'scopes'}
                 {item.next_eligible_at === null
                   ? ''
-                  : ` · next eligible ${dateParts(item.next_eligible_at).time}`}
+                  : ` · next eligible ${formatWhen(item.next_eligible_at, new Date())}`}
                 {item.failure_reasons?.length ? (
                   <span>
                     {' '}
@@ -1729,7 +1800,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 <strong>Authority and recovery</strong>
                 <small>
                   {recoveryCount
-                    ? `${String(recoveryCount)} recovery ${recoveryCount === 1 ? 'item' : 'items'} need review`
+                    ? `${String(recoveryCount)} recovery ${recoveryCount === 1 ? 'item needs' : 'items need'} review`
                     : data.paused
                       ? 'New work remains paused until you resume it'
                       : 'Write permissions and pause controls'}
@@ -1761,7 +1832,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     })
                   }
                 >
-                  Remove write permission for {library.library}
+                  Remove write permission for {names.name(library.library)}
                 </button>
               ))}
               {commandStatus(authorityFeedback)}
@@ -1769,9 +1840,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 <div className="cm-activity-recovery-facts" aria-label="Recovery facts">
                   {suspensions.map((item, index) => (
                     <p key={`${item.connection}:${item.destination ?? ''}:${String(index)}`}>
-                      <strong>Recovery:</strong>{' '}
-                      {fieldLabel(item.reason || 'A shared condition is being checked')}. No
-                      accepted decision is retried blindly.
+                      <strong>Recovery:</strong> Writes are held because{' '}
+                      {writeHoldReasons[item.reason]}. No accepted decision is retried blindly.
                     </p>
                   ))}
                 </div>

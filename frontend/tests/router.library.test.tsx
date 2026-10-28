@@ -9,7 +9,7 @@ import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
 import { ownerChoiceCount } from '../src/reviewChoiceCounts'
 import { reconciliationKey } from '../src/reviewDecisionController'
-import { sourceStatusLabel } from '../src/routes/LibraryPage'
+import { sourceStatusLabels } from '../src/labels'
 import { advancePresentationSettled } from '../src/reviewAdvancePresentation'
 import type {
   AttentionSearch,
@@ -22,6 +22,7 @@ import type {
   ProviderThrottlingView,
   ReviewHttp,
   ReviewerAccessView,
+  TargetDestination,
 } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import {
@@ -225,11 +226,11 @@ it('keeps Attention in the Library search scope with its own cursor', async () =
   const http = createHttp()
   const item = {
     id: 'case-1',
-    destination: 'title',
+    destination: 'title' as const,
     title: 'Scoped work',
     authors: [],
     library: 'Books',
-    mediaKind: 'ebook',
+    mediaKind: 'epub' as const,
     notices: [],
     provenance: [],
     workAttentionCount: 1,
@@ -383,11 +384,11 @@ describe('Library route', () => {
       items: [
         {
           id: 'case-1',
-          destination: 'title',
+          destination: 'title' as const,
           title: 'A Book',
           authors: [],
           library: 'Books',
-          mediaKind: 'ebook',
+          mediaKind: 'epub' as const,
           classificationReason: 'Title needs a decision',
           notices: [],
           provenance: [],
@@ -1472,7 +1473,7 @@ describe('Library route', () => {
 
   it('keeps a target route pending until its selected field commits', () => {
     const presentation = {
-      destination: 'authors',
+      destination: 'authors' as const,
       sourceRevision: 'source-revision',
       target: 'target-search',
     }
@@ -1552,7 +1553,7 @@ describe('Library route', () => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         title: 'item-1',
         subtitle: 'internal identity',
@@ -1569,7 +1570,7 @@ describe('Library route', () => {
     await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     expect(screen.queryByText('item-1')).toBeNull()
-    expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
+    expect(screen.getByText('Author details unavailable · Books · Ebook (EPUB)')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
     expect(screen.getByRole('link', { name: 'Evidence' })).toHaveAttribute(
       'href',
@@ -1603,16 +1604,16 @@ describe('Library route', () => {
         reason: 'Provider credentials need owner attention.',
         recovery: 'Update the configured provider credentials, then scan this library again.',
         recoveryAttempt: 0,
-        stage: 'provider',
-        status: 'authentication',
+        stage: 'provider' as const,
+        status: 'authentication' as const,
       },
       preparationOutcomes: [
         {
           providerRequests: 1,
-          laneKind: 'work',
+          laneKind: 'work' as const,
           provider: 'hardcover-main',
           reason: 'Refused the credentials it was given; nothing was retained.',
-          status: 'authentication',
+          status: 'authentication' as const,
         },
       ],
       summary: {
@@ -1664,7 +1665,7 @@ describe('Library route', () => {
         id: 'library_work_audio',
         workId: 'library_work_audio',
         title: 'Recorded work',
-        mediaKind: 'm4b',
+        mediaKind: 'm4b' as const,
         attentionCount: 0,
         attention: 'no_attention_needed' as const,
         detailUrl,
@@ -1679,7 +1680,7 @@ describe('Library route', () => {
         // The row must not read as a failure, and must open (#966).
         preparation: null,
       }
-      const getReportDetail = vi.fn(async () => ({
+      const getReportDetail = vi.fn<ReviewHttp['getReportDetail']>(async () => ({
         chapters: [
           { endMilliseconds: 1_800_000, ordinal: 1, startMilliseconds: 0, title: 'Chapter One' },
         ],
@@ -1688,7 +1689,7 @@ describe('Library route', () => {
         coverSurface: 'container_stream',
         evidence: [
           {
-            basis: 'sidecar_libation',
+            basis: 'sidecar',
             excerpt: 'B0CW1KL2QD',
             kind: 'asin',
             role: null,
@@ -1696,7 +1697,7 @@ describe('Library route', () => {
             value: 'B0CW1KL2QD',
           },
           {
-            basis: 'sidecar_libation',
+            basis: 'sidecar',
             excerpt: 'Recorded Narrator',
             kind: 'contributor',
             role: 'narrator',
@@ -1704,7 +1705,7 @@ describe('Library route', () => {
             value: 'Recorded Narrator',
           },
           {
-            basis: 'container_format',
+            basis: 'embedded_tag',
             excerpt: '43200.000',
             kind: 'duration',
             role: null,
@@ -1712,12 +1713,20 @@ describe('Library route', () => {
             value: '43200.000',
           },
           {
-            basis: 'path_file',
+            basis: 'path',
             excerpt: 'B0XXXXXXXX',
             kind: 'asin',
             role: null,
             state: 'malformed',
             value: 'B0XXXXXXXX',
+          },
+          {
+            basis: 'path',
+            excerpt: '7200',
+            kind: 'duration',
+            role: null,
+            state: 'malformed',
+            value: '7200',
           },
         ],
         evidenceTruncated: false,
@@ -1726,22 +1735,22 @@ describe('Library route', () => {
         mediaHealth: [
           {
             bound:
-              'The local running time is within 90 seconds of the running time the matched edition states.',
+              "A complete recording runs within 1 min 30 s of the edition's stated running time.",
             cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
-            expected: '72000 seconds stated by the matched edition',
+            expected: '20 h stated by the matched edition',
             kind: 'runtime_short_of_provider' as const,
-            observed: '43200 seconds of local audio',
+            observed: '12 h of local audio, 8 h shorter than the matched edition',
             tracks: [],
           },
         ],
-        mediaKind: 'm4b',
+        mediaKind: 'm4b' as const,
         providerSources: [
           {
             providerRequests: 1,
-            laneKind: 'asin',
+            laneKind: 'asin' as const,
             provider: 'Audnexus',
             reason: 'The provider had nothing matching this work.',
-            status: 'no_match',
+            status: 'no_match' as const,
           },
         ],
         providerEvidence: [],
@@ -1820,25 +1829,33 @@ describe('Library route', () => {
       expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything(), 'foreground')
       expect(within(evidence).getByText('B0CW1KL2QD')).toBeVisible()
       expect(within(evidence).getByText('Recorded Narrator')).toBeVisible()
-      expect(within(evidence).getByText('43200.000')).toBeVisible()
+      // A running time reads in hours and minutes, never as raw seconds (#1286).
+      expect(within(evidence).getByText('12 h')).toBeVisible()
+      expect(within(evidence).queryByText(/43200/u)).toBeNull()
+      // A running time the extraction could not trust is no running time: it
+      // keeps its recorded text rather than reading as `2 h` (#1286 C5).
+      expect(within(evidence).getByText('7200')).toBeVisible()
+      expect(within(evidence).queryByText('2 h')).toBeNull()
       // A claim the extraction could not trust must not read as sound evidence.
-      expect(within(evidence).getByText(/Malformed/u)).toBeVisible()
+      expect(within(evidence).getAllByText(/Unreadable/u)).toHaveLength(2)
       expect(within(evidence).getByText(/Embedded cover art is present/u)).toBeVisible()
       // What is wrong with the media, stated as its own section: the observation,
       // the rule it broke, and what it was read from -- with the opaque local
       // reference standing for the evidence it points at rather than shown.
       const health = within(evidence).getByRole('region', { name: 'Media health' })
-      expect(within(health).getByText('Runtime short of provider')).toBeVisible()
-      expect(
-        within(health).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
-      ).toBeVisible()
+      expect(within(health).getByText('Shorter than the edition')).toBeVisible()
       expect(
         within(health).getByText(
-          'The local running time is within 90 seconds of the running time the matched edition states.',
+          /12 h of local audio, 8 h shorter than the matched edition · expected 20 h/u,
         ),
       ).toBeVisible()
       expect(
-        within(health).getByText('Read from local evidence, audible-product-B08G9PRS1K'),
+        within(health).getByText(
+          "A complete recording runs within 1 min 30 s of the edition's stated running time.",
+        ),
+      ).toBeVisible()
+      expect(
+        within(health).getByText('Read from local evidence, Audible product B08G9PRS1K'),
       ).toBeVisible()
       // Chapters are a bounded structured section, disclosed like the source
       // ledger beside them rather than filling the panel.
@@ -1873,8 +1890,8 @@ describe('Library route', () => {
         reason: 'Provider credentials need owner attention.',
         recovery: 'Update the configured provider credentials, then scan this library again.',
         recoveryAttempt: 0,
-        stage: 'provider',
-        status: 'authentication',
+        stage: 'provider' as const,
+        status: 'authentication' as const,
       },
       // The retained report matched nothing, which the failure still outranks.
       summary: {
@@ -2070,8 +2087,8 @@ describe('Library route', () => {
         reason: 'One file in this work could not be read.',
         recovery: 'Repair or replace the unreadable file, then scan this library again.',
         recoveryAttempt: 0,
-        stage: 'media',
-        status: 'unreadable_media',
+        stage: 'extraction' as const,
+        status: 'unreadable_media' as const,
       },
     }
     const http: ReviewHttp = {
@@ -2091,7 +2108,7 @@ describe('Library route', () => {
     const row = await screen.findByRole('button', { name: /^Retained audiobook\./u })
     expect(row).toHaveTextContent('Preparation failed safely')
     const health = screen.getByRole('region', { name: 'Media health' })
-    expect(within(health).getByText('Media unreadable')).toBeVisible()
+    expect(within(health).getByText('Audio could not be read')).toBeVisible()
     expect(within(health).getByText('Read from track_4')).toBeVisible()
     expect(row).not.toContainElement(health)
   })
@@ -2110,8 +2127,8 @@ describe('Library route', () => {
         reason: 'A <script> hostile diagnostic remains safe.',
         recovery: 'Scan again only after the source condition is corrected.',
         recoveryAttempt: 0,
-        stage: 'provider',
-        status: 'failed',
+        stage: 'provider' as const,
+        status: 'failed' as const,
       },
     }
     const http: ReviewHttp = {
@@ -2154,7 +2171,9 @@ describe('Library route', () => {
       summary: {
         state: 'no_decision_recorded' as const,
         reason: 'No review decision is recorded for this work.',
-        fields: [{ destination: 'title', state: 'value', value: 'Unfiled observation' }],
+        fields: [
+          { destination: 'title' as const, state: 'value' as const, value: 'Unfiled observation' },
+        ],
       },
     }
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
@@ -2199,7 +2218,7 @@ describe('Library route', () => {
         summary: {
           state: 'no_decision_recorded' as const,
           reason: 'No review decision is recorded for this work.',
-          fields: [{ destination: 'title', state: 'value' as const, value: title }],
+          fields: [{ destination: 'title' as const, state: 'value' as const, value: title }],
         },
       }
     }
@@ -2275,9 +2294,10 @@ describe('Library route', () => {
     ['candidate_limit_exceeded', 'Too many candidates'],
     ['authentication', 'Authentication failed'],
     ['malformed', 'Malformed evidence'],
-    ['a_status_this_build_has_never_seen', 'Provider failure'],
-  ])('names the %s source status for an owner as %s', (status, label) => {
-    expect(sourceStatusLabel(status)).toBe(label)
+    ['insufficient_input', 'Too little to search with'],
+    // A status outside the closed set is refused at the transport (#1286).
+  ] as const)('names the %s source status for an owner as %s', (status, label) => {
+    expect(sourceStatusLabels[status]).toBe(label)
   })
 
   it('keeps the whole work card as the single selection target', async () => {
@@ -2318,6 +2338,15 @@ describe('Library route', () => {
     await waitFor(() =>
       expect(router.state.location.search).toEqual({ lens: 'all', q: 'book', cursor: 'page-3' }),
     )
+  })
+
+  it('closes the last page in plain words (#1286)', async () => {
+    // The fixture page has no next cursor, so it is the last page.
+    const last = { ...library, page: 3, previousCursor: 'page-2' }
+    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => last) }
+    renderRoute('/library?lens=all&cursor=page-3', http)
+    expect(await screen.findByText('Page 3 · Last page')).toBeVisible()
+    expect(screen.queryByText(/bounded current result/u)).toBeNull()
   })
 
   describe('retention and intent prefetch', () => {
@@ -2466,11 +2495,11 @@ describe('Library route', () => {
       const user = userEvent.setup()
       const item = {
         id: 'case-1',
-        destination: 'title',
+        destination: 'title' as const,
         title: 'Retained queue work',
         authors: [],
         library: 'Books',
-        mediaKind: 'ebook',
+        mediaKind: 'epub' as const,
         notices: [],
         provenance: [],
         workAttentionCount: 1,
@@ -2606,7 +2635,7 @@ describe('Library route', () => {
   it('shows bounded provider absence once at the selected-work comparison boundary', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         comparisonNotices: [
           'Provider limitation: Open Library — Provider returned no matching metadata.',
@@ -2629,7 +2658,7 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const automaticField = {
       ...titleField,
-      destination: 'series',
+      destination: 'series' as const,
       currentValue: 'Atlas Cycle 2.5',
       currentRaw: { name: 'Atlas Cycle', sequence: '2.5' },
       proposedValues: [],
@@ -2653,7 +2682,7 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         fields: [
           {
@@ -2745,7 +2774,9 @@ describe('Library route', () => {
     expect(screen.getByText('Title: New title')).toBeVisible()
     expect(screen.getByText('External corroboration')).toBeVisible()
     expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
-    expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
+    expect(
+      screen.getAllByText('The sources disagree; choose the value yourself').length,
+    ).toBeGreaterThan(0)
     expect(screen.queryByText('Different source tag lists')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(
@@ -2831,7 +2862,7 @@ describe('Library route', () => {
         currentRaw: current,
         decisionActions: editable ? ['keep_current' as const, 'accept' as const] : [],
         editable,
-        destination: 'series',
+        destination: 'series' as const,
         needsAttention: false,
         navigationRole: 'resolved' as const,
         proposedValues: [candidate],
@@ -2840,7 +2871,10 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=series', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [series] })),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [series],
+        })),
       })
 
       expect(await screen.findByRole('heading', { name: 'Series' })).toBeVisible()
@@ -2907,7 +2941,7 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=description', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
           ...detail,
           target: { ...detail.target, mediaKind },
           fields: [field],
@@ -2915,10 +2949,18 @@ describe('Library route', () => {
       })
       const neutral = selected && ['m4b', 'm4a', 'mp3'].includes(mediaKind)
       expect(
-        await screen.findByText(neutral ? 'Different source descriptions' : 'Competing evidence'),
+        await screen.findByText(
+          neutral
+            ? 'Different source descriptions'
+            : 'The sources disagree; choose the value yourself',
+        ),
       ).toBeVisible()
       expect(
-        screen.queryByText(neutral ? 'Competing evidence' : 'Different source descriptions'),
+        screen.queryByText(
+          neutral
+            ? 'The sources disagree; choose the value yourself'
+            : 'Different source descriptions',
+        ),
       ).toBeNull()
     },
   )
@@ -2984,7 +3026,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=description', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [description] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [description],
+      })),
     })
 
     expect(
@@ -3029,7 +3074,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=description', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [description] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [description],
+      })),
     })
 
     expect((await screen.findAllByText('Resolved automatically')).at(-1)).toBeVisible()
@@ -3063,7 +3111,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [title] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [title],
+      })),
     })
 
     const notice = await screen.findByRole('complementary', {
@@ -3104,7 +3155,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [title] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [title],
+      })),
     })
 
     const notice = await screen.findByRole('complementary', {
@@ -3140,7 +3194,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [title] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [title],
+      })),
     })
 
     const notice = await screen.findByRole('complementary', {
@@ -3156,14 +3213,17 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const subtitle = {
       ...titleField,
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       proposalId: 'proposal-subtitle',
       targetFingerprint: 'fingerprint-subtitle',
       notices: ['subtitle_segment_provider_dissent', 'subtitle_segment_decorated_consensus'],
     }
     renderRoute('/library?lens=all&preview=case-1&field=subtitle', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [subtitle] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [subtitle],
+      })),
     })
 
     const notice = await screen.findByRole('complementary', {
@@ -3205,7 +3265,7 @@ describe('Library route', () => {
                 actor: 'owner',
                 application: 'apply' as const,
                 decision_id: 'owner-authors',
-                destination: 'authors',
+                destination: 'authors' as const,
                 occurred_at: 2,
                 outcome,
                 proposal_id: base.proposalId,
@@ -3222,7 +3282,10 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=authors', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [authors] })),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [authors],
+        })),
       })
 
       const recorded = await screen.findByRole('region', { name: 'Authors recorded outcome' })
@@ -3239,15 +3302,14 @@ describe('Library route', () => {
   )
 
   it.each([
-    { ownerTags: [], mediaKind: 'm4b' },
-    { ownerTags: ['Owner tag'], mediaKind: 'm4b' },
-    { ownerTags: ['Owner tag'], mediaKind: 'm4a' },
-    { ownerTags: ['Owner tag'], mediaKind: 'mp3' },
-    { ownerTags: ['Owner tag'], mediaKind: 'ebook' },
-    { ownerTags: ['Owner tag'], mediaKind: 'epub' },
-    { ownerTags: ['Owner tag'], mediaKind: 'unknown' },
-    { ownerTags: ['Owner tag'], mediaKind: 'audiobook' },
-  ])(
+    { ownerTags: [], mediaKind: 'm4b' as const },
+    { ownerTags: ['Owner tag'], mediaKind: 'm4b' as const },
+    { ownerTags: ['Owner tag'], mediaKind: 'm4a' as const },
+    { ownerTags: ['Owner tag'], mediaKind: 'mp3' as const },
+    { ownerTags: ['Owner tag'], mediaKind: 'epub' as const },
+    { ownerTags: ['Owner tag'], mediaKind: 'unknown' as const },
+    { ownerTags: ['Owner tag'], mediaKind: 'audio' as const },
+  ] as const)(
     'shows combined tags only for $mediaKind with $ownerTags',
     async ({ ownerTags, mediaKind }) => {
       const base = detail.fields[0]
@@ -3298,7 +3360,7 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=tags', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
           ...detail,
           target: { ...detail.target, mediaKind },
           fields: [field],
@@ -3311,9 +3373,9 @@ describe('Library route', () => {
       expect(
         screen.getByRole('button', { name: 'Choose proposed value: Shared · Second' }),
       ).toBeVisible()
-      if (['ebook', 'epub', 'unknown', 'audiobook'].includes(mediaKind)) {
+      if (['epub', 'unknown', 'audio'].includes(mediaKind)) {
         expect(screen.queryByRole('region', { name: 'Tags recorded outcome' })).toBeNull()
-        expect(screen.getByText('Competing evidence')).toBeVisible()
+        expect(screen.getByText('The sources disagree; choose the value yourself')).toBeVisible()
         expect(screen.queryByText('Different source tag lists')).toBeNull()
         expect(
           screen.queryByText('Compatible source tags were combined, retaining any existing tags.'),
@@ -3325,7 +3387,7 @@ describe('Library route', () => {
       if (ownerTags.length) expect(recorded).toHaveTextContent('Owner tag')
       expect(recorded).toHaveTextContent('Compatible source tags were combined')
       expect(screen.getByText('Different source tag lists')).toBeVisible()
-      expect(screen.queryByText('Competing evidence')).toBeNull()
+      expect(screen.queryByText('The sources disagree; choose the value yourself')).toBeNull()
       await userEvent.click(within(recorded).getByRole('button', { name: 'Evidence' }))
       expect(recorded).toHaveTextContent('Source record 1')
       expect(recorded).toHaveTextContent('Source record 2')
@@ -3362,7 +3424,10 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=authors', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [authors] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [authors],
+      })),
     })
     expect(
       await screen.findByText('Providers chose Ada Example; normalized from Example, Ada.'),
@@ -3397,10 +3462,13 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=isbn', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [isbn] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [isbn],
+      })),
     })
 
-    const recorded = await screen.findByRole('region', { name: 'Isbn recorded outcome' })
+    const recorded = await screen.findByRole('region', { name: 'ISBN recorded outcome' })
     expect(recorded).toHaveTextContent(
       "Deterministic identity evidence bound this ISBN to this file's work.",
     )
@@ -3447,10 +3515,13 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=isbn', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [isbn] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [isbn],
+      })),
     })
 
-    const recorded = await screen.findByRole('region', { name: 'Isbn recorded outcome' })
+    const recorded = await screen.findByRole('region', { name: 'ISBN recorded outcome' })
     expect(recorded).toHaveTextContent('Chosen value')
     expect(recorded).toHaveTextContent('9780000000002')
     expect(recorded).not.toHaveTextContent(
@@ -3489,7 +3560,7 @@ describe('Library route', () => {
           actor: 'owner',
           application: 'apply' as const,
           decision_id: 'decision-title',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 2,
           outcome,
           proposal_id: base.proposalId,
@@ -3502,7 +3573,10 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=title', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [field],
+        })),
       })
 
       const recorded = await screen.findByRole('region', { name: 'Title recorded outcome' })
@@ -3527,7 +3601,7 @@ describe('Library route', () => {
     }
     const series = {
       ...base,
-      destination: 'series',
+      destination: 'series' as const,
       currentRaw: null,
       currentValue: 'Unavailable',
       automaticSelectionSources: ['Hardcover'],
@@ -3553,7 +3627,7 @@ describe('Library route', () => {
       actor: 'owner',
       application: 'apply' as const,
       decision_id: 'owner-series',
-      destination: 'series',
+      destination: 'series' as const,
       occurred_at: 2,
       outcome: 'keep_current' as const,
       proposal_id: base.proposalId,
@@ -3564,7 +3638,7 @@ describe('Library route', () => {
     let current: CaseDetailView = { ...detail, fields: [series] }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [{ ...series, humanDecision: owner }] }
         return {
@@ -3600,10 +3674,13 @@ describe('Library route', () => {
       'unbroken'.repeat(50)
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('description fixture requires a field')
-    const field = { ...titleField, destination: 'description', currentValue: description }
+    const field = { ...titleField, destination: 'description' as const, currentValue: description }
     const http = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [field],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=description', http)
 
@@ -3619,7 +3696,7 @@ describe('Library route', () => {
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
   })
 
-  it.each(['epub', 'm4b'])('retains %s cover checks', async (mediaKind) => {
+  it.each(['epub', 'm4b'] as const)('retains %s cover checks', async (mediaKind) => {
     const user = userEvent.setup()
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
@@ -3657,8 +3734,8 @@ describe('Library route', () => {
       reference: reference(index),
       selectable: !incumbent,
       manualEligible: !incumbent,
-      sourceKinds: [incumbent ? 'audiobookshelf_current' : 'provider'],
-      state: incumbent ? 'incumbent' : 'acceptable',
+      sourceKinds: [incumbent ? ('abs' as const) : ('open_library' as const)],
+      state: incumbent ? ('excluded' as const) : ('acceptable' as const),
       width: 800,
     })
     const consideration = {
@@ -3763,7 +3840,7 @@ describe('Library route', () => {
         },
       ],
       incumbent: { reference: reference(1), state: 'available' as const },
-      omissions: [{ reason: 'preview_unavailable', reference: 'retained-unavailable-source' }],
+      omissions: [{ reason: 'source_unavailable', reference: 'retained-unavailable-source' }],
       policy: {
         recommended_candidate_reference: reference(3),
         acceptable_candidate_references: [reference(2), reference(3), reference(4)],
@@ -3787,7 +3864,7 @@ describe('Library route', () => {
     } as const
     const coverField = {
       ...base,
-      destination: 'cover',
+      destination: 'cover' as const,
       decisionActions: [],
       editable: false,
       needsAttention: false,
@@ -3800,7 +3877,7 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         target: { ...detail.target, mediaKind },
         fields: [coverField],
@@ -3858,7 +3935,7 @@ describe('Library route', () => {
     if (!observationDetails) throw new Error('cover observation details are missing')
     expect(within(observationDetails).getByText('Text-edition branding')).toBeVisible()
     await user.click(within(comparison).getByText('Reasons retained'))
-    expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
+    expect(within(comparison).getByText('The source was unavailable')).toBeVisible()
     expect(
       comparison.querySelectorAll('.cover-choice.is-unconfirmed .library-cover-card:disabled'),
     ).toHaveLength(2)
@@ -3872,7 +3949,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', {
       ...createHttp(),
       recordDecision,
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         target: { ...detail.target, mediaKind },
         fields: [
@@ -3966,7 +4043,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', {
       ...createHttp(),
       recordDecision: revision,
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         fields: [
           {
@@ -3994,7 +4071,7 @@ describe('Library route', () => {
     cleanup()
     renderRoute('/library?lens=all&preview=case-1&field=cover', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         fields: [
           {
@@ -4003,7 +4080,7 @@ describe('Library route', () => {
               actor: 'owner' as const,
               application: 'apply' as const,
               decision_id: 'recorded-cover',
-              destination: 'cover',
+              destination: 'cover' as const,
               occurred_at: 1,
               outcome: 'accept' as const,
               proposal_id: coverField.proposalId,
@@ -4035,7 +4112,7 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=cover', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         target: { ...detail.target, mediaKind },
         fields: [{ ...coverField, coverConsideration: recommended }],
@@ -4071,7 +4148,7 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
           ...detail,
           target: { ...detail.target, mediaKind },
           fields: [{ ...coverField, coverConsideration: ownerReady }],
@@ -4107,7 +4184,7 @@ describe('Library route', () => {
                 observation: 'Current cover preview is unavailable; local presence is retained.',
               },
             ],
-            limitations: ['preview_unavailable'],
+            limitations: ['Preview unavailable for this retained cover.'],
             rationale: 'Keep the retained local cover.',
             recommendation: 'no_recommendation',
             recommendationReason: 'No recommendation retained.',
@@ -4148,7 +4225,7 @@ describe('Library route', () => {
             reference: `cover_transport_ref_${'a'.repeat(64)}`,
             selectable: true,
             manualEligible: true,
-            sourceKinds: ['provider'],
+            sourceKinds: ['open_library' as const],
             state: 'acceptable',
             width: 800,
           },
@@ -4176,13 +4253,16 @@ describe('Library route', () => {
       } as const
       const coverField = {
         ...base,
-        destination: 'cover',
+        destination: 'cover' as const,
         proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
         coverConsideration: consideration,
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [coverField],
+        })),
       })
 
       const currentCover = await screen.findByRole('button', {
@@ -4219,7 +4299,7 @@ describe('Library route', () => {
         'Hide evidence',
       )
       expect(screen.getByText('Local presence')).toBeVisible()
-      expect(screen.getByText('Preview unavailable')).toBeVisible()
+      expect(screen.getByText('Preview unavailable for this retained cover.')).toBeVisible()
       expect(screen.getByRole('button', { name: 'Keep current cover' })).toHaveAttribute(
         'aria-pressed',
         'false',
@@ -4260,7 +4340,7 @@ describe('Library route', () => {
       cleanup()
       const acceptOnlyHttp = {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
           ...detail,
           fields: [{ ...coverField, decisionActions: ['accept' as const] }],
         })),
@@ -4320,7 +4400,10 @@ describe('Library route', () => {
           }
           const capabilityHttp = {
             ...createHttp(),
-            getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })),
+            getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+              ...detail,
+              fields: [coverField],
+            })),
             getReviewerAccess: vi.fn(async () => access),
             retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
               throw new ApiError(409, 'stale_cover')
@@ -4354,7 +4437,7 @@ describe('Library route', () => {
       fields: [
         {
           ...baseField,
-          destination: 'cover',
+          destination: 'cover' as const,
           proposedValues: [{ kind: 'cover', value: 'cover-alt' }],
           coverConsideration: {
             id: `consideration-${id}`,
@@ -4462,7 +4545,7 @@ describe('Library route', () => {
     const http = {
       ...createHttp(),
       getLibrary: vi.fn(async () => twoWorks),
-      getCaseDetail: vi.fn(async (id: string) => cover(id)),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) => cover(id)),
     }
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
     const evidence = await screen.findByRole('button', { name: 'Evidence for Current cover' })
@@ -4529,7 +4612,7 @@ describe('Library route', () => {
           reference: `cover_transport_ref_${'a'.repeat(64)}`,
           selectable: true,
           manualEligible: true,
-          sourceKinds: ['provider'],
+          sourceKinds: ['open_library' as const],
           state: 'acceptable',
           width: 800,
         },
@@ -4557,7 +4640,7 @@ describe('Library route', () => {
     } as const
     const absent: CaseDetailView['fields'][number] = {
       ...base,
-      destination: 'cover',
+      destination: 'cover' as const,
       proposedValues: [{ kind: 'cover', value: `cover_${'a'.repeat(64)}` }],
       coverConsideration: null,
     }
@@ -4575,7 +4658,10 @@ describe('Library route', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [field],
+      })),
       retryCoverConsideration,
     }
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
@@ -4599,7 +4685,7 @@ describe('Library route', () => {
     if (!base) throw new Error('cover fixture requires a field')
     const historical: CaseDetailView['fields'][number] = {
       ...base,
-      destination: 'cover',
+      destination: 'cover' as const,
       decisionActions: [],
       editable: true,
       needsAttention: true,
@@ -4629,7 +4715,10 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [historical] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [historical],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
@@ -4645,7 +4734,7 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         fields: [
           {
@@ -4709,14 +4798,14 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const authorsField = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       currentValue: 'Ada Example',
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
     const retainedAttentionContext = {
       ...titleField,
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       decisionActions: [],
       editable: false,
       needsAttention: true,
@@ -4726,7 +4815,7 @@ describe('Library route', () => {
     }
     const contextualField = {
       ...titleField,
-      destination: 'publishedYear',
+      destination: 'publishedYear' as const,
       inventoryRole: 'contextual' as const,
       navigationRole: 'inspect' as const,
       needsAttention: false,
@@ -4748,7 +4837,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-title',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current' as const,
             proposal_id: titleField.proposalId,
@@ -4762,7 +4851,7 @@ describe('Library route', () => {
     let current: CaseDetailView = initial
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         current = settled
         return {
@@ -4772,7 +4861,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-title',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current' as const,
           proposal_id: titleField.proposalId,
@@ -4814,7 +4903,7 @@ describe('Library route', () => {
     const series = {
       ...source,
       currentValue: 'Not set',
-      destination: 'series',
+      destination: 'series' as const,
       proposalId: 'proposal-series',
       proposedValues: [mistborn],
       targetFingerprint: 'fingerprint-series',
@@ -4828,7 +4917,7 @@ describe('Library route', () => {
         actor: 'owner' as const,
         application: 'apply' as const,
         decision_id: 'decision-series',
-        destination: 'series',
+        destination: 'series' as const,
         occurred_at: 1,
         outcome: 'accept' as const,
         proposal_id: series.proposalId,
@@ -4840,7 +4929,7 @@ describe('Library route', () => {
     let current: CaseDetailView = { ...detail, fields: [title, series] }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [title, recordedSeries] }
         return {
@@ -4850,7 +4939,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-series',
-          destination: 'series',
+          destination: 'series' as const,
           occurred_at: 1,
           outcome: 'accept' as const,
           proposal_id: series.proposalId,
@@ -4890,7 +4979,7 @@ describe('Library route', () => {
     const series = {
       ...source,
       currentValue: 'Not set',
-      destination: 'series',
+      destination: 'series' as const,
       proposalId: 'proposal-series',
       proposedValues: [{ kind: 'text' as const, value: 'Mistborn' }],
       targetFingerprint: 'fingerprint-series',
@@ -4903,7 +4992,7 @@ describe('Library route', () => {
         actor: 'owner' as const,
         application: 'apply' as const,
         decision_id: 'decision-series',
-        destination: 'series',
+        destination: 'series' as const,
         occurred_at: 1,
         outcome: 'accept' as const,
         proposal_id: series.proposalId,
@@ -4934,7 +5023,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getAttention,
-      getCaseDetail: vi.fn(async () => currentDetail),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => currentDetail),
       getLibrary: vi.fn(async () => {
         await waitForAggregateRefresh()
         return currentLibrary
@@ -4949,7 +5038,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-series',
-          destination: 'series',
+          destination: 'series' as const,
           occurred_at: 1,
           outcome: 'accept' as const,
           proposal_id: series.proposalId,
@@ -4987,7 +5076,7 @@ describe('Library route', () => {
     const authors = {
       ...title,
       currentValue: 'Ada Example',
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -4998,7 +5087,7 @@ describe('Library route', () => {
         actor: 'owner' as const,
         application: 'apply' as const,
         decision_id: 'decision-title',
-        destination: 'title',
+        destination: 'title' as const,
         occurred_at: 1,
         outcome: 'accept' as const,
         proposal_id: title.proposalId,
@@ -5010,7 +5099,7 @@ describe('Library route', () => {
     let current: CaseDetailView = { ...detail, fields: [title, authors] }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       getLibrary: vi.fn(async () => library),
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [recorded, authors] }
@@ -5021,7 +5110,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-title',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'accept' as const,
           proposal_id: title.proposalId,
@@ -5052,7 +5141,7 @@ describe('Library route', () => {
     const authors = {
       ...title,
       currentValue: 'Ada Example',
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -5063,7 +5152,7 @@ describe('Library route', () => {
         actor: 'owner' as const,
         application: 'apply' as const,
         decision_id: 'decision-title',
-        destination: 'title',
+        destination: 'title' as const,
         occurred_at: 1,
         outcome: 'accept' as const,
         proposal_id: title.proposalId,
@@ -5075,7 +5164,7 @@ describe('Library route', () => {
     let current: CaseDetailView = { ...detail, fields: [title, authors] }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [recorded, authors] }
         return {
@@ -5085,7 +5174,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-title',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'accept' as const,
           proposal_id: title.proposalId,
@@ -5127,7 +5216,7 @@ describe('Library route', () => {
     const authors = {
       ...title,
       currentValue: 'Ada Example',
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -5138,7 +5227,7 @@ describe('Library route', () => {
         actor: 'owner' as const,
         application: 'apply' as const,
         decision_id: 'decision-title',
-        destination: 'title',
+        destination: 'title' as const,
         occurred_at: 1,
         outcome: 'accept' as const,
         proposal_id: title.proposalId,
@@ -5155,7 +5244,7 @@ describe('Library route', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
         reads += 1
         return reads === 2 ? refresh : current
       }),
@@ -5169,7 +5258,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-title',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'accept' as const,
           proposal_id: title.proposalId,
@@ -5233,7 +5322,7 @@ describe('Library route', () => {
     expect(http.recordDecision).toHaveBeenCalledWith(
       'case-1',
       expect.objectContaining({
-        destination: 'title',
+        destination: 'title' as const,
         outcome: 'accept',
         selectedValue: { kind: 'text', value: 'New title' },
       }),
@@ -5254,14 +5343,14 @@ describe('Library route', () => {
     }
     const subtitleContext = {
       ...contextOnly,
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       currentValue: 'Unavailable',
       proposalId: 'proposal-subtitle',
       targetFingerprint: 'fingerprint-subtitle',
     }
     const contextualField = {
       ...contextOnly,
-      destination: 'authors',
+      destination: 'authors' as const,
       inventoryRole: 'contextual' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
@@ -5277,16 +5366,16 @@ describe('Library route', () => {
           preparationOutcomes: [
             {
               providerRequests: 1,
-              laneKind: 'work',
+              laneKind: 'work' as const,
               provider: 'synthetic-catalogue',
               reason: 'No eligible alternative was retained.',
-              status: 'no_match',
+              status: 'no_match' as const,
             },
           ],
         })),
       })),
       getAttention: vi.fn(async () => ({ total: 0, items: [] })),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         fields: [contextOnly, subtitleContext, contextualField],
       })),
@@ -5366,7 +5455,7 @@ describe('Library route', () => {
               actor: 'owner',
               application: 'apply' as const,
               decision_id: 'decision-retried',
-              destination: 'title',
+              destination: 'title' as const,
               occurred_at: 1,
               outcome: 'keep_current',
               proposal_id: titleField.proposalId,
@@ -5390,7 +5479,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-retried',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current' as const,
           proposal_id: titleField.proposalId,
@@ -5401,7 +5490,7 @@ describe('Library route', () => {
       })
       const http: ReviewHttp = {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => current),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
         recordDecision,
       }
       renderRoute('/library?lens=all&preview=case-1&field=title', http)
@@ -5442,7 +5531,7 @@ describe('Library route', () => {
     if (!title) throw new Error('optional choice fixture requires a title field')
     const asin = {
       ...title,
-      destination: 'asin',
+      destination: 'asin' as const,
       classification: 'owner_choosable' as const,
       classificationReason:
         'No review is needed. You can still keep the current value or choose a proposed one.',
@@ -5500,7 +5589,7 @@ describe('Library route', () => {
       })
       renderRoute('/library?lens=all&preview=case-1', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => current),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
         recordDecision,
       })
 
@@ -5509,12 +5598,12 @@ describe('Library route', () => {
       ).toBeVisible()
       expect(screen.getByText('Needs review').nextElementSibling).toHaveTextContent('1')
       expect(screen.getByText('1 remaining · field 1 of 2')).toBeVisible()
-      const rail = screen.getByRole('button', { name: /^Asin/u })
+      const rail = screen.getByRole('button', { name: /^ASIN/u })
       const glyph = within(rail).getByLabelText('Optional choice')
       expect(glyph).toHaveTextContent('✓')
 
       await user.click(rail)
-      const choices = await screen.findByRole('region', { name: 'Asin choices' })
+      const choices = await screen.findByRole('region', { name: 'ASIN choices' })
       expect(
         within(choices).getByRole('button', { name: 'Choose current value: Unavailable' }),
       ).toBeEnabled()
@@ -5542,7 +5631,7 @@ describe('Library route', () => {
       let current = recording
       renderRoute('/library?lens=all&preview=case-1', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => current),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
         recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
           current = settled
           return {
@@ -5558,7 +5647,7 @@ describe('Library route', () => {
         await screen.findByRole('button', { name: 'Choose current value: Old title' }),
       )
       expect(await screen.findByRole('heading', { name: 'Review complete' })).toBeVisible()
-      expect(screen.queryByRole('region', { name: 'Asin choices' })).toBeNull()
+      expect(screen.queryByRole('region', { name: 'ASIN choices' })).toBeNull()
     })
   })
 
@@ -5624,8 +5713,8 @@ describe('Library route', () => {
       reference: `cover_transport_ref_${suffix.repeat(64)}`,
       selectable: !incumbent,
       manualEligible: !incumbent,
-      sourceKinds: [incumbent ? 'epub' : 'provider'],
-      state: incumbent ? ('incumbent' as const) : ('acceptable' as const),
+      sourceKinds: [incumbent ? ('epub' as const) : ('open_library' as const)],
+      state: incumbent ? ('excluded' as const) : ('acceptable' as const),
       width: 800,
     })
     const coverDetail = (id: string, alternative: string): CaseDetailView => ({
@@ -5634,7 +5723,7 @@ describe('Library route', () => {
       fields: [
         {
           ...base,
-          destination: 'cover',
+          destination: 'cover' as const,
           currentValue: `cover_${'1'.repeat(64)}`,
           currentRaw: `cover_${'1'.repeat(64)}`,
           proposedValues: [{ kind: 'cover', value: `cover_${alternative.repeat(64)}` }],
@@ -5703,7 +5792,7 @@ describe('Library route', () => {
           ? { ...library, works: library.works.filter((work) => work.reviewCaseId !== initial.id) }
           : library,
       ),
-      getCaseDetail: vi.fn(async (id) => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
         if (!stale || retainSameConsideration) return initial
         if (label.includes('unavailable detail') && id === initial.id)
           throw new Error('retired case unavailable')
@@ -5832,14 +5921,17 @@ describe('Library route', () => {
       if (!titleField) throw new Error('workspace fixture requires a title field')
       const authorsField = {
         ...titleField,
-        destination: 'authors',
+        destination: 'authors' as const,
         currentValue: 'Ada Example',
         proposalId: 'proposal-authors',
         targetFingerprint: 'fingerprint-authors',
       }
       const http: ReviewHttp = {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [titleField, authorsField],
+        })),
         recordDecision: vi.fn(async () => {
           throw new ApiError(503, 'unavailable')
         }),
@@ -5879,7 +5971,7 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const recordedAuthors = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       needsAttention: false,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
@@ -5887,7 +5979,7 @@ describe('Library route', () => {
         actor: 'owner',
         application: 'apply' as const,
         decision_id: 'decision-authors',
-        destination: 'authors',
+        destination: 'authors' as const,
         occurred_at: 1,
         outcome: 'keep_current' as const,
         proposal_id: 'proposal-authors',
@@ -5899,7 +5991,7 @@ describe('Library route', () => {
     let current: CaseDetailView = { ...detail, fields: [titleField, recordedAuthors] }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(
         // eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReviewHttp includes cancellation unused by this scenario.
         async (_reviewCaseId: string, command: DecisionCommand, _signal?: AbortSignal) => {
@@ -5917,7 +6009,7 @@ describe('Library route', () => {
                   actor: 'owner',
                   application: 'apply' as const,
                   decision_id: `decision-title-${command.outcome}`,
-                  destination: 'title',
+                  destination: 'title' as const,
                   occurred_at: 1,
                   outcome: command.outcome,
                   proposal_id: titleField.proposalId,
@@ -5936,7 +6028,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: `decision-title-${command.outcome}`,
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: command.outcome,
             proposal_id: titleField.proposalId,
@@ -5976,7 +6068,7 @@ describe('Library route', () => {
     })
     renderRoute('/library?lens=all', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => pendingDetail),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => pendingDetail),
     })
 
     await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
@@ -6002,7 +6094,7 @@ describe('Library route', () => {
     })
     renderRoute('/library?lens=all', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => pendingDetail),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => pendingDetail),
     })
 
     await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
@@ -6033,7 +6125,7 @@ describe('Library route', () => {
     let detailReads = 0
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
         detailReads += 1
         if (detailReads === 1) throw new Error('temporary selected detail failure')
         return pendingDetail
@@ -6064,7 +6156,7 @@ describe('Library route', () => {
     let detailReads = 0
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
         detailReads += 1
         if (detailReads === 1) throw new Error('initial selected detail failure')
         return pendingRetry
@@ -6092,7 +6184,7 @@ describe('Library route', () => {
     let detailReads = 0
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
         detailReads += 1
         if (detailReads === 1) throw new Error('temporary selected detail failure')
         return pendingDetail
@@ -6125,7 +6217,7 @@ describe('Library route', () => {
     let detailReads = 0
     renderRoute('/library?lens=all&preview=case-1&field=title', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => {
         detailReads += 1
         if (detailReads === 1) throw new Error('initial selected detail failure')
         return pendingRetry
@@ -6147,7 +6239,10 @@ describe('Library route', () => {
   it('suppresses workspace decisions for a superseded case', async () => {
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, current: false })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        current: false,
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1', http)
 
@@ -6167,7 +6262,7 @@ describe('Library route', () => {
     if (!titleField || !firstWork) throw new Error('workspace fixture requires a field and work')
     const authorsField = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -6179,7 +6274,7 @@ describe('Library route', () => {
         counts: { ...library.counts, all: 2 },
         works: [firstWork, secondWork],
       })),
-      getCaseDetail: vi.fn(async (id: string) => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) => ({
         ...detail,
         id,
         title: id === 'case-2' ? 'Second work' : detail.title,
@@ -6203,11 +6298,11 @@ describe('Library route', () => {
       if (!title) throw new Error('title fixture required')
       const item = {
         id: 'case-1',
-        destination: 'title',
+        destination: 'title' as const,
         title: 'A Book',
         authors: [],
         library: 'Books',
-        mediaKind: 'ebook',
+        mediaKind: 'epub' as const,
         notices: [],
         provenance: [],
         workAttentionCount: 1,
@@ -6215,7 +6310,7 @@ describe('Library route', () => {
       const target = {
         ...item,
         id: 'case-2',
-        destination: 'authors',
+        destination: 'authors' as const,
         title: 'Later attention target',
       }
       const http = createHttp()
@@ -6233,7 +6328,7 @@ describe('Library route', () => {
               fields: [
                 {
                   ...title,
-                  destination: 'authors',
+                  destination: 'authors' as const,
                   currentValue: 'Later author',
                   currentRaw: 'Later author',
                 },
@@ -6306,11 +6401,11 @@ describe('Library route', () => {
       if (!title) throw new Error('title fixture required')
       const item = {
         id: 'case-2',
-        destination: 'title',
+        destination: 'title' as const,
         title: 'Split field work',
         authors: [],
         library: 'Books',
-        mediaKind: 'ebook',
+        mediaKind: 'epub' as const,
         notices: [],
         provenance: [],
         workAttentionCount: 2,
@@ -6318,13 +6413,13 @@ describe('Library route', () => {
       const http = createHttp()
       http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) =>
         cursor === 'later-page'
-          ? { total: 2, items: [{ ...item, destination: 'authors' }] }
+          ? { total: 2, items: [{ ...item, destination: 'authors' as const }] }
           : { total: 2, items: [item], nextCursor: 'later-page' },
       )
       http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
         ...detail,
         id,
-        fields: [title, { ...title, destination: 'authors' }],
+        fields: [title, { ...title, destination: 'authors' as const }],
       }))
       const { router } = renderRoute(
         `/library?lens=all&attention=open${start ? '&attentionCursor=starting-page' : ''}`,
@@ -6365,11 +6460,11 @@ describe('Library route', () => {
       if (!title) throw new Error('title fixture required')
       const firstItem = {
         id: 'case-1',
-        destination: 'title',
+        destination: 'title' as const,
         title: 'A Book',
         authors: [],
         library: 'Books',
-        mediaKind: 'ebook',
+        mediaKind: 'epub' as const,
         notices: [],
         provenance: [],
         workAttentionCount: 1,
@@ -6442,11 +6537,11 @@ describe('Library route', () => {
     if (!title) throw new Error('title fixture required')
     const firstItem = {
       id: 'case-1',
-      destination: 'title',
+      destination: 'title' as const,
       title: 'A Book',
       authors: [],
       library: 'Books',
-      mediaKind: 'ebook',
+      mediaKind: 'epub' as const,
       notices: [],
       provenance: [],
       workAttentionCount: 1,
@@ -6540,11 +6635,11 @@ describe('Library route', () => {
       let calls = 0
       const item = {
         id: 'case-1',
-        destination: 'title',
+        destination: 'title' as const,
         title: 'A Book',
         authors: [],
         library: 'Books',
-        mediaKind: 'ebook',
+        mediaKind: 'epub' as const,
         classificationReason: 'Canonical library attention reason',
         notices: ['internal-library-notice'],
         provenance: [],
@@ -6622,7 +6717,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-identity',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -6642,29 +6737,29 @@ describe('Library route', () => {
         items: [
           {
             id: 'case-1',
-            destination: 'title',
+            destination: 'title' as const,
             title: 'A Book',
             authors: [],
             library: 'Books',
-            mediaKind: 'ebook',
+            mediaKind: 'epub' as const,
             notices: [],
             provenance: ['Local catalogue'],
             workAttentionCount: 1,
           },
           {
             id: 'case-2',
-            destination: 'authors',
+            destination: 'authors' as const,
             title: 'Off-page successor',
             authors: ['Ada Example'],
             library: 'Project Gutenberg',
-            mediaKind: 'audiobook',
+            mediaKind: 'm4b' as const,
             notices: [],
             provenance: ['Project Gutenberg record'],
             workAttentionCount: 1,
           },
         ],
       })),
-      getCaseDetail: vi.fn(async (id: string) =>
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
         id === 'case-2' ? { ...detail, id, title: 'Off-page successor' } : current,
       ),
       recordDecision: vi.fn(async () => {
@@ -6676,7 +6771,7 @@ describe('Library route', () => {
           actor: 'owner',
           application: 'apply' as const,
           decision_id: 'decision-identity',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current',
           proposal_id: titleField.proposalId,
@@ -6725,7 +6820,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-complete',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -6738,11 +6833,11 @@ describe('Library route', () => {
     }
     const successor = {
       id: 'case-2',
-      destination: 'authors',
+      destination: 'authors' as const,
       title: 'Next work',
       authors: [],
       library: 'Books',
-      mediaKind: 'ebook',
+      mediaKind: 'epub' as const,
       notices: [],
       provenance: [],
       workAttentionCount: 1,
@@ -6771,13 +6866,18 @@ describe('Library route', () => {
           ? {
               total: 2,
               items: [
-                { ...successor, id: 'case-1', destination: 'title', title: firstWork.title },
+                {
+                  ...successor,
+                  id: 'case-1',
+                  destination: 'title' as const,
+                  title: firstWork.title,
+                },
                 successor,
               ],
             }
           : { total: 1, items: [successor] },
       ),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         current = settled
         return {
@@ -6787,7 +6887,7 @@ describe('Library route', () => {
           actor: 'owner',
           application: 'apply' as const,
           decision_id: 'decision-complete',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current',
           proposal_id: titleField.proposalId,
@@ -6844,9 +6944,9 @@ describe('Library route', () => {
       actor: 'owner',
       application: 'apply' as const,
       decision_id: 'decision-complete',
-      destination: 'title',
+      destination: 'title' as const,
       occurred_at: 1,
-      outcome: 'keep_current',
+      outcome: 'keep_current' as const,
       proposal_id: titleField.proposalId,
       review_case_id: 'case-1',
       selected_value: null,
@@ -6856,13 +6956,13 @@ describe('Library route', () => {
       ...detail,
       fields: [{ ...titleField, needsAttention: false, humanDecision: decision }],
     }
-    const item = (id: string, destination: string, title: string) => ({
+    const item = (id: string, destination: TargetDestination, title: string) => ({
       id,
       destination,
       title,
       authors: [],
       library: 'Books',
-      mediaKind: 'ebook',
+      mediaKind: 'epub' as const,
       notices: [],
       provenance: [],
       workAttentionCount: 1,
@@ -6878,7 +6978,7 @@ describe('Library route', () => {
           ? new Promise<Page>((resolve) => searched.push(resolve))
           : { total: 2, items: [earlier, item('case-1', 'title', 'A Book')] },
       ),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         current = settled
         return {
@@ -6948,10 +7048,10 @@ describe('Library route', () => {
                   preparationOutcomes: [
                     {
                       providerRequests: 1,
-                      laneKind: 'work',
+                      laneKind: 'work' as const,
                       provider: 'catalogue',
                       reason: 'Provider retry is awaiting its next permitted request.',
-                      status: 'rate_limited',
+                      status: 'rate_limited' as const,
                     },
                   ],
                 })),
@@ -6963,7 +7063,7 @@ describe('Library route', () => {
                 works: [],
               },
       ),
-      getCaseDetail: vi.fn(async (id: string) =>
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
         id === 'case-2'
           ? successor
           : id === 'case-3'
@@ -6990,7 +7090,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
-      getCaseDetail: vi.fn(async (id: string) =>
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
         id === 'case-2' ? successor : { ...predecessor, current: !stale },
       ),
       getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
@@ -7026,7 +7126,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
-      getCaseDetail: vi.fn(async (id: string) =>
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
         id === 'case-2' ? successor : { ...predecessor, current: !stale },
       ),
       getCaseSuccessor,
@@ -7077,7 +7177,9 @@ describe('Library route', () => {
       .mockRejectedValueOnce(new Error('second synthetic transport failure'))
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async (id: string) => (id === 'case-2' ? second : first)),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
+        id === 'case-2' ? second : first,
+      ),
       getCaseSuccessor,
     }
     const { queryClient, router } = renderRoute(
@@ -7136,7 +7238,9 @@ describe('Library route', () => {
       .mockResolvedValueOnce('case-2')
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async (id: string) => (id === 'case-2' ? second : first)),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
+        id === 'case-2' ? second : first,
+      ),
       getCaseSuccessor,
     }
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
@@ -7174,7 +7278,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
-      getCaseDetail: vi.fn(async (id: string) =>
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
         id === 'case-2' ? successor : { ...detail, id: 'case-1', current: !stale },
       ),
       getCaseSuccessor,
@@ -7214,7 +7318,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
-      getCaseDetail: vi.fn(async (id: string) => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) => {
         if (id === 'case-2') return successor
         if (firstDetail) {
           firstDetail = false
@@ -7252,7 +7356,7 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
-      getCaseDetail: vi.fn(async (id: string) => {
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) => {
         if (id === 'case-2') return successor
         if (firstDetail) {
           firstDetail = false
@@ -7397,7 +7501,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'd',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -7421,7 +7525,7 @@ describe('Library route', () => {
         attentionReads += 1
         return { total: 0, items: [] }
       }),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       // The positions the server says this decision caused. 41 is its Library
       // row, which is the only one this tab may recognise.
       recordDecision: vi.fn(async () => {
@@ -7433,7 +7537,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-echo',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current' as const,
           proposal_id: titleField.proposalId,
@@ -7514,7 +7618,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'd',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -7538,7 +7642,7 @@ describe('Library route', () => {
         attentionReads += 1
         return { total: 0, items: [] }
       }),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         current = settled
         return {
@@ -7548,7 +7652,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-settle',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current' as const,
           proposal_id: titleField.proposalId,
@@ -7598,7 +7702,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'd',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -7621,7 +7725,7 @@ describe('Library route', () => {
         libraryReads += 1
         return library
       }),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         await answered
         current = settled
@@ -7632,7 +7736,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-outrun',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current' as const,
           proposal_id: titleField.proposalId,
@@ -7708,7 +7812,7 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const authorsField = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -7718,7 +7822,10 @@ describe('Library route', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [titleField, authorsField],
+      })),
       recordDecision: vi.fn(async () => {
         await deferred
         return recordedAcknowledgement(
@@ -7729,7 +7836,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-title',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -7776,7 +7883,7 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const authorsField = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -7806,7 +7913,10 @@ describe('Library route', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [titleField, authorsField],
+      })),
       recordDecision,
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
@@ -7833,7 +7943,7 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const authorsField = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -7856,7 +7966,7 @@ describe('Library route', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-authors',
-          destination: 'authors',
+          destination: 'authors' as const,
           occurred_at: 1,
           outcome: 'keep_current' as const,
           proposal_id: command.proposalId,
@@ -7868,7 +7978,10 @@ describe('Library route', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [titleField, authorsField],
+      })),
       recordDecision,
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
@@ -7899,7 +8012,7 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const authorsField = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
@@ -7931,7 +8044,10 @@ describe('Library route', () => {
     })
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [titleField, authorsField],
+      })),
       recordDecision,
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
@@ -7975,7 +8091,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-title',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -7997,7 +8113,7 @@ describe('Library route', () => {
       let current: CaseDetailView = { ...detail, writesConsented }
       const http: ReviewHttp = {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => current),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
         recordDecision: vi.fn(async () => {
           current = settled(writesConsented)
           return {
@@ -8007,7 +8123,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-title',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -8044,10 +8160,10 @@ describe('Library route', () => {
       preparationOutcomes: [
         {
           providerRequests: 1,
-          laneKind: 'work',
+          laneKind: 'work' as const,
           provider: 'hardcover-main',
           reason: 'Answered with one candidate.',
-          status: 'candidates',
+          status: 'candidates' as const,
         },
       ],
     }
@@ -8067,13 +8183,16 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const authorsField = {
       ...titleField,
-      destination: 'authors',
+      destination: 'authors' as const,
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [titleField, authorsField],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
@@ -8100,7 +8219,7 @@ describe('Library route', () => {
       classification: 'unsupported',
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'Unavailable',
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       decisionActions: [],
       editable: false,
       currentRaw: null,
@@ -8110,12 +8229,12 @@ describe('Library route', () => {
     }
     const emptySeries = {
       ...emptySubtitle,
-      destination: 'series',
+      destination: 'series' as const,
       currentRaw: '',
     }
     const emptyGenres = {
       ...emptySubtitle,
-      destination: 'genres',
+      destination: 'genres' as const,
       currentRaw: [],
     }
     const currentOnly = {
@@ -8123,7 +8242,7 @@ describe('Library route', () => {
       classification: 'unsupported',
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'An Author',
-      destination: 'authors',
+      destination: 'authors' as const,
       decisionActions: [],
       editable: false,
       currentRaw: ['An Author'],
@@ -8133,13 +8252,13 @@ describe('Library route', () => {
     }
     const proposalOnly = {
       ...titleField,
-      destination: 'description',
+      destination: 'description' as const,
       currentRaw: null,
       proposedValues: [{ kind: 'text' as const, value: 'A description' }],
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
         ...detail,
         fields: [emptySubtitle, currentOnly, emptySeries, proposalOnly, emptyGenres],
       })),
@@ -8179,12 +8298,15 @@ describe('Library route', () => {
     }
     const emptySubtitle = {
       ...emptyTitle,
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       currentRaw: '',
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [emptyTitle, emptySubtitle] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [emptyTitle, emptySubtitle],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1', http)
 
@@ -8199,6 +8321,48 @@ describe('Library route', () => {
     expect(within(rail).getByRole('button', { name: /^Title/u })).toHaveFocus()
   })
 
+  it('names the same book-level fields as Detail, whether or not empty fields are shown (#1286 O2)', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        audiobookReviewScope: 'work' as const,
+        // The fields router.detail's note test offers: Series as context, and
+        // Series again empty with nothing proposed, are never named.
+        fields: [
+          { ...titleField, destination: 'genres' as const },
+          titleField,
+          { ...titleField, destination: 'description' as const },
+          { ...titleField, destination: 'series' as const, inventoryRole: 'contextual' as const },
+          {
+            ...titleField,
+            destination: 'series' as const,
+            currentRaw: null,
+            proposedValues: [],
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all&preview=case-1', http)
+    const note =
+      'Book-level evidence supports title, description, and genre choices. The exact recording remains unresolved.'
+    const context = await screen.findByRole('region', { name: 'Whole-work context' })
+    expect(within(context).getByText(note)).toBeVisible()
+    const rail = screen.getByRole('navigation', { name: 'Review fields' })
+    await userEvent
+      .setup()
+      .click(within(rail).getByRole('button', { name: 'Show 1 additional field' }))
+    expect(within(rail).getByRole('button', { name: /^Series/u })).toBeVisible()
+    expect(
+      within(screen.getByRole('region', { name: 'Whole-work context' })).getByText(note),
+    ).toBeVisible()
+    expect(
+      within(screen.getByRole('region', { name: 'Whole-work context' })).queryByText(/series/u),
+    ).toBeNull()
+  })
+
   it('synchronously reveals and selects an additional field named in the URL', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
@@ -8207,7 +8371,7 @@ describe('Library route', () => {
       classification: 'unsupported',
       classificationReason: 'This field is unavailable for the current service capability.',
       currentValue: 'Unavailable',
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       decisionActions: [],
       editable: false,
       currentRaw: '',
@@ -8217,7 +8381,10 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, emptySubtitle] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [titleField, emptySubtitle],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=subtitle', http)
 
@@ -8247,13 +8414,13 @@ describe('Library route', () => {
     }
     const emptySubtitle = {
       ...emptyTitle,
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       currentRaw: '',
     }
     let authoritative = false
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () =>
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () =>
         authoritative
           ? {
               ...detail,
@@ -8292,7 +8459,7 @@ describe('Library route', () => {
       ...titleField,
       classification: 'unsupported' as const,
       classificationReason: 'This field is unavailable for the current service capability.',
-      destination: 'subtitle',
+      destination: 'subtitle' as const,
       editable: false,
       inventoryRole: 'contextual' as const,
       needsAttention: false,
@@ -8303,7 +8470,10 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, unavailableField] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [titleField, unavailableField],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
@@ -8322,20 +8492,23 @@ describe('Library route', () => {
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const publicationDate = {
       ...titleField,
-      destination: 'publishedDate',
+      destination: 'publishedDate' as const,
       proposalId: 'proposal-publication-date',
       targetFingerprint: 'fingerprint-publication-date',
     }
     const publicationYear = {
       ...titleField,
-      destination: 'publishedYear',
+      destination: 'publishedYear' as const,
       inventoryRole: 'contextual' as const,
       proposalId: 'proposal-publication-year',
       targetFingerprint: 'fingerprint-publication-year',
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [publicationDate, publicationYear] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [publicationDate, publicationYear],
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=publishedYear', http)
 
@@ -8437,7 +8610,7 @@ describe('Library route', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-page',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -8456,11 +8629,11 @@ describe('Library route', () => {
             items: [
               {
                 id: 'case-2',
-                destination: 'authors',
+                destination: 'authors' as const,
                 title: 'Later page work',
                 authors: [],
                 library: 'Books',
-                mediaKind: 'ebook',
+                mediaKind: 'epub' as const,
                 notices: [],
                 provenance: [],
                 workAttentionCount: 1,
@@ -8473,11 +8646,11 @@ describe('Library route', () => {
             items: [
               {
                 id: 'case-1',
-                destination: 'title',
+                destination: 'title' as const,
                 title: 'A Book',
                 authors: [],
                 library: 'Books',
-                mediaKind: 'ebook',
+                mediaKind: 'epub' as const,
                 notices: [],
                 provenance: [],
                 workAttentionCount: 1,
@@ -8488,13 +8661,15 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getAttention,
-      getCaseDetail: vi.fn(async (id: string) =>
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id: string) =>
         id === 'case-2'
           ? {
               ...detail,
               id,
               title: 'Later page work',
-              fields: [{ ...titleField, destination: 'authors', currentValue: 'Later author' }],
+              fields: [
+                { ...titleField, destination: 'authors' as const, currentValue: 'Later author' },
+              ],
             }
           : current,
       ),
@@ -8507,7 +8682,7 @@ describe('Library route', () => {
           actor: 'owner',
           application: 'apply' as const,
           decision_id: 'decision-page',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current',
           proposal_id: titleField.proposalId,
@@ -8848,7 +9023,10 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => emptyLibrary),
-      getCaseDetail: vi.fn(async () => ({ ...detail, subtitle: 'internal identity' })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        subtitle: 'internal identity',
+      })),
     }
     renderRoute('/library?lens=all&preview=case-1', http)
 
@@ -8913,6 +9091,77 @@ describe('Library route', () => {
     expect(http.getLibrary).toHaveBeenCalledTimes(3)
   })
 
+  it('names which library holds permission when only some do, and says readiness once (#1286)', async () => {
+    const view = activity({
+      configured_libraries: ['fiction', 'history', 'research'].map((name) => ({
+        connection: 'primary',
+        library: name,
+        prepared: { automatic: 1, human: 0, total: 1 },
+      })),
+      // Research shelf is held for an unexpected write: it cannot be given
+      // permission, so it is never said to need it (#1286 X12).
+      capabilities: ['fiction', 'history', 'research'].map((name) => ({
+        connection: 'primary',
+        library: name,
+        state: name === 'research' ? ('not_ready' as const) : ('allowed' as const),
+        destinations: [
+          {
+            consented: name === 'fiction',
+            destination: 'title' as const,
+            prepared: 1,
+            state:
+              name === 'research' ? ('unexpected_effect_behavior' as const) : ('allowed' as const),
+          },
+        ],
+      })),
+      waiting: {
+        applying: 0,
+        awaiting_permission: 1,
+        held_for_recovery: 0,
+        retrying: 0,
+        scheduled: 0,
+      },
+    })
+    const named = settingsView()
+    const [shelf] = named.document.libraries
+    if (!shelf) throw new Error('the settings fixture configures a library')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getSettings: vi.fn(async () => ({
+        ...named,
+        document: {
+          ...named.document,
+          libraries: ['fiction', 'history', 'research'].map((name) => ({
+            ...shelf,
+            name,
+            display_name:
+              name === 'fiction'
+                ? 'Fiction Shelf'
+                : name === 'history'
+                  ? 'History Room'
+                  : 'Research Shelf',
+          })),
+        },
+      })),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getLibrary: vi.fn(async () => ({ ...library, counts: { ...library.counts, all: 5 } })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const heading = await screen.findByRole('heading', {
+      name: '5 works are in Library. Writes are on for Fiction Shelf; History Room needs permission; writes to Research Shelf are held.',
+    })
+    const notice = heading.closest('section')
+    if (!notice) throw new Error('the handoff notice is a section')
+    // Readiness is said once, in one sentence that is also the instruction.
+    expect(notice).toHaveTextContent(
+      'Open permission review in Activity to check current readiness.',
+    )
+    expect(notice).not.toHaveTextContent('Review current write permissions')
+    expect(notice).not.toHaveTextContent('Readiness is checked when you open the review.')
+    expect(within(notice).getAllByText(/readiness/iu)).toHaveLength(1)
+  })
+
   it('offers the completion handoff inside Library with one action for every eligible destination', async () => {
     const user = userEvent.setup()
     const view = activity({
@@ -8929,10 +9178,10 @@ describe('Library route', () => {
           library: 'fiction',
           state: 'partially_allowed',
           destinations: [
-            { consented: false, destination: 'title', prepared: 4, state: 'allowed' },
+            { consented: false, destination: 'title' as const, prepared: 4, state: 'allowed' },
             {
               consented: false,
-              destination: 'cover',
+              destination: 'cover' as const,
               prepared: 6,
               state: 'insufficient_permission',
             },
@@ -9041,7 +9290,9 @@ describe('Library route', () => {
           connection: 'primary',
           library: 'fiction',
           state: 'allowed',
-          destinations: [{ consented: false, destination: 'title', prepared: 2, state: 'allowed' }],
+          destinations: [
+            { consented: false, destination: 'title' as const, prepared: 2, state: 'allowed' },
+          ],
         },
       ],
       waiting: {
@@ -9126,8 +9377,8 @@ describe('Provider evidence rail', () => {
         recovery:
           'When this library finishes with failures, open Background activity and choose Retry.',
         recoveryAttempt: 0,
-        stage: 'provider',
-        status: 'transient',
+        stage: 'provider' as const,
+        status: 'transient' as const,
       },
     }
     const http = Object.assign(createHttp(), {
@@ -9155,8 +9406,8 @@ describe('Provider evidence rail', () => {
           preparationOutcomes: [
             {
               provider: 'Catalogue',
-              laneKind: 'isbn',
-              status: 'no_match',
+              laneKind: 'isbn' as const,
+              status: 'no_match' as const,
               reason: 'No match',
               providerRequests: 1,
             },
@@ -9170,8 +9421,8 @@ describe('Provider evidence rail', () => {
           preparationOutcomes: [
             {
               provider: 'Catalogue',
-              laneKind: 'isbn',
-              status: 'unavailable',
+              laneKind: 'isbn' as const,
+              status: 'unavailable' as const,
               reason: 'Unavailable',
               providerRequests: 1,
             },
@@ -9214,7 +9465,7 @@ describe('Provider evidence rail', () => {
     ['candidates', 'Candidates found', 'complete'],
     ['no_match', 'No match', 'complete'],
     ['disabled', 'Not enabled', 'complete'],
-    ['insufficient_input', 'Not enough identity', 'complete'],
+    ['insufficient_input', 'Too little to search with', 'complete'],
     ['authentication', 'Authentication failed', 'limited'],
     ['authorization', 'Access denied', 'limited'],
     ['rate_limited', 'Rate limited', 'limited'],
@@ -9237,7 +9488,7 @@ describe('Provider evidence rail', () => {
               preparationOutcomes: [
                 {
                   provider: 'Catalogue',
-                  laneKind: 'discovery',
+                  laneKind: 'discovery' as const,
                   status,
                   reason: 'Bounded status',
                   providerRequests: 0,
@@ -9299,8 +9550,8 @@ it('keeps clear and empty lenses free of provider headers and bounds many lane h
         attentionCount: 0,
         preparationOutcomes: Array.from({ length: 40 }, (_, index) => ({
           provider: `Source ${String(index)}`,
-          laneKind: 'isbn',
-          status: 'no_match',
+          laneKind: 'isbn' as const,
+          status: 'no_match' as const,
           reason: 'No match',
           providerRequests: 1,
         })),
@@ -9309,7 +9560,7 @@ it('keeps clear and empty lenses free of provider headers and bounds many lane h
   }))
   renderRoute('/library?lens=no_attention_needed', http)
   const row = await screen.findByRole('button', { name: /A Book\./ })
-  expect(row).toHaveAccessibleDescription('No match × 40')
+  expect(row).toHaveAccessibleDescription('40 sources: No match')
   expect(screen.queryByRole('heading', { name: /Provider evidence/ })).toBeNull()
 })
 
@@ -9372,7 +9623,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     actor: 'owner',
     application: 'apply',
     decision_id: 'prior-description',
-    destination: 'description',
+    destination: 'description' as const,
     occurred_at: 1,
     outcome: 'accept',
     proposal_id: field.proposalId,
@@ -9409,7 +9660,7 @@ it('offers advised text in the ordinary Description chooser with its immutable a
                 qualification_manifest_sha256: 'c'.repeat(64),
                 idempotency_digest: 'd'.repeat(64),
                 occurred_at: 10,
-                destination: 'description',
+                destination: 'description' as const,
                 outcome: 'accept',
                 application: 'guarded',
               },
@@ -9487,7 +9738,11 @@ it('renders hostile multiline advice as text and refuses stale selection while o
   }
   renderRoute('/library?lens=all&preview=case-1&field=description', {
     ...createHttp(),
-    getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
   })
   const option = await screen.findByRole('button', {
     name: /Choose advised value: <img src=x onerror=alert\(1\)>/,
@@ -9571,14 +9826,18 @@ it.each(['verified', 'no_change_required'] as const)(
         qualification_manifest_sha256: 'c'.repeat(64),
         idempotency_digest: 'd'.repeat(64),
         occurred_at: 10,
-        destination: 'description',
+        destination: 'description' as const,
         outcome: 'accept',
         application: 'guarded',
       },
     }
     renderRoute('/library?lens=all&preview=case-1&field=description', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...authored,
+        id: 'case-1',
+        fields: [field],
+      })),
     })
     const option = await screen.findByRole('button', { name: /^Choose advised value:/ })
     expect(option).toHaveAttribute('aria-pressed', 'true')
@@ -9625,14 +9884,18 @@ it.each([
         qualification_manifest_sha256: 'c'.repeat(64),
         idempotency_digest: 'd'.repeat(64),
         occurred_at: 10,
-        destination: 'description',
+        destination: 'description' as const,
         outcome: 'accept',
         application: 'guarded',
       },
     }
     const http = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...authored,
+        id: 'case-1',
+        fields: [field],
+      })),
     }
     const url = '/library?lens=all&preview=case-1&field=description'
     const first = renderRoute(url, http)
@@ -9685,9 +9948,9 @@ it.each(['human', 'automatic_policy'] as const)(
       {
         current: true,
         outcome: null,
-        capability: 'backup_required',
+        capability: 'insufficient_permission',
         heading: 'Choice recorded · External update guarded',
-        detail: 'currently prevents an external update.',
+        detail: 'Writes are held because the connection lacks permission for it.',
       },
       {
         current: false,
@@ -9706,7 +9969,7 @@ it.each(['human', 'automatic_policy'] as const)(
       {
         current: false,
         outcome: 'no_change_required',
-        capability: 'backup_required',
+        capability: 'insufficient_permission',
         heading: 'No change needed',
         detail: 'The library already held the selected description.',
       },
@@ -9736,14 +9999,18 @@ it.each(['human', 'automatic_policy'] as const)(
           qualification_manifest_sha256: 'c'.repeat(64),
           idempotency_digest: 'd'.repeat(64),
           occurred_at: 10,
-          destination: 'description',
+          destination: 'description' as const,
           outcome: 'accept',
           application: 'guarded',
         },
       }
       renderRoute('/library?lens=all&preview=case-1&field=description', {
         ...createHttp(),
-        getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...authored,
+          id: 'case-1',
+          fields: [field],
+        })),
       })
       const panel = await screen.findByLabelText('External update status')
       expect(panel).toHaveTextContent(scenario.heading)
@@ -9782,14 +10049,18 @@ it.each([true, false])(
         qualification_manifest_sha256: 'c'.repeat(64),
         idempotency_digest: 'd'.repeat(64),
         occurred_at: 10,
-        destination: 'description',
+        destination: 'description' as const,
         outcome: 'accept',
         application: 'guarded',
       },
     }
     renderRoute('/library?lens=all&preview=case-1&field=description', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...authored,
+        id: 'case-1',
+        fields: [field],
+      })),
     })
     const choices = await screen.findAllByRole('button', { name: /^Choose advised value:/ })
     const panel = screen.getByLabelText('External update status')
@@ -9831,7 +10102,11 @@ it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
       }
     renderRoute('/library?lens=all&preview=case-1&field=description', {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...authored,
+        id: 'case-1',
+        fields: [field],
+      })),
     })
     const panel = await screen.findByLabelText('External update status')
     expect(panel).toHaveTextContent('Eligible for a library update')
@@ -9862,7 +10137,11 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
       throw new Error('selected retry fixture required')
     const http = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...authored,
+        id: 'case-1',
+        fields: [field],
+      })),
     }
     for (let load = 0; load < 2; load++) {
       renderRoute('/library?lens=all&preview=case-1&field=description', http)
@@ -9907,7 +10186,11 @@ it('shows retained automatic advice during preservation-only retry without addin
   expect(field.descriptionAdvice.application_outcome).toBeNull()
   renderRoute('/library?lens=all&preview=case-1&field=description', {
     ...createHttp(),
-    getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
   })
   const retained = await screen.findByRole('button', {
     name: 'Choose advised value: Authored synthetic description.',
@@ -10294,12 +10577,76 @@ it('counts linked corroborating authorities once and keeps observations separate
   expect(http.recordDecision).not.toHaveBeenCalled()
 })
 
+it('names a language observation as Detail does, in choice evidence and recorded observations (#1286 L1)', async () => {
+  const user = userEvent.setup()
+  const field = detail.fields[0]
+  if (!field) throw new Error('title field required')
+  const http = createHttp()
+  http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+    ...detail,
+    fields: [
+      {
+        ...field,
+        destination: 'language' as const,
+        choiceContexts: [
+          {
+            alternativeId: null,
+            selection: 'current',
+            limitations: [],
+            rationale: 'Retained current language.',
+            recommendation: 'no_recommendation',
+            recommendationReason: 'No recommendation.',
+            evidence: [
+              {
+                source: 'Local library record',
+                observation: 'Language: pt-BR',
+                role: 'local_presence',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }))
+  http.getEvidence = vi.fn<ReviewHttp['getEvidence']>(async () => ({
+    items: [
+      {
+        destinations: ['language'],
+        observation: 'Language: zh-Hant. Retained for review only; not an eligible choice.',
+        role: 'external_observation',
+        source: 'Open Library',
+      },
+      {
+        destinations: ['language'],
+        observation: 'Language: UND. Undetermined language; not an eligible choice.',
+        role: 'local_presence',
+        source: 'Local metadata',
+      },
+    ],
+    missingLineageCount: 0,
+    sourceLedger: [],
+  }))
+  renderRoute('/library?lens=all&preview=case-1&field=language', http)
+  await user.click(await screen.findByRole('button', { name: /^Evidence for Current value:/u }))
+  expect(screen.getByText('Language: Brazilian Portuguese (pt-BR)')).toBeVisible()
+  expect(screen.queryByText('Language: pt-BR')).toBeNull()
+  const region = await screen.findByRole('region', { name: 'Recorded observations' })
+  expect(
+    await within(region).findByText(
+      'Language: Traditional Chinese (zh-Hant). Retained for review only; not an eligible choice.',
+    ),
+  ).toBeVisible()
+  expect(
+    within(region).getByText('Language: UND. Undetermined language; not an eligible choice.'),
+  ).toBeVisible()
+})
+
 describe('library provider throttling notice (#1282)', () => {
   const noon = new Date(2026, 9, 23, 12, 0)
   const seconds = (date: Date) => Math.floor(date.getTime() / 1000)
   // The time and its meridiem never wrap apart (#1282 R3 F8).
   const clock = (date: Date) =>
-    new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+    new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hourCycle: 'h23' })
       .format(date)
       .replace(/\s/g, '\u00a0')
   const entry = (overrides: Partial<ProviderThrottleEntry> = {}): ProviderThrottleEntry => ({
@@ -10473,8 +10820,8 @@ describe('library provider throttling notice (#1282)', () => {
       vi.useRealTimers()
       Object.assign(globalThis, real)
     })
-    // jest-dom compares normalised text, where the no-break space is a space.
-    const spoken = (date: Date) => clock(date).replace(/\u00a0/g, ' ')
+    // A wait ahead reads as its clock time, never relative, so it stays true
+    // while the page is open (#1286); each item names its own wait.
     const soon = new Date(noon.getTime() + 90_000)
     const later = new Date(noon.getTime() + 600_000)
     let current = throttled([
@@ -10484,7 +10831,8 @@ describe('library provider throttling notice (#1282)', () => {
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/library?lens=all', http)
     const items = await within(await notice()).findAllByRole('listitem')
-    expect(items[0]).toHaveTextContent(`Next automatic retry ${spoken(soon)}.`)
+    expect(items[0]).toHaveTextContent(`Next automatic retry ${clock(soon)}.`)
+    expect(items[1]).toHaveTextContent(`Next automatic retry ${clock(later)}.`)
     // One timer, to the earliest wait still ahead; the query cache's own
     // five-minute collection timers are the only other long ones.
     const timers = () => scheduled.filter(([delay]) => delay > 60_000 && delay !== 300_000)
@@ -10492,7 +10840,7 @@ describe('library provider throttling notice (#1282)', () => {
     const reads = vi.mocked(http.getPreparation).mock.calls.length
     await act(() => vi.advanceTimersByTimeAsync(91_000))
     expect(items[0]).toHaveTextContent('214 deferred lookups. Retry due now.')
-    expect(items[1]).toHaveTextContent(`Next automatic retry ${spoken(later)}.`)
+    expect(items[1]).toHaveTextContent(`Next automatic retry ${clock(later)}.`)
     expect(vi.mocked(http.getPreparation).mock.calls.length).toBe(reads)
     // The next timer runs to the next wait; a change replaces it.
     const [, second] = timers().at(-1) ?? []
@@ -10672,7 +11020,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       .join('')
   const railItem = (
     id: string,
-    destination: string,
+    destination: TargetDestination,
     title: string,
     workAttentionCount: number,
   ) => ({
@@ -10681,7 +11029,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     title,
     authors: ['Synthetic Writer'],
     library: 'Books',
-    mediaKind: 'ebook',
+    mediaKind: 'epub' as const,
     notices: [],
     provenance: [],
     workAttentionCount,
@@ -10694,7 +11042,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
           connection: 'primary',
           library: 'fiction',
           state: 'allowed',
-          destinations: [{ consented: false, destination: 'title', prepared: 2, state: 'allowed' }],
+          destinations: [
+            { consented: false, destination: 'title' as const, prepared: 2, state: 'allowed' },
+          ],
         },
       ],
       waiting: {
@@ -10807,7 +11157,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
             total: 5,
             items: [
               workA,
-              { ...workA, destination: 'description' },
+              { ...workA, destination: 'description' as const },
               railItem('case-2', 'title', 'Work B', 2),
             ],
             nextCursor: 'attention-page-2',
@@ -11065,7 +11415,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
           connection: 'primary',
           library: 'fiction',
           state: 'allowed',
-          destinations: [{ consented: false, destination: 'title', prepared: 0, state: 'allowed' }],
+          destinations: [
+            { consented: false, destination: 'title' as const, prepared: 0, state: 'allowed' },
+          ],
         },
       ],
       lapsed_consents: [
@@ -11113,7 +11465,12 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         library,
         state: 'allowed',
         destinations: [
-          { consented: library === 'fiction', destination: 'title', prepared: 0, state: 'allowed' },
+          {
+            consented: library === 'fiction',
+            destination: 'title' as const,
+            prepared: 0,
+            state: 'allowed',
+          },
         ],
       })),
       lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
@@ -11135,6 +11492,56 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(screen.getByRole('link', { name: 'Review write permissions' })).toBeVisible()
   })
 
+  it('reads a lapse beside a consented but suspended library as off, naming it held (#1286 L2)', async () => {
+    const view = activity({
+      configured_libraries: ['fiction', 'history'].map((library) => ({
+        connection: 'primary',
+        library,
+      })),
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'not_ready',
+          destinations: [
+            {
+              consented: true,
+              destination: 'title' as const,
+              prepared: 0,
+              state: 'unexpected_effect_behavior',
+            },
+          ],
+        },
+        {
+          connection: 'primary',
+          library: 'history',
+          state: 'allowed',
+          destinations: [
+            { consented: false, destination: 'title' as const, prepared: 0, state: 'allowed' },
+          ],
+        },
+      ],
+      lapsed_consents: [{ connection: 'primary', library: 'history', reason: 'policy_changed' }],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityConsent: vi.fn(async () => consentOf(view)),
+      getLibrary: vi.fn(async () => counted(0, 5)),
+    }
+    renderRoute('/library?lens=all', http)
+
+    // Permission kept for a library whose every destination is suspended
+    // writes nothing, so the lapse beside it does not read as writes enabled.
+    const heading = await screen.findByRole('heading', {
+      name: '5 works are in Library. Writes are off; writes to fiction are held.',
+    })
+    const notice = heading.closest('.cm-library-handoff')
+    expect(notice).not.toHaveTextContent('Writes are enabled')
+    expect(notice).toHaveTextContent(
+      'Write permission for history lapsed because it was given under a policy that is no longer active.',
+    )
+  })
+
   it('announces a lapse once, by its Settings name (#1370)', async () => {
     const view = activity({
       configured_libraries: [{ connection: 'primary', library: 'fiction' }],
@@ -11143,7 +11550,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
           connection: 'primary',
           library: 'fiction',
           state: 'allowed',
-          destinations: [{ consented: false, destination: 'title', prepared: 0, state: 'allowed' }],
+          destinations: [
+            { consented: false, destination: 'title' as const, prepared: 0, state: 'allowed' },
+          ],
         },
       ],
       lapsed_consents: [{ connection: 'primary', library: 'fiction', reason: 'policy_changed' }],
@@ -11217,7 +11626,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
             actor: 'owner',
             application: 'apply' as const,
             decision_id: 'decision-filtered',
-            destination: 'title',
+            destination: 'title' as const,
             occurred_at: 1,
             outcome: 'keep_current',
             proposal_id: titleField.proposalId,
@@ -11248,7 +11657,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
           ? { total: 0, items: [] }
           : { total: 1, items: [railItem('case-1', 'title', 'A Book', 1)] },
       ),
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
       recordDecision: vi.fn(async () => {
         decided = true
         current = settledTitle()
@@ -11259,7 +11668,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
           actor: 'owner' as const,
           application: 'apply' as const,
           decision_id: 'decision-filtered',
-          destination: 'title',
+          destination: 'title' as const,
           occurred_at: 1,
           outcome: 'keep_current' as const,
           proposal_id: titleField.proposalId,

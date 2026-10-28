@@ -89,6 +89,20 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Plain evidence copy successor (#1286)
+
+The current F19a, F20 and F46 records move to semantic revision 78 over base
+`b2ba38e2`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. Nothing
+persisted changes; no clean rebuild is required. A retained observation no
+longer repeats its own label or names internal scope, state and applicability
+codes, media health states running times in hours and minutes with the
+difference between them, and an owner decision's Activity row names the value
+its plan replaced. That changes only owner-facing words, not which values are
+proposed or what any qualified operation may do, so no operation gains or loses
+authority.
+
 ## Visible incumbent description successor (#1424)
 
 The current F19a, F20 and F46 records move to semantic revision 77 over base

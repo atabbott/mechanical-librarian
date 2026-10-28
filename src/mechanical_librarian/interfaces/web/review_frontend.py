@@ -26,7 +26,7 @@ def login_html() -> str:
     <section class="login-card" aria-labelledby="login-title">
       <p class="eyebrow">Private owner access</p>
       <h1 id="login-title">Review your library with confidence.</h1>
-      <p class="lede">Sign in to inspect exact-current exception cases. Library changes require your write permission and must pass safeguards.</p>
+      <p class="lede">Sign in to see what needs your attention in your library. Nothing changes in your library until you give write permission, and every change is checked before it is written.</p>
       <form id="login">
         <label for="password">Owner password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>

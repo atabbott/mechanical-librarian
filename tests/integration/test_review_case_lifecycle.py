@@ -948,6 +948,48 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
             # The library holds the bytes it held before the first write.
             assert library.detail["media"]["metadata"]["description"] == stored
             assert [request.method for request in library.requests].count("PATCH") == 1
+            # The restore's own row says what it kept, never the value its
+            # corrective write overwrote; the accept row still names what
+            # its write replaced (#1286).
+            from mechanical_librarian.application.continuous_field_effects import (
+                ContinuousGuardedApplication,
+            )
+
+            events = [
+                event
+                for event in ContinuousGuardedApplication(
+                    repository,
+                    {},
+                    {},
+                    PersistedFieldEffectAuthority(repository),
+                    (("primary", "ebooks"),),
+                    lambda: 9_000,
+                    lambda *_: None,
+                    activity_only=True,
+                ).activity()["events"]
+                if event["destination"] == "description"
+            ]
+            facts = {
+                str(event["state"]): {
+                    str(item["label"]): str(item["value"])
+                    for item in cast(list[dict[str, object]], event["evidence"])
+                }
+                for event in events
+                if event["state"] in {"keep_current", "accept"}
+            }
+            (kept,) = [event for event in events if event["state"] == "keep_current"]
+            assert str(kept["change"]).startswith("Kept ")
+            assert desired not in str(kept["change"])
+            assert (
+                facts["keep_current"]["Current value"]
+                == facts["keep_current"]["Selected value"]
+                != desired
+            )
+            assert facts["accept"]["New value"] == desired
+            assert (
+                facts["accept"]["Previous value"]
+                == facts["keep_current"]["Current value"]
+            )
     finally:
         repository.close()
         library.close()

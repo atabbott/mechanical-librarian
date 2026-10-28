@@ -370,12 +370,12 @@
                 "source": "Local library record"
               },
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               }
@@ -390,12 +390,12 @@
             "alternative_id": "alternative_6edf6cc99c073bb07d4bf641be960738da82833e49f56883f3ac69291c8e9349",
             "evidence": [
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               },
               {
-                "observation": "Metadata: Example Author",
+                "observation": "Author: Example Author",
                 "role": "external_corroboration",
                 "source": "Audnexus"
               }
@@ -912,13 +912,13 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
+        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Edition-level detail."
       },
       {
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown."
+        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Edition-level detail."
       },
       {
         "destinations": ["title"],
@@ -930,7 +930,7 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
+        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Edition-level detail."
       },
       {
         "destinations": ["narrators"],
@@ -954,7 +954,7 @@
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown."
+        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Edition-level detail."
       },
       {
         "destinations": ["narrators"],
@@ -964,13 +964,13 @@
       },
       {
         "destinations": ["authors"],
-        "observation": "Metadata: Example Author",
+        "observation": "Author: Example Author",
         "role": "external_corroboration",
         "source": "Audnexus"
       },
       {
         "destinations": ["authors"],
-        "observation": "Metadata: Example Author",
+        "observation": "Author: Example Author",
         "role": "external_corroboration",
         "source": "Audnexus"
       },

@@ -73,12 +73,15 @@ _DESTINATION_LABELS = {
     "authors": "Authors",
     "cover": "Cover",
     "description": "Description",
+    "explicit": "Explicit content",
     "genres": "Genres",
     "isbn": "ISBN",
     "language": "Language",
+    "narrators": "Narrators",
     "policy": "Policy",
-    "publishedDate": "Published date",
-    "publishedYear": "Published year",
+    # The browser names these fields the same way (#1286).
+    "publishedDate": "Publication date",
+    "publishedYear": "Publication year",
     "publisher": "Publisher",
     "series": "Series",
     "subtitle": "Subtitle",
@@ -155,8 +158,8 @@ def destination_label(destination: str) -> str:
     if named is not None:
         return named
     # Sentence case, the one convention every server-named field reads in:
-    # `publishedYear` and `published_year` both become `Published year`, so an
-    # unmapped destination never arrives looking like a proper noun.
+    # `narratorCredits` and `narrator_credits` both become `Narrator credits`,
+    # so an unmapped destination never arrives looking like a proper noun.
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", destination.replace("_", " "))
     tidied = _tidy(spaced.lower(), 64)
     return tidied[:1].upper() + tidied[1:]
@@ -192,10 +195,11 @@ def policy_option_label(option: str, category: str) -> str:
     if category == "language_rendering" and option == "preserve":
         return "Preserve supported form"
     named = {
-        "all_qualified": "All qualified memberships",
+        "all_qualified": "All supported memberships",
         "ask": "Ask me",
         "automatic": "Automatic",
         "canonical": "Canonical form",
+        "ebook_manifestation": "Ebook edition ASIN",
         "fill_empty": "Fill when empty",
         "ignore": "Skip it",
         "preserve": "Leave as it is",

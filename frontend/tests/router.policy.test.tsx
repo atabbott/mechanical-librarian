@@ -42,7 +42,7 @@ describe('Policy route', () => {
     expect(within(series).getByText(/not independently verified for each book/u)).toBeVisible()
     expect(within(series).getByText('Primary narrative:')).toBeVisible()
     expect(within(series).getByText('First source membership:')).toBeVisible()
-    expect(within(series).getByText('All qualified memberships:')).toBeVisible()
+    expect(within(series).getByText('All supported memberships:')).toBeVisible()
     expect(within(series).getByText('Add supported memberships:')).toBeVisible()
     expect(within(series).getByText('Replace with supported memberships:')).toBeVisible()
     expect(within(series).getByText(/with only its first membership/u)).toBeVisible()
@@ -237,7 +237,7 @@ describe('Policy route', () => {
         audiobook_qualification: [
           {
             automatic_available: true,
-            destination: 'asin',
+            destination: 'asin' as const,
             field: 'asin',
             identity: 'asin:preserve_exact:audiobook_asin_fill',
             operation: 'fill',
@@ -246,7 +246,7 @@ describe('Policy route', () => {
           },
           {
             automatic_available: false,
-            destination: 'asin',
+            destination: 'asin' as const,
             field: 'asin',
             identity: 'asin:preserve_exact:audiobook_asin_replace_recording',
             operation: 'replace_recording',
@@ -265,7 +265,7 @@ describe('Policy route', () => {
       'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me — owner choice required. Automatic eligibility if selected: Asin: fill',
+      'Audiobooks: Ask me — owner choice required. Automatic eligibility if selected: ASIN: fill empty',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
@@ -274,7 +274,7 @@ describe('Policy route', () => {
     // The record qualified one option, so the other one this field offers is
     // still the owner's.
     await user.click(within(asin).getByRole('combobox', { name: 'ASIN representation' }))
-    await user.click(screen.getByRole('option', { name: 'Ebook manifestation' }))
+    await user.click(screen.getByRole('option', { name: 'Ebook edition ASIN' }))
     expect(within(asin).getByText('Automatic not supported')).toBeVisible()
     await user.click(screen.getByRole('button', { name: /Identity How a work/ }))
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
@@ -557,13 +557,13 @@ describe('Policy route', () => {
     const helpLines = within(description).getAllByRole('listitem')
     expect(helpLines).toHaveLength(3)
     expect(helpLines[0]).toHaveTextContent(
-      'Fill empty with safe plain text: Fills an empty Description; preserves populated prose; abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification.',
+      'Fill empty with safe plain text: Fills an empty Description; preserves populated prose; makes no change for unsafe or incomplete source text, conflicting work identity, or when Automatic is unavailable.',
     )
     expect(helpLines[1]).toHaveTextContent(
-      'Visible Google text: Fills an empty Description only; abstains without it and never falls back to Hardcover.',
+      'Visible Google text: Fills an empty Description only; makes no change without it and never falls back to Hardcover.',
     )
     expect(helpLines[2]).toHaveTextContent(
-      'Fill empty or replace safe text: For audiobooks, fills an empty Description or replaces only whole chapter/track number and no-description/no-synopsis placeholders, preserving other useful prose; for ebooks, fills or replaces a Description with eligible source text; abstains for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not assess general writing quality.',
+      'Fill empty or replace safe text: For audiobooks, fills an empty Description or replaces only whole chapter/track number and no-description/no-synopsis placeholders, preserving other useful prose; for ebooks, fills or replaces a Description with eligible source text; makes no change for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not judge writing quality.',
     )
     await user.click(
       within(description).getByRole('combobox', { name: 'Description representation' }),
@@ -680,6 +680,89 @@ describe('Policy route', () => {
     ])
   })
 
+  it('reads an Ask me preview row as a proposal and the finish tray in plain words (#1286)', async () => {
+    const user = userEvent.setup()
+    const draft = {
+      narrowed_for_target: false,
+      outcome: 'projected',
+      reason: null,
+      target_state: 'missing',
+      field: 'contributor_names',
+      option: 'canonical',
+      current_value: null,
+      desired_value: 'Complete recording cast',
+      qualified_value: 'Complete recording cast',
+    }
+    const policyCommand = vi.fn<(path: string, body: unknown) => Promise<unknown>>(async (path) => {
+      if (path === 'drafts')
+        return { policy_id: 'policy-reviewed', schema_version: 'metadata-policy-profile-v3' }
+      if (path === 'preview')
+        return {
+          active_policy_id: 'policy-preview-authority',
+          policy_id: 'policy-reviewed',
+          schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
+          libraries: [
+            {
+              library: 'Fiction',
+              affected_categories: ['contributor_names'],
+              comparisons: [
+                {
+                  media_kind: 'audiobook',
+                  fields: [
+                    {
+                      // Under Ask me nothing is written: the active policy
+                      // would put this value to the owner.
+                      active: { ...draft, desired_value: 'Proposed cast' },
+                      draft,
+                      active_destination: 'ask',
+                      draft_destination: 'automatic',
+                      changed: true,
+                    },
+                  ],
+                },
+              ],
+              cases_total: 1,
+              cases_truncated: false,
+              current_unapplied_count: 1,
+              resolved_policy_id: 'resolved-policy',
+              cases: [
+                {
+                  fields: [draft],
+                  proposal_set_id: 'proposal-1',
+                  report_id: 'report-1',
+                  resolved_policy_id: 'resolved-policy',
+                  work_label: 'Recording book',
+                },
+              ],
+            },
+          ],
+        }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      policyCommand: <T,>(path: string, body: unknown) => policyCommand(path, body) as Promise<T>,
+    }
+    renderRoute('/policy?section=identity', http)
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    expect(
+      await screen.findByText(
+        '· Ask me: would propose filling the empty field with Proposed cast → Automatic: fills the empty field with Complete recording cast',
+        { selector: '.cm-policy-impact small' },
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText(/\b(?:ask|automatic|ignore): /u)).toBeNull()
+    expect(
+      screen.getByText(
+        /draft saved; activate to keep it — reloading starts from the active policy\.$/u,
+      ),
+    ).toBeVisible()
+    expect(screen.queryByText(/snapshot saved automatically/u)).toBeNull()
+  })
+
   it('excludes unchanged outcomes from the primary policy impact list', async () => {
     const user = userEvent.setup()
     const unchanged = Array.from({ length: 6 }, (_, index) => ({
@@ -763,11 +846,11 @@ describe('Policy route', () => {
       await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Show 1 more outcome' })).toBeNull()
-    expect(screen.getByText('Unchanged outcomes and projected library context (8)')).toBeVisible()
+    expect(screen.getByText('Unchanged outcomes and current library context (8)')).toBeVisible()
     expect(
       screen.getByText('Ebooks: 1 sampled work · Audiobooks: 2 sampled works · 1 changed field'),
     ).toBeVisible()
-    await user.click(screen.getByText('Unchanged outcomes and projected library context (8)'))
+    await user.click(screen.getByText('Unchanged outcomes and current library context (8)'))
     expect(
       screen.queryByText(/Complete recording cast/, { selector: '.cm-policy-projected-context p' }),
     ).toBeNull()
@@ -882,7 +965,14 @@ describe('Policy route', () => {
     expect(screen.getByText(/New one/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText(/New two/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText('2 sampled works with changes')).toBeVisible()
-    expect(screen.getByText(/16 material changes in the bounded sample/)).toBeVisible()
+    expect(screen.getByText(/16 changes in the sample/)).toBeVisible()
+    // No design-document term reaches the owner on Policy (#1286 X5); only
+    // the Technical detail disclosure quotes the server's own codes.
+    const owner = document.body.cloneNode(true) as HTMLElement
+    for (const code of owner.querySelectorAll('code')) code.remove()
+    expect(owner.textContent).not.toMatch(
+      /qualified|admitted|projected|bounded|manifestation|abstain/iu,
+    )
     expect(screen.getByLabelText('2 sampled works with changes')).toHaveTextContent('2')
   })
 
@@ -1172,9 +1262,9 @@ describe('Policy route', () => {
         /^Not previewed\.This rule takes effect on the next preparation\.$/u,
       )
     expect(screen.getByText(example.title)).toBeVisible()
-    const material = screen.queryByText(/material changes? in the bounded sample/u)
+    const material = screen.queryByText(/\d+ changes? in the sample/u)
     if (example.rows.some((row) => row.endsWith('Policy change')))
-      expect(material).toHaveTextContent(`${String(example.cases.length)} material change`)
+      expect(material).toHaveTextContent(`${String(example.cases.length)} change`)
     else expect(material).toBeNull()
     const preview = document.querySelector<HTMLElement>('.cm-policy-preview')
     if (!preview) throw new Error('preview not shown')
@@ -1578,7 +1668,7 @@ it('keeps explicit off until the owner chooses its representation and review mod
       audiobook_qualification: [
         {
           automatic_available: true,
-          destination: 'explicit',
+          destination: 'explicit' as const,
           field: 'explicit',
           identity: 'explicit:adult_product:audiobook_explicit_fill',
           operation: 'fill',
@@ -1694,6 +1784,27 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   expect(summary).toHaveFocus()
   expect(screen.getByRole('button', { name: /Recover .*publisher.* suspension/iu })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
+})
+
+it('names a provider-consensus title suspension by its destination (#1286)', async () => {
+  const user = userEvent.setup()
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getAutomaticSafety: vi.fn(async () => ({
+      paused: true,
+      global_suspension: null,
+      category_suspensions: { title: 'target_changed', not_a_category: 'other_failure' },
+    })),
+  }
+  renderRoute('/policy', http)
+  await screen.findByRole('heading', { name: 'Library policy' })
+  const summary = screen.getByText('Safety').closest('summary')
+  if (!summary) throw new Error('Safety summary missing')
+  await user.click(summary)
+  expect(screen.getByRole('button', { name: 'Recover Title suspension' })).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: 'Recover Another policy field suspension' }),
+  ).toBeVisible()
 })
 
 it.each([
@@ -1854,9 +1965,11 @@ it.each([
     await user.click(screen.getByRole('option', { name: 'Add missing values' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     await user.click(await screen.findByRole('button', { name: 'Review activation' }))
-    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(`Ebooks — ${label}`)
     expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
-      `Audiobooks — ${label}`,
+      `Ebook libraries — ${label}`,
+    )
+    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
+      `Audiobook libraries — ${label}`,
     )
   },
 )
@@ -1943,8 +2056,10 @@ it.each([
         {
           connection: 'home',
           library: 'a-very_long-library-name',
-          state: 'allowed',
-          destinations: [{ consented, destination: 'title', prepared: 0, state: 'allowed' }],
+          state: 'allowed' as const,
+          destinations: [
+            { consented, destination: 'title' as const, prepared: 0, state: 'allowed' as const },
+          ],
         },
       ],
       configured_libraries: [{ connection: 'home', library: 'a-very_long-library-name' }],

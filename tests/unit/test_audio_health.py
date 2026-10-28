@@ -23,6 +23,7 @@ from mechanical_librarian.domain.audio_health import (
     AudioHealthKind,
     AudioHealthObservation,
     derive_audio_health,
+    hours_minutes,
     media_unreadable_observation,
 )
 from mechanical_librarian.domain.audio_inspection import (
@@ -292,8 +293,11 @@ def test_a_short_recording_reads_short_of_its_provider_runtime() -> None:
     ]
     stated = health[0]
     assert stated.tracks == ()
-    assert stated.observed == f"{_LOCAL_SECONDS} seconds of local audio"
-    assert stated.expected == "72000 seconds stated by the matched edition"
+    # 58,244 s and 72,000 s, read in hours and minutes (#1286).
+    assert stated.observed == (
+        "16 h 11 min of local audio, 3 h 49 min shorter than the matched edition"
+    )
+    assert stated.expected == "20 h stated by the matched edition"
     assert stated.cited[-1] == "audible-product-B08G9PRS1K"
     assert stated.cited[:-1] and all(
         value.startswith("local_") for value in stated.cited[:-1]
@@ -368,9 +372,9 @@ def test_a_diverged_chapter_vector_is_a_mismatch() -> None:
     )
     # Two counts are not a discrepancy: what the owner is told is the first cut
     # the two recordings disagree on and how long it runs on each side.
-    assert stated.observed == "2 embedded chapters; chapter 1 runs 100 s"
+    assert stated.observed == "2 embedded chapters; chapter 1 runs 1 min 40 s"
     assert stated.expected == (
-        "2 chapters stated by the matched edition; chapter 1 runs 29100 s"
+        "2 chapters stated by the matched edition; chapter 1 runs 8 h 5 min"
     )
     assert derive_audio_health(aligned) == ()
 
@@ -391,9 +395,9 @@ def test_a_diverged_chapter_vector_is_a_mismatch() -> None:
             # first and last chapters, so the cut is named under that alignment
             # and the statement says which end was skipped.
             (100, 200, 300, 400),
-            "4 embedded chapters; chapter 2 runs 200 s, aligned past this "
+            "4 embedded chapters; chapter 2 runs 3 min 20 s, aligned past this "
             "recording's first chapter",
-            "2 chapters stated by the matched edition; chapter 1 runs 29100 s",
+            "2 chapters stated by the matched edition; chapter 1 runs 8 h 5 min",
             id="counts-and-a-cut",
         ),
     ),
@@ -449,12 +453,12 @@ def test_a_chapter_discrepancy_stays_within_the_projection_bound() -> None:
     ]
     stated = health[0]
     assert stated.observed == (
-        f"{MAX_CHAPTERS} embedded chapters; chapter 1023 runs 590 s, aligned past "
+        f"{MAX_CHAPTERS} embedded chapters; chapter 1023 runs 9 min 50 s, aligned past "
         "this recording's first chapter"
     )
     assert stated.expected == (
         f"{MAX_PROVIDER_CHAPTER_DURATIONS} chapters stated by the matched edition; "
-        "chapter 1022 runs 604800 s"
+        "chapter 1022 runs 168 h"
     )
     assert max(len(stated.observed), len(stated.expected)) <= MAX_SHORT_TEXT_LENGTH
 
@@ -482,12 +486,37 @@ def test_a_diverging_cut_is_named_under_the_alignment_the_gate_would_choose() ->
     ]
     stated = health[0]
     assert stated.observed == (
-        "6 embedded chapters; chapter 4 runs 350 s, aligned past this "
+        "6 embedded chapters; chapter 4 runs 5 min 50 s, aligned past this "
         "recording's first chapter"
     )
     assert stated.expected == (
-        "5 chapters stated by the matched edition; chapter 3 runs 300 s"
+        "5 chapters stated by the matched edition; chapter 3 runs 5 min"
     )
+
+
+def test_an_hour_long_chapter_cut_keeps_its_seconds() -> None:
+    """Chapters are compared within seconds, so a cut reads to the second.
+
+    3,700 s and 3,725 s both round to "1 h 2 min"; stated that way, the two
+    sides of a mismatch would read the same and contradict it (#1286).
+    """
+    stated_seconds = (3_725, 3_660, 3_540)
+    report = _corroborated_report(
+        chapters=_running_chapters((3_700, 3_700, 3_700)),
+        provider_chapters=ProviderChapterStructure(
+            len(stated_seconds), sum(stated_seconds), stated_seconds, False
+        ),
+    )
+
+    (stated,) = derive_audio_health(report)
+
+    assert stated.kind is AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH
+    assert stated.observed == "3 embedded chapters; chapter 1 runs 1 h 1 min 40 s"
+    assert stated.expected == (
+        "3 chapters stated by the matched edition; chapter 1 runs 1 h 2 min 5 s"
+    )
+    # Control: the running time itself still reads in whole minutes.
+    assert hours_minutes(3_700) == "1 h 2 min"
 
 
 def test_an_incomplete_vector_states_nothing() -> None:
@@ -606,7 +635,6 @@ def test_a_persisted_truncation_is_stated_once_with_runtime_precedence(
     stated = health[0]
     assert stated.tracks == ()
     assert stated.cited[-1] == "audible-product-B0DEMOTED1"
-    assert stated.observed == f"{_LOCAL_SECONDS} seconds of local audio"
     candidate = report.providers[0].candidates[0]
     assert all(
         evidence.kind is not ProviderEvidenceKind.ASIN_MARKETPLACE
@@ -618,9 +646,13 @@ def test_a_persisted_truncation_is_stated_once_with_runtime_precedence(
     )
     if retain_runtime:
         assert durations == (_LONG_PROVIDER_SECONDS,)
-        assert stated.expected == "72000 seconds stated by the matched edition"
+        assert stated.observed == (
+            "16 h 11 min of local audio, 3 h 49 min shorter than the matched edition"
+        )
+        assert stated.expected == "20 h stated by the matched edition"
     else:
         assert durations == ()
+        assert stated.observed == "16 h 11 min of local audio"
         assert stated.expected is not None and "did not retain" in stated.expected
     assert (
         stated.bound == AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER]
@@ -658,7 +690,7 @@ def test_one_candidate_short_of_this_recording_is_stated_exactly_once() -> None:
         AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER
     ]
     # The derived statement is the one kept: it carries both running times.
-    assert health[0].expected == "72000 seconds stated by the matched edition"
+    assert health[0].expected == "20 h stated by the matched edition"
 
 
 def test_a_persisted_truncation_without_a_candidate_states_nothing() -> None:
@@ -786,3 +818,38 @@ def test_a_persisted_truncation_states_no_local_runtime_it_does_not_have() -> No
     assert health[0].cited == ("audible-product-B0DEMOTED1",)
     assert health[0].observed is None
     assert health[0].expected is not None and "did not retain" in health[0].expected
+
+
+def test_runtime_reads_in_hours_and_minutes_and_states_the_difference() -> None:
+    """A running time reads as the owner reads a clock, never as seconds (#1286).
+
+    30,846 s against 31,680 s is 834 s apart, far outside the 90 s band: it
+    is stated, and the difference is the one between the two times as shown.
+    """
+    from mechanical_librarian.domain.audio_health import _shown_seconds, hours_minutes
+
+    assert hours_minutes(30_846) == "8 h 34 min"
+    assert hours_minutes(31_680) == "8 h 48 min"
+    assert hours_minutes(_shown_seconds(31_680) - _shown_seconds(30_846)) == "14 min"
+    assert hours_minutes(90) == "1 min 30 s"
+    assert hours_minutes(45) == "45 s"
+    assert hours_minutes(0) == "0 s"
+    assert hours_minutes(7_200) == "2 h"
+    assert AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER] == (
+        "A complete recording runs within 1 min 30 s of the edition's stated "
+        "running time."
+    )
+
+    def stated(provider_seconds: int) -> list[str | None]:
+        report = asserted_asin_report(
+            provider_duration=f"{provider_seconds}.000", local_asin=_LOCAL_ASIN
+        )
+        return [value.observed for value in derive_audio_health(report)]
+
+    assert stated(_LOCAL_SECONDS + 834) == [
+        "16 h 11 min of local audio, 14 min shorter than the matched edition"
+    ]
+    # Negative control: a recording within the band is not short of it.
+    assert stated(_LOCAL_SECONDS + 90) == []
+    for value in stated(_LOCAL_SECONDS + 834):
+        assert value is not None and "seconds" not in value

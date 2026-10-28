@@ -83,6 +83,8 @@ from tests.support.field_effects import (  # noqa: F401
     envelope,
     metadata_report,
 )
+from tests.support.genre_reports import genre_report
+from tests.support.owner_values import OwnerStore
 from tests.support.proposal_evidence import (
     _claim,
     _fields,
@@ -92,6 +94,8 @@ from tests.support.proposal_evidence import (
     _target_work_report,
 )
 from tests.support.proposal_evidence import _report as _proposal_report
+
+ORCHARD = {"kind": "text", "value": "The Silent Orchard"}
 
 
 def _ledger(
@@ -985,6 +989,47 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
     assert replacement["change"] == "en → fr"
     assert _facts(replacement)["Previous value"] == "en"
     assert _facts(replacement)["New value"] == "fr"
+
+
+def test_a_second_owner_entry_names_the_value_the_first_one_wrote(
+    tmp_path,
+) -> None:
+    """Both rows of an owner entry name the value its write replaced (#1286).
+
+    The case stays pinned to the report from before the first write, so the
+    second entry's decision row once read that report's value while its
+    Verified row read the first write's.
+    """
+    store = OwnerStore(tmp_path, genre_report())
+    try:
+        store.write(store.decide("owner_entered", ORCHARD))
+        store.write(
+            store.decide("owner_entered", {"kind": "text", "value": "Another Orchard"})
+        )
+        rows = [
+            event
+            for event in ContinuousGuardedApplication(
+                store.repository,
+                {},
+                {},
+                PersistedFieldEffectAuthority(store.repository),
+                (("primary", "books"),),
+                lambda: 9_000,
+                lambda *_: None,
+                activity_only=True,
+            ).activity()["events"]
+            if event["destination"] == "title"
+            and _facts(event).get("New value") == "Another Orchard"
+        ]
+    finally:
+        store.close()
+    assert sorted(str(event["state"]) for event in rows) == [
+        "owner_entered",
+        "verified",
+    ]
+    for event in rows:
+        assert event["change"] == "The Silent Orchard → Another Orchard"
+        assert _facts(event)["Previous value"] == "The Silent Orchard"
 
 
 def _automatic_write(

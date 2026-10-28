@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { ModelPicker } from './ModelPicker'
 
 import { refusalCopy } from '../api/http'
+import { reviewerStateLabels } from '../labels'
 import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 
 export const DescriptionReviewerSettings = ({
@@ -76,7 +77,7 @@ export const DescriptionReviewerSettings = ({
         <div className="settings-field-control">
           <p role="status">
             {selected
-              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : `contained Codex — ${view.codex.model ?? 'model unavailable'}`}. Advisory availability: ${view.description?.state ?? 'unavailable'}.`
+              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : `contained Codex — ${view.codex.model ?? 'model unavailable'}`}. Advisory availability: ${view.description === null ? 'unavailable' : reviewerStateLabels[view.description.state]}.`
               : 'No description adviser selected.'}
           </p>
           <a href="/policy?section=curation#description-advice">

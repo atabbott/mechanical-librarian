@@ -1,17 +1,28 @@
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
-import { controlId, descriptionId, errorId } from '../fieldControls'
+import { controlId, descriptionId, errorId, unitId } from '../fieldControls'
 
+// `unit` says the control's unit is shown beside it, at `unitId`, so the
+// unit is announced with the value as well as seen (#1286).
 export const FieldInput = ({
   fieldId,
   error,
+  unit = false,
   ...properties
-}: ComponentPropsWithoutRef<'input'> & { fieldId: string; error?: string | undefined }) => (
+}: ComponentPropsWithoutRef<'input'> & {
+  fieldId: string
+  error?: string | undefined
+  unit?: boolean
+}) => (
   <input
     {...properties}
     id={controlId(fieldId)}
     aria-invalid={error ? true : undefined}
-    aria-describedby={`${descriptionId(fieldId)}${error ? ` ${errorId(fieldId)}` : ''}`}
+    aria-describedby={[
+      ...(unit ? [unitId(fieldId)] : []),
+      descriptionId(fieldId),
+      ...(error ? [errorId(fieldId)] : []),
+    ].join(' ')}
   />
 )
 

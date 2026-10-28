@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router'
 
 import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
 import { useLibraryName } from '../libraryNames'
-import { libraryList, readWriteConsent } from '../writeConsent'
+import { libraryList, readWriteConsent, writesEnabled, writesOffSentence } from '../writeConsent'
 
 /**
  * The completion handoff, stated once and compactly inside the Library flow.
@@ -39,9 +39,15 @@ export const WriteReadyNotice = () => {
     refetchInterval: live ? false : 15_000,
   })
   const data = query.data
-  // A lapse names its libraries as Settings does, and the notice waits for that
-  // read so it is announced once, with the name (#1370).
-  const names = useLibraryName(http, Boolean(data?.lapsed_consents.length))
+  // A lapse, and a library that holds permission beside one that does not, are
+  // named as Settings names them; the notice waits for that read so it is
+  // announced once, with the name (#1370, #1286).
+  const names = useLibraryName(
+    http,
+    data !== undefined &&
+      (data.lapsed_consents.length > 0 ||
+        data.capabilities.some((item) => item.destinations.some((entry) => entry.consented))),
+  )
   if (!data || !names.ready) return null
   const connectionUnavailable = (preparation?.connections ?? []).some(
     (item) => item.state !== 'recovered',
@@ -57,11 +63,19 @@ export const WriteReadyNotice = () => {
   if (!consent.actionable && !lapsedBesideHeld) return null
   const lapse = consent.lapsed ? `${consent.lapsed} ` : ''
   // Beside a lapse, writes are enabled only for the libraries that kept
-  // permission, so the heading names them (#1370).
-  const held = data.capabilities
+  // permission, so the heading names them (#1370), and only while a kept
+  // destination is still allowed: consent outlives a suspension (#1286).
+  const holding = data.capabilities
     .filter((item) => item.destinations.some((entry) => entry.consented))
+    .map((item) => item.library)
+  const held = data.capabilities
+    .filter((item) => item.destinations.some(writesEnabled))
     .map((item) => names.name(item.library))
   const enabledFor = consent.lapsed && held.length ? ` for ${libraryList(held)}` : ''
+  // Writes are off only for the libraries still waiting on permission; beside
+  // one that holds it, the heading says which is which, and a held one is
+  // named as held (#1286).
+  const offFor = writesOffSentence(data, holding, names.name)
   const preparing = Boolean(preparation?.active)
   const inLibrary =
     works !== undefined
@@ -71,7 +85,7 @@ export const WriteReadyNotice = () => {
         : 'Counting works in Library… '
   const heading =
     consent.state === 'off'
-      ? `${inLibrary}Writes are off.`
+      ? `${inLibrary}${offFor}`
       : consent.state === 'enabling'
         ? 'Enabling writes…'
         : consent.state === 'applying'
@@ -79,7 +93,7 @@ export const WriteReadyNotice = () => {
           : `${inLibrary}Writes are enabled${enabledFor}.`
   const copy =
     consent.state === 'off'
-      ? `${lapse}Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
+      ? `${lapse}Open permission review in Activity to check current readiness${preparing ? ' while preparation continues' : ''}.`
       : consent.state === 'enabling'
         ? 'Confirming permission with the authoritative server. No change is sent twice.'
         : consent.state === 'applying'

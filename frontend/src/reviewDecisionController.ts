@@ -3,8 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { AmbiguousMutationError, ApiError, CsrfRenewedError, refusalCopy } from './api/http'
-import type { CaseDetailView, DecisionCommand } from './api/http'
-import { labelWords } from './labels'
+import type { CaseDetailView, DecisionCommand, DecisionOutcome } from './api/http'
 import {
   beginDecisionEcho,
   confirmDecisionCase,
@@ -29,8 +28,16 @@ const ownerOutcomes: Readonly<Record<string, string>> = {
   owner_entered: 'Your value is recorded.',
   withdraw: 'Withdrawn. This field needs a decision again.',
 }
-const outcomeWords = (outcome: string) =>
-  ({ owner_entered: 'your value', withdraw: 'withdrawal' })[outcome] ?? labelWords(outcome)
+const outcomeWords = (outcome: DecisionOutcome) =>
+  (
+    ({
+      accept: 'your choice',
+      keep_current: 'keep current',
+      reject: 'rejection',
+      owner_entered: 'your value',
+      withdraw: 'withdrawal',
+    }) satisfies Record<DecisionOutcome, string>
+  )[outcome]
 // One sentence for a written decision, shared by the refusal and the note.
 export const writtenRefusal =
   'This decision has been written to your library, so it can’t be withdrawn.'

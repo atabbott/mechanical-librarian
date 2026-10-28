@@ -3,7 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
-import type { CaseDetailView, DecisionCommand, OwnerControlView, ReviewHttp } from '../src/api/http'
+import type {
+  CaseDetailView,
+  DecisionCommand,
+  DecisionOutcome,
+  OwnerControlView,
+  ReviewHttp,
+  TargetDestination,
+} from '../src/api/http'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import {
   createHttp,
@@ -49,13 +56,13 @@ const contextTitle: Field = {
   ownerControl: entry,
 }
 const decision = (
-  outcome: string,
+  outcome: DecisionOutcome,
   selected: { kind: string; value: unknown } | null,
 ): NonNullable<Field['humanDecision']> => ({
   actor: 'owner',
   application: 'apply',
   decision_id: `decision-${outcome}`,
-  destination: 'title',
+  destination: 'title' as const,
   occurred_at: 1,
   outcome,
   proposal_id: base.proposalId,
@@ -216,7 +223,7 @@ describe('owner-entered values', () => {
     const user = userEvent.setup()
     const genres: Field = {
       ...contextTitle,
-      destination: 'genres',
+      destination: 'genres' as const,
       currentValue: 'Drama',
       currentRaw: ['Drama'],
       proposedValues: [{ kind: 'list', value: ['Fantasy', 'Mystery'] }],
@@ -255,7 +262,7 @@ describe('owner-entered values', () => {
     await user.click(within(panel).getByRole('button', { name: 'Record these genres' }))
     expect(sent(http)).toEqual([
       expect.objectContaining({
-        destination: 'genres',
+        destination: 'genres' as const,
         outcome: 'owner_entered',
         selectedValue: { kind: 'list', value: ['Fantasy', 'Mystery'] },
       }),
@@ -395,7 +402,7 @@ describe('choosing the previous value again', () => {
     const user = userEvent.setup()
     const genres: Field = {
       ...contextTitle,
-      destination: 'genres',
+      destination: 'genres' as const,
       currentValue: 'Fantasy',
       currentRaw: ['Fantasy'],
       proposedValues: [],
@@ -431,7 +438,7 @@ describe('choosing the previous value again', () => {
 
 describe('owner command labels', () => {
   it('V8 names each new owner outcome in the case history', async () => {
-    const item = (destination: string, outcome: string) => ({
+    const item = (destination: TargetDestination, outcome: DecisionOutcome) => ({
       category: 'owner' as const,
       occurredAt: 1786000000,
       applicationReason: null,
@@ -471,7 +478,7 @@ describe('owner review fixes', () => {
       automaticDecision: {
         candidate_id: null,
         decision_id: 'automatic-1',
-        destination: 'title',
+        destination: 'title' as const,
         occurred_at: 1,
         outcome: 'keep_current',
         proposal_id: base.proposalId,
@@ -773,7 +780,7 @@ describe('owner review fixes', () => {
     const user = userEvent.setup()
     const genres: Field = {
       ...contextTitle,
-      destination: 'genres',
+      destination: 'genres' as const,
       currentRaw: ['Drama'],
       ownerControl: control({
         subset: {
@@ -810,7 +817,7 @@ describe('owner review fixes', () => {
     const user = userEvent.setup()
     const genres: Field = {
       ...base,
-      destination: 'genres',
+      destination: 'genres' as const,
       decisionActions: ['keep_current', 'accept'],
       currentValue: 'Drama',
       currentRaw: ['Drama'],
@@ -837,7 +844,7 @@ describe('owner review fixes', () => {
         needsAttention: false,
         humanDecision: {
           ...decision('owner_entered', { kind: 'list', value: ['Drama', 'Fantasy'] }),
-          destination: 'genres',
+          destination: 'genres' as const,
         },
       },
     ]
@@ -866,7 +873,7 @@ describe('owner review fixes', () => {
           category: 'owner' as const,
           occurredAt: 1786000000,
           applicationReason: null,
-          destination: 'title',
+          destination: 'title' as const,
           outcome: 'withdraw',
           previousValue: { kind: 'text', value: 'The Silent Orchard' },
           selectedValue: null,

@@ -342,6 +342,30 @@ current `main`, including the order-5 to order-7 additions, #1285 delivered or
 explicitly deferred, and Project, issue, dependency and milestone tracking read
 back.
 
+## Delivery checkpoint 0.29.1: clarity and accessibility
+
+Formerly 0.22.4; renumbered by #1321. Everything the owner reads is in their
+own words. The interface meets WCAG 2.2 AA, renders the right theme from the
+first paint, and holds still. This checkpoint is shaped from the same
+2026-10-20 frontend audit as 0.29.0 and absorbs the findings #1240 recorded
+after #1013.
+
+Every unit is focused work with `Delivery slice: Not applicable`.
+
+| Order | Issues | Outcome |
+| --- | --- | --- |
+| 1 | #1286 | Owner language: field names, states, reasons, units, dates and languages read in plain words on every surface. It records this checkpoint and is its first unit. |
+| 2 | #1289 | Foundations: theme from the first paint, the documented typeface, shared tokens, one Button and one StatusPill. |
+| 3 | #1288, #1290, #1291, in any order | Accessibility, review choices and covers, and the masthead and phone layout, sharing #1289's tokens and primitives; #1290 is natively blocked by #1289. |
+| 4 | #1287, in any position | Setup and sign-in failures that say what happened and what to do. |
+
+No release, tag, deployment, palette redesign, navigation restructure or
+change to decision behaviour is included. Exit requires every in-scope issue
+merged or reconciled as CLEAN on current `main`; one installed walkthrough
+(setup → preparation → review → policy → permission → Activity) in both themes
+at desktop, 375 and 320 px, and at 200% text; and Project, issue, dependency
+and milestone tracking read back.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit

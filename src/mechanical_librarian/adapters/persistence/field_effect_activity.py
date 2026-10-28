@@ -128,6 +128,7 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.human_decision import (
     OWNER_SUBSET_DESTINATION,
     OWNER_TEXT_DESTINATIONS,
+    VALUE_OUTCOMES,
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
@@ -2047,6 +2048,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 if candidate.candidate_id != authored.candidate_id:
                     raise FieldEffectError("persistence")
                 authored_records[authored.decision_id] = authored, candidate
+        # What each owner decision's own first plan replaced: an earlier write
+        # on the same case can leave it different from the pinned report, and
+        # the decision's row names the same value its Verified row does (#1286).
+        human_ids = sorted(
+            {
+                row[17]
+                for row in rows
+                if row[13] == "human_decision" and type(row[17]) is str
+            }
+        )
+        replaced: dict[str, object] = {}
+        if human_ids:
+            for decision_id, effect_document in self._connection.execute(
+                "SELECT decision_id,document FROM field_effects WHERE decision_id IN ("
+                + ",".join("?" for _ in human_ids)
+                + ") ORDER BY rowid DESC",
+                human_ids,
+            ):
+                replaced[decision_id] = FieldEffectOperation.from_json(
+                    effect_document
+                ).plan.pre_value
         projected_events: list[dict[str, object]] = []
         decision: (
             HumanDecision
@@ -2479,9 +2501,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 # value-free rather than substituting a later current report.
                 connection = None
             # Every fact below leaves this loop from the document that
-            # was just checked against its own identity above, so an
-            # Activity row is a function of one immutable event and
-            # nothing else -- a later catalogue change cannot move it.
+            # was just checked against its own identity above, or, for an
+            # owner decision that chose a value, from that decision's own
+            # first plan (the value its write replaced), so an Activity row
+            # is a function of immutable records -- a later catalogue
+            # change cannot move it.
             # The owner-facing words are composed one layer out, where the
             # pinned report is already parsed; ``record`` is the closed
             # private carrier the application consumes and removes, the
@@ -2538,6 +2562,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     raise FieldEffectError("persistence")
                 durable["selected_value"] = decision.selected_value
                 durable["target_fingerprint"] = decision.target_fingerprint
+                # Only a decision that chose a new value names what its write
+                # replaced; a keep-current restore states the value it kept,
+                # not the one its corrective write overwrote (#1286).
+                if (
+                    decision.outcome in VALUE_OUTCOMES
+                    and decision.decision_id in replaced
+                ):
+                    durable["pre_value"] = replaced[decision.decision_id]
             elif source_kind == "isbn_refusal":
                 if isbn is None:
                     raise FieldEffectError("persistence")
