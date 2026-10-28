@@ -370,7 +370,7 @@ def _add_font(root: Path, kind: str, path: str) -> None:
         "size": len(_FONT),
     }
     _rewrite_manifest(
-        root, sorted([*value["assets"], record], key=lambda item: item["path"])
+        root, sorted([*value["assets"], record], key=lambda item: str(item["path"]))
     )
 
 
