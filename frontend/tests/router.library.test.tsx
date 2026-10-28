@@ -317,6 +317,23 @@ describe('Library route', () => {
     expect(http.getPreparation).toHaveBeenCalledTimes(1)
   })
 
+  it('lets the preparation status line speak instead of the whole detail (#1288)', async () => {
+    const runId = `preparation_run_${'7'.repeat(64)}`
+    const http = createHttp()
+    http.getPreparation = vi
+      .fn<ReviewHttp['getPreparation']>()
+      .mockResolvedValue(terminalPreparation(runId))
+    renderRoute(`/library?lens=all&preparation=${runId}`, http)
+    const state = await screen.findByText(
+      wholeText('Finished · 1 ready to browse · 1 could not finish'),
+      { selector: '.preparation-run-state' },
+    )
+    expect(state).toHaveAttribute('role', 'status')
+    const detail = state.closest('.workspace-detail')
+    expect(detail).not.toBeNull()
+    expect(detail).not.toHaveAttribute('aria-live')
+  })
+
   it('retains a failed cold handoff and normalizes only after authoritative absence', async () => {
     const runId = `preparation_run_${'8'.repeat(64)}`
     const http = createHttp()

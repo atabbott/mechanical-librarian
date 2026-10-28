@@ -4457,7 +4457,9 @@ export default function LibraryPage({
         </section>
         <section
           className="workspace-detail"
-          aria-live="polite"
+          // Preparation states its own progress in one status line; the whole
+          // detail would otherwise be read again on every poll (#1288).
+          aria-live={preparationSelected ? undefined : 'polite'}
           tabIndex={-1}
           {...(!selectedWork &&
           search.preview &&

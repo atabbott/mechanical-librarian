@@ -5612,8 +5612,13 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 expect(page.locator(".preparation-run-state")).to_have_text(
                     "Preparation continues"
                 )
-                expect(page.locator(".workspace-detail")).to_have_attribute(
-                    "aria-live", "polite"
+                # Its one status line speaks for it; the detail is no live
+                # region re-read on every poll (#1288).
+                expect(page.locator(".workspace-detail")).not_to_have_attribute(
+                    "aria-live", re.compile(r".*")
+                )
+                expect(page.locator(".preparation-run-state")).to_have_attribute(
+                    "role", "status"
                 )
                 # Find in Works is a full target even though it wraps with the
                 # name it searches for (#1288).
