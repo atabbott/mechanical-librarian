@@ -4345,3 +4345,97 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                 )
                 page.keyboard.press("Escape")
                 expect(trigger).to_be_focused()
+
+
+# The words an owner reads as interface: headings, controls, labels and the
+# pager's status. The #1290 review choices, covers and works rows are proved
+# by their own tests.
+_UI_LABELS = (
+    ":is(h1, h2, h3, h4, button, a, label, summary, legend, dt, th, "
+    ".library-pager > span):not(:is({owned}), :is({owned}) *)".format(
+        owned=".workspace-detail .value-choice, .field-filmstrip, .cover-card, "
+        ".library-cover-card, .library-work-row, .metadata-choice"
+    )
+)
+# Of the split words `_POLICY_MID_WORD` found, those the layout split without
+# need. A word may break only when it is wider than its whole line box. For a
+# word of the interface that box must also hold at least half the page's
+# width: a narrower one is a column the layout squeezed. A data token -- an
+# id, a path, an address, an unbroken title -- may break in any box it
+# overflows.
+_NEEDLESS_SPLITS = """([selector, words]) => {
+  const main = document.querySelector('#main-content');
+  const page = main.clientWidth - parseFloat(getComputedStyle(main).paddingLeft)
+    - parseFloat(getComputedStyle(main).paddingRight);
+  const token = word => /[\\/_:.@=#?&<>\\d]/.test(word) || word.length > 24;
+  const lineBox = node => {
+    let box = node;
+    while (['inline', 'contents'].includes(getComputedStyle(box).display)) box = box.parentElement;
+    const style = getComputedStyle(box);
+    return box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  };
+  const needless = new Set();
+  for (const node of document.querySelectorAll(selector)) {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/[^\\s\\u2010-\\u2014-]+/g)) {
+        if (!words.includes(match[0])) continue;
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const rects = [...range.getClientRects()].filter(rect => rect.width > 0);
+        if (new Set(rects.map(rect => Math.round(rect.top))).size < 2) continue;
+        const width = rects.reduce((sum, rect) => sum + rect.width, 0);
+        const room = lineBox(text.parentElement);
+        const excused = width > room - 1 && (token(match[0]) || room >= page / 2);
+        if (!excused)
+          needless.add(`${match[0]} (${Math.round(width)}px in ${Math.round(room)}px, `
+            + `${node.tagName.toLowerCase()} "${node.textContent.trim().slice(0, 40)}")`);
+      }
+  }
+  return [...needless];
+}"""
+
+
+def test_words_break_only_where_they_must() -> None:
+    """No interface word splits where the layout could have kept it whole, on
+    every route state at every frozen width and both text sizes, and no page
+    is wider than the window (#1291). Enlarged text is root font-size 200%."""
+    routes = {
+        "library": "/library?lens=all",
+        "selected": "/library?lens=all&preview=case-1",
+        "attention": "/library?lens=all&attention=open",
+        "review": "/review/case-1",
+        "policy": "/policy?section=identity",
+        "activity": "/activity?eventType=all&rangeDays=30&page=1&pageSize=25",
+        "settings": "/settings?group=connection",
+    }
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        failures = []
+        for text in styles:
+            for name, route in routes.items():
+                for width in (1440, 1100, 1024, 884, 760, 390, 375, 320):
+                    where = f"{name}, {text} text at {width}px"
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.goto("https://react-platform.invalid" + route)
+                    page.wait_for_load_state("networkidle")
+                    expect(page.locator("#main-content h1").first).to_be_visible()
+                    page.evaluate(_TWO_FRAMES)
+                    split = page.evaluate(_POLICY_MID_WORD, _UI_LABELS)
+                    if split:
+                        needless = page.evaluate(_NEEDLESS_SPLITS, [_UI_LABELS, split])
+                        failures += [f"{where}: {word}" for word in needless]
+                    overflow = page.evaluate(
+                        "document.scrollingElement.scrollWidth - innerWidth"
+                    )
+                    if overflow > 0:
+                        failures.append(f"{where}: the page is {overflow}px too wide")
+        assert failures == [], "\n".join(failures)
