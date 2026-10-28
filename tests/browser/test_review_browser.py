@@ -4294,7 +4294,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     label="library:compact",
                     shapes=_LIBRARY_SHAPES,
                 )
-                # Below 900px the current cover joins the same scrollable row
+                # At 1024px and below the current cover joins the same scrollable row
                 # as every replacement rather than sitting above them.
                 assert len({frame["frame_top"] for frame in compact}) == 1, compact
                 track = page.locator(
@@ -4354,7 +4354,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     page.set_viewport_size({"width": width, "height": 900})
                     page.wait_for_function(
                         "width => window.innerWidth === width && "
-                        "window.matchMedia('(max-width: 700px)').matches === (width <= 700)",
+                        "window.matchMedia('(max-width: 760px)').matches === (width <= 760)",
                         arg=width,
                     )
                     # Viewport changes reach responsive layout on a rendering frame.
@@ -6966,21 +6966,21 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
-                        assert_settings_layout(sidebar_visible=width > 700)
+                        assert_settings_layout(sidebar_visible=width > 760)
                         # Exactly one of the two navigations at every width,
-                        # including the 391-700px band that once had neither.
+                        # including the 391-760px band that once had neither.
                         compact = page.get_by_role("combobox", name="Settings section")
                         sidebar = page.get_by_role(
                             "navigation", name="Settings sections"
                         )
-                        if width <= 700:
+                        if width <= 760:
                             expect(compact).to_be_visible()
                             expect(sidebar).to_be_hidden()
                         else:
                             expect(sidebar).to_be_visible()
                             expect(compact).to_be_hidden()
 
-                    for width in (600, 701):
+                    for width in (600, 760, 761):
                         page.set_viewport_size({"width": width, "height": 900})
                         assert (
                             page.get_by_role(
@@ -7003,7 +7003,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     for width, height in ((884, 1000), (390, 844), (320, 800)):
                         page.set_viewport_size({"width": width, "height": height})
                         for label in group_labels.values():
-                            if width <= 700:
+                            if width <= 760:
                                 choose_section(label)
                             else:
                                 page.locator(
@@ -7015,7 +7015,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                             assert page.evaluate(
                                 "document.documentElement.scrollWidth <= window.innerWidth"
                             )
-                            assert_settings_layout(sidebar_visible=width > 700)
+                            assert_settings_layout(sidebar_visible=width > 760)
 
                 page.set_viewport_size({"width": 884, "height": 1000})
                 page.evaluate("document.documentElement.style.fontSize = '200%'")

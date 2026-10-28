@@ -22,7 +22,19 @@ const declarations = (css: string) =>
     ([, token, value = '']) => [token, value] as const,
   )
 
+const ladder = new Set(['1200', '1199', '1024', '1025', '760', '761', '390', '391'])
+const offLadder = (css: string) =>
+  [...css.matchAll(/@media[^{]*/g)]
+    .flatMap(([query]) => [...query.matchAll(/(?:min|max)-width:\s*(\d+)px/g)])
+    .map((match) => match[1] ?? '')
+    .filter((width) => !ladder.has(width))
+
 describe('Design tokens', () => {
+  it('places every width query on the 1200 / 1024 / 760 / 390 ladder', () => {
+    expect(offLadder(styles)).toEqual([])
+    expect(offLadder('@media (max-width:900px) and (min-width:761px) {}')).toEqual(['900'])
+  })
+
   it('resolves every token a stylesheet uses without a fallback', () => {
     expect(undefinedTokens(sheets)).toEqual([])
     expect(undefinedTokens('a{color:var(--missing)} b{color:var(--set,red)}')).toEqual([

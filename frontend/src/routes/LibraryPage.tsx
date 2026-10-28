@@ -277,7 +277,7 @@ const preparationPassage = [
 
 // The compact layout, where the selected work replaces the list.
 const compactWidth = () =>
-  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches
+  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1024px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
 // A search under a lens counts that lens against its whole-library total; the
 // lens link names it visually and the status names it to screen readers (#1425).
