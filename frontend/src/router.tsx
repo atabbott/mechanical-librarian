@@ -204,6 +204,17 @@ export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) =>
 // limit, so the default landing read is the summary: it shares that request,
 // and with no q no search can reach a global figure (#1284).
 export const librarySummaryQuery = (http: ReviewHttp) => libraryQuery(http, { lens: 'all' })
+// The narrow consent read behind Library's completion handoff (#1236). Library
+// waits for it to settle, so the handoff arrives with the works rather than
+// pushing them down after they are read (#1291).
+export const handoffConsentQuery = (http: ReviewHttp) =>
+  queryOptions({
+    queryKey: ['activity', 'library-handoff'] as const,
+    queryFn: (queryContext) =>
+      http.getActivityConsent(queryContext.signal, queryWorkClass(queryContext)),
+    staleTime: 4_000,
+    retry: false,
+  })
 export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) =>
   queryOptions({
     queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const,
@@ -1305,8 +1316,13 @@ const LibraryRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
   const query = useRetainedQuery(libraryQuery(http, search))
+  const handoff = useQuery(handoffConsentQuery(http))
   const [railRetaining, setRailRetaining] = useState(false)
   useAnnounceRetaining(query.isPlaceholderData || railRetaining)
+  // Library waits for the handoff's read to settle once, either way, so the
+  // notice above the works is there when they are and never moves them. A
+  // read that failed has settled even while a later mount retries it.
+  if (!handoff.dataUpdatedAt && !handoff.errorUpdatedAt) return <RoutePending title="Library" />
   return (
     <LibraryPage
       data={query.data}

@@ -1,8 +1,14 @@
-import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useRequiredQuery as useQuery } from '../queryWork'
 import { Link } from '@tanstack/react-router'
 import { Button } from './Button'
 
-import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
+import {
+  handoffConsentQuery,
+  librarySummaryQuery,
+  useLiveStream,
+  usePreparation,
+  useReviewContext,
+} from '../router'
 import { useLibraryName } from '../libraryNames'
 import { libraryList, readWriteConsent, writesEnabled, writesOffSentence } from '../writeConsent'
 
@@ -29,11 +35,7 @@ export const WriteReadyNotice = () => {
   const summary = useQuery(librarySummaryQuery(http))
   const works = summary.data?.counts.all
   const query = useQuery({
-    queryKey: ['activity', 'library-handoff'] as const,
-    queryFn: (queryContext) =>
-      http.getActivityConsent(queryContext.signal, queryWorkClass(queryContext)),
-    staleTime: 4_000,
-    retry: false,
+    ...handoffConsentQuery(http),
     // The cadence is the degraded fallback only. While the stream is up, an
     // `activity` invalidation is what brings this notice up to date, which is
     // why the event needs to carry nothing but the fact that it changed.
