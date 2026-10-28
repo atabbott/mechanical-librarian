@@ -246,10 +246,14 @@ the band-first set rule deferred above. A clean rebuild under ADR-0013 was
 accepted.
 
 **Where it applies.** Only Audible's asserted WORK lane on an audiobook plan,
-and only after the whole ladder admitted nothing: set admission first runs
+and only after every exact path admitted nothing: set admission first runs
 exactly as before, then with the #1260 band productions, and only a page every
-path refused reaches the rule. The carried lane (#1316, ADR-0088) may verify a
-refused product through the same rule. The alternative-title lane, every other
+path refused reaches the rule. The asserted lane walks its whole ladder first,
+and the #1255 alternative lane is then asked as before; only when it also
+ends `no_match`, or the plan has none, does the rule read the asserted lane's
+refused pages. An exact admission on any rung of either lane therefore always
+comes first. A rule admission records every rung the walk sent. The carried
+lane (#1316, ADR-0088) may verify a refused product through the same rule. The alternative-title lane, every other
 fed ASIN lane, the overflow witness, ebooks and every other authority keep
 their rules unchanged.
 
@@ -264,9 +268,11 @@ their rules unchanged.
   contained in the lane title, or the two share at least half of their
   combined words;
 - its narrator agrees with the target's or the recording's narrators, or its
-  series position equals the target's for the same series;
+  series position equals the target's for a series whose normalized name is
+  equal;
 - nothing contradicts it: no disjoint narrator cast, no disjoint author list,
-  no different position in the same series, no recording language or format
+  no different position in the same series on any pair of memberships, even
+  where another pair agrees, no recording language or format
   conflict, and no work-identity veto (an abridger, adapter or translator
   credit, or a variant marker in the title).
 
@@ -275,10 +281,25 @@ A language contradiction needs a language the local file states, as
 none. A product in another language then fails the rule only by lacking a
 narrator or series agreement, or by its runtime.
 
-When several products qualify, every pair must share a narrator, or none
-admits; otherwise the closest runtime, then the lowest identity, is chosen.
-The title guard is mandatory. Without it every rule tried admitted
+A product whose title runs on past the whole local title ("Example Journey
+Home" for "Example Journey") is the shape of a sequel by the same author and
+narrator, so it admits only when its series position agrees; a narrator
+agreement alone does not admit it. A title whose part before a colon lies
+inside the local title, such as "Example Journey: A Novel", does not run on.
+
+When several products qualify, each must state a narrator and every pair must
+share one, or none admits: an unnarrated edition beside a narrated one could
+be any recording. Otherwise the closest runtime, then the lowest identity, is
+chosen. The title guard is mandatory. Without it every rule tried admitted
 same-author, same-narrator neighbours in the same series.
+
+**Residual risk, pinned by tests.** Two titles that share at least half their
+words ("Example and the Iron Gate" beside "Example and the Silver Gate") are
+related, and with the same author, narrator and band and no local series to
+contradict, such a neighbour admits. No guard was found that refuses it
+without also refusing a measured rescue of the same shape; a known local
+series position does refuse it. The same holds for an edition in another
+language when the file states no language.
 
 **Lineage.** The production is `band_corroborated_title_relation`: one local
 title application of the new `corroborated_title_relation` family, a table row
@@ -291,7 +312,9 @@ claims, and a forged narrator or series claim fails it.
 one of them is inside the tight band and every other one is outside the loose
 band, the tight one is kept, unless it has a recording-variant conflict or its
 narrators contradict the target's. It then replays alone through the path
-that admitted it, so its lineage is that path's.
+that admitted it, so its lineage is that path's. It too reads only after the
+whole ladder, so its record may count every rung sent rather than stop at the
+rung its lineage names.
 
 **Per-shape productions: not added.** Title and subtitle join, subtitle
 stripping with series corroboration, article fold, right-hand segment and the
@@ -303,7 +326,7 @@ what it finds admits by exact admission or by the rule.
 **Evidence.** An offline replay over the #1294 snapshot and the retained probe
 bodies, driving the real Audible adapter, compared with the #1316 tree:
 
-- Probe items: 42. Rescued: 14, 8 through the rule on the leading-number rung,
+- Probe items: 42, with 92 requests against the retained bodies. Rescued: 14, 8 through the rule on the leading-number rung,
   2 through the rule on the normalized rung, and 4 through the floor reading
   on the exact path. Every admitted product is inside the band (largest floor
   distance 69 seconds) and none has a narrator disagreement; 2 of the 15 have

@@ -303,8 +303,10 @@ leaves no proposal. Every other lane serializes `[]`.
 
 That ASIN-only stub is still what the candidate list keeps, but each audiobook
 provider now also records `refused_products` (#1307): for every stub on an
-ASIN lane, the product the provider actually returned, with its claims and no
-evidence, bindings or runtime-short mark. Validation requires each one to
+ASIN lane, the product the provider actually returned, with its claims, no
+bindings or runtime-short mark, and no evidence but the publication-date text
+comparison finalization derives. Its comparison links are finalized and
+replayed exactly as a candidate's. Validation requires each one to
 match a stub with the same identity, work identity and ASIN claim references,
 and to state more than that stub. A refused product grants nothing: it is the
 record the cold-start report and later analysis read. The carried lane
@@ -316,8 +318,9 @@ Provider runtimes from Audible, Audnexus and AudioSilo are whole minutes, so
 the tight band reads a provider runtime of `m` minutes as the interval
 `[60m, 60m + 59]` seconds (#1307, ADR-0064): the distance is zero inside that
 interval and otherwise measured to its nearer end. The band stays 90 seconds,
-and the loose band is unchanged. Where one product is tight under the exact
-reading, it is still preferred to one that is tight only as a floor.
+and the loose band is unchanged. Set admission, corroboration and the bounded
+hints read the exact band first and the floor only where it found nothing, so
+nothing the exact band admitted or kept changes.
 
 Every lane of an audiobook report also records `dispatch` (#1258): an
 `outcome` of `admitted`, `empty`, `refused`, `overflow`, `unavailable`,
@@ -678,18 +681,23 @@ target's; the kept product then replays alone through the path that admitted
 it. When no product admits, the corroborated rule (`band_corroborated_title_relation`)
 admits one product only if its runtime is inside the tight band, its title is
 related to the lane title, its narrator or its series number agrees with the
-target, and nothing contradicts it on narrator, author, series number or
-language. A title is related when, after accents, case, articles, apostrophes
+target (series names must be equal once normalized), and nothing contradicts
+it on narrator, author, series number or language. A product whose title runs
+on past the whole lane title also needs its series number to agree. A title is related when, after accents, case, articles, apostrophes
 and punctuation are folded, it equals the lane title, its title and subtitle
 joined equal it, one contains the other as a contiguous run of words, or the
 two share at least half of their combined words; the guard is mandatory,
 because without it every rule admits same-author, same-narrator series
-neighbours. When several products qualify they must not disagree on narrator,
-or none is admitted, and the closest runtime then the lowest identity wins. The
+neighbours. When several products qualify, each must state a narrator and no
+two may disagree, or none is admitted, and the closest runtime then the lowest
+identity wins. The
 lineage records the rung the page was asked on plus the single
 `corroborated_title_relation` application, and replay recomputes the rule from
-the report's own claims. Audible applies the rule only after its whole ladder
-admitted nothing, so an exact admission on any rung still comes first.
+the report's own claims. Audible applies the rule only after its whole asserted
+ladder and the alternative lane, where the plan has one, both ended
+`no_match`, so an exact admission on any rung of either lane comes first. A
+rule admission's `dispatch` counts every rung the walk sent, and so may a
+band-first admission's.
 
 The filename-prefix query grammar requires the complete prefix token sequence
 to equal the complete first ordered author. It permits no inversion, initial

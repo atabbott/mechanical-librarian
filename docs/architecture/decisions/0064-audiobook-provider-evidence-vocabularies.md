@@ -527,10 +527,14 @@ whole number of minutes keeps the exact distance.
 This changes what the band measures, not its width. `RUNTIME_BAND_TIGHT_SECONDS`
 stays 90 and the loose band stays 600, read exactly as before. The floor
 applies wherever a provider runtime meets the tight band: the lane band, the
-recording-lookup hints, the band-aware set admission and its runtime veto,
-and stated-runtime corroboration. Corroboration picks a product tight under
-the exact reading first and falls back to the floor reading only when none
-is, so every earlier choice is unchanged. `DURATION_AGREEMENT_BAND_SECONDS`
+recording-lookup hints, the band-aware set admission, the recording runtime
+veto and stated-runtime corroboration. Every place that chooses reads the
+exact band first and the floor only where that found nothing: set admission
+admits with the exact reading before it tries the floor, corroboration picks
+a product tight exactly before one tight only as a floor, and the bounded
+hints keep exactly tight hints before floor-only ones. So every set, pick and
+hint the exact band kept is unchanged. The veto only ever vetoes less under
+the floor. `DURATION_AGREEMENT_BAND_SECONDS`
 for claim links is unchanged.
 
 The band was not reopened. Once sibling-edition re-selections were removed,

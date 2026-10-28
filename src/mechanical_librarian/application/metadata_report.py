@@ -7,6 +7,7 @@ import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from dataclasses import field as dataclass_field
 from typing import Never, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
@@ -38,6 +39,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioTrackDigest,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
+    CorroborationOutcome,
     _chapter_candidate_support,
     _local_identifier_asins,
     admitted_recording_asin,
@@ -45,7 +47,9 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_recording_runtime_veto,
     carried_asin_claim,
     corroborated_recording_candidate,
+    local_claim_runtime_seconds,
     recording_lookup_hints,
+    runtime_agreement,
     runtime_corroborated_candidate,
     runtime_short_of_stated,
 )
@@ -2243,6 +2247,8 @@ def qualify_provider_observation(
             and observation.authority == CORROBORATED_RULE_AUTHORITY
             else None
         ),
+        leading_number=asserted_band
+        and observation.authority == CORROBORATED_RULE_AUTHORITY,
     )
     if not set_admission.admitted:
         return ProviderObservation(
@@ -2365,6 +2371,12 @@ class QualifiedLaneObservation:
     diagnostics: tuple[FailureDiagnostic, ...] = ()
     recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
     rungs: int = 0
+    # Set only on Audible's exhausted asserted audiobook lane (#1307): the
+    # corroborated rule over the pages its ladder refused, which the adapter
+    # runs only once the alternative lane has also found nothing.
+    corroborated: Callable[[], QualifiedLaneObservation | None] | None = (
+        dataclass_field(default=None, compare=False)
+    )
 
 
 def observe_work_ladder(
@@ -2396,12 +2408,13 @@ def observe_work_ladder(
     however it ended (#1258).
 
     `corroborate` is the catalogue's asserted audiobook lane (#1307). Its
-    ladder ends with the leading-number rung, and when every rung was empty
-    or refused, each refused rung's page is qualified again, in ladder order,
-    with the band-first set rule and the corroborated admission rule. The
-    first rung either admits ends the lane as if the walk had stopped there:
-    its rungs count to that rung, and only hints from rungs up to it are kept.
-    An exact admission anywhere on the ladder therefore always comes first.
+    ladder ends with the leading-number rung. When every rung was empty or
+    refused, the exhausted result carries `corroborated`: it qualifies each
+    refused rung's page again, in ladder order, with the band-first set rule
+    and the corroborated admission rule, and the first page either admits is
+    the lane's result. The walk sent every rung, so that result counts them
+    all and keeps every rung's hints. The caller runs it only after every
+    exact path, the alternative lane's included, admitted nothing.
     """
     corroborate = (
         corroborate
@@ -2414,7 +2427,7 @@ def observe_work_ladder(
     refused_products = 0
     hints: tuple[ProviderCandidate, ...] = ()
     tight: list[RecordingLookupHint] = []
-    refused_pages: list[tuple[int, ProviderObservation]] = []
+    refused_pages: list[ProviderObservation] = []
     observation: ProviderObservation | None = None
     for query in work_query_ladder(
         lookup.title or "",
@@ -2448,11 +2461,13 @@ def observe_work_ladder(
         ):
             refused_products += len(physical.candidates)
             hints = hints or observation.recording_lookup_candidates
-            refused_pages.append((len(exhausted), physical))
+            refused_pages.append(physical)
         elif observation.status is ProviderStatus.CANDIDATES:
             return QualifiedLaneObservation(
                 observation,
-                recording_lookup_hints=_bounded_lookup_hints(tight, observation),
+                recording_lookup_hints=_bounded_lookup_hints(
+                    tight, observation, lookup.local_claims
+                ),
                 rungs=len(exhausted) + 1,
             )
         else:
@@ -2462,38 +2477,54 @@ def observe_work_ladder(
         raise MetadataReportError("work query ladder is empty")
     if lookup.audio is None:
         return QualifiedLaneObservation(observation, rungs=len(exhausted))
-    for index, physical in refused_pages if corroborate else ():
-        admitted = qualify_provider_observation(physical, lookup, corroborate=True)
-        if admitted.status is ProviderStatus.CANDIDATES:
-            return QualifiedLaneObservation(
-                admitted,
-                recording_lookup_hints=_bounded_lookup_hints(
-                    [hint for hint in tight if exhausted.index(hint.rung) <= index],
-                    admitted,
-                ),
-                rungs=index + 1,
-            )
     observation = replace(observation, recording_lookup_candidates=hints)
+    sent = len(exhausted)
+
+    def corroborated() -> QualifiedLaneObservation | None:
+        for physical in refused_pages:
+            admitted = qualify_provider_observation(physical, lookup, corroborate=True)
+            if admitted.status is ProviderStatus.CANDIDATES:
+                return QualifiedLaneObservation(
+                    admitted,
+                    recording_lookup_hints=_bounded_lookup_hints(
+                        tight, admitted, lookup.local_claims
+                    ),
+                    rungs=sent,
+                )
+        return None
+
     return QualifiedLaneObservation(
         observation,
         tuple(exhausted),
         work_ladder_diagnostics(empty_rungs, refused_products),
-        _bounded_lookup_hints(tight, observation),
-        len(exhausted),
+        _bounded_lookup_hints(tight, observation, lookup.local_claims),
+        sent,
+        corroborated if corroborate and refused_pages else None,
     )
 
 
 def _bounded_lookup_hints(
-    tight: list[RecordingLookupHint], final: ProviderObservation
+    tight: list[RecordingLookupHint],
+    final: ProviderObservation,
+    local_claims: tuple[LocalClaim, ...],
 ) -> tuple[RecordingLookupHint, ...]:
     """Keep the earliest hints whose ASIN the lane's final result does not hold.
 
     A product refused on one rung and admitted on a later one is the final
-    result's candidate rather than a hint.
+    result's candidate rather than a hint. A hint inside the band read exactly
+    comes before one only the minute floor brings in (#1307), so every hint
+    the exact band kept is still kept.
     """
+    local = local_claim_runtime_seconds(local_claims)
     held = candidate_asins((*final.candidates, *final.recording_lookup_candidates))
     kept: dict[str, RecordingLookupHint] = {}
-    for hint in tight:
+    for hint in sorted(
+        tight,
+        key=lambda value: (
+            runtime_agreement(local, value.runtime_seconds).outcome
+            is not CorroborationOutcome.CORROBORATED
+        ),
+    ):
         if len(kept) == MAX_RECORDING_LOOKUP_HINTS:
             break
         if hint.asin not in held:

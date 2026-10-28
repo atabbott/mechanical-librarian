@@ -3474,6 +3474,7 @@ def _candidate_set_replays_work_qualification(
         audiobook=audiobook,
         band_claims=band_claims,
         corroboration=corroboration,
+        leading_number=corroboration is not None,
     )
     return (
         admission.admitted
@@ -3652,7 +3653,12 @@ def provider_candidate_represents_target_work(
                 lane.dispatch_lineage,
                 audiobook=report.audio is not None,
                 band_claims=_asserted_lane_band_claims(report, provider, lane),
-                corroboration=_asserted_lane_corroboration(report, provider, lane),
+                corroboration=(
+                    corroboration := _asserted_lane_corroboration(
+                        report, provider, lane
+                    )
+                ),
+                leading_number=corroboration is not None,
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
         else:

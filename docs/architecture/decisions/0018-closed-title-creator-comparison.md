@@ -18,7 +18,7 @@ and could increase downstream evidence authority.
 
 ## Decision
 
-`closed-title-creator-publication-work-identity-v5` is the only current
+`closed-title-creator-publication-work-identity-v6` is the only current
 comparison policy. It records a
 truthful deterministic method on every agreement link:
 
@@ -140,13 +140,17 @@ apostrophe of a contraction or possessive, not a quotation. A U+2019 beside a
 digit, a space or punctuation, a lone U+2018, and a reversed pair stay
 disagreements, as before. Stored text, fingerprints and effect preconditions
 are unchanged; the mapping applies to comparison, to work-identity admission
-and to the closed equality that removes duplicate discovery titles.
+and to the closed equality that removes duplicate discovery titles. Because
+it changes what step 4 calls agreement, the comparison policy moves from
+`closed-title-creator-publication-work-identity-v5` to `-v6`, and a v5 report
+is refused with the rest of the clean rebuild.
 
 The same amendment appends two audiobook-only rows after `initials_fold`.
 `leading_number` is query-enabled and admission-disabled: on Audible's asserted
 lane only, it strips one to three leading digits and a space from a title with
 no separator when the rest names a letter, as the last rung
-`leading_number_stripped`. `corroborated_title_relation` is neither query- nor
+`leading_number_stripped`. Replay permits that rung only on the lane that can
+dispatch it, so a lineage naming it anywhere else is refused. `corroborated_title_relation` is neither query- nor
 admission-enabled and admits only through ADR-0067's
 `band_corroborated_title_relation` production. Its word-overlap title relation
 is that production's guard, with runtime and narrator or series corroboration;

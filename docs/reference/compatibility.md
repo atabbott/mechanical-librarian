@@ -3,8 +3,9 @@
 #1307 advances the report to `metadata-report-v61` and the proposal policy to
 `fixed-conservative-v38`: an audiobook ASIN lane keeps each product it refused
 with its own claims, Audible's asserted lane may admit one runtime-, title- and
-narrator- or series-corroborated product the exact path refused, and provider
-whole-minute runtimes are read as floors. **Clean rebuild required** for every
+narrator- or series-corroborated product every exact path refused, provider
+whole-minute runtimes are read as floors, and the comparison version moves to
+`closed-title-creator-publication-work-identity-v6`. **Clean rebuild required** for every
 predecessor application database; startup refuses v60 reports before mutation.
 No migration, adoption, conversion, import or downgrade is supplied.
 
@@ -604,7 +605,9 @@ floors against the tight band. A v60 report cannot state what a v61 report
 records, so the exact SQLite discriminator requires a **clean rebuild** under
 ADR-0013, and the proposal policy moves to `fixed-conservative-v38`. Prior
 stores are refused before mutation. No migration, adoption or relabelling is
-supplied. The comparison version and the packet, outcome and review envelopes
+supplied. The comparison version moves to
+`closed-title-creator-publication-work-identity-v6` because a lone apostrophe
+between letters now folds (ADR-0018). The packet, outcome and review envelopes
 are unchanged.
 
 ## Provider log events (#1299)

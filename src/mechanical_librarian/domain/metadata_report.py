@@ -73,6 +73,7 @@ from mechanical_librarian.domain.validation import (
 from mechanical_librarian.domain.work_identity import (
     BAND_TITLE_PRODUCTIONS,
     CORROBORATED_TITLE_APPLICATION,
+    CORROBORATED_TITLE_PRODUCTION,
     WorkDispatchLineage,
     WorkDispatchRung,
     WorkIdentityAdmission,
@@ -94,7 +95,7 @@ from mechanical_librarian.domain.work_identity import (
 )
 
 REPORT_SCHEMA = "metadata-report-v61"
-COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
+COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
@@ -3171,7 +3172,11 @@ class ProviderObservation:
             stub = stubs.get(product.identity)
             if (
                 stub is None
-                or product.evidence
+                # Only finalization's own publication-date text (#1307).
+                or any(
+                    value.kind is not ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    for value in product.evidence
+                )
                 or product.identity_bindings
                 or product.runtime_short_of_local
                 or stub.evidence
@@ -3308,6 +3313,7 @@ def provider_candidate_work_identity_admission(
     *,
     audiobook: bool = False,
     runtime_tight: bool = False,
+    leading_number: bool = False,
 ) -> WorkIdentityAdmission:
     """Apply the closed WORK qualification floor to one retained candidate.
 
@@ -3370,6 +3376,7 @@ def provider_candidate_work_identity_admission(
         provider_series_memberships=memberships,
         audiobook=audiobook,
         runtime_tight=runtime_tight,
+        leading_number=leading_number,
     )
     if (
         admission.transformation is not None
@@ -3876,6 +3883,7 @@ def provider_candidate_set_work_identity_admission(
     audiobook: bool = False,
     band_claims: tuple[LocalClaim, ...] | None = None,
     corroboration: RecordingCorroboration | None = None,
+    leading_number: bool = False,
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit exactly one work identity and one lineage from a candidate set.
 
@@ -3894,6 +3902,13 @@ def provider_candidate_set_work_identity_admission(
     may admit one. Either way the admitted set is that one product, and it
     replays as one: band-first through the path that admitted it alone, the
     rule through `band_corroborated_title_relation`.
+
+    The band reads a provider's whole-minute runtime exactly first and as a
+    floor (ADR-0064 as amended) only when that admits nothing, so a set the
+    exact band admitted keeps its candidates and lineage (#1307).
+
+    `leading_number` is Audible's asserted audiobook lane, the one lane that
+    dispatches the `leading_number_stripped` rung (#1307).
     """
 
     def admit(
@@ -3908,6 +3923,7 @@ def provider_candidate_set_work_identity_admission(
                 dispatch_lineage,
                 audiobook=audiobook,
                 runtime_tight=tight(candidate),
+                leading_number=leading_number,
             ),
             audiobook=audiobook,
         )
@@ -3928,15 +3944,27 @@ def provider_candidate_set_work_identity_admission(
     if local is None:
         return unwidened
 
-    def tight(candidate: ProviderCandidate) -> bool:
-        return (
-            runtime_agreement(
-                local, candidate_runtime_seconds(candidate), provider_minutes=True
-            ).outcome
-            is CorroborationOutcome.CORROBORATED
-            and recording_variant_conflict(candidate, band_claims, local_title) is None
-        )
+    def tight_reading(
+        provider_minutes: bool,
+    ) -> Callable[[ProviderCandidate], bool]:
+        def tight(candidate: ProviderCandidate) -> bool:
+            return (
+                runtime_agreement(
+                    local,
+                    candidate_runtime_seconds(candidate),
+                    provider_minutes=provider_minutes,
+                ).outcome
+                is CorroborationOutcome.CORROBORATED
+                and recording_variant_conflict(candidate, band_claims, local_title)
+                is None
+            )
 
+        return tight
+
+    banded = admit(tight_reading(False))
+    if banded.admitted:
+        return banded
+    tight = tight_reading(True)
     banded = admit(tight)
     if banded.admitted or corroboration is None or not audiobook:
         return banded
@@ -3986,6 +4014,7 @@ def _corroborated_set_admission(
             dispatch_lineage,
             audiobook=True,
             runtime_tight=tight(candidate),
+            leading_number=True,
         ).admitted
     )
     if admitted:
@@ -4001,6 +4030,7 @@ def _corroborated_set_admission(
             dispatch_lineage,
             audiobook=True,
             band_claims=band_claims,
+            leading_number=True,
         )
     chosen = corroborated_recording_candidate(
         eligible, local_title, local_authors, band_claims, corroboration
@@ -4023,6 +4053,25 @@ def _corroborated_set_admission(
         else chosen.work_identity,
         WorkTitleTransformationLineage((CORROBORATED_TITLE_APPLICATION,)),
     )
+
+
+def _corroborated_lane(lane: ProviderLaneObservation) -> bool:
+    """Say whether a lane admitted through the corroborated rule (#1307)."""
+    return (
+        lane.transformation_lineage is not None
+        and lane.transformation_lineage.production == CORROBORATED_TITLE_PRODUCTION
+    )
+
+
+def _whole_ladder_sent(
+    lane: ProviderLaneObservation, ladder: tuple[WorkDispatchLineage, ...]
+) -> bool:
+    """Say whether an admitted lane records its whole ladder as sent (#1307).
+
+    The corroborated rule and the band-first set rule read the refused pages
+    only after every rung was sent, so their admissions count every rung.
+    """
+    return lane.dispatch is not None and lane.dispatch.rungs == len(ladder)
 
 
 # The one authority whose asserted lane walks the leading-number rung and
@@ -4451,6 +4500,7 @@ class MetadataReport:
                     audiobook=self.audio is not None,
                     band_claims=band_claims,
                     corroboration=corroboration,
+                    leading_number=corroboration is not None,
                 )
                 if (
                     not set_admission.admitted
@@ -4486,6 +4536,9 @@ class MetadataReport:
                         if payload is not None and payload.title_basis is None
                         else None
                     ),
+                    leading_number=corroboration is not None
+                    and payload is not None
+                    and payload.title_basis is None,
                 )
                 if (
                     not set_admission.admitted
@@ -4533,6 +4586,10 @@ class MetadataReport:
                     hint.rung not in ladder for hint in lane.recording_lookup_hints
                 ) or (
                     lane.status is ProviderStatus.CANDIDATES
+                    # A rule admission follows the whole ladder (#1307), so
+                    # every rung's hints stand beside it.
+                    and not _corroborated_lane(lane)
+                    and not _whole_ladder_sent(lane, ladder)
                     and (
                         lane.dispatch_lineage not in ladder
                         or any(
@@ -4659,6 +4716,7 @@ class MetadataReport:
             for candidate in (
                 *provider.candidates,
                 *provider.recording_lookup_candidates,
+                *provider.refused_products,
             ):
                 expected = finalize_candidate_comparisons(
                     candidate,
@@ -4738,10 +4796,22 @@ class MetadataReport:
                 expected = rungs == 0
             elif dispatch.outcome in {DispatchOutcome.EMPTY, DispatchOutcome.REFUSED}:
                 expected = rungs == len(lane.exhausted_dispatch)
+            elif dispatch.outcome is DispatchOutcome.ADMITTED and _corroborated_lane(
+                lane
+            ):
+                # The rule reads only after the whole ladder was sent (#1307).
+                expected = rungs == len(ladder)
             elif dispatch.outcome is DispatchOutcome.ADMITTED:
-                expected = (
-                    lane.dispatch_lineage in ladder
-                    and rungs == ladder.index(lane.dispatch_lineage) + 1
+                # A band-first admission (#1307) also follows the whole
+                # ladder; its lineage is the exact path's, so its record may
+                # count every rung rather than stop at the admitted one.
+                expected = lane.dispatch_lineage in ladder and (
+                    rungs == ladder.index(lane.dispatch_lineage) + 1
+                    or (
+                        provider.authority == CORROBORATED_RULE_AUTHORITY
+                        and payload.title_basis is None
+                        and rungs == len(ladder)
+                    )
                 )
             else:
                 expected = 1 <= rungs <= len(ladder)
@@ -4807,6 +4877,17 @@ class MetadataReport:
                         ),
                     )
                     for candidate in provider.recording_lookup_candidates
+                ),
+                refused_products=tuple(
+                    finalize_candidate_comparisons(
+                        candidate,
+                        local_claims,
+                        provider.provider,
+                        allow_unbound_manifestation_link=(
+                            _target_backed_work_lookup(target, provider)
+                        ),
+                    )
+                    for candidate in provider.refused_products
                 ),
                 candidates=tuple(
                     finalize_candidate_comparisons(

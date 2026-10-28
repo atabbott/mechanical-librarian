@@ -61,6 +61,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
+    work_title_extends,
     work_title_related,
 )
 
@@ -1426,34 +1427,24 @@ def _series_signal(
 ) -> _Signal:
     """Agree on one shared series number, contradict on a different one.
 
-    Two memberships name one series when their keys are equal or one runs
-    inside the other and is longer than three characters. A number agreeing
-    on any such pair agrees; otherwise a number differing on one contradicts.
+    Two memberships name one series only when their normalized names are
+    equal. A different number on any such pair contradicts, whatever another
+    pair says; otherwise an equal number on one agrees.
     """
-    signal = _Signal.UNKNOWN
+    agree = False
     for local_name, local_sequence in local:
         for product_name, product_sequence in product:
             left, right = _series_key(local_name), _series_key(product_name)
-            if (
-                not left
-                or not right
-                or not (
-                    left == right
-                    or len(left) > 3
-                    and left in right
-                    or len(right) > 3
-                    and right in left
-                )
-            ):
+            if not left or left != right:
                 continue
             left_number = _sequence_number(local_sequence)
             right_number = _sequence_number(product_sequence)
             if left_number is None or right_number is None:
                 continue
-            if left_number == right_number:
-                return _Signal.AGREE
-            signal = _Signal.CONTRADICT
-    return signal
+            if left_number != right_number:
+                return _Signal.CONTRADICT
+            agree = True
+    return _Signal.AGREE if agree else _Signal.UNKNOWN
 
 
 def _narrator_signal(local: tuple[str, ...], candidate: ProviderCandidate) -> _Signal:
@@ -1502,6 +1493,11 @@ def _corroborated_distance(
         series,
     }:
         return None
+    # A title that runs on past the local one is the shape of a series
+    # neighbour by the same author and narrator, so only an agreeing series
+    # position admits it.
+    if work_title_extends(title, provider_title) and series is not _Signal.AGREE:
+        return None
     return tight_runtime_distance(local, stated, provider_minutes=True)
 
 
@@ -1519,9 +1515,10 @@ def corroborated_recording_candidate(
     title is related to the local one (`work_title_related`, the mandatory
     guard), its narrator or series number agrees, and nothing contradicts it:
     no disjoint narrator cast or author set, no different series number, and
-    no recording language or format conflict. Every qualifying product must
-    share narrators with every other, or none is admitted; of those that do,
-    the closest runtime wins, then the identity.
+    no recording language or format conflict. When several products qualify,
+    each must state a narrator and share narrators with every other, or none
+    is admitted; of those that do, the closest runtime wins, then the
+    identity.
     """
     if (
         type(candidates) is not tuple
@@ -1539,10 +1536,21 @@ def corroborated_recording_candidate(
         )
         is not None
     )
-    if not qualified or any(
-        narrator_cast_disjoint(_candidate_narrators(left), _candidate_narrators(right))
-        for _, left in qualified
-        for _, right in qualified
+    # Several qualifying editions are one recording only when each states a
+    # narrator and no two casts are disjoint: an unnarrated edition beside
+    # them could be any recording, so it does not pass by saying nothing.
+    if not qualified or (
+        len(qualified) > 1
+        and (
+            any(not _candidate_narrators(candidate) for _, candidate in qualified)
+            or any(
+                narrator_cast_disjoint(
+                    _candidate_narrators(left), _candidate_narrators(right)
+                )
+                for _, left in qualified
+                for _, right in qualified
+            )
+        )
     ):
         return None
     return min(qualified, key=lambda value: (value[0], value[1].identity))[1]

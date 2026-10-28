@@ -32,6 +32,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     tight_runtime_distance,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AudioDiscoveryTitle,
     ClaimKind,
     ClaimScope,
     FieldState,
@@ -46,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     RecordingCorroboration,
+    RecordingLookupHint,
     ReportValueError,
     TargetDestination,
     TargetFacts,
@@ -62,7 +64,9 @@ from mechanical_librarian.domain.work_identity import (
     CORROBORATED_TITLE_PRODUCTION,
     WorkDispatchRung,
     WorkTitleTransformationFamily,
+    replay_provider_work_identity_admission,
     work_query_ladder,
+    work_title_extends,
     work_title_related,
 )
 from mechanical_librarian.domain.work_identity import (
@@ -654,7 +658,7 @@ def test_a_joined_title_admits_its_tight_narrated_recording_after_the_walk() -> 
     assert lane.transformation_lineage is not None
     assert CORROBORATED_TITLE_PRODUCTION == lane.transformation_lineage.production
     assert lane.dispatch is not None
-    assert 1 == lane.dispatch.rungs
+    assert 2 == lane.dispatch.rungs
     report = _report(plan, _DECORATED, observation)
     assert report == MetadataReport.from_json(report.to_json())
     assert ProviderEvidenceKind.ASIN_MARKETPLACE in {
@@ -959,3 +963,306 @@ def test_a_carried_edition_the_rule_admitted_is_verified_by_the_rule() -> None:
     assert ("audible-product-B000000001",) == tuple(
         value.identity for value in refuted.providers[0].refused_products
     )
+
+
+# -- review regressions -------------------------------------------------------
+
+
+def _initialled(identity: str, minutes: int) -> ProviderCandidate:
+    # "J. R. Example" admits "J.R. Example" only through the band's initials
+    # fold, so only a tight product admits at all.
+    return _candidate(
+        identity, title="Plain Work", authors=("J. R. Example",), minutes=minutes
+    )
+
+
+def test_the_minute_floor_never_undoes_an_exact_band_admission() -> None:
+    lineage = WorkDispatchLineage.from_query(
+        work_query_ladder("Plain Work", ("J.R. Example",), audiobook=True)[0]
+    )
+    claims = (local_runtime_claim("60140.000"),)
+    exact = _initialled("audible-product-B000000001", 1_001)  # 80 s exactly
+    floor = _initialled("audible-product-B000000002", 1_000)  # 140 s, 81 as floor
+
+    def admit(*candidates: ProviderCandidate) -> Any:
+        return provider_candidate_set_work_identity_admission(
+            candidates,
+            "Plain Work",
+            ("J.R. Example",),
+            lineage,
+            audiobook=True,
+            band_claims=claims,
+        )
+
+    assert (exact,) == admit(exact).candidates
+    # Read as a floor both are tight, but the exact reading admitted first.
+    assert (exact,) == admit(exact, floor).candidates
+    # The floor alone still admits where the exact band admits nothing.
+    assert (floor,) == admit(floor).candidates
+
+
+def test_a_hint_the_exact_band_kept_is_never_displaced_by_the_floor() -> None:
+    claims = (local_runtime_claim("60100.000"),)
+    floors = [
+        RecordingLookupHint(f"B00000000{index}", 60_000, _DECORATED_LADDER[0])
+        for index in (1, 2)
+    ]
+    exact = RecordingLookupHint("B000000003", 60_060, _DECORATED_LADDER[1])
+    final = ProviderObservation(
+        "audible", ProviderStatus.NO_MATCH, authority="audible_catalog"
+    )
+
+    kept = m._bounded_lookup_hints([*floors, exact], final, claims)
+
+    assert m.MAX_RECORDING_LOOKUP_HINTS == len(kept)
+    assert exact in kept and floors[0] in kept
+
+
+def _alternative_plan() -> m.MetadataDiscoveryPlan:
+    return m.audiobook_discovery_plan(
+        m.TargetSnapshot(
+            "audiobook",
+            _DECORATED,
+            (),
+            fields=_target_fields(_DECORATED, (_NARRATOR,)),
+        ),
+        (target_title_claim(_DECORATED), local_runtime_claim(_RUNTIME)),
+        audio=_alternative_audio(),
+    )
+
+
+def _alternative_audio() -> Any:
+    return replace(
+        single_track_audio_facts(),
+        discovery_titles=(AudioDiscoveryTitle("path_leaf", "Distant Harbour"),),
+    )
+
+
+def _walk_by_title(
+    plan: m.MetadataDiscoveryPlan, pages: dict[str, list[dict[str, Any]]]
+) -> tuple[ProviderObservation, list[str]]:
+    seen: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        title = request.url.params.get("title") or ""
+        seen.append(title)
+        products = pages.get(title, [])
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"total_results": len(products), "products": products},
+        )
+
+    provider = AudibleCatalogMetadataProvider(
+        "audible",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        262_144,
+        5.0,
+        marketplaces=("us",),
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1_700_000_000.0,
+        sleep=lambda value: None,
+        jitter=lambda: 0.0,
+    )
+    try:
+        result = m.observe_provider("audible", "audible_catalog", provider, plan)
+    finally:
+        provider._client.close()
+    return result.observation, seen
+
+
+def _alternative_report(observation: ProviderObservation) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "audio", "item-1", _target_fields(_DECORATED, (_NARRATOR,))
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=(target_title_claim(_DECORATED), local_runtime_claim(_RUNTIME)),
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=_alternative_audio(),
+    )
+
+
+def test_an_exact_alternative_lane_admission_comes_before_the_rule() -> None:
+    plan = _alternative_plan()
+    joined = [_product(1, "Synthetic Journey", subtitle="Into the Fold")]
+    observation, seen = _walk_by_title(
+        plan,
+        {
+            _DECORATED: joined,
+            "Synthetic Journey": joined,
+            "Distant Harbour": [_product(2, "Distant Harbour")],
+        },
+    )
+
+    # The rule waits, so the alternative lane is asked and its exact answer
+    # stands; the asserted lane stays exhausted.
+    assert [_DECORATED, "Synthetic Journey", "Distant Harbour"] == seen
+    assert {"audible-product-B000000002"} == {
+        value.identity for value in observation.candidates
+    }
+    assert [ProviderStatus.NO_MATCH, ProviderStatus.CANDIDATES] == [
+        lane.status for lane in observation.lanes
+    ]
+    report = _alternative_report(observation)
+    assert report == MetadataReport.from_json(report.to_json())
+
+
+def test_the_rule_reads_the_asserted_lane_once_the_alternative_refused() -> None:
+    plan = _alternative_plan()
+    joined = [_product(1, "Synthetic Journey", subtitle="Into the Fold")]
+    observation, seen = _walk_by_title(
+        plan, {_DECORATED: joined, "Synthetic Journey": joined}
+    )
+
+    assert [_DECORATED, "Synthetic Journey", "Distant Harbour"] == seen
+    asserted, alternative = observation.lanes
+    assert ProviderStatus.CANDIDATES is asserted.status
+    assert asserted.transformation_lineage is not None
+    assert CORROBORATED_TITLE_PRODUCTION == asserted.transformation_lineage.production
+    assert asserted.dispatch is not None
+    assert 2 == asserted.dispatch.rungs
+    assert ProviderStatus.NO_MATCH is alternative.status
+    report = _alternative_report(observation)
+    assert report == MetadataReport.from_json(report.to_json())
+
+    # A rule admission records every rung the walk sent.
+    data = json.loads(report.to_json())
+    for lane in data["providers"][0]["lanes"]:
+        if lane["status"] == "candidates":
+            lane["dispatch"]["rungs"] = 1
+    with pytest.raises(ReportValueError, match="rungs do not replay"):
+        MetadataReport.from_json(_readdressed(data))
+
+
+def test_a_series_matches_only_by_its_normalized_name() -> None:
+    product = _candidate(narrators=(), series=(("Darkness Cycle", "2"),))
+
+    assert None is _ruled(
+        product,
+        corroboration=RecordingCorroboration(series=(TargetSeries("Dark", "2"),)),
+    )
+    assert product == _ruled(
+        product,
+        corroboration=RecordingCorroboration(
+            series=(TargetSeries("The Darkness Cycle", "2"),)
+        ),
+    )
+
+
+def test_a_series_contradiction_on_any_pair_wins_over_an_agreement() -> None:
+    product = _candidate(series=(("Example Saga", "2"),))
+
+    assert None is _ruled(
+        product,
+        corroboration=RecordingCorroboration(
+            (_NARRATOR,),
+            (TargetSeries("Example Saga", "2"), TargetSeries("Example Saga", "3")),
+        ),
+    )
+
+
+def test_an_unnarrated_qualifier_does_not_pass_beside_a_narrated_one() -> None:
+    corroboration = RecordingCorroboration(
+        (_NARRATOR,), (TargetSeries("Example Saga", "2"),)
+    )
+    narrated = _candidate("audible-product-B000000001", series=(("Example Saga", "2"),))
+    unnarrated = _candidate(
+        "audible-product-B000000002",
+        narrators=(),
+        series=(("Example Saga", "2"),),
+        minutes=1_001,
+    )
+
+    assert narrated == _ruled(narrated, corroboration=corroboration)
+    assert unnarrated == _ruled(unnarrated, corroboration=corroboration)
+    assert None is _ruled(narrated, unnarrated, corroboration=corroboration)
+
+
+def test_a_title_running_on_past_the_local_one_needs_its_series_to_agree() -> None:
+    neighbour = _candidate(
+        title="Synthetic Journey Home", series=(("Example Saga", "2"),)
+    )
+
+    assert work_title_extends("Synthetic Journey", "Synthetic Journey Home")
+    assert not work_title_extends("Synthetic Journey", "Synthetic Journey: A Novel")
+    # Same author, narrator and band, and no local series: refused.
+    assert None is _ruled(neighbour, title="Synthetic Journey")
+    # An agreeing series position is what separates the same book.
+    assert neighbour == _ruled(
+        neighbour,
+        title="Synthetic Journey",
+        corroboration=RecordingCorroboration(
+            (_NARRATOR,), (TargetSeries("Example Saga", "2"),)
+        ),
+    )
+
+
+def test_an_overlapping_series_neighbour_is_a_documented_residual() -> None:
+    # Pinned residual risk (ADR-0067, #1307): two titles sharing over half
+    # their words, with the same author, narrator and band and no local series
+    # to contradict, are related. No guard refuses this without also refusing
+    # a measured rescue of the same shape.
+    neighbour = _candidate(
+        title="Example and the Iron Gate", series=(("Example Saga", "2"),)
+    )
+
+    assert neighbour == _ruled(neighbour, title="Example and the Silver Gate")
+    assert None is _ruled(
+        neighbour,
+        title="Example and the Silver Gate",
+        corroboration=RecordingCorroboration(
+            (_NARRATOR,), (TargetSeries("Example Saga", "1"),)
+        ),
+    )
+
+
+def test_an_unknown_local_language_cannot_contradict() -> None:
+    # Pinned (ADR-0067): only a language the file states contradicts. An
+    # edition in another language still needs a narrator or series agreement.
+    product = _candidate(narrators=(), series=(("Example Saga", "2"),), language="de")
+    by_series = RecordingCorroboration(series=(TargetSeries("Example Saga", "2"),))
+
+    assert product == _ruled(product, corroboration=by_series)
+    assert None is _ruled(
+        product, claims=_local_claims(language="en"), corroboration=by_series
+    )
+    assert None is _ruled(product, corroboration=RecordingCorroboration())
+
+
+def test_only_the_asserted_audible_lane_replays_the_leading_number_rung() -> None:
+    lineage = WorkDispatchLineage.from_query(
+        work_query_ladder(
+            "12 Synthetic Journey", (_AUTHOR,), audiobook=True, leading_number=True
+        )[-1]
+    )
+
+    def replay(*, leading_number: bool) -> bool:
+        return replay_provider_work_identity_admission(
+            local_title="12 Synthetic Journey",
+            local_authors=(_AUTHOR,),
+            # Admission compares the asserted title, whatever the rung asked.
+            provider_title="12 Synthetic Journey",
+            provider_authors=(_AUTHOR,),
+            provider_work_identity="audible-product-B000000001",
+            dispatch_lineage=lineage,
+            audiobook=True,
+            leading_number=leading_number,
+        ).admitted
+
+    assert WorkDispatchRung.LEADING_NUMBER_STRIPPED is lineage.rung
+    assert replay(leading_number=True)
+    assert not replay(leading_number=False)
+
+
+def test_refused_product_comparison_links_replay() -> None:
+    report = _fed_report(_enrichment("enrichment-B000000007", "Distant Harbour"))
+    data = json.loads(report.to_json())
+    claims = data["providers"][0]["refused_products"][0]["claims"]
+    assert any(claim["links"] for claim in claims)
+    for claim in claims:
+        claim["links"] = []
+
+    with pytest.raises(ReportValueError, match="comparison links are inconsistent"):
+        MetadataReport.from_json(_readdressed(data))

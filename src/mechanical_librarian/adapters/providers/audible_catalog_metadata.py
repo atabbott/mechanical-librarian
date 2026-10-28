@@ -338,6 +338,16 @@ class AudibleCatalogMetadataProvider:
         self._session.ledger = ledger
         results: list[ProviderLaneResult] = []
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        # The asserted lane's corroborated rule waits for every exact path,
+        # the alternative lane's included (#1307).
+        deferred: (
+            tuple[
+                int,
+                Callable[[], QualifiedLaneObservation | None],
+                tuple[ProviderCoverDescriptor, ...],
+            ]
+            | None
+        ) = None
         with provider_client_lifetime(self._client):
             for lane in provider_discovery_lane_order(plan):
                 if lane.title_basis is not None and not alternative_work_lane_permitted(
@@ -369,21 +379,13 @@ class AudibleCatalogMetadataProvider:
                     self._work_ladders.append(
                         WorkLadderFacts(lane.identity, qualified.rungs, self._near_miss)
                     )
-                results.append(
-                    ProviderLaneResult(
-                        lane,
-                        observation.status,
-                        observation.candidates,
-                        observation.accessed_at,
-                        recording_lookup_candidates=observation.recording_lookup_candidates,
-                        refused_products=observation.refused_products,
-                        diagnostics=qualified.diagnostics,
-                        dispatch_lineage=observation.dispatch_lineage,
-                        transformation_lineage=observation.transformation_lineage,
-                        exhausted_dispatch=qualified.exhausted_dispatch,
-                        recording_lookup_hints=qualified.recording_lookup_hints,
+                results.append(_lane_result(lane, qualified))
+                if qualified.corroborated is not None:
+                    deferred = (
+                        len(results) - 1,
+                        qualified.corroborated,
+                        self._cover_descriptors,
                     )
-                )
                 merged = merge_provider_cover_descriptors(
                     descriptors,
                     _retained_cover_descriptors(self._cover_descriptors, observation),
@@ -396,6 +398,24 @@ class AudibleCatalogMetadataProvider:
                     )
                 else:
                     descriptors = merged
+            if deferred is not None and all(
+                result.status is ProviderStatus.NO_MATCH
+                for result in results
+                if result.lane.kind is ProviderQueryKind.WORK
+                and result.lane.title_basis is not None
+            ):
+                index, corroborated, lane_descriptors = deferred
+                ruled = corroborated()
+                if ruled is not None:
+                    merged = merge_provider_cover_descriptors(
+                        descriptors,
+                        _retained_cover_descriptors(
+                            lane_descriptors, ruled.observation
+                        ),
+                    )
+                    if merged is not None:
+                        results[index] = _lane_result(results[index].lane, ruled)
+                        descriptors = merged
         self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
@@ -795,6 +815,25 @@ def _admitted_cover_url(
     ):
         return None, CoverSourceState.UNSAFE_REMOTE
     return url, None
+
+
+def _lane_result(
+    lane: MetadataDiscoveryLane, qualified: QualifiedLaneObservation
+) -> ProviderLaneResult:
+    observation = qualified.observation
+    return ProviderLaneResult(
+        lane,
+        observation.status,
+        observation.candidates,
+        observation.accessed_at,
+        recording_lookup_candidates=observation.recording_lookup_candidates,
+        refused_products=observation.refused_products,
+        diagnostics=qualified.diagnostics,
+        dispatch_lineage=observation.dispatch_lineage,
+        transformation_lineage=observation.transformation_lineage,
+        exhausted_dispatch=qualified.exhausted_dispatch,
+        recording_lookup_hints=qualified.recording_lookup_hints,
+    )
 
 
 def _lane_asin(lane: MetadataDiscoveryLane) -> str:

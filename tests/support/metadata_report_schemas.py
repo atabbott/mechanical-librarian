@@ -19,6 +19,7 @@ import pytest
 
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
 from mechanical_librarian.domain.metadata_report import (
+    COMPARISON_VERSION,
     ClaimKind,
     ClaimScope,
     FieldState,
@@ -243,14 +244,17 @@ def retained_report_as_current(document: str) -> MetadataReport:
     carried no admission, so it reads `absent` for an ASIN and `unsupported`
     for every other field, as `derive_field_results` states it. v61 added each
     provider's `refused_products`: empty here, since an earlier producer cut
-    every refused product to its identifier and kept nothing else of it.
-    Nothing is migrated: the copy is never written back.
+    every refused product to its identifier and kept nothing else of it, and
+    moved comparison to `closed-title-creator-publication-work-identity-v6`,
+    whose only change, a lone apostrophe between letters, no relabelled
+    fixture states. Nothing is migrated: the copy is never written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
     data["schema_version"] = "metadata-report-v61"
+    data["comparison_version"] = COMPARISON_VERSION
     for provider in data["providers"]:
         provider["refused_products"] = []
         for lane in provider["lanes"]:

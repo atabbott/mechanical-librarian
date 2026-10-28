@@ -683,7 +683,11 @@ def work_query_ladder(
     audiobook: bool = False,
     leading_number: bool = False,
 ) -> tuple[WorkQuery, ...]:
-    """Return at most three distinct, deterministic WORK dispatches.
+    """Return the distinct, deterministic WORK dispatches, in ladder order.
+
+    An ebook ladder has at most three rungs: normalized, subtitle-stripped and
+    punctuation-folded. An audiobook ladder shapes those rungs with its own
+    rows, and an asserted Audible lane may add a fourth (below).
 
     `audiobook` admits the audiobook-only rows; an ebook ladder never reads them.
     `leading_number` appends one fourth rung, the normalized title with a bare
@@ -1019,8 +1023,13 @@ def replay_provider_work_identity_admission(
     provider_series_memberships: tuple[tuple[str, str | None], ...] = (),
     audiobook: bool = False,
     runtime_tight: bool = False,
+    leading_number: bool = False,
 ) -> WorkIdentityAdmission:
     """Recompute admission only for a dispatch the exact local ladder can emit.
+
+    `leading_number` permits the `leading_number_stripped` rung, which only
+    Audible's asserted audiobook lane dispatches (#1307); every other lane
+    replays the ladder it can actually ask.
 
     `runtime_tight` enables the band-corroborated productions (#1260); the
     caller passes it only for a tight candidate on an audiobook plan's asserted
@@ -1136,7 +1145,10 @@ def replay_provider_work_identity_admission(
     if not admission.admitted or dispatch_lineage is None:
         return WorkIdentityAdmission(False)
     queries = work_query_ladder(
-        local_title, local_authors, audiobook=audiobook, leading_number=audiobook
+        local_title,
+        local_authors,
+        audiobook=audiobook,
+        leading_number=audiobook and leading_number,
     )
     permitted = {WorkDispatchLineage.from_query(query) for query in queries} | {
         WorkDispatchLineage.from_query(narrowing_work_query(query)) for query in queries
@@ -1202,6 +1214,27 @@ def work_title_related(
         return True
     left, right = set(local), set(joined)
     return len(left & right) >= TITLE_RELATION_OVERLAP * len(left | right)
+
+
+def work_title_extends(local_title: str, provider_title: str) -> bool:
+    """Whether a provider title runs on past the whole local title (#1307).
+
+    "Example Journey Home" extends "Example Journey": the shape of a sequel
+    or companion in the same series, which title relation alone cannot tell
+    from the same book. A provider title whose part before a colon lies inside
+    the local title, such as "Example Journey: A Novel", does not extend it.
+    """
+    if type(local_title) is not str or type(provider_title) is not str:
+        raise ValueError("work title relation input is invalid")
+    local = _relation_tokens(local_title)
+    title = _relation_tokens(provider_title)
+    main = _relation_tokens(provider_title.split(":", 1)[0])
+    return (
+        bool(local)
+        and len(title) > len(local)
+        and _contains_tokens(title, local)
+        and not (main and _contains_tokens(local, main))
+    )
 
 
 def work_title_has_variant_marker(value: str) -> bool:
@@ -2037,6 +2070,7 @@ __all__ = [
     "work_dispatch_lineage_from_data",
     "work_query_ladder",
     "work_title_has_variant_marker",
+    "work_title_extends",
     "work_title_related",
     "work_title_election_matches",
     "work_title_transformation_lineage_from_data",
