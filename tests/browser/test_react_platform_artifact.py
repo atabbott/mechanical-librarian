@@ -1974,7 +1974,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         page.get_by_role("button", name="Attention 5 works").click()
         expect(page.locator(".attention-rail")).to_be_visible()
-        expect(page.locator(".attention-rail")).to_be_focused()
+        expect(page.locator(".attention-rail h2")).to_be_focused()
         attention_rail_clears_masthead()
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 760
 
@@ -2004,7 +2004,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".library-work-row").first.wait_for()
         page.locator(".attention-toggle").click()
         expect(page.locator(".attention-rail")).to_be_visible()
-        expect(page.locator(".attention-rail")).to_be_focused()
+        expect(page.locator(".attention-rail h2")).to_be_focused()
         expect(page.locator(".library-works")).to_be_hidden()
         expect(page.locator(".workspace-detail")).to_be_hidden()
         page.locator(".attention-queue-item").first.click()
@@ -3543,7 +3543,7 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
         # B2: the rail groups six field rows under four works.
         page.get_by_role("button", name="Attention 5 works").click()
         rail = page.get_by_role("complementary", name="Attention queue")
-        expect(rail).to_be_focused()
+        expect(rail.get_by_role("heading", name="Attention")).to_be_focused()
         groups = rail.locator(".attention-work-group")
         expect(groups).to_have_count(4)
         rows = rail.locator("button.attention-queue-item")
@@ -3678,6 +3678,61 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
                 back = page.evaluate(_BACK_IN_VIEW)
                 assert back["visible"], f"{where}: {back}"
                 assert not page.evaluate(_FOCUS_ON_BODY), where
+
+
+def test_attention_drawer_holds_focus_and_returns_it() -> None:
+    """Opening Attention focuses its heading. Between 761 and 1199px the rail
+    is a drawer: the page behind it, but for the toolbar that toggles it, is
+    inert and Tab wraps inside it; Escape closes it at any width and hands
+    focus back to the toggle (#1288)."""
+    inert = """() => ['.masthead', '.library-works', '.workspace-detail']
+      .filter(selector => document.querySelector(selector)?.closest('[inert]'))"""
+    inside = """() => Boolean(document.activeElement?.closest('.attention-rail'))"""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        _serve_cohort(page)
+        rail = page.get_by_role("complementary", name="Attention queue")
+        heading = rail.get_by_role("heading", name="Attention")
+        toggle = page.locator(".attention-toggle")
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            for width, drawer in (
+                (1440, False),
+                (1100, True),
+                (900, True),
+                (390, False),
+            ):
+                where = f"{scheme} at {width}px"
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto("https://react-platform.invalid/library?lens=all")
+                page.locator(".attention-toggle strong").filter(
+                    has_text=re.compile(r"works?$")
+                ).wait_for()
+                toggle.click()
+                expect(heading).to_be_focused()
+                assert page.evaluate(inert) == (
+                    [".masthead", ".library-works", ".workspace-detail"]
+                    if drawer
+                    else []
+                ), where
+                # The toolbar that opened the drawer can still close it.
+                assert not toggle.evaluate("node => Boolean(node.closest('[inert]'))")
+                if drawer:
+                    stops = rail.locator("button, a[href], input").count()
+                    for key in ("Tab", "Shift+Tab"):
+                        for _ in range(stops + 1):
+                            page.keyboard.press(key)
+                            assert page.evaluate(inside), (
+                                f"{where}: {key} left the drawer"
+                            )
+                page.keyboard.press("Escape")
+                expect(rail).to_have_count(0)
+                expect(toggle).to_be_focused()
+                assert page.evaluate(inert) == [], where
+                assert page.locator("[inert]").count() == 0, where
 
 
 # Every visible disclosure summary under a full 44px target (#1288).

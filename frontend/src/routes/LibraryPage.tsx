@@ -1469,6 +1469,8 @@ const selectedAutomaticLanguageForm = (field: ReviewField) =>
 // suggestions. Each is offered only where the store would accept it now; the
 // store still decides, and a refusal is said here, beside the control used.
 type OwnerOutcome = 'owner_entered' | 'withdraw'
+// The width range where the Attention rail is a drawer over the workspace.
+const drawerQuery = '(min-width: 761px) and (max-width: 1199px)'
 // The open field's heading, the place focus returns to when the control that
 // was used is gone.
 const focusFieldHeading = () => {
@@ -2725,6 +2727,11 @@ export default function LibraryPage({
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
   const attentionRail = useRef<HTMLElement>(null)
+  const attentionHeading = useRef<HTMLHeadingElement>(null)
+  const attentionToggle = useRef<HTMLButtonElement>(null)
+  const attentionRetry = useRef<HTMLButtonElement>(null)
+  // Close and Escape hand focus back to the toggle that opened the rail.
+  const returnToToggle = useRef(false)
   const revealWorkspace = useRef(false)
   const workSelectionGeneration = useRef(0)
   const selectedIdentityRef = useRef<{
@@ -3674,16 +3681,65 @@ export default function LibraryPage({
     automaticTrigger.current?.focus()
   }, [automaticPanel])
   useEffect(() => {
-    if (search.attention !== 'open') return
+    const opened = search.attention === 'open'
+    if (!opened && !returnToToggle.current) return
+    returnToToggle.current = false
     let focusFrame = 0
     const routeFrame = requestAnimationFrame(() => {
-      focusFrame = requestAnimationFrame(() =>
-        attentionRail.current?.focus({ preventScroll: true }),
-      )
+      focusFrame = requestAnimationFrame(() => {
+        // Closing returns focus from the rail it left, or from where the
+        // route's own focus put it, never from a field the owner moved to.
+        const active = document.activeElement
+        const routeTarget = document.querySelector('#main-content [data-route-focus]')
+        if (opened) attentionHeading.current?.focus({ preventScroll: true })
+        else if (
+          !active ||
+          active === document.body ||
+          active === routeTarget ||
+          attentionRail.current?.contains(active)
+        )
+          attentionToggle.current?.focus({ preventScroll: true })
+      })
     })
     return () => {
       cancelAnimationFrame(routeFrame)
       cancelAnimationFrame(focusFrame)
+    }
+  }, [search.attention])
+  // From 761 to 1199px the rail is a drawer over the workspace: everything
+  // outside it but the toolbar that toggles it is inert until it closes, and
+  // its own Tab order wraps.
+  useEffect(() => {
+    const rail = attentionRail.current
+    if (search.attention !== 'open' || !rail || typeof window.matchMedia !== 'function') return
+    const drawer = window.matchMedia(drawerQuery)
+    let muted: Element[] = []
+    const restore = () => {
+      for (const node of muted) node.removeAttribute('inert')
+      muted = []
+    }
+    const apply = () => {
+      restore()
+      if (!drawer.matches) return
+      for (let node: Element = rail; node.parentElement && node !== document.body;) {
+        const parent: Element = node.parentElement
+        for (const sibling of parent.children)
+          if (
+            sibling !== node &&
+            !sibling.hasAttribute('inert') &&
+            !(attentionToggle.current && sibling.contains(attentionToggle.current))
+          ) {
+            sibling.setAttribute('inert', '')
+            muted.push(sibling)
+          }
+        node = parent
+      }
+    }
+    apply()
+    drawer.addEventListener('change', apply)
+    return () => {
+      drawer.removeEventListener('change', apply)
+      restore()
     }
   }, [search.attention])
   useEffect(() => {
@@ -3859,6 +3915,10 @@ export default function LibraryPage({
     setSearchPending(true)
     pendingSearchQuery.current = { ...pendingSearchQuery.current, q }
     scheduleSearchNavigation()
+  }
+  const closeAttention = () => {
+    returnToToggle.current = true
+    changeAttention(false)
   }
   const changeAttention = (open: boolean) => {
     if (!open) revealWorkspace.current = Boolean(search.preview ?? search.work) && compactWidth()
@@ -4069,6 +4129,7 @@ export default function LibraryPage({
         {...(!hasSelection ? { 'data-route-focus': 'true' } : {})}
       >
         <button
+          ref={attentionToggle}
           className="attention-toggle"
           type="button"
           aria-expanded={search.attention === 'open'}
@@ -5276,10 +5337,30 @@ export default function LibraryPage({
             aria-busy={attention.isPlaceholderData || undefined}
             tabIndex={-1}
             ref={attentionRail}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                closeAttention()
+                return
+              }
+              if (event.key !== 'Tab' || typeof window.matchMedia !== 'function') return
+              if (!window.matchMedia(drawerQuery).matches) return
+              const stops = [
+                ...event.currentTarget.querySelectorAll<HTMLElement>('button, a[href], input'),
+              ].filter((stop) => !stop.matches(':disabled') && stop.getClientRects().length)
+              const edge = event.shiftKey ? stops[0] : stops.at(-1)
+              const active = document.activeElement
+              if (active === edge || (event.shiftKey && !stops.some((stop) => stop === active))) {
+                event.preventDefault()
+                ;(event.shiftKey ? stops.at(-1) : stops[0])?.focus()
+              }
+            }}
           >
             <header>
               <div>
-                <h2>Attention</h2>
+                <h2 ref={attentionHeading} tabIndex={-1}>
+                  Attention
+                </h2>
                 <p>
                   {search.q && !data
                     ? failed
@@ -5296,7 +5377,7 @@ export default function LibraryPage({
                         : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`}
                 </p>
               </div>
-              <button onClick={() => changeAttention(false)}>Close</button>
+              <button onClick={closeAttention}>Close</button>
             </header>
             {attention.data === undefined ? (
               <p role={attention.isError ? 'alert' : 'status'}>
@@ -5304,19 +5385,26 @@ export default function LibraryPage({
                   <>
                     Attention could not be loaded.{' '}
                     <button
+                      ref={attentionRetry}
                       type="button"
                       onClick={() =>
                         void attention.refetch().then((result) => {
-                          // A successful retry removes this button, so the
-                          // rail takes focus back from it (#1399).
+                          // The retry removes this button while it reads, so
+                          // the rail's heading takes focus back on success
+                          // (#1399) and Try again does when it fails again.
                           const active = document.activeElement
                           if (
-                            result.isSuccess &&
-                            (!active ||
-                              active === document.body ||
-                              attentionRail.current?.contains(active))
+                            active &&
+                            active !== document.body &&
+                            !attentionRail.current?.contains(active)
                           )
-                            attentionRail.current?.focus({ preventScroll: true })
+                            return
+                          if (result.isSuccess)
+                            attentionHeading.current?.focus({ preventScroll: true })
+                          else
+                            requestAnimationFrame(() =>
+                              attentionRetry.current?.focus({ preventScroll: true }),
+                            )
                         })
                       }
                     >

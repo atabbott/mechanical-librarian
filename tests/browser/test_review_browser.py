@@ -2434,7 +2434,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.get_by_role("button", name=re.compile(r"^Attention ")).click()
                 attention_rail = page.locator(".attention-rail")
                 attention_rail.wait_for()
-                expect(attention_rail).to_be_focused()
+                expect(attention_rail.locator("h2")).to_be_focused()
                 page.get_by_role("link", name="Policy", exact=True).click()
                 page.get_by_role("heading", name="Library policy").wait_for()
                 page.get_by_role("button", name="Curation").click()

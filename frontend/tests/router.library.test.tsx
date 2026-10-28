@@ -6534,7 +6534,7 @@ describe('Library route', () => {
         }
       })
       renderRoute('/library?lens=all&attention=open', http)
-      await waitFor(() => expect(screen.getByLabelText('Attention queue')).toHaveFocus())
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Attention' })).toHaveFocus())
       await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
       const row = await screen.findByRole('button', { description: 'Anchored target' })
       row.focus()
@@ -6611,7 +6611,7 @@ describe('Library route', () => {
       }
     })
     renderRoute('/library?lens=all&attention=open', http)
-    await waitFor(() => expect(screen.getByLabelText('Attention queue')).toHaveFocus())
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Attention' })).toHaveFocus())
     await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
     const row = await screen.findByRole('button', { description: 'Anchored target' })
     row.focus()
@@ -6715,12 +6715,14 @@ describe('Library route', () => {
       const rail = screen.getByLabelText('Attention queue')
       if (frames === 'before') {
         await runFrames()
-        expect(rail).toHaveFocus()
+        expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus()
       }
       await user.click(retry)
       expect(await within(rail).findByText('A Book')).toBeVisible()
       if (frames === 'after') await runFrames()
-      await waitFor(() => expect(rail).toHaveFocus())
+      await waitFor(() =>
+        expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+      )
       expect(within(rail).getByText(/Canonical library attention reason/u)).toBeVisible()
       expect(within(rail).queryByText('internal-library-notice')).toBeNull()
       await user.click(screen.getByRole('button', { name: 'Load more attention' }))
@@ -6732,6 +6734,29 @@ describe('Library route', () => {
       )
     },
   )
+
+  it('keeps focus on Try again when an Attention retry fails again (#1288)', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn(async () => {
+        throw new Error('attention stays unavailable')
+      }),
+    }
+    renderRoute('/library?lens=all&attention=open', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    await waitFor(() =>
+      expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+    )
+    await user.click(await within(rail).findByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(http.getAttention).toHaveBeenCalledTimes(2))
+    // The button is gone while it reads and back when the read fails again;
+    // focus returns to it rather than falling to the page.
+    await waitFor(() =>
+      expect(within(rail).getByRole('button', { name: 'Try again' })).toHaveFocus(),
+    )
+    expect(document.body).not.toHaveFocus()
+  })
 
   it('uses the review-case identity for workspace selection and advances through the frozen attention cohort', async () => {
     const user = userEvent.setup()
@@ -10257,9 +10282,7 @@ it.each([
     await screen.findByRole('heading', { name: extra.includes('preview') ? 'A Book' : 'Works' })
     const user = userEvent.setup()
     if (closing)
-      await waitFor(() =>
-        expect(screen.getByRole('complementary', { name: 'Attention queue' })).toHaveFocus(),
-      )
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Attention' })).toHaveFocus())
     await user.clear(query)
     await user.type(query, 'after ')
     const button =
@@ -11104,8 +11127,10 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(screen.getByRole('button', { name: 'Attention 3 works' })).toBeVisible()
     const rail = screen.getByRole('complementary', { name: 'Attention queue' })
     expect(within(rail).getByText('3 works need a decision')).toBeVisible()
-    // Opening the rail moves focus to it; type only once it has settled there.
-    await waitFor(() => expect(rail).toHaveFocus())
+    // Opening the rail moves focus to its heading; type only once it has settled there.
+    await waitFor(() =>
+      expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+    )
 
     await user.type(screen.getByRole('searchbox'), 'needle')
     await waitFor(() => expect(router.state.location.search.q).toBe('needle'))
@@ -11263,8 +11288,10 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
     const more = await within(rail).findByRole('button', { name: 'Load more attention' })
-    // Opening the rail focuses it a frame later; the owner reaches Load more after that.
-    await waitFor(() => expect(rail).toHaveFocus())
+    // Opening the rail focuses its heading a frame later; the owner reaches Load more after that.
+    await waitFor(() =>
+      expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+    )
     more.focus()
     await user.keyboard('{Enter}')
     // While the page loads the control keeps focus, and a second press is ignored.
@@ -11306,7 +11333,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     )
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
-    await waitFor(() => expect(rail).toHaveFocus())
+    await waitFor(() =>
+      expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+    )
     await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
     await within(rail).findByRole('button', { name: /^Title/u, description: 'Work B' })
     await user.click(within(rail).getByRole('button', { name: 'Load more attention' }))
@@ -11336,7 +11365,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     })
     const { queryClient } = renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
-    await waitFor(() => expect(rail).toHaveFocus())
+    await waitFor(() =>
+      expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+    )
     const more = within(rail).getByRole('button', { name: 'Load more attention' })
     await user.click(more)
     await waitFor(() => expect(more).toHaveAttribute('aria-disabled', 'true'))
@@ -11366,7 +11397,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     )
     renderRoute('/library?lens=all&attention=open', http)
     const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
-    await waitFor(() => expect(rail).toHaveFocus())
+    await waitFor(() =>
+      expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
+    )
     await user.click(within(rail).getByRole('button', { name: 'Load more attention' }))
     const search = screen.getByRole('searchbox')
     await user.click(search)
