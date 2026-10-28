@@ -308,6 +308,69 @@ describe('owner-entered values', () => {
     await waitFor(() => expect(outcome).toHaveFocus())
   })
 
+  it.each(['withdraw', 'record'] as const)(
+    'V10 keeps focus off the page when the reads after a %s fail (#1288)',
+    async (command) => {
+      const user = userEvent.setup()
+      let fields: readonly Field[] = [command === 'withdraw' ? enteredTitle : contextTitle]
+      let failing = false
+      const http = owner(() => fields)
+      // Audiobookshelf becomes unreachable: the command records, and every
+      // read the change notice prompts after it fails.
+      const unavailable = () => Promise.reject(new ApiError(503, 'unavailable'))
+      http.getCaseDetail = vi.fn(async () =>
+        failing ? await unavailable() : { ...detail, fields: [...fields] },
+      )
+      http.getLibrary = vi.fn(async () => (failing ? await unavailable() : quietLibrary))
+      const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      const panel = await screen.findByRole('region', { name: 'Your value for Title' })
+      if (command === 'record') {
+        await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+        await user.click(within(panel).getByRole('button', { name: 'Use “The Silent Orchard”' }))
+      }
+      fields = [command === 'withdraw' ? contextTitle : enteredTitle]
+      await user.click(
+        within(panel).getByRole('button', {
+          name: command === 'withdraw' ? 'Withdraw' : 'Record this value',
+        }),
+      )
+      const outcome = await screen.findByText(
+        command === 'withdraw'
+          ? 'Withdrawn. This field needs a decision again.'
+          : 'You entered “The Silent Orchard”.',
+      )
+      await waitFor(() => expect(outcome).toHaveFocus())
+      failing = true
+      await act(async () => {
+        await queryClient.invalidateQueries()
+      })
+      // The canvas gives way to the read failure; its Try again takes focus.
+      const retry = await screen.findByRole('button', { name: 'Try again' })
+      await waitFor(() => expect(retry).toHaveFocus())
+      expect(sent(http)).toHaveLength(1)
+    },
+  )
+
+  it('V10 keeps focus off the page when an unreachable accept is followed by failing reads (#1288)', async () => {
+    const user = userEvent.setup()
+    let failing = false
+    const unavailable = () => Promise.reject(new ApiError(503, 'unavailable'))
+    const http = createHttp()
+    http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(unavailable)
+    http.getCaseDetail = vi.fn(async () => (failing ? await unavailable() : detail))
+    http.getLibrary = vi.fn(async () => (failing ? await unavailable() : library))
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const choice = await screen.findByRole('button', { name: 'Choose proposed value: New title' })
+    await user.click(choice)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+    failing = true
+    await act(async () => {
+      await queryClient.invalidateQueries()
+    })
+    const retry = await screen.findByRole('button', { name: 'Try again' })
+    await waitFor(() => expect(retry).toHaveFocus())
+  })
+
   it.each(['entered', 'withdrawn'] as const)(
     'V9 keeps the work in view when the %s outcome takes it off the Library result',
     async (outcome) => {
@@ -459,7 +522,7 @@ describe('owner command labels', () => {
 })
 
 describe('owner review fixes', () => {
-  const heading = () => screen.getByRole('heading', { level: 2, name: 'Title' })
+  const heading = () => screen.getByRole('heading', { level: 3, name: 'Title' })
 
   it('M1 labels an entered value as the owner’s own', async () => {
     const http = owner(() => [{ ...enteredTitle, editable: false, ownerControl: null }])
