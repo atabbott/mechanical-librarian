@@ -110,7 +110,7 @@ markup only once decoded, or that would decode again, is kept as stored. A
 description also records `restorable`: whether writing its text back would
 store it as it is stored now. Text whose only defect is C1 control characters is refused by the
 validator with its own reason, but the report and UI still show that field only
-as `malformed` (#1251). The report is `metadata-report-v60`. For the title
+as `malformed` (#1251). The report is `metadata-report-v61`. For the title
 specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
@@ -300,6 +300,24 @@ grant nothing themselves. A fed ASIN the item did not name admits only when the
 answer passes exact work-identity admission and the tight band, so never without
 a title and authors; an answer naming another work keeps only its ASIN and
 leaves no proposal. Every other lane serializes `[]`.
+
+That ASIN-only stub is still what the candidate list keeps, but each audiobook
+provider now also records `refused_products` (#1307): for every stub on an
+ASIN lane, the product the provider actually returned, with its claims and no
+evidence, bindings or runtime-short mark. Validation requires each one to
+match a stub with the same identity, work identity and ASIN claim references,
+and to state more than that stub. A refused product grants nothing: it is the
+record the cold-start report and later analysis read. The carried lane
+(#1316, ADR-0088) is the one ASIN lane that may admit a refused product, and
+only through the corroborated rule above. Every other provider serializes
+`[]`.
+
+Provider runtimes from Audible, Audnexus and AudioSilo are whole minutes, so
+the tight band reads a provider runtime of `m` minutes as the interval
+`[60m, 60m + 59]` seconds (#1307, ADR-0064): the distance is zero inside that
+interval and otherwise measured to its nearer end. The band stays 90 seconds,
+and the loose band is unchanged. Where one product is tight under the exact
+reading, it is still preferred to one that is tight only as a floor.
 
 Every lane of an audiobook report also records `dispatch` (#1258): an
 `outcome` of `admitted`, `empty`, `refused`, `overflow`, `unavailable`,
@@ -609,6 +627,7 @@ of its constituent rows alone:
 | `band_parenthesized_series_name` | parenthesized series name, as the rung's only decoration | local title | tight band only |
 | `band_order_inverted_series_prefix` | order-inverted series prefix, as the rung's only decoration | local title | tight band only |
 | `band_initials_fold` | dotted initials folded to spaced letters | local or provider authors | tight band only |
+| `band_corroborated_title_relation` | corroborated title relation, recorded alone | local title | tight band, plus narrator or series agreement |
 
 An admitted production records its applications in the persisted report beside
 the base dispatch lineage:
@@ -651,6 +670,27 @@ runs without the band first, so a set admitted before keeps its candidates and
 lineage. Report validation and the proposal set replay it from the report's
 own claims on the asserted lane only.
 
+Two set rules follow on the same asserted Audible lane (#1307, ADR-0067). When
+several products admit and exactly one is inside the tight band while every
+other one is outside the loose band, the band-first rule keeps the tight one,
+unless it carries a recording-variant conflict or its narrators contradict the
+target's; the kept product then replays alone through the path that admitted
+it. When no product admits, the corroborated rule (`band_corroborated_title_relation`)
+admits one product only if its runtime is inside the tight band, its title is
+related to the lane title, its narrator or its series number agrees with the
+target, and nothing contradicts it on narrator, author, series number or
+language. A title is related when, after accents, case, articles, apostrophes
+and punctuation are folded, it equals the lane title, its title and subtitle
+joined equal it, one contains the other as a contiguous run of words, or the
+two share at least half of their combined words; the guard is mandatory,
+because without it every rule admits same-author, same-narrator series
+neighbours. When several products qualify they must not disagree on narrator,
+or none is admitted, and the closest runtime then the lowest identity wins. The
+lineage records the rung the page was asked on plus the single
+`corroborated_title_relation` application, and replay recomputes the rule from
+the report's own claims. Audible applies the rule only after its whole ladder
+admitted nothing, so an exact admission on any rung still comes first.
+
 The filename-prefix query grammar requires the complete prefix token sequence
 to equal the complete first ordered author. It permits no inversion, initial
 expansion, reordering, partial author, alternate author, or fuzzy match. The
@@ -677,6 +717,13 @@ ends the walk with that rung's own result. Ebook lanes record no ladder.
 An audiobook ladder (#1255) also applies two query-only families to its
 normalized rung, `leading_sequence_token` and `right_hand_segment`, after
 `order_inverted_series_prefix`; ebook ladders never do.
+Audible's asserted audiobook lane adds one last rung,
+`leading_number_stripped` (#1307): a title that begins with one to three digits
+and a space, with no separator, such as `12 Example Title`, is also asked
+without the number when the rest contains a letter. The rung is query-only, so
+a product it finds admits only through exact admission against the asserted
+title or through the corroborated rule. It counts against the same per-lane
+dispatch bound, and no other lane or authority asks it.
 
 An audiobook's audio section records `discovery_titles`: at most two, the
 folder leaf (`path_leaf`) before a single-file item's title tag

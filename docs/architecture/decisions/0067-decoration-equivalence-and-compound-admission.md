@@ -237,6 +237,103 @@ dispatch canonicality, lineage round trip and forged-lineage rejection,
 report replay with and without band claims, v57 persistence and v56
 rejection, and integration through the real Audible and Audnexus adapters.
 
+### Corroborated admission and the band-first set rule (#1307)
+
+The owner approved on 2026-10-21 and 2026-10-22 admitting band-agreeing
+audiobook products that exact title admission refuses, through one
+corroborated rule rather than a production per refusal shape, together with
+the band-first set rule deferred above. A clean rebuild under ADR-0013 was
+accepted.
+
+**Where it applies.** Only Audible's asserted WORK lane on an audiobook plan,
+and only after the whole ladder admitted nothing: set admission first runs
+exactly as before, then with the #1260 band productions, and only a page every
+path refused reaches the rule. The carried lane (#1316, ADR-0088) may verify a
+refused product through the same rule. The alternative-title lane, every other
+fed ASIN lane, the overflow witness, ebooks and every other authority keep
+their rules unchanged.
+
+**The rule.** One product admits when all of these hold:
+
+- its runtime is inside ADR-0064's tight band of the item's single local
+  runtime, read as a whole-minute floor;
+- its title is related to the lane title: after accents, case, articles,
+  apostrophes and punctuation fold, the titles are equal, the product's title
+  and subtitle joined equal the lane title, one contains the other as a
+  contiguous run of words, the product's main title before a colon is
+  contained in the lane title, or the two share at least half of their
+  combined words;
+- its narrator agrees with the target's or the recording's narrators, or its
+  series position equals the target's for the same series;
+- nothing contradicts it: no disjoint narrator cast, no disjoint author list,
+  no different position in the same series, no recording language or format
+  conflict, and no work-identity veto (an abridger, adapter or translator
+  credit, or a variant marker in the title).
+
+A language contradiction needs a language the local file states, as
+`recording_variant_conflict` reads it everywhere; most audiobook files state
+none. A product in another language then fails the rule only by lacking a
+narrator or series agreement, or by its runtime.
+
+When several products qualify, every pair must share a narrator, or none
+admits; otherwise the closest runtime, then the lowest identity, is chosen.
+The title guard is mandatory. Without it every rule tried admitted
+same-author, same-narrator neighbours in the same series.
+
+**Lineage.** The production is `band_corroborated_title_relation`: one local
+title application of the new `corroborated_title_relation` family, a table row
+that is neither query- nor admission-enabled and is audiobook-only. The
+dispatch lineage is the rung the page was asked on, which must be a rung of
+the lane's own ladder. Replay recomputes the rule from the report's own
+claims, and a forged narrator or series claim fails it.
+
+**Band-first set rule.** When at least two products admit one by one, exactly
+one of them is inside the tight band and every other one is outside the loose
+band, the tight one is kept, unless it has a recording-variant conflict or its
+narrators contradict the target's. It then replays alone through the path
+that admitted it, so its lineage is that path's.
+
+**Per-shape productions: not added.** Title and subtitle join, subtitle
+stripping with series corroboration, article fold, right-hand segment and the
+band-gated rung title are each a case of the rule. A separate production for
+any of them would admit nothing the rule refuses, and would need its own
+evidence. The `leading_number_stripped` query rung (#1307) is query-only:
+what it finds admits by exact admission or by the rule.
+
+**Evidence.** An offline replay over the #1294 snapshot and the retained probe
+bodies, driving the real Audible adapter, compared with the #1316 tree:
+
+- Probe items: 42. Rescued: 14, 8 through the rule on the leading-number rung,
+  2 through the rule on the normalized rung, and 4 through the floor reading
+  on the exact path. Every admitted product is inside the band (largest floor
+  distance 69 seconds) and none has a narrator disagreement; 2 of the 15 have
+  no known narrator and agree on series position. The one earlier admission
+  is unchanged.
+- Stored reports: all 125 admitted audiobook identities, 83 of them with a
+  recording ASIN, are unchanged. The floor reading adds 6, all inside the band
+  (37 to 77 seconds) with no narrator disagreement.
+- Cross-item control: 57,570 product and item pairs, 3,043 of them
+  same-author. 18 admit, every one the same book: 17 a product the item's own
+  pool also holds, and 1 a series-position title naming the product's book.
+  Different-work admissions: 0.
+- Holdout control: with the chosen product removed, 0 of 203 items admit
+  another product.
+- Different-recording control: on the 4 items where Hardcover matched the file
+  and Audible's candidate is another recording, nothing admits.
+- The band-first rule found no positive in this replay; its tests are
+  synthetic.
+
+**Persistence.** The report advances to `metadata-report-v61`, which retains
+refused products, and the proposal policy to `fixed-conservative-v38`.
+**Clean rebuild required** under ADR-0013.
+
+**Validation.** Unit matrices for the rule's admit and refuse cases, title
+relation, narrator set agreement, language conflict, band-first, set
+admission and lineage canonicality; and the real Audible adapter end to end,
+covering the post-walk retry, the leading-number rung, the dispatch bound,
+forged-narrator replay refusal, retained refused products and carried-lane
+verification.
+
 ## Consequences
 
 ### Positive

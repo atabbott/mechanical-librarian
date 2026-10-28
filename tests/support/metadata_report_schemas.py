@@ -241,15 +241,18 @@ def retained_report_as_current(document: str) -> MetadataReport:
     here, so no relabelled copy can authorise a restore it was never read for.
     v60 added the `prior_admission` field-result source: an earlier producer
     carried no admission, so it reads `absent` for an ASIN and `unsupported`
-    for every other field, as `derive_field_results` states it.
+    for every other field, as `derive_field_results` states it. v61 added each
+    provider's `refused_products`: empty here, since an earlier producer cut
+    every refused product to its identifier and kept nothing else of it.
     Nothing is migrated: the copy is never written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v60"
+    data["schema_version"] = "metadata-report-v61"
     for provider in data["providers"]:
+        provider["refused_products"] = []
         for lane in provider["lanes"]:
             lane["exhausted_dispatch"] = []
             lane["recording_lookup_hints"] = []
@@ -353,7 +356,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v60'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v61'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -372,10 +375,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v60'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v61'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v60'", f"= '{version}'"
+            "= 'metadata-report-v61'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

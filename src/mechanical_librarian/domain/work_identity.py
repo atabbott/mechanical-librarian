@@ -21,6 +21,9 @@ class WorkDispatchRung(StrEnum):
     NORMALIZED = "normalized"
     SUBTITLE_STRIPPED = "subtitle_stripped"
     PUNCTUATION_FOLDED = "punctuation_folded"
+    # An audiobook's bare "NN Title" with the number stripped, as the asserted
+    # lane's last rung (#1307).
+    LEADING_NUMBER_STRIPPED = "leading_number_stripped"
 
 
 class WorkTitleTransformationFamily(StrEnum):
@@ -42,6 +45,8 @@ class WorkTitleTransformationFamily(StrEnum):
     PUNCTUATION_AMPERSAND_FOLD = "punctuation_ampersand_fold"
     LATIN_COMBINING_MARKS = "latin_combining_marks"
     INITIALS_FOLD = "initials_fold"
+    LEADING_NUMBER = "leading_number"
+    CORROBORATED_TITLE_RELATION = "corroborated_title_relation"
 
 
 class WorkTitleTransformationSide(StrEnum):
@@ -267,6 +272,25 @@ WORK_TITLE_TRANSFORMATION_RULES = (
         WorkDispatchRung.NORMALIZED,
         audiobook_only=True,
     ),
+    # A bare leading number with no separator ("12 Title"), stripped only on
+    # its own last rung of an audiobook's asserted ladder (#1307).
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.LEADING_NUMBER,
+        True,
+        False,
+        WorkDispatchRung.LEADING_NUMBER_STRIPPED,
+        audiobook_only=True,
+    ),
+    # A title relation that shapes no query and admits only through the
+    # `band_corroborated_title_relation` production: a tight product whose
+    # title is related and whose narrator or series number agrees (#1307).
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION,
+        False,
+        False,
+        WorkDispatchRung.NORMALIZED,
+        audiobook_only=True,
+    ),
 )
 
 
@@ -438,8 +462,13 @@ WORK_TITLE_COMPOUND_PRODUCTIONS = (
         for family in (
             *_BAND_TITLE_FAMILIES,
             WorkTitleTransformationFamily.INITIALS_FOLD,
+            WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION,
         )
     ),
+)
+# The production the corroborated admission rule records (ADR-0067, #1307).
+CORROBORATED_TITLE_PRODUCTION = (
+    f"band_{WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION.value}"
 )
 _ADMITTED_PRODUCTIONS_BY_FAMILIES = {
     production.families: production
@@ -460,6 +489,14 @@ def _application_ordinal(
             WorkTitleTransformationFamily.FILENAME_UNDERSCORES: 1,
         }.get(value.family, _RULE_ORDINAL[value.family] + 2),
     )
+
+
+CORROBORATED_TITLE_APPLICATION = WorkTitleTransformationApplication(
+    WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION,
+    WorkTitleTransformationSide.LOCAL,
+    WorkTitleTransformationField.TITLE,
+    None,
+)
 
 
 def _lineage_production(
@@ -516,6 +553,8 @@ def _lineage_production(
         for value in applications
     ):
         return "band_initials_fold"
+    if applications == (CORROBORATED_TITLE_APPLICATION,):
+        return CORROBORATED_TITLE_PRODUCTION
     return None
 
 
@@ -577,6 +616,10 @@ _LEADING_SEQUENCE = re.compile(
     r"(?:[-–—:.)] | [-–—] )(?P<rest>.+)",
     re.IGNORECASE,
 )
+# A bare leading number with no separator: "12 Title" (#1307).  At most three
+# digits, so a year-shaped title never matches, and only a space follows it,
+# so every form `_LEADING_SEQUENCE` reads is left to that family.
+_LEADING_NUMBER = re.compile(r"[0-9]{1,3} (?P<rest>[^\W\d_].*)")
 # A position the shared series grammar above does not spell: "Saga #3", "No. 4".
 _POSITION_NUMBER = re.compile(
     r"(?:^|[\t\n\r\f\v ])(?:#|no\.?[\t\n\r\f\v ]*#?)[\t\n\r\f\v ]*"
@@ -634,11 +677,18 @@ _ADMISSION_TYPOGRAPHIC_TRANSLATION = str.maketrans({"\u00a0": " ", "–": "-", "
 
 
 def work_query_ladder(
-    title: str, authors: tuple[str, ...], *, audiobook: bool = False
+    title: str,
+    authors: tuple[str, ...],
+    *,
+    audiobook: bool = False,
+    leading_number: bool = False,
 ) -> tuple[WorkQuery, ...]:
     """Return at most three distinct, deterministic WORK dispatches.
 
     `audiobook` admits the audiobook-only rows; an ebook ladder never reads them.
+    `leading_number` appends one fourth rung, the normalized title with a bare
+    leading number stripped (#1307); only an audiobook plan's asserted lane at
+    Audible asks for it, so every other ladder is the ladder it was before.
     """
     if (
         type(title) is not str
@@ -646,6 +696,9 @@ def work_query_ladder(
         or not authors
         or any(type(value) is not str for value in authors)
         or type(audiobook) is not bool
+        or type(leading_number) is not bool
+        or leading_number
+        and not audiobook
     ):
         raise ValueError("work query input is invalid")
     shaped_title = _normalized_query_text(title)
@@ -729,6 +782,19 @@ def work_query_ladder(
                 folded_applied,
             )
         )
+    if leading_number:
+        stripped = apply_work_title_transformation(
+            WorkTitleTransformationFamily.LEADING_NUMBER, shaped_title, shaped_authors
+        )
+        if stripped != shaped_title and all(shaped_authors):
+            candidates.append(
+                WorkQuery(
+                    stripped,
+                    shaped_authors,
+                    WorkDispatchRung.LEADING_NUMBER_STRIPPED,
+                    (*applied, WorkTitleTransformationFamily.LEADING_NUMBER),
+                )
+            )
     distinct: list[WorkQuery] = []
     seen: set[tuple[str, tuple[str, ...]]] = set()
     for value in candidates:
@@ -752,6 +818,14 @@ def _dispatch_transformations_are_canonical(
         return all(
             _RULES_BY_FAMILY[family].rung is WorkDispatchRung.NORMALIZED
             for family in transformations
+        )
+    if rung is WorkDispatchRung.LEADING_NUMBER_STRIPPED:
+        return bool(transformations) and (
+            transformations[-1] is WorkTitleTransformationFamily.LEADING_NUMBER
+            and all(
+                _RULES_BY_FAMILY[family].rung is WorkDispatchRung.NORMALIZED
+                for family in transformations[:-1]
+            )
         )
     if rung is WorkDispatchRung.SUBTITLE_STRIPPED:
         return bool(transformations) and (
@@ -1061,11 +1135,73 @@ def replay_provider_work_identity_admission(
             )
     if not admission.admitted or dispatch_lineage is None:
         return WorkIdentityAdmission(False)
-    queries = work_query_ladder(local_title, local_authors, audiobook=audiobook)
+    queries = work_query_ladder(
+        local_title, local_authors, audiobook=audiobook, leading_number=audiobook
+    )
     permitted = {WorkDispatchLineage.from_query(query) for query in queries} | {
         WorkDispatchLineage.from_query(narrowing_work_query(query)) for query in queries
     }
     return admission if dispatch_lineage in permitted else WorkIdentityAdmission(False)
+
+
+_RELATION_ARTICLES = frozenset({"the", "a", "an"})
+# The token overlap at or above which two titles are related (#1307).
+TITLE_RELATION_OVERLAP = 0.5
+
+
+def _relation_tokens(value: str) -> tuple[str, ...]:
+    decomposed = unicodedata.normalize("NFKD", value)
+    folded = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    ).casefold()
+    folded = re.sub(r"['‘’`]", "", folded.replace("&", " and "))
+    folded = re.sub(r"[^\w\s]|_", " ", folded)
+    return tuple(token for token in folded.split() if token not in _RELATION_ARTICLES)
+
+
+def _contains_tokens(outer: tuple[str, ...], inner: tuple[str, ...]) -> bool:
+    return bool(inner) and any(
+        outer[index : index + len(inner)] == inner
+        for index in range(len(outer) - len(inner) + 1)
+    )
+
+
+def work_title_related(
+    local_title: str, provider_title: str, provider_subtitle: str | None = None
+) -> bool:
+    """Whether a provider title is related to the local one (#1307).
+
+    The mandatory title guard of the corroborated admission rule. Both sides
+    fold to word tokens without marks, case, apostrophes, punctuation or a
+    leading article. They are related when the tokens are equal, when the local
+    title is the provider title joined to its subtitle, when either side's
+    tokens run whole inside the other's (the provider side with its subtitle
+    joined, or its title before a colon), or when the local tokens and the
+    joined provider tokens overlap by at least one half. Relation alone admits
+    nothing: it only keeps a different work out of the rule.
+    """
+    if (
+        type(local_title) is not str
+        or type(provider_title) is not str
+        or provider_subtitle is not None
+        and type(provider_subtitle) is not str
+    ):
+        raise ValueError("work title relation input is invalid")
+    local = _relation_tokens(local_title)
+    title = _relation_tokens(provider_title)
+    joined = _relation_tokens(f"{provider_title} {provider_subtitle or ''}")
+    main = _relation_tokens(provider_title.split(":", 1)[0])
+    if not local or not title:
+        return False
+    if (
+        local in {title, joined}
+        or _contains_tokens(joined, local)
+        or _contains_tokens(local, title)
+        or _contains_tokens(local, main)
+    ):
+        return True
+    left, right = set(local), set(joined)
+    return len(left & right) >= TITLE_RELATION_OVERLAP * len(left | right)
 
 
 def work_title_has_variant_marker(value: str) -> bool:
@@ -1170,6 +1306,12 @@ def apply_work_title_transformation(
     if family is WorkTitleTransformationFamily.ORDER_INVERTED_SERIES_PREFIX:
         match = _INVERTED_SERIES.fullmatch(title)
         return _clean(match.group("title")) if match is not None else title
+    if family is WorkTitleTransformationFamily.LEADING_NUMBER:
+        match = _LEADING_NUMBER.fullmatch(title)
+        rest = "" if match is None else _clean(match.group("rest"))
+        return rest if _has_letter(rest) else title
+    if family is WorkTitleTransformationFamily.CORROBORATED_TITLE_RELATION:
+        return title
     if family is WorkTitleTransformationFamily.LEADING_SEQUENCE_TOKEN:
         match = _LEADING_SEQUENCE.fullmatch(title)
         rest = "" if match is None else _clean(match.group("rest"))
@@ -1596,6 +1738,8 @@ def _balanced_typographic_preserving_case(
     translation = (
         _ADMISSION_TYPOGRAPHIC_TRANSLATION if admission else _TYPOGRAPHIC_TRANSLATION
     )
+    if admission:
+        value = fold_lone_apostrophes(value)
     for character in value:
         paired = pairs.get(character)
         if paired is None:
@@ -1608,6 +1752,20 @@ def _balanced_typographic_preserving_case(
             return None
         result.append(mark)
     return None if stack else "".join(result)
+
+
+# A typographic apostrophe with a letter on each side: "Journey’s" (#1307).
+_LONE_APOSTROPHE = re.compile(r"(?<=[^\W\d_])\u2019(?=[^\W\d_])")
+
+
+def fold_lone_apostrophes(value: str) -> str:
+    """Fold each right single quotation mark between two letters to U+0027.
+
+    ADR-0018 step 4 as amended by #1307: between letters the mark is an
+    apostrophe, never a closing quotation mark, so it needs no partner. A mark
+    anywhere else still pairs, and a lone or reversed one still disagrees.
+    """
+    return _LONE_APOSTROPHE.sub("'", value)
 
 
 def _identity_tokens(value: str) -> tuple[str, ...]:
@@ -1851,6 +2009,8 @@ def _year(value: str) -> bool:
 
 __all__ = [
     "BAND_TITLE_PRODUCTIONS",
+    "CORROBORATED_TITLE_APPLICATION",
+    "CORROBORATED_TITLE_PRODUCTION",
     "WORK_TITLE_COMPOUND_PRODUCTIONS",
     "WORK_TITLE_TRANSFORMATION_RULES",
     "WorkDispatchLineage",
@@ -1870,12 +2030,14 @@ __all__ = [
     "closed_creator_display_possibility",
     "direct_work_title_election_matches",
     "discovery_title_candidate",
+    "fold_lone_apostrophes",
     "narrowing_work_query",
     "replay_provider_work_identity_admission",
     "series_label_segment",
     "work_dispatch_lineage_from_data",
     "work_query_ladder",
     "work_title_has_variant_marker",
+    "work_title_related",
     "work_title_election_matches",
     "work_title_transformation_lineage_from_data",
 ]

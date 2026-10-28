@@ -44,6 +44,7 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_narrator_disjoint,
     candidate_recording_runtime_veto,
     carried_asin_claim,
+    corroborated_recording_candidate,
     recording_lookup_hints,
     runtime_corroborated_candidate,
     runtime_short_of_stated,
@@ -72,6 +73,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIO_DISCOVERY_TITLE_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    CORROBORATED_RULE_AUTHORITY,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
     MAX_RECORDING_LOOKUP_HINTS,
@@ -98,6 +100,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderRequestAccounting,
     ProviderStatus,
     PublicationDateRelation,
+    RecordingCorroboration,
     RecordingLookupHint,
     ReportValueError,
     TargetDestination,
@@ -120,6 +123,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_set_work_identity_admission,
     provider_candidate_work_identity_contradiction,
     provider_lane_candidate_reference,
+    recording_corroboration,
     recording_variant_conflict,
     starvation_backed,
     surviving_discovery_titles,
@@ -281,10 +285,19 @@ class MetadataLookup:
     # Set only on an audiobook's alternative WORK lane, whose title is a
     # discovery title rather than the target's own (#1255).
     title_basis: str | None = None
+    # The target's narrators and series an audiobook plan carries for the
+    # corroborated admission rule (#1307); `None` on every other plan.
+    recording_corroboration: RecordingCorroboration | None = None
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
         if (
+            self.recording_corroboration is not None
+            and (
+                type(self.recording_corroboration) is not RecordingCorroboration
+                or self.audio is None
+            )
+        ) or (
             type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -405,8 +418,17 @@ class MetadataDiscoveryLane:
 def _metadata_discovery_query_count(
     lanes: tuple[MetadataDiscoveryLane, ...], *, audiobook: bool = False
 ) -> int:
+    # An audiobook's asserted lane is counted with its leading-number rung
+    # (#1307), which only the catalogue walks, so the bound holds for it.
     return sum(
-        len(work_query_ladder(lane.title, lane.authors, audiobook=audiobook))
+        len(
+            work_query_ladder(
+                lane.title,
+                lane.authors,
+                audiobook=audiobook,
+                leading_number=audiobook and lane.title_basis is None,
+            )
+        )
         if lane.kind is ProviderQueryKind.WORK and lane.title is not None
         else 1
         for lane in lanes
@@ -422,10 +444,17 @@ class MetadataDiscoveryPlan:
     audio: AudioFacts | None = None
     work_title: str | None = None
     work_authors: tuple[str, ...] = ()
+    recording_corroboration: RecordingCorroboration | None = None
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
         if (
+            self.recording_corroboration is not None
+            and (
+                type(self.recording_corroboration) is not RecordingCorroboration
+                or self.audio is None
+            )
+        ) or (
             type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
@@ -488,8 +517,25 @@ class ProviderLaneResult:
     recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
     # Set only by a retry successor carrying a lane's persisted record over.
     dispatch: ProviderLaneDispatch | None = None
+    # What an ASIN lane refused, with its claims (#1307).
+    refused_products: tuple[ProviderCandidate, ...] = ()
 
     def __post_init__(self) -> None:
+        if (
+            type(self.refused_products) is not tuple
+            or len(self.refused_products) > MAX_CANDIDATES
+            or any(
+                type(value) is not ProviderCandidate for value in self.refused_products
+            )
+            or self.refused_products
+            and (
+                self.lane.kind is not ProviderQueryKind.ASIN
+                or not {value.identity for value in self.refused_products}.issubset(
+                    {value.identity for value in self.candidates}
+                )
+            )
+        ):
+            raise MetadataReportError("provider lane result is invalid")
         if (
             type(self.lane) is not MetadataDiscoveryLane
             or type(self.status) is not ProviderStatus
@@ -859,6 +905,9 @@ def audiobook_discovery_plan(
         audio=audio,
         work_title=context.title,
         work_authors=context.authors,
+        recording_corroboration=(
+            None if audio is None else recording_corroboration(target.fields)
+        ),
     )
 
 
@@ -1100,6 +1149,7 @@ def audiobook_asin_feed_plan(
         audio=plan.audio,
         work_title=plan.work_title,
         work_authors=plan.work_authors,
+        recording_corroboration=plan.recording_corroboration,
     )
 
 
@@ -1371,6 +1421,44 @@ def provider_observation(
             for result in results
             for candidate in result.recording_lookup_candidates
         ),
+        refused_products=_aggregate_refused_products(results, candidates),
+    )
+
+
+def _aggregate_refused_products(
+    results: tuple[ProviderLaneResult, ...],
+    candidates: tuple[ProviderCandidate, ...],
+) -> tuple[ProviderCandidate, ...]:
+    """Keep each refused product whose identity the observation still stubs.
+
+    Another lane may have admitted the same product, whose fuller claims then
+    replace the stub; a refused product is a record of a stub only (#1307).
+    Two lanes that refused one product with different claims keep neither.
+    """
+    stubs = {
+        candidate.identity: candidate
+        for candidate in candidates
+        if not candidate.evidence
+        and candidate.claims
+        and all(claim.kind is ClaimKind.ASIN for claim in candidate.claims)
+    }
+    refused: dict[str, ProviderCandidate | None] = {}
+    for result in results:
+        for product in result.refused_products:
+            stub = stubs.get(product.identity)
+            if (
+                stub is None
+                or stub.work_identity != product.work_identity
+                or tuple(c.reference for c in stub.claims)
+                != tuple(
+                    c.reference for c in product.claims if c.kind is ClaimKind.ASIN
+                )
+            ):
+                continue
+            previous = refused.get(product.identity, product)
+            refused[product.identity] = product if previous == product else None
+    return tuple(
+        product for _identity, product in sorted(refused.items()) if product is not None
     )
 
 
@@ -1847,7 +1935,7 @@ def metadata_lookup(
 
 def _identifier_lane_candidates(
     observation: ProviderObservation, lookup: MetadataLookup
-) -> tuple[ProviderCandidate, ...]:
+) -> tuple[tuple[ProviderCandidate, ...], tuple[ProviderCandidate, ...]]:
     """Corroboration-gate an ASIN lane the item's own surfaces did not name.
 
     A lane built from an embedded, sidecar, or path ASIN *is* this recording's
@@ -1858,13 +1946,17 @@ def _identifier_lane_candidates(
     identity. So the same runtime band that widens a search candidate decides
     here too, and every candidate it does not admit is demoted to exactly the
     work shape an uncorroborated search candidate gets.
+
+    The second value is each product cut to its identifier, with every claim
+    it stated and no evidence (#1307): a record of what was refused, which
+    nothing reads as an admission.
     """
     if (
         lookup.kind is not ProviderQueryKind.ASIN
         or observation.status is not ProviderStatus.CANDIDATES
         or observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
     ):
-        return observation.candidates
+        return observation.candidates, ()
     independent = (
         lookup.requested_asin in _local_identifier_asins(lookup.local_claims)
         if lookup.requested_asin is not None
@@ -1885,7 +1977,7 @@ def _identifier_lane_candidates(
                 recording_hints=True,
             )
             for candidate in observation.candidates
-        )
+        ), ()
     # A carried admission is looked up again only to be re-verified, so a
     # product whose narrators the recording's own credits never name is a
     # different recording of the work and is refused here (#1316, ADR-0088).
@@ -1932,6 +2024,31 @@ def _identifier_lane_candidates(
         if carried_lane
         else set()
     )
+    # An edition the corroborated rule admitted (#1307) is re-verified by the
+    # same rule, read one product at a time, so a lookup of it answers as the
+    # search did; such a product, too, is kept only as the corroborated
+    # recording.
+    corroborated_admitted = (
+        {
+            c.identity
+            for c in observation.candidates
+            if c.identity not in work_admitted
+            and c.identity not in alternative_admitted
+            and lookup.work_title is not None
+            and lookup.work_authors
+            and corroborated_recording_candidate(
+                (c,),
+                lookup.work_title,
+                lookup.work_authors,
+                lookup.local_claims,
+                lookup.recording_corroboration,
+            )
+            is not None
+        }
+        if carried_lane and lookup.recording_corroboration is not None
+        else set()
+    )
+    alternative_admitted |= corroborated_admitted
     runtime_candidates = tuple(
         c
         for c in observation.candidates
@@ -1952,6 +2069,7 @@ def _identifier_lane_candidates(
     # narrator gate refused is another recording, so it is shaped the same
     # way: its runtime and cast would otherwise admit and describe this one.
     shaped: list[ProviderCandidate] = []
+    refused: list[ProviderCandidate] = []
     for candidate in observation.candidates:
         chapter = candidate.identity not in narrator_refused and (
             _chapter_candidate_support(
@@ -1970,15 +2088,23 @@ def _identifier_lane_candidates(
         if candidate.identity in narrator_refused or (
             candidate.identity not in work_admitted and not chapter and not alternative
         ):
-            shaped.append(
-                replace(
-                    candidate,
-                    claims=tuple(
-                        c for c in candidate.claims if c.kind is ClaimKind.ASIN
-                    ),
-                    evidence=(),
-                )
+            stub = replace(
+                candidate,
+                claims=tuple(c for c in candidate.claims if c.kind is ClaimKind.ASIN),
+                evidence=(),
+                identity_bindings=(),
+                runtime_short_of_local=False,
             )
+            shaped.append(stub)
+            if stub.claims and len(stub.claims) < len(candidate.claims):
+                refused.append(
+                    replace(
+                        candidate,
+                        evidence=(),
+                        identity_bindings=(),
+                        runtime_short_of_local=False,
+                    )
+                )
             continue
         shaped.append(
             _shaped_with_runtime_comparison(
@@ -1988,7 +2114,7 @@ def _identifier_lane_candidates(
                 recording_hints=True,
             )
         )
-    return tuple(shaped)
+    return tuple(shaped), tuple(sorted(refused, key=lambda value: value.identity))
 
 
 def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:
@@ -2005,8 +2131,18 @@ def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:
 
 
 def qualify_provider_observation(
-    observation: ProviderObservation, lookup: MetadataLookup
+    observation: ProviderObservation,
+    lookup: MetadataLookup,
+    *,
+    corroborate: bool = False,
 ) -> ProviderObservation:
+    """Qualify one provider answer against the lookup that asked it.
+
+    `corroborate` adds the band-first set rule and the corroborated
+    admission rule (#1307) to a WORK answer's set admission. Only the
+    catalogue's ladder walk sets it, and only once its exact walk admitted
+    nothing, on its asserted lane.
+    """
     if (
         lookup.requested_asin is not None
         and observation.status is ProviderStatus.CANDIDATES
@@ -2027,11 +2163,12 @@ def qualify_provider_observation(
             input_references=(),
         )
     if lookup.kind is not ProviderQueryKind.WORK:
+        shaped, refused = _identifier_lane_candidates(observation, lookup)
         return ProviderObservation(
             observation.provider,
             observation.status,
             observation.input_references,
-            _identifier_lane_candidates(observation, lookup),
+            shaped,
             lookup.kind,
             observation.authority,
             accessed_at=observation.accessed_at,
@@ -2039,6 +2176,7 @@ def qualify_provider_observation(
             request_accounting=observation.request_accounting,
             # ISBN lanes cannot establish the exact work title and author set.
             edition_enrichment_overflow=None,
+            refused_products=refused,
         )
     if observation.edition_enrichment_overflow is not None:
         witness = observation.edition_enrichment_overflow
@@ -2086,17 +2224,23 @@ def qualify_provider_observation(
     # Band claims reach only the asserted lane of an audiobook plan at an
     # audiobook authority (#1260): the alternative lane (#1255), ebooks and
     # every other authority keep the closed comparison alone.
+    asserted_band = (
+        lookup.audio is not None
+        and lookup.title_basis is None
+        and observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+    )
     set_admission = provider_candidate_set_work_identity_admission(
         observation.candidates,
         lookup.title or "",
         lookup.authors,
         observation.dispatch_lineage,
         audiobook=lookup.audio is not None,
-        band_claims=(
-            lookup.local_claims
-            if lookup.audio is not None
-            and lookup.title_basis is None
-            and observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        band_claims=lookup.local_claims if asserted_band else None,
+        corroboration=(
+            lookup.recording_corroboration
+            if corroborate
+            and asserted_band
+            and observation.authority == CORROBORATED_RULE_AUTHORITY
             else None
         ),
     )
@@ -2226,6 +2370,8 @@ class QualifiedLaneObservation:
 def observe_work_ladder(
     lookup: MetadataLookup,
     observe_rung: Callable[[WorkQuery], ProviderObservation],
+    *,
+    corroborate: bool = False,
 ) -> QualifiedLaneObservation:
     """Walk one WORK lane's query ladder, qualifying each rung as it returns.
 
@@ -2248,15 +2394,33 @@ def observe_work_ladder(
 
     Every result counts the rungs the walk attempted, the last one included
     however it ended (#1258).
+
+    `corroborate` is the catalogue's asserted audiobook lane (#1307). Its
+    ladder ends with the leading-number rung, and when every rung was empty
+    or refused, each refused rung's page is qualified again, in ladder order,
+    with the band-first set rule and the corroborated admission rule. The
+    first rung either admits ends the lane as if the walk had stopped there:
+    its rungs count to that rung, and only hints from rungs up to it are kept.
+    An exact admission anywhere on the ladder therefore always comes first.
     """
+    corroborate = (
+        corroborate
+        and lookup.audio is not None
+        and lookup.title_basis is None
+        and lookup.recording_corroboration is not None
+    )
     exhausted: list[WorkDispatchLineage] = []
     empty_rungs = 0
     refused_products = 0
     hints: tuple[ProviderCandidate, ...] = ()
     tight: list[RecordingLookupHint] = []
+    refused_pages: list[tuple[int, ProviderObservation]] = []
     observation: ProviderObservation | None = None
     for query in work_query_ladder(
-        lookup.title or "", lookup.authors, audiobook=lookup.audio is not None
+        lookup.title or "",
+        lookup.authors,
+        audiobook=lookup.audio is not None,
+        leading_number=corroborate,
     ):
         physical = observe_rung(query)
         observation = qualify_provider_observation(physical, lookup)
@@ -2284,6 +2448,7 @@ def observe_work_ladder(
         ):
             refused_products += len(physical.candidates)
             hints = hints or observation.recording_lookup_candidates
+            refused_pages.append((len(exhausted), physical))
         elif observation.status is ProviderStatus.CANDIDATES:
             return QualifiedLaneObservation(
                 observation,
@@ -2297,6 +2462,17 @@ def observe_work_ladder(
         raise MetadataReportError("work query ladder is empty")
     if lookup.audio is None:
         return QualifiedLaneObservation(observation, rungs=len(exhausted))
+    for index, physical in refused_pages if corroborate else ():
+        admitted = qualify_provider_observation(physical, lookup, corroborate=True)
+        if admitted.status is ProviderStatus.CANDIDATES:
+            return QualifiedLaneObservation(
+                admitted,
+                recording_lookup_hints=_bounded_lookup_hints(
+                    [hint for hint in tight if exhausted.index(hint.rung) <= index],
+                    admitted,
+                ),
+                rungs=index + 1,
+            )
     observation = replace(observation, recording_lookup_candidates=hints)
     return QualifiedLaneObservation(
         observation,

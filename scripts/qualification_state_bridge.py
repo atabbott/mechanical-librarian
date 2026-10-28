@@ -361,6 +361,7 @@ def _provider_requires_work_lineage(provider: dict[str, object]) -> bool:
 
 def _augment_provider(provider: dict[str, object]) -> None:
     provider["recording_lookup_candidates"] = []
+    provider["refused_products"] = []
     provider["dispatch_lineage"] = None
     provider["transformation_lineage"] = None
     for value in _list(provider["lanes"]):

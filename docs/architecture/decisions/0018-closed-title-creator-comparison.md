@@ -27,7 +27,8 @@ truthful deterministic method on every agreement link:
    and non-creator values;
 3. Unicode NFC, case folding, and ASCII-whitespace normalization;
 4. the same form after mapping non-breaking spaces, paired curly quotation
-   marks, and en/em dashes; or
+   marks, a lone right single quotation mark between two letters (#1307), and
+   en/em dashes; or
 5. conservative `Family, Given` inversion for exactly one author-role value.
 
 NFC does not strip or transliterate diacritics. Comma inversion requires exactly
@@ -131,6 +132,26 @@ so "J.R.R." and "J. R. R." compare equal and "JRR" does not. It admits only
 through ADR-0067's `band_initials_fold` production, inside the tight runtime
 band, with titles closed-equal and authors ordered. The admission subset stays
 empty at row level.
+
+The #1307 amendment widens step 4 by one mapping, approved by the owner on
+2026-10-21: a lone U+2019 right single quotation mark with a letter on each
+side becomes U+0027, so "Journey’s" and "Journey's" agree. It is the
+apostrophe of a contraction or possessive, not a quotation. A U+2019 beside a
+digit, a space or punctuation, a lone U+2018, and a reversed pair stay
+disagreements, as before. Stored text, fingerprints and effect preconditions
+are unchanged; the mapping applies to comparison, to work-identity admission
+and to the closed equality that removes duplicate discovery titles.
+
+The same amendment appends two audiobook-only rows after `initials_fold`.
+`leading_number` is query-enabled and admission-disabled: on Audible's asserted
+lane only, it strips one to three leading digits and a space from a title with
+no separator when the rest names a letter, as the last rung
+`leading_number_stripped`. `corroborated_title_relation` is neither query- nor
+admission-enabled and admits only through ADR-0067's
+`band_corroborated_title_relation` production. Its word-overlap title relation
+is that production's guard, with runtime and narrator or series corroboration;
+it grants no ordinary title agreement, so the closed comparison above still
+has no fuzzy matching, token subsets or accent stripping.
 
 ## Consequences
 

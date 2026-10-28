@@ -376,6 +376,7 @@ class AudibleCatalogMetadataProvider:
                         observation.candidates,
                         observation.accessed_at,
                         recording_lookup_candidates=observation.recording_lookup_candidates,
+                        refused_products=observation.refused_products,
                         diagnostics=qualified.diagnostics,
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
@@ -512,6 +513,7 @@ class AudibleCatalogMetadataProvider:
         return observe_work_ladder(
             lookup,
             lambda query: self._observe_work_query(lookup, query, deadline=deadline),
+            corroborate=True,
         )
 
     def _observe_work_query(
@@ -813,6 +815,7 @@ def _lane_lookup(
         audio=plan.audio,
         work_title=plan.work_title,
         work_authors=plan.work_authors,
+        recording_corroboration=plan.recording_corroboration,
         requested_asin=lane.canonical_asin,
         title_basis=lane.title_basis,
     )

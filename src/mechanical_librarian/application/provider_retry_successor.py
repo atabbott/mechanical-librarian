@@ -767,6 +767,16 @@ class GenerateProviderRetrySuccessor:
                 exhausted_dispatch=observation.exhausted_dispatch,
                 recording_lookup_hints=observation.recording_lookup_hints,
                 dispatch=observation.dispatch,
+                # What an ASIN lane refused stays with the stub it explains.
+                refused_products=tuple(
+                    product
+                    for product in evidence.refused_products
+                    if lane.kind is ProviderQueryKind.ASIN
+                    and any(
+                        item.edition_identity == product.identity
+                        for item in observation.candidates
+                    )
+                ),
             )
 
         # Merge over the observed lanes only: retrying an asserted lane that

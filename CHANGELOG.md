@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Clean rebuild required.** An audiobook whose Audible edition agrees on
+  runtime but whose title differs in shape (a joined subtitle, a bare leading
+  number, a series-position title) can now be matched when its narrator or
+  series number also agrees and nothing contradicts it. A bare "NN Title"
+  folder name is also searched without its number, a lone typographic
+  apostrophe between letters reads as a straight one, provider whole-minute
+  runtimes count as floors when compared with the 90 s band, and products a
+  lookup refused are kept with their details. The cold-start report's "no
+  comparable runtime" class is now "tight product refused by title" where that
+  is what happened (#1307).
+
 - Setup now lists iTunes with the book and ebook providers and suggests it only
   for libraries with ebooks. No audiobook is sent to iTunes, so it was never
   of use to an audiobook library (#1458).

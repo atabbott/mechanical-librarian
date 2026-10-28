@@ -102,12 +102,17 @@ Over the same audiobook reports, `audiobook_outcomes` splits each library's
 whose recording identity is admitted and `work_only` one whose book evidence
 alone opens a work-level case, both read from the product's own review scope
 rather than re-derived. Every other report is `evidence_only`, with a `total`
-and a count for each of four reasons. They are judged, in this order, by the
+and a count for each of five reasons. They are judged, in this order, by the
 set of best runtime bands its audiobook-authority lanes reach, as `band`
 reports them, ignoring lanes that retained nothing, so each report has exactly
 one: `no_retained_recording_candidate` when no such lane retained a candidate;
-`no_comparable_runtime` when every band is `unstated`, because the retained
-candidates state no runtime or the item has no composed local runtime;
+`tight_product_refused_by_title` when every band is `unstated` but a product
+the provider refused on an ASIN lane, retained under `refused_products`
+(#1307), states a runtime inside the tight band: the ASIN-only stub is what
+left the band unstated, and title admission is what refused the product;
+`no_comparable_runtime` for every other set where every band is `unstated`,
+because the retained candidates state no runtime or the item has no composed
+local runtime;
 `runtime_contradiction` when every band is `outside`; and
 `runtime_near_miss_only_or_mixed` for every other set, which is any set holding
 `loose`, or `outside` beside `unstated`. A retained `tight` candidate is
