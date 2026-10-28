@@ -3688,10 +3688,15 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
     is a drawer: the page behind it, but for the toolbar that toggles it, is
     inert and Tab wraps inside it, and crossing out of that range while it is
     open releases the page. Escape or Close shuts it at any width and hands
-    focus back to the toggle (#1288)."""
+    focus back to the toggle, or at 760px and below to the selected work it
+    reveals; whatever takes focus is in view (#1288)."""
     inert = """() => ['.masthead', '.library-works', '.workspace-detail']
       .filter(selector => document.querySelector(selector)?.closest('[inert]'))"""
     inside = """() => Boolean(document.activeElement?.closest('.attention-rail'))"""
+    in_view = """() => {
+      const bounds = document.activeElement.getBoundingClientRect();
+      return bounds.top >= -1 && bounds.bottom <= innerHeight + 1;
+    }"""
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
@@ -3703,20 +3708,29 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
         toggle = page.locator(".attention-toggle")
         for scheme in ("light", "dark"):
             page.emulate_media(color_scheme=scheme)
-            for width, drawer in (
-                (1440, False),
-                (1100, True),
-                (900, True),
-                (390, False),
+            for width, drawer, preview in (
+                (1440, False, False),
+                (1100, True, False),
+                (900, True, False),
+                (900, True, True),
+                (390, False, False),
+                (390, False, True),
+                (320, False, False),
             ):
-                where = f"{scheme} at {width}px"
+                where = f"{scheme} at {width}px{' over a work' if preview else ''}"
                 page.set_viewport_size({"width": width, "height": 900})
-                page.goto("https://react-platform.invalid/library?lens=all")
+                page.goto(
+                    "https://react-platform.invalid/library?lens=all"
+                    + ("&preview=case-1" if preview else "")
+                )
                 page.locator(".attention-toggle strong").filter(
                     has_text=re.compile(r"works?$")
                 ).wait_for()
+                if preview:
+                    page.locator(".selected-work-header").wait_for()
                 toggle.click()
                 expect(heading).to_be_focused()
+                assert page.evaluate(in_view), f"{where}: heading out of view"
                 assert page.evaluate(inert) == (
                     [".masthead", ".library-works", ".workspace-detail"]
                     if drawer
@@ -3744,7 +3758,12 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
                 else:
                     rail.get_by_role("button", name="Close", exact=True).click()
                 expect(rail).to_have_count(0)
-                expect(toggle).to_be_focused()
+                if preview and not drawer and width <= 760:
+                    expect(page.locator(".selected-work-header")).to_be_focused()
+                else:
+                    expect(toggle).to_be_focused()
+                # The close-reveal may still be scrolling; focus must end in view.
+                page.wait_for_function(in_view, timeout=2_000)
                 assert page.evaluate(inert) == [], where
                 assert page.locator("[inert]").count() == 0, where
 

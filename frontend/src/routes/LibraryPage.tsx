@@ -278,6 +278,8 @@ const preparationPassage = [
 // The compact layout, where the selected work replaces the list.
 const compactWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1024px)').matches
+const narrowWidth = () =>
+  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
 // A search under a lens counts that lens against its whole-library total; the
 // lens link names it visually and the status names it to screen readers (#1425).
@@ -2732,6 +2734,7 @@ export default function LibraryPage({
   const attentionRetry = useRef<HTMLButtonElement>(null)
   // Close and Escape hand focus back to the toggle that opened the rail.
   const returnToToggle = useRef(false)
+  const returnToWork = useRef(false)
   const revealWorkspace = useRef(false)
   const workSelectionGeneration = useRef(0)
   const selectedIdentityRef = useRef<{
@@ -3704,14 +3707,22 @@ export default function LibraryPage({
         // route's own focus put it, never from a field the owner moved to.
         const active = document.activeElement
         const routeTarget = document.querySelector('#main-content [data-route-focus]')
-        if (opened) attentionHeading.current?.focus({ preventScroll: true })
-        else if (
+        // At 760px and below closing over a selected work reveals that work,
+        // so focus stays on its header there rather than the toggle above it.
+        if (opened) {
+          attentionHeading.current?.focus({ preventScroll: true })
+          attentionHeading.current?.scrollIntoView({ block: 'nearest' })
+        } else if (
           !active ||
           active === document.body ||
           active === routeTarget ||
           attentionRail.current?.contains(active)
-        )
-          attentionToggle.current?.focus({ preventScroll: true })
+        ) {
+          ;(returnToWork.current && routeTarget instanceof HTMLElement
+            ? routeTarget
+            : attentionToggle.current
+          )?.focus({ preventScroll: true })
+        }
       })
     })
     return () => {
@@ -3931,10 +3942,13 @@ export default function LibraryPage({
   }
   const closeAttention = () => {
     returnToToggle.current = true
+    returnToWork.current = Boolean(search.preview ?? search.work) && narrowWidth()
     changeAttention(false)
   }
   const changeAttention = (open: boolean) => {
-    if (!open) revealWorkspace.current = Boolean(search.preview ?? search.work) && compactWidth()
+    // Only a narrow rail covers the work; from 761px it overlays the page,
+    // which stays where it was with the toggle in view.
+    if (!open) revealWorkspace.current = Boolean(search.preview ?? search.work) && narrowWidth()
     pendingSearchQuery.current = {
       q: searchPending ? queryText.trim() : null,
       attention: open,
