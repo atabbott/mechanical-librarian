@@ -4439,3 +4439,57 @@ def test_words_break_only_where_they_must() -> None:
                     if overflow > 0:
                         failures.append(f"{where}: the page is {overflow}px too wide")
         assert failures == [], "\n".join(failures)
+
+
+# Cells of one Activity row that overlap another cell of the same row.
+_ROW_OVERLAPS = """() => [...document.querySelectorAll('.cm-activity-event-group article')]
+  .flatMap(row => {
+    const cells = [...row.children].filter(cell => {
+      const box = cell.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && !cell.matches('.sr-only');
+    });
+    return cells.flatMap((cell, index) => cells.slice(index + 1).flatMap(other => {
+      const [a, b] = [cell.getBoundingClientRect(), other.getBoundingClientRect()];
+      const across = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const down = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      return across > 1 && down > 1
+        ? [`"${cell.textContent.trim().slice(0, 20)}" overlaps "${other.textContent.trim().slice(0, 20)}"`]
+        : [];
+    }));
+  })"""
+
+
+def test_activity_ledger_rows_fit_at_two_hundred_percent_text() -> None:
+    """With root font-size 200%, every Activity row -- a check's members open
+    -- keeps its promises and whole labels, with no cell clipped, past its row
+    or over another, from the widest window to the narrowest phone (#1291)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: "html { font-size: 200% !important; }")
+        page.goto(
+            "https://react-platform.invalid/activity"
+            "?eventType=all&rangeDays=30&page=1&pageSize=25"
+        )
+        page.locator("article.is-checks").get_by_role("button").click()
+        expect(page.locator(".cm-activity-checks > li").first).to_be_visible()
+        for width in (1440, 1100, 884, 390, 375, 320):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.evaluate(_TWO_FRAMES)
+            where = f"200% text at {width}px"
+            assert page.evaluate(_ROW_PROMISES, True) == [], where
+            labels = page.evaluate(_ROW_LABELS, True)
+            assert labels == [], f"{where}: {labels}"
+            overlaps = page.evaluate(_ROW_OVERLAPS)
+            assert overlaps == [], f"{where}: {overlaps}"
+            clipped = [
+                failure
+                for node in page.locator(
+                    ".cm-activity-event-group article button"
+                ).all()
+                for failure in node.evaluate(_NAMED_CLIP)
+            ]
+            assert clipped == [], f"{where}: {clipped}"
