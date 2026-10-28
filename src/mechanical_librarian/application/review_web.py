@@ -5,10 +5,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import logging
 import math
 import re
 import secrets
+import sys
 import threading
 import unicodedata
 from collections import OrderedDict
@@ -1700,17 +1700,8 @@ class BrowseReviewLibrary:
                     )
                 except Exception as error:
                     # The promise is display-only: a recovery store that cannot
-                    # answer withdraws it and never fails the page (#1407). The
-                    # log carries a closed code and the exception type only.
-                    logging.getLogger(__name__).warning(
-                        "provider recovery schedule unavailable (%s)",
-                        type(error).__name__,
-                        extra={
-                            "event": "provider_recovery_schedule",
-                            "code": "unavailable",
-                            "error": type(error).__name__,
-                        },
-                    )
+                    # answer withdraws it and never fails the page (#1407).
+                    _recovery_schedule_unavailable(type(error).__name__)
             for index, (row, scope, match_reason) in enumerate(visible):
                 (
                     case_document,
@@ -2911,6 +2902,32 @@ def _case_and_report(
         # with the rest of this projection. Lineage disagreement is one of
         # those outcomes.
         raise ReviewWebError("unavailable") from error
+
+
+def _recovery_schedule_unavailable(error: str) -> None:
+    """Write one value-free warning that the recovery schedule went unread.
+
+    It carries a closed code and at most an exception type name, never a
+    message, identity or path. Like the other operational events it bypasses
+    `logging`, which nothing configures (#1304), and a failing sink cannot fail
+    the page (#1447).
+    """
+    event = {
+        "code": "unavailable",
+        "error": (
+            error
+            if error.isascii() and error.isidentifier() and len(error) <= 128
+            else None
+        ),
+        "event": "provider_recovery_schedule",
+        "level": "warning",
+    }
+    try:
+        sys.stderr.write(
+            json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+    except Exception:
+        pass
 
 
 def _report_facts(report_document: str) -> LibraryReportFacts:

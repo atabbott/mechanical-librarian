@@ -19,6 +19,10 @@
   request path as every other metadata provider. Their requests, limits,
   retries and reported outcomes are unchanged (#984).
 
+- When the review library cannot read the provider-recovery schedule, the
+  service log now gets the same one-line JSON warning as every other
+  operational event; before, its code and exception type were dropped (#1447).
+
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.
   Automatic decisions recorded under an earlier qualification are refused
