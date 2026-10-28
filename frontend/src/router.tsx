@@ -1085,6 +1085,11 @@ const Shell = () => {
   const navigation = useRouterState({
     select: (state) => ({ href: state.location.href, status: state.status }),
   })
+  // A review and the attention queue are both parts of Library, so Library
+  // stays the current destination while either is open.
+  const libraryCurrent = useRouterState({
+    select: (state) => /^\/(?:library|attention)(?:\/|$)|^\/review\//.test(state.location.pathname),
+  })
   const { http, queryClient, updates } = rootRoute.useRouteContext()
   useLiveInvalidation(updates, queryClient)
   const streamState = useLiveStreamState(updates)
@@ -1194,7 +1199,7 @@ const Shell = () => {
             to="/library"
             search={{ lens: 'all' }}
             activeOptions={{ includeSearch: false }}
-            activeProps={{ 'aria-current': 'page' }}
+            aria-current={libraryCurrent ? 'page' : undefined}
           >
             Library
           </Link>

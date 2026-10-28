@@ -101,6 +101,29 @@ describe('Application shell', () => {
     expect(http.getAutomaticSafety).toHaveBeenCalled()
   })
 
+  it('marks Library current on review and attention routes', async () => {
+    for (const [entry, current] of [
+      ['/library?lens=all', 'Library'],
+      ['/review/case-1', 'Library'],
+      ['/attention', 'Library'],
+      ['/policy?section=identity', 'Policy'],
+    ] as const) {
+      renderRoute(entry)
+      const nav = await screen.findByRole('navigation', { name: 'Primary workspace' })
+      await waitFor(() =>
+        expect(within(nav).getByRole('link', { name: current })).toHaveAttribute(
+          'aria-current',
+          'page',
+        ),
+      )
+      const others = within(nav)
+        .getAllByRole('link')
+        .filter((link) => link.textContent !== current)
+      for (const link of others) expect(link).not.toHaveAttribute('aria-current')
+      cleanup()
+    }
+  })
+
   it('hands the setup run into the selectable Library preparation summary', async () => {
     vi.stubGlobal('matchMedia', vi.fn(reducedMotion))
     HTMLElement.prototype.scrollIntoView = vi.fn()
