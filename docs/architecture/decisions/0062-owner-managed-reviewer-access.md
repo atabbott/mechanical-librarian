@@ -201,3 +201,14 @@ adoption or migration. Description gates, advisory status and write boundaries
 remain unchanged. Public request estimates are separately validated aggregates,
 not inferred from catalogue prices. Owner-run collection is explicitly invoked,
 private and report-only; it adds no runtime scheduler or automatic spending.
+
+## Optional description request fee and automatic floor (#1400)
+
+A description model no longer needs a catalogue request fee. An absent fee is
+stored as `null` and disclosed as unavailable; a present invalid fee and missing
+prompt or completion prices are still refused. Automatic description admission
+and its write-time authority now also require the rewritten text to pass the
+floor qualified automatic description fill already uses. A rewrite below it
+stays an owner-choosable candidate. The table, its version constraint and
+`reviewer-access-v3` are unchanged, and every predecessor document reads with
+the same meaning and bytes, so no clean rebuild is needed under ADR-0013.

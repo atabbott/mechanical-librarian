@@ -25,6 +25,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
     DescriptionAdviceInput,
     DescriptionAdviceSettings,
+    automatic_description_floor_met,
     description_digest,
     description_document,
 )
@@ -298,6 +299,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 if (
                     not self.current_settings().automatic_application
                     or candidate.output.disposition != "ready"
+                    or not automatic_description_floor_met(candidate.output.description)
                     or human is not None
                     # An owner's hold does not refuse the decision: a successor
                     # carries it with nothing yet to hold, and authority_value
@@ -429,6 +431,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             if (
                 not self.current_settings().automatic_application
                 or candidate.output.disposition != "ready"
+                or not automatic_description_floor_met(candidate.output.description)
                 or owner_final is not None
                 or posture != ("automatic",)
                 or safety is None

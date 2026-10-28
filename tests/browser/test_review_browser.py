@@ -1428,6 +1428,8 @@ def _server(
             text = (
                 "Existing description."
                 if description_fixture == "no_change"
+                else "A synthetic reader explores an old library. Its stories bring distant communities together."
+                if description_fixture == "automatic"
                 else "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>"
             )
             if long_descriptions:

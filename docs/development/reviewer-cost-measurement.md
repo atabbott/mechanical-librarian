@@ -49,8 +49,7 @@ request and starts no contained process. Description measurement requires valid
 prompt and completion token prices; an absent catalogue request fee remains
 unknown and does not block measurement. A present invalid request fee still
 refuses the model. Actual response charges alone determine measured spend; an
-unknown catalogue fee is never substituted with zero. Settings still requires
-a known request fee when testing, selecting or refreshing a description model.
+unknown catalogue fee is never substituted with zero.
 Keep the bare key in an owner-only regular file, never on the command line. Preflight is an explicit external read;
 it is not a spending permission or an account-limit operation.
 

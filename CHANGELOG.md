@@ -21,6 +21,13 @@
   longer a failed request, and an over-bound chapter document no longer starves
   the next lookup (#1308).
 
+- Settings can now test, save and refresh an OpenRouter description model
+  whose catalogue entry has no request fee. The fee is shown as Unavailable;
+  a present invalid fee is still refused. Automatic description application
+  no longer admits or writes a rewrite that is a placeholder, mostly quoted
+  praise, cut off or marked up; you can still choose it yourself. No clean
+  rebuild is needed (#1400).
+
 - Setup and sign-in failures now say what went wrong: an unresolvable name, a
   refused connection, an unverified certificate, a timeout or a rejected key,
   naming the address and one remedy. Setup suggests providers per library and

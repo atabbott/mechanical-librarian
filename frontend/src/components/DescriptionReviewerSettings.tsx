@@ -204,7 +204,7 @@ export const DescriptionReviewerSettings = ({
                 <dt>Prices in USD</dt>
                 <dd>
                   {disclosure.prompt_price} per input token, {disclosure.completion_price} per
-                  output token, {disclosure.request_price} per request.
+                  output token, {disclosure.request_price ?? 'Unavailable'} per request.
                 </dd>
               </div>
             </dl>
