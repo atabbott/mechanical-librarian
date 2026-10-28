@@ -6209,7 +6209,6 @@
             "type": "string"
           },
           "url": {
-            "maxLength": 2048,
             "pattern": "^/api/v1/library/cover\\?",
             "title": "Url",
             "type": "string"

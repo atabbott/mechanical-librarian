@@ -886,7 +886,7 @@ class _LibraryCover(_ClosedModel):
     # only by this digest at /api/v1/library/cover (#1290).
     height: int = Field(ge=1, le=8192)
     preview_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    url: str = Field(pattern=r"^/api/v1/library/cover\?", max_length=2048)
+    url: str = Field(pattern=r"^/api/v1/library/cover\?")
     width: int = Field(ge=1, le=8192)
 
 
