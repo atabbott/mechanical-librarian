@@ -102,6 +102,19 @@ const textPairs = [
 const boundaryPairs = (line: string) =>
   grounds.map((ground) => [line, `var(${ground})`, 3] as const)
 
+// The smallest size each font declaration can render, as a violation of the
+// .75rem floor: rem below .75, px below 12, and em or % below the parent.
+const belowFloor = (css: string) =>
+  [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/font(?:-size)?\s*:\s*([^;}]+)/g)]
+    .map(([declaration = '', value = '']) => {
+      const size = /(?:clamp\(\s*)?(\d*\.?\d+)(rem|px|em|%)/.exec(value)
+      if (!size) return ''
+      const amount = Number(size[1])
+      const floor = { rem: 0.75, px: 12, em: 1, '%': 100 }[size[2] as 'rem' | 'px' | 'em' | '%']
+      return amount < floor ? declaration.trim() : ''
+    })
+    .filter(Boolean)
+
 const ladder = new Set(['1200', '1199', '1024', '1025', '760', '761', '390', '391'])
 const offLadder = (css: string) =>
   [...css.matchAll(/@media[^{]*/g)]
@@ -173,5 +186,20 @@ describe('Design tokens', () => {
         })
     expect(dimmed(styles)).toEqual([])
     expect(dimmed(".list[aria-busy='true'] { opacity:.7; }")).toEqual([".list[aria-busy='true']"])
+  })
+
+  it('sets no type below the .75rem floor', () => {
+    expect(belowFloor(sheets)).toEqual([])
+    expect(
+      belowFloor(
+        'a{font-size:.7rem} b{font:700 .53rem/1 serif} c{font-size:clamp(.6rem,2vw,1rem)} d{font-size:.8em} e{font-size:11px} f{font-size:.75rem;font:inherit} g{font-size:clamp(12px,.75rem,14px)}',
+      ),
+    ).toEqual([
+      'font-size:.7rem',
+      'font:700 .53rem/1 serif',
+      'font-size:clamp(.6rem,2vw,1rem)',
+      'font-size:.8em',
+      'font-size:11px',
+    ])
   })
 })
