@@ -201,7 +201,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
    the cohort carries. */
 .library-work-author, .library-work-origin { display:-webkit-box; min-width:0; overflow:hidden; overflow-wrap:anywhere; color:var(--soft); font-size:.75rem; line-height:1.4; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
 .library-work-origin { -webkit-line-clamp:1; }
-.library-work-status { display:flex; flex-wrap:wrap; gap:.3rem; margin-top:.5rem; }
+/* A works row keeps its narrow copy column at any text size, so its status
+   breaks as freely as the title above it rather than widening the row. */
+.library-work-status { display:flex; flex-wrap:wrap; gap:.3rem; margin-top:.5rem; overflow-wrap:anywhere; }
 .preview-button { min-height:44px; padding:.4rem .65rem; background:transparent; font-size:.75rem; }
 .library-pager, .attention-pager { display:flex; align-items:center; justify-content:flex-end; gap:1rem; margin-top:.85rem; padding-top:.85rem; border-top:1px solid var(--line); color:var(--soft); font-size:.75rem; }
 .library-pager { flex-wrap:wrap; justify-content:space-between; gap:.5rem; }
@@ -264,7 +266,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .attention-work, .attention-empty { min-width:0; padding:1.1rem; border:1px solid var(--line); border-radius:1rem; background:var(--surface); }
 .attention-work > header { display:flex; align-items:end; justify-content:space-between; gap:1rem; padding-bottom:.9rem; border-bottom:1px solid var(--line); }
 .attention-work > header h2, .attention-work > header p { margin:.15rem 0; }
-.attention-work > header h2 { font-family:Georgia,serif; font-size:1.25rem; }
+.attention-work > header > div { min-width:0; }
+.attention-work > header h2 { font-family:Georgia,serif; font-size:1.25rem; overflow-wrap:anywhere; }
 .attention-work > header > div > p:last-child { color:var(--soft); font-size:.75rem; }
 .attention-work > header > span { color:var(--soft); font-size:.75rem; white-space:nowrap; }
 .attention-field-list { display:grid; }
