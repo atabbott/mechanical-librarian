@@ -191,9 +191,13 @@ describe('Policy route', () => {
 
     expect(curation).toHaveAccessibleDescription('1 changed field')
     expect(curation.querySelector('.cm-change-count')).toHaveTextContent('1')
+    expect(within(tags).getByText('Draft changed')).toHaveClass('status-pill', 'is-notice')
     expect(screen.getByText('Changed fields')).toBeVisible()
     expect(screen.getByText('Draft has unreviewed changes.')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Validate and preview' })).toHaveClass(
+      'button-primary',
+    )
 
     await user.click(within(tags).getByRole('button', { name: 'Ask me' }))
 

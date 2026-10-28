@@ -621,7 +621,7 @@ not retain, and it is stated once per edition however it was arrived at.
 
 Cover review remains advisory: small eligible sets compare current and
 candidates equally; larger sets retain the incumbent while exposing the full
-eligible gallery. Below 900px the incumbent becomes the first item of the same
+eligible gallery. Below 1024px the incumbent becomes the first item of the same
 horizontally scrollable comparison track as every candidate, so covers stay in
 one row rather than stacking the current cover above the alternatives. Every
 image is contained whole at its intrinsic aspect ratio inside a quiet 5:8
@@ -860,7 +860,8 @@ hierarchy, progressive evidence and current-case history, interaction states,
 and compact navigation. Qualification covers 1440, 884, 390, and 320 CSS-pixel
 widths in both themes without document-level horizontal overflow. The selected
 theme is non-authoritative presentation state and cannot affect review data or
-decision authority.
+decision authority. The workspace applies it before its first paint: the saved
+choice, otherwise the system theme, which it follows until a choice is saved.
 
 Activity preserves the Library workspace and Policy hierarchy. Initial entry
 mounts navigation and a useful loading state without waiting for its ledger. An

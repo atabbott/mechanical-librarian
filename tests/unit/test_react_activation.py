@@ -23,6 +23,8 @@ from tests.unit.review_app_fixture import create_transport_test_app
 
 _SCRIPT = b"window.reviewReady=true;"
 _SCRIPT_PATH = "/assets/review-app/assets/index-deadbeef.js"
+_FONT = b"wOF2 synthetic face"
+_FONT_PATH = "/assets/review-app/assets/inter-deadbeef.woff2"
 
 
 def _write_bundle(
@@ -41,6 +43,7 @@ def _write_bundle(
         f"assets/index-{digest}.js.br": b"brotli:" + script,
         f"assets/index-{digest}.js.gz": gzip.compress(script, mtime=0),
         f"assets/index-{digest}.css": b":root{color-scheme:light}",
+        f"assets/inter-{digest}.woff2": _FONT,
     }
     records: list[dict[str, object]] = []
     for path, payload in values.items():
@@ -55,7 +58,9 @@ def _write_bundle(
                 if path.endswith(".br")
                 else "gzip"
                 if path.endswith(".gz")
-                else ("style" if path.endswith(".css") else "script"),
+                else "style"
+                if path.endswith(".css")
+                else ("font" if path.endswith(".woff2") else "script"),
                 "path": path,
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "size": len(payload),
@@ -197,6 +202,9 @@ def test_only_manifest_admitted_non_shell_assets_are_served(
     assert script.status_code == 200
     assert script.content == b"window.reviewReady=true;"
     assert script.headers["content-type"].startswith("text/javascript")
+    font = case.client.get(_FONT_PATH)
+    assert (font.status_code, font.content) == (200, _FONT)
+    assert font.headers["content-type"] == "font/woff2"
     assert case.client.get("/assets/review-app/index.html").status_code == 404
     assert case.client.get("/assets/review-app/assets/other.js").status_code == 404
     assert case.client.get(f"/assets/{retired}").status_code == 404
@@ -323,6 +331,16 @@ def test_hashed_assets_are_private_immutable_and_negotiated(case: _Case) -> None
     style = case.client.get("/assets/review-app/assets/index-deadbeef.css")
     assert style.headers["cache-control"] == "private, max-age=31536000, immutable"
     assert "content-encoding" not in style.headers
+    # A woff2 face is already compressed: it is served as itself to every client.
+    status, headers, raw = _raw(case, _FONT_PATH, **{"Accept-Encoding": "br, gzip"})
+    assert (status, raw) == (200, _FONT)
+    assert headers["content-type"] == "font/woff2"
+    assert headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert headers["etag"] == '"' + hashlib.sha256(_FONT).hexdigest() + '"'
+    assert "content-encoding" not in headers
+    assert headers["x-content-type-options"] == "nosniff"
+    # The policy admits same-origin fonts and nothing beyond them.
+    assert "; font-src 'self'; " in headers["content-security-policy"]
 
 
 def test_shell_and_api_responses_stay_uncacheable(case: _Case) -> None:

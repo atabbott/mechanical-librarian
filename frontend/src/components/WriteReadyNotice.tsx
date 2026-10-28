@@ -1,5 +1,6 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { Link } from '@tanstack/react-router'
+import { Button } from './Button'
 
 import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
 import { useLibraryName } from '../libraryNames'
@@ -114,7 +115,7 @@ export const WriteReadyNotice = () => {
       <div className="cm-library-handoff-action">
         {consent.state === 'off' || consent.state === 'complete' ? (
           <Link
-            className="cm-primary"
+            className="button-primary"
             to="/activity"
             search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }}
             hash="activity-consent"
@@ -122,9 +123,9 @@ export const WriteReadyNotice = () => {
             Review write permissions
           </Link>
         ) : (
-          <button className="cm-primary" type="button" disabled>
+          <Button variant="primary" type="button" disabled>
             {consent.state === 'applying' ? 'Applying changes…' : 'Writes enabled'}
-          </button>
+          </Button>
         )}
         <Link to="/activity" search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }}>
           Review write activity

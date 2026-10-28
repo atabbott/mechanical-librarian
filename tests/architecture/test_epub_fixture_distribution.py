@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import tarfile
 import tempfile
+import tomllib
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -85,3 +86,41 @@ def test_wheel_carries_the_built_react_assets_and_neither_carries_source_maps(
         for name in wheel_names
     )
     assert not any(name.endswith(".map") for name in wheel_names + sdist_names)
+
+
+def test_both_carry_the_vendored_inter_face_and_its_licence(
+    distribution: tuple[list[str], list[str]],
+) -> None:
+    wheel_names, sdist_names = distribution
+    # woff2 is already Brotli-compressed, so a font ships with no siblings.
+    fonts = [name for name in wheel_names if name.endswith(".woff2")]
+    assert len(fonts) == 2
+    assert all("interfaces/web/react_assets/assets/inter-" in name for name in fonts)
+    assert not any(name.endswith((".woff2.br", ".woff2.gz")) for name in wheel_names)
+    assert any(
+        name.endswith(".dist-info/licenses/LICENSES/Inter-OFL-1.1.txt")
+        for name in wheel_names
+    )
+    # The installed payload names no frontend directory, licences included.
+    assert not any("frontend" in name.split("/") for name in wheel_names)
+    for file in ("inter-latin-wght-normal.woff2", "inter-latin-ext-wght-normal.woff2"):
+        assert any(name.endswith(f"/frontend/src/fonts/{file}") for name in sdist_names)
+    assert any(name.endswith("/LICENSES/Inter-OFL-1.1.txt") for name in sdist_names)
+
+
+def test_container_build_stage_copies_every_licence_file_before_the_sync() -> None:
+    # setuptools only warns when a license-files pattern matches nothing, so
+    # an image built without a licence would ship its wheel silently short.
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    stage = (ROOT / "Dockerfile").read_text().split(" AS build\n", 1)[1]
+    stage = stage.split("\nFROM ", 1)[0].split("uv sync", 1)[0]
+    copied = {
+        source.rstrip("/")
+        for line in stage.splitlines()
+        if line.startswith("COPY ") and not line.startswith("COPY --from=")
+        for source in line.split()[1:-1]
+    }
+    for entry in project["license-files"]:
+        parts = Path(entry).parts
+        prefixes = {"/".join(parts[: count + 1]) for count in range(len(parts))}
+        assert prefixes & copied, entry

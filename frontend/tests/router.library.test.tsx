@@ -1920,7 +1920,7 @@ describe('Library route', () => {
     expect(row).not.toHaveAccessibleName(/No provider matched/u)
     expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
-    expect(row.querySelector('.needs-attention')).not.toBeNull()
+    expect(row.querySelector('.status-pill.is-notice')).not.toBeNull()
   })
 
   it('lists works no provider matched under their own lens, each with one reason (#1407)', async () => {
@@ -1979,7 +1979,7 @@ describe('Library route', () => {
       const row = screen.getByRole('button', { name: new RegExp(`^Unmatched ${key}\\.`, 'u') })
       const status = row.querySelector('.library-work-status > span')
       expect(status).toHaveTextContent(new RegExp(`^${reason}$`, 'u'))
-      expect(status).toHaveClass('handled')
+      expect(status).toHaveClass('status-pill', 'is-accent')
       expect(row).not.toHaveTextContent('Recorded evidence available')
     }
 
@@ -3924,6 +3924,10 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     expect(within(flaggedSummary).getByText('Overlay or marking')).toBeVisible()
+    expect(within(flaggedSummary).getByText('Overlay or marking')).toHaveClass(
+      'status-pill',
+      'is-danger',
+    )
     expect(within(flaggedSummary).getByText('Degraded reproduction')).toBeVisible()
     if (mediaKind === 'epub') {
       expect(within(flaggedSummary).queryByText('Text-edition branding')).not.toBeInTheDocument()

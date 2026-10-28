@@ -214,7 +214,13 @@ describe('Activity route', () => {
     expect(consentTrigger).toHaveAttribute('aria-controls', 'activity-consent')
     await user.click(consentTrigger)
     expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
+    // Confirm is the filled primary beside a plain Cancel (#1289).
+    const confirm = screen.getByRole('button', { name: 'Confirm write permissions' })
+    expect(confirm).toBeDisabled()
+    expect(confirm).toHaveClass('button-primary')
+    expect(screen.getByRole('button', { name: 'Cancel permission review' })).not.toHaveClass(
+      'button-primary',
+    )
   })
 
   it.each([
@@ -3381,6 +3387,7 @@ it('moves focus to the new entry when the focused one leaves', async () => {
   const { queryClient } = renderRoute('/activity', http)
   const status = await screen.findByRole('button', { name: 'Review write permissions' })
   expect(status.closest('.cm-activity-status')).not.toBeNull()
+  expect(status).not.toHaveClass('button-primary')
   await user.click(status)
   await user.click(await screen.findByRole('button', { name: 'Cancel permission review' }))
   await waitFor(() => expect(status).toHaveFocus())
@@ -3391,6 +3398,8 @@ it('moves focus to the new entry when the focused one leaves', async () => {
   await waitFor(() => expect(status).not.toBeInTheDocument())
   const card = screen.getByRole('button', { name: 'Review write permissions' })
   expect(card.closest('.cm-write-consent')).not.toBeNull()
+  // The card's entry is the filled primary; the status section's is plain (#1289).
+  expect(card).toHaveClass('button-primary')
   await waitFor(() => expect(card).toHaveFocus())
 })
 
@@ -4129,9 +4138,9 @@ describe('owner language in Activity (#1286)', () => {
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
     await openActivityAuthority(user)
-    expect(
-      screen.getByRole('button', { name: 'Remove write permission for Fiction Shelf' }),
-    ).toBeVisible()
+    const remove = screen.getByRole('button', { name: 'Remove write permission for Fiction Shelf' })
+    expect(remove).toBeVisible()
+    expect(remove).toHaveClass('button-danger')
     // No library slug reaches the owner.
     for (const slug of ['fiction', 'history'])
       expect(screen.queryByText(new RegExp(`\\b${slug}\\b`, 'u'))).toBeNull()

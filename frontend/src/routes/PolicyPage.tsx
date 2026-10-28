@@ -26,6 +26,8 @@ import type {
   TargetDestination,
 } from '../api/http'
 import { ChangeCount } from '../components/ChangeCount'
+import { Button } from '../components/Button'
+import { StatusPill } from '../components/StatusPill'
 import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
 import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
@@ -1530,7 +1532,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   <header>
                     <span>
                       <strong>{field.label}</strong>
-                      {changed ? <small>Draft changed</small> : null}
+                      {changed ? <StatusPill tone="notice">Draft changed</StatusPill> : null}
                     </span>
                     <p>{field.meaning}</p>
                     <p className="cm-policy-media-scope">
@@ -1912,41 +1914,41 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 </button>
               ) : null}
               {stage === 'editing' ? (
-                <button
-                  className="primary-action"
+                <Button
+                  variant="primary"
                   disabled={command.isPending || !draftDisplay.changed}
                   onClick={() => void validateAndPreview()}
                 >
                   Validate and preview
-                </button>
+                </Button>
               ) : null}
               {stage === 'validating' ? (
-                <button className="primary-action" disabled>
+                <Button variant="primary" disabled>
                   Validating…
-                </button>
+                </Button>
               ) : null}
               {stage === 'preview' ? (
-                <button
-                  className="primary-action"
+                <Button
+                  variant="primary"
                   disabled={command.isPending || !snapshotId || !preview || !previewActivePolicyId}
                   onClick={() => setStage('activation')}
                 >
                   Review activation
-                </button>
+                </Button>
               ) : null}
               {stage === 'activation' ? (
-                <button
-                  className="primary-action"
+                <Button
+                  variant="primary"
                   disabled={command.isPending}
                   onClick={() => void activate()}
                 >
                   {command.isPending ? 'Activating…' : 'Activate policy'}
-                </button>
+                </Button>
               ) : null}
               {stage === 'activated' ? (
-                <button className="primary-action" onClick={() => setStage('editing')}>
+                <Button variant="primary" onClick={() => setStage('editing')}>
                   Continue editing
-                </button>
+                </Button>
               ) : null}
             </>
           }

@@ -91,6 +91,8 @@ import {
   normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
+import { Button } from '../components/Button'
+import { StatusPill } from '../components/StatusPill'
 import {
   actionable,
   choiceAvailable,
@@ -275,7 +277,7 @@ const preparationPassage = [
 
 // The compact layout, where the selected work replaces the list.
 const compactWidth = () =>
-  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches
+  typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1024px)').matches
 const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
 // A search under a lens counts that lens against its whole-library total; the
 // lens link names it visually and the status names it to screen readers (#1425).
@@ -1728,9 +1730,9 @@ function OwnerControls({
                 <span>{option.value}</span>
                 {/* One unit, so a narrow row wraps its tags together. */}
                 <span className="owner-tags">
-                  {option.current ? <small className="owner-tag">Current</small> : null}
-                  {option.proposed ? <small className="owner-tag">Proposed</small> : null}
-                  {option.previous ? <small className="owner-tag">Previous</small> : null}
+                  {option.current ? <StatusPill>Current</StatusPill> : null}
+                  {option.proposed ? <StatusPill>Proposed</StatusPill> : null}
+                  {option.previous ? <StatusPill>Previous</StatusPill> : null}
                 </span>
               </label>
             ))}
@@ -2019,11 +2021,13 @@ function CoverObservationEvidence({
         {defects.length || uncertain.length ? (
           <ul>
             {defects.map((defect) => (
-              <li key={defect}>{defect}</li>
+              <li key={defect}>
+                <StatusPill tone="danger">{defect}</StatusPill>
+              </li>
             ))}
             {uncertain.map((item) => (
-              <li className="is-uncertain" key={item}>
-                {item} uncertain
+              <li key={item}>
+                <StatusPill tone="notice">{item} uncertain</StatusPill>
               </li>
             ))}
           </ul>
@@ -2405,14 +2409,14 @@ function LibraryCoverChoicesContent({
         them.
       </p>
       {reviewerUnavailable && canRetryReviewer ? (
-        <button
+        <Button
           className="secondary-action"
           type="button"
           disabled={disabled || cover.prepare.isPending}
           onClick={() => cover.prepare.mutate()}
         >
           Retry advisory review
-        </button>
+        </Button>
       ) : null}
       {cover.prepare.isError ? (
         <p role="alert">
@@ -4282,15 +4286,13 @@ export default function LibraryPage({
                         </span>
                       ) : null}
                       <span className="library-work-status">
-                        <span
-                          className={
-                            !recorded && (needsAttention || work.preparation)
-                              ? 'needs-attention'
-                              : 'handled'
+                        <StatusPill
+                          tone={
+                            !recorded && (needsAttention || work.preparation) ? 'notice' : 'accent'
                           }
                         >
                           {status}
-                        </span>
+                        </StatusPill>
                         {preparation ? (
                           <span id={preparationId} className="terminal-preparation-copy">
                             {preparation.stage}: {preparation.reason} {preparation.recovery}{' '}
@@ -4679,7 +4681,8 @@ export default function LibraryPage({
                   </p>
                   <footer>
                     {nextWork ? (
-                      <button
+                      <Button
+                        variant="primary"
                         type="button"
                         onClick={() => {
                           setComplete(null)
@@ -4690,7 +4693,7 @@ export default function LibraryPage({
                         }}
                       >
                         Review next work →
-                      </button>
+                      </Button>
                     ) : attention.isPending ||
                       attention.isPlaceholderData ||
                       attention.isFetchingNextPage ? (
@@ -4698,9 +4701,9 @@ export default function LibraryPage({
                     ) : nextWorkError ? (
                       <>
                         <span>The next attention work could not be loaded.</span>
-                        <button type="button" onClick={retryNextWork}>
+                        <Button variant="primary" type="button" onClick={retryNextWork}>
                           Try finding next work again
-                        </button>
+                        </Button>
                       </>
                     ) : !search.q ? (
                       <span>All visible review work is complete.</span>

@@ -1012,8 +1012,9 @@ export const PreparationActivity = () => {
   )
 }
 
-// One rule with setup and sign-in: the owner's saved choice, otherwise the
-// system, followed live until a choice is saved (#1013).
+// One rule with setup, sign-in and public/theme.js, which applies it before first
+// paint: the owner's saved choice, otherwise the system, followed live until a
+// choice is saved (#1013).
 const savedTheme = () => /(?:^|; )ml_theme=(light|dark)(?:;|$)/.exec(document.cookie)?.[1]
 const systemMedia = () => {
   const query = '(prefers-color-scheme: dark)'

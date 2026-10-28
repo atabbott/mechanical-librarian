@@ -771,9 +771,12 @@ cross-origin use; HttpOnly SameSite cookies (Secure for browser HTTPS) and per-s
 browser mutation. Forwarded Host or scheme is rejected unless the direct peer
 is explicitly configured, and Uvicorn ambient proxy handling remains disabled.
 Every response carries a restrictive CSP, frame denial, no-referrer, and
-no-sniff; browser HTTPS additionally receives HSTS. Every response is
+no-sniff; browser HTTPS additionally receives HSTS. The CSP admits scripts,
+styles and fonts from the same origin only (`font-src 'self'`, #1289): the
+workspace's Inter faces are vendored, content-hashed manifest assets, so no
+untrusted font input is parsed. Every response is
 private/no-store except two route-set families whose bytes their URL fixes:
-manifest-admitted hashed scripts and styles, and session-checked cover previews
+manifest-admitted hashed scripts, styles and fonts, and session-checked cover previews
 addressed by a content-derived consideration and reference. Those are
 `private, max-age=31536000, immutable`, so no shared cache may keep them and
 they carry no session, CSRF, credential, or account state; a revoked session

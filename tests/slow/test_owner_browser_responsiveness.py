@@ -553,7 +553,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 measured(
                                     "activity_expansion",
                                     lambda page=page: page.get_by_role(
-                                        "button", name="Details", exact=True
+                                        "button", name=re.compile(r"^Details for ")
                                     ).first.click(),
                                     lambda page=page: expect(
                                         page.locator(".cm-activity-evidence")

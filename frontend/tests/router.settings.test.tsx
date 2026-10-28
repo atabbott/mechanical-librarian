@@ -178,6 +178,8 @@ describe('owner settings route', () => {
     expect(screen.queryByRole('button', { name: /API key/u })).not.toBeInTheDocument()
     expect(screen.getByText('Marketplace order')).toBeVisible()
     expect(screen.getByText('us, uk, de, fr, au, in, ca, jp, it, es')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Save settings' })).toHaveClass('button-primary')
+    expect(screen.getByRole('button', { name: 'Discard all' })).not.toHaveClass('button-primary')
 
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
@@ -1275,7 +1277,10 @@ describe('owner settings route', () => {
     expect(nav.getByRole('button', { name: /Audiobookshelf/ })).toHaveAccessibleDescription(
       '1 changed field',
     )
-    expect(endpoint.closest('.settings-field-row')).toHaveClass('is-changed')
+    const row = endpoint.closest('.settings-field-row')
+    expect(row).toHaveClass('is-changed')
+    // The same compact pill as every other state chip (#1289).
+    expect(row?.querySelector('.status-pill.is-notice')).toHaveTextContent('Changed')
     await user.click(nav.getByRole('button', { name: /Appearance/ }))
     await user.click(segment('Motion', 'Always reduced'))
     expect(screen.getByText('2 unsaved changes')).toBeVisible()

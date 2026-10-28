@@ -24,6 +24,8 @@ import type {
   ProviderRecoveryFailureReason,
 } from '../api/http'
 import { activityOutcome, ledgerRows } from '../activityState'
+import { Button } from '../components/Button'
+import { StatusPill } from '../components/StatusPill'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { RecordedTime } from '../components/RecordedTime'
@@ -1053,7 +1055,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             safeguards, and verified updates.
           </p>
         </div>
-        <span className="cm-activity-calm">
+        <StatusPill className="cm-activity-calm">
           {connection?.state === 'checking'
             ? 'Connection checking'
             : connection?.state === 'paused'
@@ -1077,7 +1079,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                               : consent.lapsed
                                 ? 'Action needed'
                                 : 'No action required'}
-        </span>
+        </StatusPill>
       </header>
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
         <header className="cm-activity-ledger-heading">
@@ -1462,8 +1464,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ))
             : null}
           <div className="cm-write-consent-action">
-            <button
-              className="cm-primary"
+            <Button
+              variant="primary"
               type="button"
               data-consent-entry={cardOffers ? '' : undefined}
               disabled={consentState !== 'off' || consentOpen}
@@ -1478,7 +1480,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   : consentState === 'applying'
                     ? 'Applying changes…'
                     : 'Writes enabled'}
-            </button>
+            </Button>
             {consentBlocked ? <p className="cm-write-consent-reason">{consentBlocked}</p> : null}
           </div>
         </section>
@@ -1605,8 +1607,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <p id="activity-consent-requirement">
               Select each library you want to include, then confirm.
             </p>
-            <button
-              className="primary-action"
+            <Button
+              variant="primary"
               aria-describedby="activity-consent-requirement"
               // Busy, not disabled, so focus stays here; the ref refuses a
               // second press that lands before the pending state renders.
@@ -1632,7 +1634,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               }}
             >
               Confirm write permissions
-            </button>
+            </Button>
           </div>
         </section>
       ) : null}
@@ -1822,8 +1824,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 </button>
               ) : null}
               {enabled.map((library) => (
-                <button
-                  className="activity-revoke"
+                <Button
+                  variant="danger"
                   key={`${library.connection}:${library.library}`}
                   disabled={mutation.isPending}
                   onClick={() =>
@@ -1833,7 +1835,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   }
                 >
                   Remove write permission for {names.name(library.library)}
-                </button>
+                </Button>
               ))}
               {commandStatus(authorityFeedback)}
               {suspensions.length ? (

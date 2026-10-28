@@ -52,6 +52,13 @@ _ACTIVE_ELEMENT = """() => {
 _LOST_ACTIVATION_MILLISECONDS = 5_000
 
 
+def _asset_type(relative: str) -> str:
+    """The review server's media type for one bundle asset."""
+    return {"css": "text/css", "woff2": "font/woff2"}.get(
+        relative.rpartition(".")[2], "text/javascript"
+    )
+
+
 def _report(record: dict[str, object]) -> None:
     """Emit one diagnostic record on the only stream that survives the tier.
 
@@ -340,11 +347,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             if fail_policy_persistently and "PolicyPage-" in relative:
                 route.fulfill(status=503, body="")
                 return
-            content_type = (
-                "text/css" if relative.endswith(".css") else "text/javascript"
-            )
             route.fulfill(
-                status=200, content_type=content_type, body=bundle.read(relative)
+                status=200,
+                content_type=_asset_type(relative),
+                body=bundle.read(relative),
             )
             return
         if route.request.resource_type == "document":
@@ -361,7 +367,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 status=200,
                 content_type="text/html",
                 headers={
-                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
                 },
                 body=shell,
             )
@@ -2685,14 +2691,14 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
             css = relative.endswith(".css")
             body = bundle.read(relative)
             route.fulfill(
-                content_type="text/css" if css else "text/javascript",
+                content_type=_asset_type(relative),
                 body=body + _WIDER_TEXT.encode() if css and widened else body,
             )
         elif route.request.resource_type == "document":
             route.fulfill(
                 content_type="text/html",
                 headers={
-                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
                 },
                 body=bundle.read(bundle.entry)
                 .decode("utf-8")
@@ -3094,14 +3100,14 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
             css = relative.endswith(".css")
             body = bundle.read(relative)
             route.fulfill(
-                content_type="text/css" if css else "text/javascript",
+                content_type=_asset_type(relative),
                 body=body + _WIDER_TEXT.encode() if css and widened else body,
             )
         elif route.request.resource_type == "document":
             route.fulfill(
                 content_type="text/html",
                 headers={
-                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+                    "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
                 },
                 body=bundle.read(bundle.entry)
                 .decode("utf-8")
@@ -3349,8 +3355,8 @@ _REMEDY_LINKS_SETTLED = """async () => {
 # that production would refuse.
 _PRODUCTION_CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; "
-    "img-src 'self' data:; connect-src 'self'; form-action 'self'; "
-    "frame-ancestors 'none'; base-uri 'none'"
+    "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 )
 
 # Writes are off and one library may be enabled, so the Library handoff shows.
@@ -3444,7 +3450,7 @@ def _serve_cohort(
             css = relative.endswith(".css")
             body = bundle.read(relative)
             route.fulfill(
-                content_type="text/css" if css else "text/javascript",
+                content_type=_asset_type(relative),
                 body=body + stylesheet().encode() if css else body,
             )
         elif route.request.resource_type == "document":

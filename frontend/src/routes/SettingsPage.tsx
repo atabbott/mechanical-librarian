@@ -18,6 +18,7 @@ import {
 } from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
 import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
+import { Button } from '../components/Button'
 import { ChangeCount } from '../components/ChangeCount'
 import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
@@ -1504,14 +1505,14 @@ const SettingsEditor = ({
               >
                 Discard all
               </button>
-              <button
+              <Button
+                variant="primary"
                 type="button"
-                className="primary-action"
                 disabled={!changed || mutation.isPending || saveBlocked}
                 onClick={save}
               >
                 {mutation.isPending ? 'Saving…' : 'Save settings'}
-              </button>
+              </Button>
             </>
           }
         >

@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Vendored typeface successor (#1289)
+
+The current F19a, F20 and F46 records move to semantic revision 79 over base
+`807cabab`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. Nothing
+persisted changes; no clean rebuild is required. The web application now
+serves the workspace's hashed Inter faces as `font/woff2` and its policy
+admits `font-src 'self'`. That changes how the page is delivered, not which
+values are proposed or what any qualified operation may do, so no operation
+gains or loses authority.
+
 ## Plain evidence copy successor (#1286)
 
 The current F19a, F20 and F46 records move to semantic revision 78 over base

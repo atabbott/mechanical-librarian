@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1289 changes presentation only: the workspace paints its saved or system
+theme before it loads, self-hosts Inter, and uses one Button and one
+StatusPill. The web application serves the hashed font faces and its content
+security policy admits `font-src 'self'`. No public schema, API version or
+persisted document changes, so no clean rebuild is required. F19a/F20/F46
+records are displaced because the web application module they bind changed,
+with permission sets unchanged.
+
 #1286 changes owner-facing copy only: evidence observations no longer repeat
 their label or name internal scope, state and applicability codes; media
 health states running times in hours and minutes; and an owner decision's

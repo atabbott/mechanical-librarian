@@ -27,6 +27,7 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 from playwright.sync_api import (
     BrowserContext,
+    Locator,
     Page,
     Request,
     Route,
@@ -1944,6 +1945,24 @@ def _read_back_title(
     return admitted["review_case_id"], successor
 
 
+_FILL_AND_ACCENT = """node => {
+    const probe = document.createElement('span');
+    probe.style.backgroundColor = 'var(--accent-strong)';
+    document.body.append(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return [getComputedStyle(node).backgroundColor, accent];
+}"""
+
+
+def _assert_primary_fill(primary: Locator, secondary: Locator | None) -> None:
+    """The primary is filled with the theme's accent, unlike its neighbour (#1289)."""
+    fill, accent = primary.evaluate(_FILL_AND_ACCENT)
+    assert fill == accent, (fill, accent)
+    if secondary is not None:
+        assert secondary.evaluate(_FILL_AND_ACCENT)[0] != fill
+
+
 def _login(page: Page, origin: str) -> None:
     page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
     page.goto(f"{origin}/login")
@@ -2542,6 +2561,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 ).is_disabled()
                 genres.get_by_role("button", name="Ignore").click()
                 assert policy_chapters.locator("button b").all_inner_texts() == ["1"]
+                _assert_primary_fill(
+                    page.get_by_role("button", name="Validate and preview"), None
+                )
 
                 def assert_text_zoom_policy_layout(width: int) -> None:
                     page.set_viewport_size({"width": width, "height": 844})
@@ -2625,9 +2647,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
                 page.get_by_role("button", name="Back to preview").click()
                 review_activation.wait_for()
+                back_to_editing = page.get_by_role("button", name="Back to editing")
+                _assert_primary_fill(review_activation, back_to_editing)
                 dark_mode = page.get_by_role("button", name="Use dark mode")
                 dark_mode.click()
                 page.get_by_role("button", name="Use light mode").wait_for()
+                _assert_primary_fill(review_activation, back_to_editing)
                 page.set_viewport_size({"width": 1440, "height": 900})
                 unsupported_description.wait_for()
                 assert page.get_by_role(
@@ -2745,6 +2770,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 expect(
                     page.get_by_role("button", name="Confirm write permissions")
                 ).to_be_disabled()
+                # The guarded confirmation is the filled primary beside a plain
+                # Cancel, rather than reading as a second Cancel (#1289).
+                _assert_primary_fill(
+                    page.get_by_role("button", name="Confirm write permissions"),
+                    page.get_by_role("button", name="Cancel permission review"),
+                )
                 expect(
                     page.get_by_role(
                         "heading", name="Prepared work needs your permission"
@@ -3745,6 +3776,107 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         )
 
 
+def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads() -> (
+    None
+):
+    """The shell's blocking theme script sets the saved, else the system, theme
+    before the application bundle runs, under the production CSP; the bundled
+    Inter face loads from the same origin (#1289)."""
+    held: list[Route] = []
+    first_paint = (
+        "() => { const body = document.body; if (!body) return null;"
+        " const background = getComputedStyle(body).backgroundColor;"
+        " return background === 'rgba(0, 0, 0, 0)' ? null :"
+        " [document.documentElement.dataset.theme ?? null, background] }"
+    )
+
+    def painted(page: Page, url: str) -> list[str | None]:
+        page.goto(url, wait_until="commit")
+        return cast(list[str | None], page.wait_for_function(first_paint).json_value())
+
+    with _identity_library() as (page, origin, _queries):
+        context = page.context
+        errors: list[str] = []
+        fonts: list[tuple[int, str | None, str | None]] = []
+        page.on(
+            "console",
+            lambda message: (
+                errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        page.on(
+            "response",
+            lambda response: (
+                fonts.append(
+                    (
+                        response.status,
+                        response.headers.get("content-type"),
+                        response.headers.get("cache-control"),
+                    )
+                )
+                if response.url.endswith(".woff2")
+                else None
+            ),
+        )
+        page.route(
+            "**/assets/review-app/assets/index-*.js", lambda route: held.append(route)
+        )
+        page.emulate_media(color_scheme="dark")
+        url = f"{origin}/library?lens=all"
+        assert painted(page, url) == ["dark", "rgb(15, 21, 18)"]
+        assert len(held) == 1
+        held.pop().abort()
+        context.add_cookies([{"name": "ml_theme", "value": "light", "url": origin}])
+        assert painted(page, url) == ["light", "rgb(244, 242, 236)"]
+        held.pop().abort()
+        context.clear_cookies(name="ml_theme")
+
+        # Without the script the shell paints light under a dark system: the
+        # gap the script closes, and the proof this test bites.
+        control = context.new_page()
+        control.emulate_media(color_scheme="dark")
+        control.route(
+            "**/assets/review-app/assets/index-*.js", lambda route: held.append(route)
+        )
+        control.route(
+            "**/assets/review-app/assets/theme-*.js", lambda route: route.abort()
+        )
+        assert painted(control, url) == [None, "rgb(244, 242, 236)"]
+        held.pop().abort()
+        control.close()
+
+        page.goto(url, wait_until="commit")
+        assert page.wait_for_function(first_paint).json_value()[0] == "dark"
+        held.pop().continue_()
+        expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
+        html = page.locator("html")
+        page.emulate_media(color_scheme="light")
+        expect(html).to_have_attribute("data-theme", "light")
+        page.emulate_media(color_scheme="dark")
+        expect(html).to_have_attribute("data-theme", "dark")
+        page.get_by_role("button", name="Use light mode").click()
+        expect(html).to_have_attribute("data-theme", "light")
+        page.emulate_media(color_scheme="light")
+        page.emulate_media(color_scheme="dark")
+        expect(html).to_have_attribute("data-theme", "light")
+
+        assert page.evaluate(
+            "async () => { await document.fonts.ready;"
+            " return document.fonts.check('400 16px Inter') && [...document.fonts]"
+            ".some(face => face.family.replaceAll('\"', '') === 'Inter'"
+            " && face.status === 'loaded') }"
+        )
+        assert fonts and all(
+            status == 200
+            and content_type == "font/woff2"
+            and cache_control == "private, max-age=31536000, immutable"
+            for status, content_type, cache_control in fonts
+        ), fonts
+        assert not [error for error in errors if "Content Security Policy" in error], (
+            errors
+        )
+
+
 @pytest.mark.parametrize("cohort", [24, 30])
 def test_load_more_attention_keeps_focus_on_the_first_row_it_added(
     cohort: int,
@@ -4162,7 +4294,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     label="library:compact",
                     shapes=_LIBRARY_SHAPES,
                 )
-                # Below 900px the current cover joins the same scrollable row
+                # At 1024px and below the current cover joins the same scrollable row
                 # as every replacement rather than sitting above them.
                 assert len({frame["frame_top"] for frame in compact}) == 1, compact
                 track = page.locator(
@@ -4222,7 +4354,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     page.set_viewport_size({"width": width, "height": 900})
                     page.wait_for_function(
                         "width => window.innerWidth === width && "
-                        "window.matchMedia('(max-width: 700px)').matches === (width <= 700)",
+                        "window.matchMedia('(max-width: 760px)').matches === (width <= 760)",
                         arg=width,
                     )
                     # Viewport changes reach responsive layout on a rendering frame.
@@ -6834,21 +6966,21 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
-                        assert_settings_layout(sidebar_visible=width > 700)
+                        assert_settings_layout(sidebar_visible=width > 760)
                         # Exactly one of the two navigations at every width,
-                        # including the 391-700px band that once had neither.
+                        # including the 391-760px band that once had neither.
                         compact = page.get_by_role("combobox", name="Settings section")
                         sidebar = page.get_by_role(
                             "navigation", name="Settings sections"
                         )
-                        if width <= 700:
+                        if width <= 760:
                             expect(compact).to_be_visible()
                             expect(sidebar).to_be_hidden()
                         else:
                             expect(sidebar).to_be_visible()
                             expect(compact).to_be_hidden()
 
-                    for width in (600, 701):
+                    for width in (600, 760, 761):
                         page.set_viewport_size({"width": width, "height": 900})
                         assert (
                             page.get_by_role(
@@ -6871,7 +7003,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     for width, height in ((884, 1000), (390, 844), (320, 800)):
                         page.set_viewport_size({"width": width, "height": height})
                         for label in group_labels.values():
-                            if width <= 700:
+                            if width <= 760:
                                 choose_section(label)
                             else:
                                 page.locator(
@@ -6883,7 +7015,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                             assert page.evaluate(
                                 "document.documentElement.scrollWidth <= window.innerWidth"
                             )
-                            assert_settings_layout(sidebar_visible=width > 700)
+                            assert_settings_layout(sidebar_visible=width > 760)
 
                 page.set_viewport_size({"width": 884, "height": 1000})
                 page.evaluate("document.documentElement.style.fontSize = '200%'")
@@ -6978,6 +7110,13 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "window.scrollTo(0, document.documentElement.scrollHeight)"
                 )
                 assert_settings_layout(sidebar_visible=False)
+                # Save is the filled primary beside a plain Discard, in each theme.
+                for _theme in range(2):
+                    _assert_primary_fill(
+                        page.get_by_role("button", name="Save settings"),
+                        page.get_by_role("button", name="Discard all"),
+                    )
+                    page.locator(".theme-toggle").click()
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[

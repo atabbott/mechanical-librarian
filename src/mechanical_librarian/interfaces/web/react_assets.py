@@ -13,7 +13,8 @@ from typing import Protocol
 _BUILD_IDENTITY = re.compile(r"^[0-9a-f]{64}$")
 _CSRF_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _ASSET_PATH = re.compile(
-    r"^(?:index\.html|assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.(?:css|js)(?:\.br|\.gz)?)$"
+    r"^(?:index\.html|assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}"
+    r"(?:\.(?:css|js)(?:\.br|\.gz)?|\.woff2))$"
 )
 # Precompressed siblings, in serving preference; each kind is its Content-Encoding.
 _ENCODINGS = {"br": ".br", "gzip": ".gz"}
@@ -207,7 +208,7 @@ def load_react_asset_bundle(
             or _BUILD_IDENTITY.fullmatch(item["sha256"]) is None
             or type(item["size"]) is not int
             or not 0 < item["size"] <= _MAX_ASSET_BYTES
-            or item["kind"] not in {"shell", "script", "style", *_ENCODINGS}
+            or item["kind"] not in {"shell", "script", "style", "font", *_ENCODINGS}
         ):
             raise ReactAssetError("manifest_invalid")
         if (item["path"] == "index.html") != (item["kind"] == "shell"):
@@ -215,6 +216,8 @@ def load_react_asset_bundle(
         if item["path"].endswith(".css") != (item["kind"] == "style"):
             raise ReactAssetError("manifest_invalid")
         if item["path"].endswith(".js") != (item["kind"] == "script"):
+            raise ReactAssetError("manifest_invalid")
+        if item["path"].endswith(".woff2") != (item["kind"] == "font"):
             raise ReactAssetError("manifest_invalid")
         if any(
             item["path"].endswith(suffix) != (item["kind"] == coding)
