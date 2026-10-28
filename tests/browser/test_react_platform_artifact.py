@@ -3666,6 +3666,7 @@ _COVER_ROW_GEOMETRY = """() => {
     const mark = row.querySelector('.library-book-mark')
     const image = mark.querySelector('img')
     const box = (node) => node.getBoundingClientRect()
+    const centre = (node) => box(node).left + box(node).width / 2
     const shown = box(row).height
     image.style.display = 'none'
     const hidden = box(row).height
@@ -3679,7 +3680,7 @@ _COVER_ROW_GEOMETRY = """() => {
         fit: getComputedStyle(image).objectFit,
         loading: image.loading,
         alt: image.alt,
-        offset: Math.abs(box(mark).left - box(spine).left),
+        offset: Math.abs(centre(mark) - centre(spine)),
     }
 }"""
 
@@ -3709,8 +3710,11 @@ _ROWS_AGAINST_SPINE_COLUMN = """(column) => [...document.querySelectorAll('.libr
             mark.classList.add('has-cover')
             image.style.display = ''
         }
+        const title = row.querySelector('.library-work-title')
         return {
-            title: row.querySelector('.library-work-title').innerText,
+            title: title.innerText,
+            titleLeft: title.getBoundingClientRect().left,
+            column: getComputedStyle(row).gridTemplateColumns.split(' ')[0],
             cover,
             shown,
             spine,
@@ -3719,9 +3723,10 @@ _ROWS_AGAINST_SPINE_COLUMN = """(column) => [...document.querySelectorAll('.libr
 
 
 def test_works_rows_show_a_retained_cover_without_growing() -> None:
-    """A work's retained cover is its mark: whole, at most 60 by 90 px (42 by
-    63 on phones), level with the spine marks, and never the reason its row,
-    or any other row, is taller than with base's spine column (#1290)."""
+    """A work's retained cover is its mark: whole, fitted to the spine's own
+    column (48 by 72 px, 42 by 63 on phones) and centred like the spine, so
+    every title starts at one edge and no row is taller than with the spine
+    mark (#1290)."""
     styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
     text = "default"
     with ExitStack() as stack:
@@ -3756,7 +3761,7 @@ def test_works_rows_show_a_retained_cover_without_growing() -> None:
                 geometry = page.evaluate(_COVER_ROW_GEOMETRY)
                 assert geometry["shown"] == geometry["hidden"], (where, geometry)
                 mark_width, mark_height = geometry["mark"]
-                limit = (42, 63) if width <= 760 else (60, 90)
+                limit = (42, 63) if width <= 760 else (48, 72)
                 assert mark_width == limit[0], (where, geometry)
                 assert mark_height <= limit[1], (where, geometry)
                 # The image fills the mark and is contained in it, whole.
@@ -3768,19 +3773,20 @@ def test_works_rows_show_a_retained_cover_without_growing() -> None:
                 assert page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
                 ), where
-                # No row's text loses width to the cover column: every spine
-                # row is as tall as with base's column, and on phones, where
-                # the cover fits the spine's own column, so is the cover's row.
-                rows = page.evaluate(
-                    _ROWS_AGAINST_SPINE_COLUMN, 42 if width <= 760 else 48
-                )
+                # The cover fits the spine's column, so every row, the cover's
+                # among them, keeps one mark column, starts its title at one
+                # edge, and is no taller than with the spine mark.
+                column = 42 if width <= 760 else 48
+                rows = page.evaluate(_ROWS_AGAINST_SPINE_COLUMN, column)
                 assert len(rows) == 6, (where, rows)
+                assert {row["column"] for row in rows} == {f"{column}px"}, (where, rows)
+                lefts = [row["titleLeft"] for row in rows]
+                assert max(lefts) - min(lefts) <= 0.5, (where, rows)
                 for row_geometry in rows:
-                    if width <= 760 or not row_geometry["cover"]:
-                        assert (
-                            row_geometry["shown"]["height"]
-                            <= row_geometry["spine"]["height"] + 0.5
-                        ), (where, row_geometry)
+                    assert (
+                        row_geometry["shown"]["height"]
+                        <= row_geometry["spine"]["height"] + 0.5
+                    ), (where, row_geometry)
                     assert (
                         row_geometry["shown"]["pill"] == row_geometry["spine"]["pill"]
                     ), (where, row_geometry)
