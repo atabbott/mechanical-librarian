@@ -134,6 +134,15 @@ two lines per job attempt. These are advisory, not audit history. Docker's defau
 `json-file` log driver does not rotate, so set `max-size` and `max-file` or
 another retention the operator controls.
 
+The background activity projector writes one line of the same kind when its
+thread ends: `{"code":"stopped","event":"activity_projector","level":"info"}`,
+`released` when its fact store was released, `admission_closed` when the
+service is closing, or `unexpected` at `warning` with `error` set to the
+exception's type name. Shutdown adds `join_timeout` at `warning` when the
+projector's current step outlasts the join bound; closing still waits for that
+step (#1231, #1304). Nothing configures Python `logging`, so no event depends
+on it.
+
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound
 `POST /api/v1/operations/support/export` creates it again and re-runs redaction.
