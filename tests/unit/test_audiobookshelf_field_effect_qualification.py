@@ -20,6 +20,7 @@ from scripts.qualify_audiobookshelf_field_effect import (
     _audiobook_canary,
     _compose_review_client,
     _epub,
+    _installed_accept_payload,
     _installed_consent_grants,
     _installed_mutation_headers,
     _operator_epub,
@@ -50,7 +51,9 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     FieldEffectPlan,
 )
+from mechanical_librarian.domain.human_decision import validate_cover_confirmation
 from mechanical_librarian.infrastructure.configuration import ConfigurationInput
+from mechanical_librarian.interfaces.web.app import _DecisionRequest
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetRecovery
 
 
@@ -449,9 +452,7 @@ def test_return_lineage_reads_hold_before_progress() -> None:
 def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane() -> (
     None
 ):
-    client = _qualification_hardcover_client(
-        {}, "synthetic-provider-token-a", {}, {}, {}
-    )
+    client = _qualification_hardcover_client({}, {}, {}, {})
     try:
         isbn_response = client.post(
             "https://qualification.invalid/graphql",
@@ -494,6 +495,53 @@ def test_missing_installed_destination_fails_full_chain_qualification() -> None:
         activity_present=True,
         diagnostics={},
     )
+
+
+@pytest.mark.parametrize(
+    ("current_selection", "match_state", "confirm"),
+    [
+        (None, "match_not_confirmed", True),
+        ("cover_selection_" + "a" * 64, "match_confirmed", False),
+    ],
+)
+def test_installed_cover_accept_satisfies_the_decision_contract(
+    current_selection: str | None, match_state: str, confirm: bool
+) -> None:
+    # #1185: the canary's cover accept drifted from the contract once already.
+    field = {
+        "current_cover_selection_id": current_selection,
+        "destination": "cover",
+        "proposal_id": "review_proposal_" + "b" * 64,
+        "target_fingerprint": "c" * 64,
+    }
+    selected_cover = {"artifact_id": "artifact", "match_state": match_state}
+    payload = _installed_accept_payload(
+        field,
+        {"kind": "cover", "value": "artifact"},
+        ("cover_consideration_" + "d" * 64, selected_cover),
+    )
+
+    assert payload["cover_confirmation"] == {
+        "expected_selection_id": current_selection,
+        "confirm_unverified_match": confirm,
+    }
+    assert (
+        validate_cover_confirmation(payload["cover_confirmation"])
+        is (payload["cover_confirmation"])
+    )
+    _DecisionRequest.model_validate(payload)
+
+
+def test_installed_non_cover_accept_carries_no_cover_confirmation() -> None:
+    field = {
+        "destination": "description",
+        "proposal_id": "review_proposal_" + "b" * 64,
+        "target_fingerprint": "c" * 64,
+    }
+    payload = _installed_accept_payload(field, {"kind": "text", "value": "x"})
+
+    assert "cover_confirmation" not in payload
+    assert "consideration_id" not in payload
 
 
 def test_missing_persisted_automatic_series_authority_fails_qualification() -> None:
@@ -667,7 +715,6 @@ def test_installed_series_provider_controls_retain_number_and_author_boundaries(
     title = "Synthetic series control"
     with _qualification_hardcover_client(
         {},
-        "synthetic-provider-token-a",
         {},
         {"9780140328721": title},
         {},
