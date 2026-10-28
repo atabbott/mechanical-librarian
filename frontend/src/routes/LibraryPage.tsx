@@ -1052,7 +1052,11 @@ function ChoiceEvidencePanel({
   )
 }
 
+// Only keyboard focus reveals a card. Focus from a pointer arrives on
+// mousedown, so scrolling then moved the card from under the press and lost
+// the tap at compact widths (#1290).
 const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
+  if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) return
   const choice = event.currentTarget
   const track = choice.closest<HTMLElement>('.library-cover-layout, .library-cover-pinned')
   if (!track) return
@@ -1903,6 +1907,20 @@ function RecordedOutcome({
   )
 }
 
+// What a tap will do, said before the tap and in the present tense of this
+// work's actual write state. The same words after the fact are what the
+// completion summary says, so the promise made here is the one kept there
+// (#639). A cover tap makes the same promise as any other field (#1290).
+function WriteStateLine({ active }: { active: boolean }) {
+  return (
+    <p className={`cm-write-state is-${active ? 'on' : 'off'}`}>
+      {active
+        ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
+        : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
+    </p>
+  )
+}
+
 function LibraryCoverChoices(props: {
   reviewCaseId: string
   mediaKind: string
@@ -1915,6 +1933,7 @@ function LibraryCoverChoices(props: {
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
+  writesActive: boolean
 }) {
   return (
     <LibraryCoverChoicesContent
@@ -2081,6 +2100,7 @@ function LibraryCoverChoicesContent({
   progress,
   revealEvidence,
   choose,
+  writesActive,
 }: {
   reviewCaseId: string
   mediaKind: string
@@ -2093,6 +2113,7 @@ function LibraryCoverChoicesContent({
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
+  writesActive: boolean
 }) {
   const { http } = useReviewContext()
   const access = useQuery({
@@ -2115,23 +2136,6 @@ function LibraryCoverChoicesContent({
     ].includes(currentReviewer.state)
   const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
-  const [confirmation, setConfirmation] = useState<CoverCandidateView | null>(null)
-  const confirmationDialog = useRef<HTMLDialogElement>(null)
-  const confirmationTrigger = useRef<HTMLButtonElement | null>(null)
-  const [submittedConfirmation, setSubmittedConfirmation] = useState(false)
-  const closeConfirmation = () => {
-    confirmationDialog.current?.close()
-    setConfirmation(null)
-    setSubmittedConfirmation(false)
-    confirmationTrigger.current?.focus()
-  }
-  useEffect(() => {
-    if (confirmation) confirmationDialog.current?.showModal()
-  }, [confirmation])
-  useEffect(() => {
-    if (submittedConfirmation && progress?.phase === 'confirmed')
-      confirmationDialog.current?.close()
-  }, [progress?.phase, submittedConfirmation])
   const keeps = field.decisionActions.includes('keep_current')
   const accepts = field.decisionActions.includes('accept')
   if (consideration?.current !== true)
@@ -2192,18 +2196,61 @@ function LibraryCoverChoicesContent({
             ? policyReasons.map(coverNoteLabel).join(', ')
             : 'Not among the covers your policy accepts'
           : coverStateLabels[candidate.state]
-  const card = (candidate: (typeof candidates)[number], index: number) => {
-    const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
-    const source = cover.imageSource(consideration.id, candidate.reference)
-    const outcome = candidate.incumbent ? 'keep_current' : 'accept'
+  const cardState = (candidate: (typeof candidates)[number]) => {
+    const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
       ? null
       : { kind: 'cover', value: candidate.artifactId }
     const selected =
       choiceSelected(field, progress, outcome, value) ||
       field.currentCoverSelectionArtifactId === candidate.artifactId
-    const eligibleCandidate = candidate.incumbent || candidate.manualEligible
     const actionableCandidate = candidate.incumbent ? keeps : accepts && candidate.manualEligible
+    return {
+      outcome,
+      value,
+      selected,
+      actionableCandidate,
+      disabled:
+        disabled ||
+        consideration.providerFetching ||
+        !actionableCandidate ||
+        cover.imageFailed(candidate.reference),
+    }
+  }
+  const unavailableCurrent = consideration.incumbent.state === 'unavailable' && !incumbent
+  const keepSelected = choiceSelected(field, progress, 'keep_current')
+  // The cards in reading order, one radio group whose Tab stop and positions
+  // follow the direct choices' rules (#1290).
+  const coverRadios = new Map(
+    choiceRadios(
+      [
+        ...(unavailableCurrent ? [null] : []),
+        ...(expanded && incumbent ? [incumbent, ...alternatives] : candidates),
+      ],
+      (candidate) => {
+        if (candidate === null) return { checked: keepSelected, disabled: disabled || !keeps }
+        const state = cardState(candidate)
+        return {
+          checked: state.actionableCandidate && state.selected,
+          disabled: state.disabled,
+        }
+      },
+    ).map(({ radio, ...candidate }) => [
+      'reference' in candidate ? candidate.reference : 'current-unavailable',
+      radio,
+    ]),
+  )
+  const card = (candidate: (typeof candidates)[number], index: number) => {
+    const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
+    const source = cover.imageSource(consideration.id, candidate.reference)
+    const {
+      outcome,
+      value,
+      selected,
+      actionableCandidate,
+      disabled: cardDisabled,
+    } = cardState(candidate)
+    const eligibleCandidate = candidate.incumbent || candidate.manualEligible
     const recommended = candidate.reference === recommendedReference
     const context = candidate.incumbent
       ? currentContext
@@ -2222,22 +2269,13 @@ function LibraryCoverChoicesContent({
         <button
           type="button"
           aria-label={`Choose ${label}`}
-          aria-pressed={actionableCandidate ? selected : false}
+          {...coverRadios.get(candidate.reference)}
           className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
-          disabled={
-            disabled ||
-            consideration.providerFetching ||
-            !actionableCandidate ||
-            cover.imageFailed(candidate.reference)
-          }
-          onClick={(event) => {
-            if (!actionableCandidate || selected) return
-            if (candidate.incumbent) choose(outcome, value)
-            else {
-              confirmationTrigger.current = event.currentTarget
-              setSubmittedConfirmation(false)
-              setConfirmation(candidate)
-            }
+          disabled={cardDisabled}
+          // One tap records, as on every other field; a card that says Match
+          // not confirmed is itself the explicit choice (#1290).
+          onClick={() => {
+            if (actionableCandidate && !selected) choose(outcome, value)
           }}
         >
           <span className="library-cover-image">
@@ -2249,6 +2287,8 @@ function LibraryCoverChoicesContent({
               <img
                 src={source}
                 alt={label}
+                loading="lazy"
+                decoding="async"
                 onError={() => cover.markImageFailed(candidate.reference)}
               />
             )}
@@ -2257,6 +2297,9 @@ function LibraryCoverChoicesContent({
             <small>
               {label}
               {recommended ? ' · Recommended' : ''}
+              {selected && actionableCandidate ? (
+                <b className="choice-chosen">Your choice</b>
+              ) : null}
             </small>
             <strong>
               {candidate.matchState === 'same_edition'
@@ -2265,10 +2308,13 @@ function LibraryCoverChoicesContent({
                   ? 'Same book'
                   : 'Match not confirmed'}
             </strong>
-            <em>
-              {context?.rationale ??
-                `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(', ')}`}
-            </em>
+            <span className="cover-dimensions">
+              {`${String(candidate.width)} × ${String(candidate.height)} px`}
+            </span>
+            <span className="cover-sources">
+              {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
+            </span>
+            {context?.rationale ? <em>{context.rationale}</em> : null}
             <span className="choice-recommendation">
               {!eligibleCandidate || candidate.matchState === 'match_not_confirmed'
                 ? excludedReason(candidate)
@@ -2311,68 +2357,19 @@ function LibraryCoverChoicesContent({
         ? 'Visual review is unavailable. Only the eligible choices shown below can be selected.'
         : 'Manual cover comparison'
   const reviewerDetail = reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
+  // A merged duplicate is the same image as a card shown, not an unavailable
+  // candidate, so it is counted apart (#1290).
+  const merged = consideration.omissions.filter(
+    (omission) => omission.reason === 'duplicate_preview',
+  ).length
+  const unavailable = consideration.omissions.filter(
+    (omission) => omission.reason !== 'duplicate_preview',
+  )
   return (
     <section
       className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
       aria-label="Choose a cover"
     >
-      <dialog
-        ref={confirmationDialog}
-        className="cover-confirmation"
-        aria-labelledby="cover-confirmation-title"
-        onCancel={(event) => {
-          event.preventDefault()
-          if (progress?.phase !== 'recording') closeConfirmation()
-        }}
-      >
-        {confirmation ? (
-          <>
-            <h2 id="cover-confirmation-title">
-              {field.currentCoverSelectionId ? 'Confirm replacement cover' : 'Confirm this cover'}
-            </h2>
-            <img
-              src={cover.imageSource(consideration.id, confirmation.reference)}
-              alt="Cover selected for confirmation"
-            />
-            <p>
-              {confirmation.matchState === 'match_not_confirmed'
-                ? 'Match not confirmed. Automated evidence has not confirmed that this cover belongs to this book. Confirm only if you recognise it as the cover you want.'
-                : 'Record this retained cover as your choice.'}
-            </p>
-            <p>
-              Your choice takes precedence over automation. Recording it does not mean it has been
-              applied; consent and application safeguards still apply.
-            </p>
-            {submittedConfirmation &&
-            progress?.phase !== 'recording' &&
-            progress?.phase !== 'confirmed' ? (
-              <p role="alert">
-                Confirmation was not completed. Close this dialog and reload the current comparison
-                before trying again.
-              </p>
-            ) : null}
-            <div className="cover-confirmation-actions">
-              <button
-                type="button"
-                disabled={progress?.phase === 'recording'}
-                onClick={closeConfirmation}
-              >
-                {submittedConfirmation ? 'Close' : 'Cancel'}
-              </button>
-              <button
-                type="button"
-                disabled={disabled || submittedConfirmation}
-                onClick={() => {
-                  setSubmittedConfirmation(true)
-                  choose('accept', { kind: 'cover', value: confirmation.artifactId })
-                }}
-              >
-                {progress?.phase === 'recording' ? 'Recording…' : 'Confirm cover choice'}
-              </button>
-            </div>
-          </>
-        ) : null}
-      </dialog>
       <header>
         <strong>
           {recommendedReference !== null
@@ -2403,7 +2400,7 @@ function LibraryCoverChoicesContent({
         <p className="reviewer-unavailable-detail">
           Owner choice takes precedence over automation.{' '}
           {field.editable
-            ? 'You can confirm a replacement before application begins.'
+            ? 'You can choose a replacement before application begins.'
             : 'This cover choice is not currently available for revision.'}
         </p>
       ) : field.automaticDecision ? (
@@ -2412,9 +2409,10 @@ function LibraryCoverChoicesContent({
         </p>
       ) : null}
       {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
+      <WriteStateLine active={writesActive} />
       <p className="cover-track-hint">
-        Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
-        them.
+        Every cover is shown whole in one row. Scroll the row, or move between covers with the arrow
+        keys, to compare them.
       </p>
       {reviewerUnavailable && canRetryReviewer ? (
         <Button
@@ -2435,7 +2433,12 @@ function LibraryCoverChoicesContent({
         </p>
       ) : null}
       {expanded && incumbent ? (
-        <div className="library-cover-pinned">
+        <div
+          className="library-cover-pinned"
+          role="radiogroup"
+          aria-label={decisionQuestion('cover')}
+          onKeyDown={moveChoiceFocus}
+        >
           <aside>
             <strong>Current reference</strong>
             {card(incumbent, candidates.indexOf(incumbent))}
@@ -2451,14 +2454,19 @@ function LibraryCoverChoicesContent({
           </div>
         </div>
       ) : (
-        <div className="library-cover-layout">
-          {consideration.incumbent.state === 'unavailable' && !incumbent ? (
+        <div
+          className="library-cover-layout"
+          role="radiogroup"
+          aria-label={decisionQuestion('cover')}
+          onKeyDown={moveChoiceFocus}
+        >
+          {unavailableCurrent ? (
             <article className="cover-choice" onFocusCapture={revealFocusedCoverChoice}>
               <button
                 type="button"
                 aria-label="Keep current cover"
-                aria-pressed={choiceSelected(field, progress, 'keep_current')}
-                className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
+                {...coverRadios.get('current-unavailable')}
+                className={`library-cover-card is-current${keepSelected ? ' is-selected' : ''}`}
                 disabled={disabled || !keeps}
                 onClick={() => {
                   if (keeps) choose('keep_current')
@@ -2472,7 +2480,10 @@ function LibraryCoverChoicesContent({
                   Image unavailable
                 </span>
                 <span>
-                  <small>Current cover</small>
+                  <small>
+                    Current cover
+                    {keepSelected ? <b className="choice-chosen">Your choice</b> : null}
+                  </small>
                   <strong>Unavailable</strong>
                   <em>
                     {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
@@ -2514,13 +2525,19 @@ function LibraryCoverChoicesContent({
           {candidates.map(card)}
         </div>
       )}
-      {consideration.omissions.length ? (
+      {merged ? (
+        <p className="cover-merged">
+          {String(merged)} duplicate image{merged === 1 ? '' : 's'} merged. Each card names every
+          source that offered it.
+        </p>
+      ) : null}
+      {unavailable.length ? (
         <details className="library-cover-excluded">
           <summary>
-            {String(consideration.omissions.length)} unavailable candidate
-            {consideration.omissions.length === 1 ? '' : 's'} <small>Reasons retained</small>
+            {String(unavailable.length)} unavailable candidate
+            {unavailable.length === 1 ? '' : 's'} <small>Reasons retained</small>
           </summary>
-          {consideration.omissions.map((omission, index) => (
+          {unavailable.map((omission, index) => (
             <p key={String(index)}>
               {typeof omission.reason === 'string'
                 ? coverNoteLabel(omission.reason)
@@ -3516,7 +3533,7 @@ export default function LibraryPage({
   useEffect(() => {
     if (!staleCoverCaseId) return
     const frame = requestAnimationFrame(() => {
-      if (document.activeElement === document.body && !document.querySelector('dialog[open]'))
+      if (document.activeElement === document.body)
         staleCoverRecoveryButton.current?.focus()
     })
     return () => cancelAnimationFrame(frame)
@@ -5014,6 +5031,7 @@ export default function LibraryPage({
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
                         revealEvidence={toggleChoiceEvidence}
+                        writesActive={writesActive}
                       />
                     ) : (
                       <section
@@ -5048,18 +5066,7 @@ export default function LibraryPage({
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}
-                        {/*
-                          What a tap will do, said before the tap and in the
-                          present tense of this work's actual write state. The
-                          same words after the fact are what the completion
-                          summary says, so the promise made here is the one kept
-                          there (#639).
-                        */}
-                        <p className={`cm-write-state is-${writesActive ? 'on' : 'off'}`}>
-                          {writesActive
-                            ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
-                            : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
-                        </p>
+                        <WriteStateLine active={writesActive} />
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
                           role="radiogroup"

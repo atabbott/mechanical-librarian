@@ -3743,8 +3743,17 @@ describe('Library route', () => {
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
   })
 
-  it.each(['epub', 'm4b'] as const)('retains %s cover checks', async (mediaKind) => {
-    const user = userEvent.setup()
+  // jsdom never matches :focus-visible, so a test says which focus is the
+  // keyboard's; only that focus reveals a cover card (#1290).
+  const keyboardFocus = (card: HTMLElement) => {
+    const matches = card.matches.bind(card)
+    vi.spyOn(card, 'matches').mockImplementation(
+      (selector) => selector === ':focus-visible' || matches(selector),
+    )
+  }
+  // Six retained covers with complete visual checks, shared by the cover
+  // check and one-tap tests.
+  const coverChecks = () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const reference = (index: number) => `cover_transport_ref_${String(index).repeat(64)}`
@@ -3922,6 +3931,11 @@ describe('Library route', () => {
       proposedValues: [{ kind: 'cover', value: `cover_${'2'.repeat(64)}` }],
       coverConsideration: consideration,
     }
+    return { consideration, coverField }
+  }
+  it.each(['epub', 'm4b'] as const)('retains %s cover checks', async (mediaKind) => {
+    const user = userEvent.setup()
+    const { consideration, coverField } = coverChecks()
     const http: ReviewHttp = {
       ...createHttp(),
       getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
@@ -4015,23 +4029,15 @@ describe('Library route', () => {
       })),
     })
     const mixedComparison = await screen.findByLabelText('Choose a cover')
-    const unknownChoice = within(mixedComparison).getByRole('button', {
-      name: /^Choose Alternative 4 cover/u,
-    })
-    await user.click(unknownChoice)
-    expect(screen.getByRole('dialog')).toHaveTextContent('Match not confirmed.')
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(unknownChoice).toHaveFocus()
-    expect(recordDecision).not.toHaveBeenCalled()
-    await user.click(unknownChoice)
-    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }))
-    expect(unknownChoice).toHaveFocus()
-    expect(recordDecision).not.toHaveBeenCalled()
+    // The card itself says the match is not confirmed before any tap.
+    expect(
+      within(mixedComparison).getByRole('radio', { name: /^Choose Alternative 4 cover/u }),
+    ).toHaveTextContent('Match not confirmed')
     const pinnedTrack = mixedComparison.querySelector<HTMLElement>('.library-cover-pinned')
-    const currentCard = within(mixedComparison).getByRole('button', {
+    const currentCard = within(mixedComparison).getByRole('radio', {
       name: 'Choose Current cover',
     })
-    const forwardCard = within(mixedComparison).getByRole('button', {
+    const forwardCard = within(mixedComparison).getByRole('radio', {
       name: /Alternative 3 cover/u,
     })
     const forwardChoice = forwardCard.closest<HTMLElement>('.cover-choice')
@@ -4054,6 +4060,13 @@ describe('Library route', () => {
       right: 500,
       width: 190,
     } as DOMRect)
+    // Focus from a pointer arrives on mousedown and must not move the card
+    // from under the press; only keyboard focus reveals it (#1290).
+    forwardCard.focus()
+    expect(pinnedTrack.scrollLeft).toBe(0)
+    forwardCard.blur()
+    keyboardFocus(forwardCard)
+    keyboardFocus(currentCard)
     forwardCard.focus()
     expect(pinnedTrack.scrollLeft).toBe(310)
     vi.spyOn(currentChoice, 'getBoundingClientRect').mockReturnValue({
@@ -4080,14 +4093,21 @@ describe('Library route', () => {
     )
     await user.click(within(mixedComparison).getByLabelText('Alternative 1 cover evidence'))
     expect(recordDecision).not.toHaveBeenCalled()
-    await user.click(
-      within(mixedComparison).getByRole('button', { name: /^Choose Alternative 1 cover/u }),
-    )
-    expect(recordDecision).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
+    // One tap records; there is no dialog to confirm or cancel (#1290).
+    const firstAlternative = within(mixedComparison).getByRole('radio', {
+      name: /^Choose Alternative 1 cover/u,
+    })
+    await user.click(firstAlternative)
     expect(recordDecision).toHaveBeenCalledOnce()
-    expect(screen.getByRole('button', { name: 'Recording…' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled()
+    expect(recordDecision.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        outcome: 'accept',
+        selectedValue: { kind: 'cover', value: `cover_${'2'.repeat(64)}` },
+        coverConfirmation: { expected_selection_id: null, confirm_unverified_match: false },
+      }),
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(firstAlternative).toHaveTextContent('Recording…')
 
     cleanup()
     const revision = vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined))
@@ -4109,10 +4129,8 @@ describe('Library route', () => {
         ],
       })),
     })
-    await user.click(await screen.findByRole('button', { name: 'Choose Alternative 4 cover' }))
-    expect(screen.getByRole('heading', { name: 'Confirm replacement cover' })).toBeVisible()
-    expect(revision).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
+    await user.click(await screen.findByRole('radio', { name: 'Choose Alternative 4 cover' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
     expect(revision).toHaveBeenCalledOnce()
     expect(revision.mock.calls[0]?.[1].coverConfirmation).toEqual({
       expected_selection_id: `cover_selection_${'a'.repeat(64)}`,
@@ -4210,6 +4228,154 @@ describe('Library route', () => {
       expect(within(ownerReadyComparison).getByText(explanation)).toBeVisible()
       expect(within(ownerReadyComparison).queryByText(/· Recommended/u)).not.toBeInTheDocument()
     }
+  })
+
+  describe('cover choices (#1290)', () => {
+    type CoverConsideration = NonNullable<CaseDetailView['fields'][number]['coverConsideration']>
+    const coverHttp = (
+      change: (consideration: CoverConsideration) => Partial<CoverConsideration> = () => ({}),
+    ) => {
+      const { consideration, coverField } = coverChecks()
+      return {
+        ...createHttp(),
+        recordDecision: vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined)),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [
+            {
+              ...coverField,
+              decisionActions: ['keep_current', 'accept'] as const,
+              editable: true,
+              needsAttention: true,
+              coverConsideration: {
+                ...consideration,
+                providerFetching: false,
+                ready: true,
+                ...change(consideration),
+              },
+            },
+          ],
+        })),
+      }
+    }
+
+    it("shows every cover's pixel size and every source", async () => {
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp((consideration) => ({
+          candidates: consideration.candidates.map((candidate, index) =>
+            index === 2
+              ? {
+                  ...candidate,
+                  width: 305,
+                  height: 480,
+                  sourceKinds: ['hardcover', 'open_library'] as const,
+                }
+              : candidate,
+          ),
+        })),
+      )
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const cards = within(group).getAllByRole('radio')
+      expect(cards).toHaveLength(6)
+      for (const card of cards) {
+        // The size and the sources are stated even where a rationale exists.
+        expect(card.querySelector('.cover-dimensions')?.textContent).toMatch(/^\d+ × \d+ px$/u)
+        expect(card.querySelector('.cover-sources')?.textContent).not.toBe('')
+        const image = within(card).getByRole('img')
+        expect(image).toHaveAttribute('loading', 'lazy')
+        expect(image).toHaveAttribute('decoding', 'async')
+      }
+      const merged = within(group).getByRole('radio', { name: 'Choose Alternative 2 cover' })
+      expect(merged.querySelector('.cover-dimensions')).toHaveTextContent('305 × 480 px')
+      expect(merged.querySelector('.cover-sources')).toHaveTextContent('Hardcover · Open Library')
+      expect(within(merged).getByText('Selectable retained cover.')).toBeVisible()
+      expect(
+        within(group)
+          .getByRole('radio', { name: 'Choose Current cover' })
+          .querySelector('.cover-dimensions'),
+      ).toHaveTextContent('800 × 1200 px')
+    })
+
+    it('counts merged duplicate images apart from unavailable candidates', async () => {
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp(() => ({
+          omissions: [
+            { reason: 'duplicate_preview', reference: 'merged-a', retained_reference: 'kept' },
+            { reason: 'duplicate_preview', reference: 'merged-b', retained_reference: 'kept' },
+            { reason: 'source_unavailable', reference: 'retained-unavailable-source' },
+          ],
+        })),
+      )
+      const comparison = await screen.findByRole('region', { name: 'Choose a cover' })
+      expect(
+        within(comparison).getByText(
+          '2 duplicate images merged. Each card names every source that offered it.',
+        ),
+      ).toBeVisible()
+      const unavailable = comparison.querySelector('.library-cover-excluded')
+      expect(unavailable?.querySelector('summary')).toHaveTextContent('1 unavailable candidate')
+      expect(unavailable?.querySelectorAll('p')).toHaveLength(1)
+      cleanup()
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp(() => ({
+          omissions: [
+            { reason: 'duplicate_preview', reference: 'merged', retained_reference: 'kept' },
+          ],
+        })),
+      )
+      expect(
+        await screen.findByText(
+          '1 duplicate image merged. Each card names every source that offered it.',
+        ),
+      ).toBeVisible()
+      expect(document.querySelector('.library-cover-excluded')).toBeNull()
+    })
+
+    it('records a cover in one tap with confirm_unverified_match for an unconfirmed match', async () => {
+      const user = userEvent.setup()
+      const http = coverHttp()
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const radios = within(group).getAllByRole('radio')
+      expect(radios.map((radio) => radio.getAttribute('aria-posinset'))).toEqual(
+        radios.map((_, index) => String(index + 1)),
+      )
+      expect(radios.map((radio) => radio.tabIndex).filter((index) => index === 0)).toHaveLength(1)
+      // Arrows move between covers and record nothing.
+      const current = within(group).getByRole('radio', { name: 'Choose Current cover' })
+      await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
+      current.focus()
+      await user.keyboard('{ArrowRight}')
+      expect(within(group).getByRole('radio', { name: 'Choose Alternative 1 cover' })).toHaveFocus()
+      expect(http.recordDecision).not.toHaveBeenCalled()
+      // The card states the unconfirmed match before the tap; the tap itself
+      // is the explicit choice.
+      const unconfirmed = within(group).getByRole('radio', { name: 'Choose Alternative 4 cover' })
+      expect(unconfirmed).toHaveTextContent('Match not confirmed')
+      await user.click(unconfirmed)
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(http.recordDecision).toHaveBeenCalledOnce()
+      expect(http.recordDecision.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          destination: 'cover',
+          outcome: 'accept',
+          selectedValue: { kind: 'cover', value: `cover_${'5'.repeat(64)}` },
+          coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+        }),
+      )
+      expect(
+        within(screen.getByRole('region', { name: 'Choose a cover' })).getByText(
+          'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.',
+        ),
+      ).toBeVisible()
+    })
   })
 
   it.each([
@@ -4316,7 +4482,7 @@ describe('Library route', () => {
         })),
       })
 
-      const currentCover = await screen.findByRole('button', {
+      const currentCover = await screen.findByRole('radio', {
         name: 'Keep current cover',
       })
       expect(currentCover).toBeVisible()
@@ -4351,13 +4517,13 @@ describe('Library route', () => {
       )
       expect(screen.getByText('Local presence')).toBeVisible()
       expect(screen.getByText('Preview unavailable for this retained cover.')).toBeVisible()
-      expect(screen.getByRole('button', { name: 'Keep current cover' })).toHaveAttribute(
-        'aria-pressed',
+      expect(screen.getByRole('radio', { name: 'Keep current cover' })).toHaveAttribute(
+        'aria-checked',
         'false',
       )
       expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
       const compactTrack = currentCover.closest<HTMLElement>('.library-cover-layout')
-      const alternativeCover = screen.getByRole('button', { name: /Alternative 1 cover/u })
+      const alternativeCover = screen.getByRole('radio', { name: /Alternative 1 cover/u })
       const alternativeChoice = alternativeCover.closest<HTMLElement>('.cover-choice')
       const compactCurrentChoice = currentCover.closest<HTMLElement>('.cover-choice')
       if (!compactTrack || !alternativeChoice || !compactCurrentChoice) {
@@ -4378,6 +4544,8 @@ describe('Library route', () => {
         right: 450,
         width: 170,
       } as DOMRect)
+      keyboardFocus(alternativeCover)
+      keyboardFocus(currentCover)
       alternativeCover.focus()
       expect(compactTrack.scrollLeft).toBe(280)
       vi.spyOn(compactCurrentChoice, 'getBoundingClientRect').mockReturnValue({
@@ -4397,10 +4565,10 @@ describe('Library route', () => {
         })),
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', acceptOnlyHttp)
-      expect(await screen.findByRole('button', { name: 'Keep current cover' })).toBeDisabled()
-      expect(screen.getByRole('button', { name: /Alternative 1 cover/u })).toBeEnabled()
+      expect(await screen.findByRole('radio', { name: 'Keep current cover' })).toBeDisabled()
+      expect(screen.getByRole('radio', { name: /Alternative 1 cover/u })).toBeEnabled()
       await user.click(screen.getByRole('button', { name: /Evidence for Current cover/u }))
-      expect(screen.queryByRole('button', { name: 'Choose Current cover' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('radio', { name: 'Choose Current cover' })).not.toBeInTheDocument()
       expect(acceptOnlyHttp.recordDecision).not.toHaveBeenCalled()
       if (reviewerStatus === 'failed') {
         for (const capability of [
@@ -4461,7 +4629,7 @@ describe('Library route', () => {
             }),
           }
           renderRoute('/library?lens=all&preview=case-1&field=cover', capabilityHttp)
-          await screen.findByRole('button', { name: /Alternative 1 cover/u })
+          await screen.findByRole('radio', { name: /Alternative 1 cover/u })
           await waitFor(() => expect(capabilityHttp.getReviewerAccess).toHaveBeenCalledOnce())
           if (capability === 'configured') {
             await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
@@ -4774,7 +4942,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
     expect(await screen.findByRole('button', { name: 'Prepare cover comparison' })).toBeEnabled()
-    expect(screen.queryByRole('button', { name: 'Keep current cover' })).toBeNull()
+    expect(screen.queryByRole('radio', { name: 'Keep current cover' })).toBeNull()
     expect(screen.queryByLabelText('Choose a cover')).toBeNull()
     expect(http.recordDecision).not.toHaveBeenCalled()
   })
@@ -5385,8 +5553,8 @@ describe('Library route', () => {
       alternativeId,
       selection: 'proposed' as const,
       rationale: `Retained evidence for ${alternativeId}.`,
-      recommendation: 'not_recommended' as const,
-      recommendationReason: null,
+      recommendation: 'no_recommendation' as const,
+      recommendationReason: '',
       limitations: [],
       evidence: [
         {
@@ -6051,13 +6219,17 @@ describe('Library route', () => {
     }
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
-    await user.click(await screen.findByRole('button', { name: /Alternative 1 cover/u }))
-    await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
+    await user.click(await screen.findByRole('radio', { name: /Alternative 1 cover/u }))
     if (retainSameConsideration) {
-      expect(await screen.findByText(/Confirmation was not completed/u)).toBeVisible()
+      await screen.findByText(
+        'This cover comparison changed before your choice was recorded. No cover was changed.',
+      )
+      // The stale tap fails inline, beside the cover it came from; a stale
+      // decision is not retried as it was (#1290).
       expect(recordDecision).toHaveBeenCalledOnce()
-      await user.click(screen.getByRole('button', { name: 'Close' }))
-      expect(screen.getByRole('button', { name: /Alternative 1 cover/u })).toHaveFocus()
+      expect(screen.getByRole('radio', { name: /Alternative 1 cover/u })).toHaveFocus()
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
       retainSameConsideration = false
     }
     expect(
@@ -6085,7 +6257,7 @@ describe('Library route', () => {
     expect(screen.getByRole('button', { name: 'Review current comparison' })).toBeEnabled()
 
     if (directChoice) {
-      const currentAlternative = screen.getByRole('button', {
+      const currentAlternative = screen.getByRole('radio', {
         name: /Alternative 1 cover/u,
       })
       expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
@@ -6093,7 +6265,6 @@ describe('Library route', () => {
         expect.stringContaining(`cover_transport_ref_${'3'.repeat(64)}`),
       )
       await user.click(currentAlternative)
-      await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
       await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
       expect(
         screen.queryByText(
@@ -6107,7 +6278,7 @@ describe('Library route', () => {
             'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
           ),
         ).toBeVisible()
-        expect(screen.queryByRole('button', { name: /Alternative 1 cover/u })).toBeNull()
+        expect(screen.queryByRole('radio', { name: /Alternative 1 cover/u })).toBeNull()
         const reconciliation = queryClient.getQueryData<{
           destination: string
           message: string
@@ -6122,7 +6293,7 @@ describe('Library route', () => {
         expect(successfulDecisions).toBe(1)
         recordedRefreshAvailable = true
         await user.click(screen.getByRole('button', { name: 'Reload current case' }))
-        expect(await screen.findByRole('button', { name: /Alternative 1 cover/u })).toBeVisible()
+        expect(await screen.findByRole('radio', { name: /Alternative 1 cover/u })).toBeVisible()
         await waitFor(() =>
           expect(queryClient.getQueryData(reconciliationKey('case-1'))).toBeNull(),
         )
@@ -6137,7 +6308,7 @@ describe('Library route', () => {
     }
 
     await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
-    const currentAlternative = await screen.findByRole('button', {
+    const currentAlternative = await screen.findByRole('radio', {
       name: /Alternative 1 cover/u,
     })
     expect(within(currentAlternative).getByRole('img')).toHaveAttribute(

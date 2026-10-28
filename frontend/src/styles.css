@@ -719,7 +719,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .variant-m-workspace .library-workspace { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); align-items: start; max-width: 1480px; margin: 0 auto; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow: clip; }
 .variant-m-workspace .library-workspace.attention-open { grid-template-columns: minmax(220px, 280px) minmax(460px, 1fr) minmax(220px, 260px); }
 .variant-m-workspace .library-works { min-height: 72vh; padding: 28px; border: 0; border-right: 1px solid var(--line); background: var(--surface); }
-.variant-m-workspace .library-works-heading h2, .selected-work-header h2, .decision-canvas > header h3, .cover-confirmation h2 { font-family: Georgia, 'Times New Roman', serif; letter-spacing: -.025em; }
+.variant-m-workspace .library-works-heading h2, .selected-work-header h2, .decision-canvas > header h3 { font-family: Georgia, 'Times New Roman', serif; letter-spacing: -.025em; }
 /* The question and the completion are the work's h3s, sized as the h2s they were. */
 .decision-canvas > header h3, .review-complete h3 { margin-bottom:.35rem; font-size:1.5em; }
 .variant-m-workspace .library-work-row { grid-template-columns: 48px minmax(0, 1fr); padding: 14px 8px; border-color: transparent; border-width: 0 0 1px; border-radius: 0; }
@@ -804,7 +804,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .variant-m-workspace .field-filmstrip button.is-recorded { color: var(--accent-strong); background: color-mix(in srgb, var(--accent-soft) 27%, transparent); }
 .decision-canvas { animation: library-field-arrive 180ms cubic-bezier(.16,1,.3,1); }
 .decision-canvas.is-recording .protected-choice { opacity: .68; }
-.library-cover-card.is-selected { border-color:var(--accent-strong); background:color-mix(in srgb, var(--accent-soft) 62%, var(--surface)); box-shadow:inset 0 -3px var(--accent-strong); }
 .library-no-action.is-selected { border-bottom:2px solid var(--accent-strong); background:color-mix(in srgb, var(--accent-soft) 42%, transparent); }
 .decision-confirmed { display: flex; min-height: 190px; align-items: center; justify-content: center; gap: 14px; border: 1px solid var(--accent); border-radius: 12px; color: var(--accent-strong); background: var(--accent-soft); text-align: left; }
 .decision-confirmed > span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; color: var(--surface); background: var(--accent-strong); font-weight: 900; }
@@ -883,7 +882,20 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .cover-choice .choice-evidence li { display:grid; grid-template-columns:1fr; }
 .cover-choice .choice-evidence li strong, .cover-choice .choice-evidence li > span { overflow-wrap:normal; }
 .library-cover-card:hover:not(:disabled), .library-cover-card:focus-visible { border-color: var(--accent); }
-.library-cover-card.is-current { background: color-mix(in srgb, var(--accent-soft) 34%, var(--surface)); }.library-cover-card.is-recommended { border-color: var(--accent); }
+.library-cover-card:hover:not(:disabled) { background:color-mix(in srgb, var(--accent-soft) 45%, var(--surface-strong)); }
+/* A cover card is a radio like a direct choice: a dashed edge for the current
+   cover, the same ring, chosen filled beside a 2px edge, and focus inside the
+   card so the scrolling track cannot clip it (#1290). */
+.library-cover-card.is-current { border-style:dashed; }.library-cover-card.is-recommended { border-color: var(--accent); }
+.library-cover-card > span:last-child > small { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+.library-cover-card > span:last-child > small::before { content:''; flex:none; box-sizing:border-box; width:20px; height:20px; border:2px solid var(--field-line); border-radius:50%; background:var(--surface-strong); }
+.library-cover-card:hover:not(:disabled) > span:last-child > small::before { border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--surface-strong), inset 0 0 0 10px color-mix(in srgb, var(--accent) 30%, var(--surface-strong)); }
+.library-cover-card.is-selected, .library-cover-card.is-selected:hover:not(:disabled) { border-color:var(--accent); background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent); }
+.library-cover-card.is-selected > span:last-child > small::before { border-color:var(--accent-strong); background:var(--accent-strong); box-shadow:inset 0 0 0 4px var(--surface-strong); }
+.library-cover-card:focus-visible { outline:3px solid var(--focus); outline-offset:-6px; }
+.library-cover-card .cover-dimensions { color:var(--ink); font-size:.75rem; font-weight:650; font-variant-numeric:tabular-nums; }
+.library-cover-card .cover-sources { color:var(--soft); font-size:.75rem; }
+.cover-merged { margin:0; color:var(--soft); font-size:.75rem; }
 .library-cover-image { position: relative; display: grid; aspect-ratio: 5 / 8; place-items: center; overflow: hidden; border-radius: 5px; background: transparent; color: var(--soft); text-align: center; }
 .library-cover-image img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .library-cover-card > span:last-child { display: grid; gap: 2px; min-width: 0; }
@@ -1251,8 +1263,3 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .activity-consent-actions > p { flex:none; }
 }
 
-.cover-confirmation { max-width: min(32rem, calc(100vw - 2rem)); max-height: calc(100dvh - 2rem); overflow-y: auto; padding: 1.5rem; color: inherit; background: var(--surface, Canvas); border: 1px solid currentColor; border-radius: .75rem; }
-.cover-confirmation::backdrop { background: #0008; }
-.cover-confirmation img { display: block; width: 100%; height: 16rem; object-fit: contain; }
-.cover-confirmation-actions { display: flex; gap: .75rem; flex-wrap: wrap; justify-content: flex-end; }
-.cover-confirmation button { min-height: 44px; }
