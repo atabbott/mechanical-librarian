@@ -6,6 +6,7 @@ import hashlib
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.review_sessions import (
@@ -57,7 +58,7 @@ class _MemoryRoot:
 
 
 class _TestReactAssetLoader:
-    def __init__(self) -> None:
+    def __init__(self, fonts: dict[str, bytes] | None = None) -> None:
         values = {
             "index.html": (
                 b'<!doctype html><html><body><div id="root"></div>'
@@ -66,6 +67,7 @@ class _TestReactAssetLoader:
             ),
             "assets/index-deadbeef.js": b"window.reviewReady=true;",
             "assets/index-deadbeef.css": b":root{color-scheme:light}",
+            **(fonts or {}),
         }
         root = _MemoryRoot(values)
         self._bundle = ReactAssetBundle(
@@ -78,6 +80,8 @@ class _TestReactAssetLoader:
                     len(payload),
                     "shell"
                     if path == "index.html"
+                    else "font"
+                    if path.endswith(".woff2")
                     else ("style" if path.endswith(".css") else "script"),
                 )
                 for path, payload in sorted(values.items())
@@ -87,6 +91,11 @@ class _TestReactAssetLoader:
 
     def load(self) -> ReactAssetBundle:
         return self._bundle
+
+
+def font_asset_loader(fonts: dict[str, bytes]) -> ReactAssetLoader:
+    """A synthetic workspace build that also carries these font files."""
+    return cast(ReactAssetLoader, _TestReactAssetLoader(fonts))
 
 
 def create_transport_test_app(

@@ -10,6 +10,21 @@ type CaseDetailDto = Schema<'_CaseDetailResponse'>
 export type SettingsView = Schema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
 export type AppearanceView = Schema<'_AppearanceResponse'>
+// The closed OpenRouter failures an owner may see, each with its own remedy.
+const reviewerFailureCodes = [
+  'invalid_key',
+  'quota_exhausted',
+  'rate_limited',
+  'model_unavailable',
+  'model_text_only',
+  'malformed_response',
+  'unreachable',
+  'response_too_large',
+  'timed_out',
+  'data_policy_refused',
+  'image_limit_exceeded',
+] as const
+export type ReviewerFailureCode = (typeof reviewerFailureCodes)[number]
 export type ReviewerState =
   | 'ready'
   | 'configured'
@@ -25,13 +40,7 @@ export type ReviewerState =
   | 'host_unsupported'
   | 'not_provisioned'
   | 'unconfigured'
-  | 'invalid_key'
-  | 'quota_exhausted'
-  | 'rate_limited'
-  | 'model_unavailable'
-  | 'model_text_only'
-  | 'malformed_response'
-  | 'unreachable'
+  | ReviewerFailureCode
 export type ReviewerReason =
   | 'profile_not_provisioned'
   | 'profile_unreadable'
@@ -44,13 +53,7 @@ export type ReviewerReason =
   | 'protocol_or_process'
   | 'restart_interrupted'
   | 'not_selected'
-  | 'invalid_key'
-  | 'quota_exhausted'
-  | 'rate_limited'
-  | 'model_unavailable'
-  | 'model_text_only'
-  | 'malformed_response'
-  | 'unreachable'
+  | ReviewerFailureCode
 export interface ReviewerEngineStatus {
   engine: 'codex' | 'openrouter'
   state: ReviewerState
@@ -747,6 +750,7 @@ export interface CoverConsiderationView {
     | 'profile contract requires memory_bytes=1073741824'
     | 'profile contract requires process_limit=32'
     | null
+  reviewerFailureCode?: ReviewerFailureCode
   supersedesId?: string
   targetFingerprint: string
 }
@@ -1884,13 +1888,7 @@ const reviewerStates = new Set<ReviewerState>([
   'host_unsupported',
   'not_provisioned',
   'unconfigured',
-  'invalid_key',
-  'quota_exhausted',
-  'rate_limited',
-  'model_unavailable',
-  'model_text_only',
-  'malformed_response',
-  'unreachable',
+  ...reviewerFailureCodes,
 ])
 const codexStates = new Set<ReviewerState>([
   'ready',
@@ -1911,13 +1909,7 @@ const openRouterStates = new Set<ReviewerState>([
   'unconfigured',
   'configured',
   'usable',
-  'invalid_key',
-  'quota_exhausted',
-  'rate_limited',
-  'model_unavailable',
-  'model_text_only',
-  'malformed_response',
-  'unreachable',
+  ...reviewerFailureCodes,
 ])
 const reviewerReasons = new Set<ReviewerReason>([
   'profile_not_provisioned',
@@ -1931,13 +1923,7 @@ const reviewerReasons = new Set<ReviewerReason>([
   'protocol_or_process',
   'restart_interrupted',
   'not_selected',
-  'invalid_key',
-  'quota_exhausted',
-  'rate_limited',
-  'model_unavailable',
-  'model_text_only',
-  'malformed_response',
-  'unreachable',
+  ...reviewerFailureCodes,
 ])
 const codexHostReasons = new Set<ReviewerReason>([
   'host_evidence_unavailable',
@@ -1950,15 +1936,7 @@ const codexFailureReasons = new Set<ReviewerReason>([
   'protocol_or_process',
   'restart_interrupted',
 ])
-const openRouterFailures = new Set<ReviewerState>([
-  'invalid_key',
-  'quota_exhausted',
-  'rate_limited',
-  'model_unavailable',
-  'model_text_only',
-  'malformed_response',
-  'unreachable',
-])
+const openRouterFailures = new Set<ReviewerState>(reviewerFailureCodes)
 const openRouterModel =
   /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$/u
 const reviewerStatus = (value: unknown, engine: 'codex' | 'openrouter') => {
@@ -4578,6 +4556,14 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       ].includes(reviewerUnavailableReason))
   )
     throw new ApiError(502, 'invalid_cover_reviewer_unavailable_reason')
+  // Optional on the wire; absent and null both mean no closed failure code.
+  const reviewerFailureCode = value.reviewer_failure_code ?? null
+  if (
+    reviewerFailureCode !== null &&
+    (reviewerStatus !== 'failed' ||
+      !(reviewerFailureCodes as readonly unknown[]).includes(reviewerFailureCode))
+  )
+    throw new ApiError(502, 'invalid_cover_reviewer_failure_code')
   const recommendedReference =
     policy === null || policy.recommended_candidate_reference === null
       ? null
@@ -4715,6 +4701,9 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       | 'profile contract requires memory_bytes=1073741824'
       | 'profile contract requires process_limit=32'
       | null,
+    ...(reviewerFailureCode === null
+      ? {}
+      : { reviewerFailureCode: reviewerFailureCode as ReviewerFailureCode }),
     ...(value.supersedes_id === null
       ? {}
       : { supersedesId: stringValue(value.supersedes_id, 'cover_supersedes_id') }),

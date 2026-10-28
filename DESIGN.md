@@ -215,7 +215,8 @@ switching themes.
 
 **Body Font:** Inter (with system sans-serif fallbacks). The review workspace
 self-hosts Inter's variable latin and latin-ext faces (SIL Open Font License),
-swapped in when loaded; sign-in and setup still render the fallback stack.
+swapped in when loaded; sign-in and setup load the same faces from the
+workspace build and keep the fallback stack only when no build is installed.
 
 **Character:** Georgia gives titles, work identity, values, and metrics the
 cadence of a catalogue or reference edition. Inter carries navigation, labels,

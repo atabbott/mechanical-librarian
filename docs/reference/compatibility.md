@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1308 advances the report to `metadata-report-v59`: the provider diagnostic
+category `malformed_over_bound_response` is replaced by `malformed_response`,
+`oversized_response` and `candidate_limit_exceeded`, and an AudioSilo lookup
+miss counts as `empty_no_match` rather than `http_non_success`. **Clean rebuild
+required** for every predecessor application database; startup refuses v58
+reports before mutation. No migration, adoption, conversion, import or
+downgrade is supplied.
+
 #1289 changes presentation only: the workspace paints its saved or system
 theme before it loads, self-hosts Inter, and uses one Button and one
 StatusPill. The web application serves the hashed font faces and its content
@@ -177,7 +185,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v58` plus `proposal-set-v8` under
+  `metadata-report-v59` plus `proposal-set-v8` under
   `fixed-conservative-v36`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under

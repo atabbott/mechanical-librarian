@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -42,6 +43,10 @@ class AudiobookshelfSetupProbe:
                 library_id=item["id"],
                 name=item["name"],
                 media_kind="book" if item.get("mediaType") == "book" else "unsupported",
+                # Audiobookshelf's own "audiobooks only" switch on a book
+                # library; anything but an exact true leaves the default.
+                audiobooks_only=type(item.get("settings")) is dict
+                and item["settings"].get("audiobooksOnly") is True,
                 service_paths=tuple(
                     folder["fullPath"]
                     for folder in item.get("folders", [])
@@ -116,15 +121,21 @@ class AudiobookshelfSetupProbe:
         except httpx.TimeoutException:
             raise AudiobookshelfSetupProbeError("timeout") from None
         except httpx.TransportError as error:
+            # `httpcore` re-raises without `from`, so the underlying socket or
+            # certificate error is the implicit context rather than the
+            # declared cause. The whole chain is read before choosing, and a
+            # certificate failure outranks the connection error carrying it.
+            chain: list[BaseException] = []
             current: BaseException | None = error
-            seen: set[int] = set()
-            while current is not None and id(current) not in seen:
-                seen.add(id(current))
-                if "SSL" in type(current).__name__.upper():
-                    raise AudiobookshelfSetupProbeError("tls") from None
-                # `httpcore` re-raises without `from`, so the certificate error
-                # is the implicit context rather than the declared cause.
+            while current is not None and all(current is not seen for seen in chain):
+                chain.append(current)
                 current = current.__cause__ or current.__context__
+            if any("SSL" in type(link).__name__.upper() for link in chain):
+                raise AudiobookshelfSetupProbeError("tls") from None
+            if any(isinstance(link, socket.gaierror) for link in chain):
+                raise AudiobookshelfSetupProbeError("name_resolution") from None
+            if any(isinstance(link, ConnectionRefusedError) for link in chain):
+                raise AudiobookshelfSetupProbeError("refused") from None
             raise AudiobookshelfSetupProbeError("unavailable") from None
         except (httpx.HTTPError, OSError):
             raise AudiobookshelfSetupProbeError("unavailable") from None

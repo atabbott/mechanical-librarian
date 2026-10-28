@@ -344,12 +344,14 @@ class Capture(httpx.BaseTransport):
         )
         self.exchanges.append(binding)
         response = self.delegate.handle_request(request)
-        maximum = 1_048_576 if request.url.path == "/api/v1/models" else 131_072
+        # The adapter caps key and chat bodies at 1 MiB at most and bounds the
+        # catalogue per entry, never in total, so neither may this recorder.
+        maximum = None if request.url.path == "/api/v1/models" else 1_048_576
         body = bytearray()
         try:
             for chunk in response.iter_bytes():
                 body.extend(chunk)
-                if len(body) > maximum:
+                if maximum is not None and len(body) > maximum:
                     raise ValueError("response exceeds capture bound")
         finally:
             response.close()

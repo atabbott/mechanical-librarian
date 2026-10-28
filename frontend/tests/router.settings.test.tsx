@@ -1105,6 +1105,30 @@ describe('owner settings route', () => {
     expect(screen.queryByText(/prior sign-in was interrupted/u)).not.toBeInTheDocument()
   })
 
+  it.each([
+    ['response_too_large', /answer too large to read\. Retry later, or choose another model\./u],
+    ['timed_out', /did not answer in time\. Check network access, then retry\./u],
+    ['data_policy_refused', /Change your privacy settings on OpenRouter, or choose a model/u],
+    ['image_limit_exceeded', /fewer images than a cover review sends\. Choose another vision/u],
+  ] as const)('says what to change for an OpenRouter %s status', async (state, copy) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'openrouter' as const, model: 'provider/model' },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state,
+        reason: state,
+        model: 'provider/model',
+        tier: null,
+      },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+    expect(await screen.findByText(copy)).toHaveAttribute('role', 'alert')
+  })
+
   it('keeps current host failure copy ahead of an older cached device failure', async () => {
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())

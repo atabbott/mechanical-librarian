@@ -438,10 +438,10 @@ def test_recovery_store_names_only_reports_a_live_job_will_check(
 
 
 def test_an_unreadable_recovery_store_withdraws_only_the_promise(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A recovery store that cannot answer leaves the page and its counts whole
-    and promises no retry, logging a closed code and no values (#1407)."""
+    and promises no retry, writing a closed code and no values (#1407, #1447)."""
     repository = _reasoned_library(tmp_path)
     (tmp_path / "recovery").mkdir()
     store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery" / "recovery.sqlite")
@@ -462,19 +462,20 @@ def test_an_unreadable_recovery_store_withdraws_only_the_promise(
         scheduled, counts = state()
         assert scheduled == "not_matched_unavailable_scheduled"
         store._connection.execute("DROP TABLE provider_recovery_jobs")
-        caplog.set_level("WARNING")
+        capsys.readouterr()
         assert state() == ("not_matched_unavailable", counts)
         store.close()
         assert state() == ("not_matched_unavailable", counts)
-        records = [
-            record
-            for record in caplog.records
-            if getattr(record, "event", None) == "provider_recovery_schedule"
-        ]
-        assert [(record.code, record.error) for record in records] == [
-            ("unavailable", "ProviderRecoveryStoreError")
-        ] * 2
-        assert report_id not in caplog.text and "unavailable'" not in caplog.text
+        written = capsys.readouterr().err
+        assert (
+            written.splitlines()
+            == [
+                '{"code":"unavailable","error":"ProviderRecoveryStoreError",'
+                '"event":"provider_recovery_schedule","level":"warning"}'
+            ]
+            * 2
+        )
+        assert report_id not in written
     finally:
         store.close()
         repository.close()

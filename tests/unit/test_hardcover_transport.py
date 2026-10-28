@@ -371,6 +371,39 @@ def test_graphql_error_transport_timeout_and_expired_deadline_are_unavailable() 
     assert [] == requests
 
 
+@pytest.mark.parametrize(
+    "headers",
+    (
+        {"content-type": "application/json"},
+        {"content-type": "text/html"},
+        {"content-type": "application/json", "content-encoding": "gzip"},
+    ),
+    ids=("json", "foreign_media_type", "non_identity_encoding"),
+)
+def test_an_empty_success_body_is_unavailable_before_its_shape_is_judged(
+    headers: dict[str, str],
+) -> None:
+    result = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200, headers=headers, stream=httpx.ByteStream(b"")
+                )
+            )
+        ),
+        65_536,
+        sleep=lambda _: None,
+        jitter=lambda: 0.0,
+    ).observe(isbn_lookup((isbn_claim(),)))
+
+    assert ProviderStatus.UNAVAILABLE == result.observation.status
+    assert result.evidence.attempt_records is not None
+    assert [("provider_failure", "terminal")] == [
+        (record.category, record.outcome) for record in result.evidence.attempt_records
+    ]
+
+
 def test_hardcover_retries_declared_transients_with_exact_authority() -> None:
     for status_code in (500, 502, 503, 504):
         responses = [
