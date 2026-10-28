@@ -38,6 +38,7 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
     admitted_recording_asin,
     carried_asin_precedence,
 )
@@ -589,12 +590,19 @@ def test_a_narrator_disjoint_product_is_refused_only_on_the_carried_lane() -> No
     other = _candidate("audible", (_CARRIED,), narrator="Someone Else")
     refused = _catalogue(claims, carried=(other,))
     (candidate,) = refused.candidates
+    alone = _report(claims, (refused,))
 
-    assert not any(
-        value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
-        for value in candidate.evidence
+    # Another recording: only its identifier survives, so its tight runtime
+    # cannot admit this one and its cast is never offered.
+    assert {ClaimKind.ASIN} == {value.kind for value in candidate.claims}
+    assert () == candidate.evidence
+    assert not admitted_audiobook_identity(alone)
+    assert all(
+        not result.alternatives
+        for result in evaluate_report(alone).results
+        if result.destination is TargetDestination.NARRATORS
     )
-    assert admitted_recording_asin(_report(claims, (refused,))) is None
+    assert admitted_recording_asin(alone) is None
     # The same product agreeing on its narrator is admitted and carried again.
     admitted = _catalogue(claims, carried=(_candidate("audible", (_CARRIED,)),))
     assert _CARRIED == admitted_recording_asin(_report(claims, (admitted,)))

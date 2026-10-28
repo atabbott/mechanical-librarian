@@ -220,7 +220,8 @@ an asserted one, except that its product may also admit, under the tight band,
 against the title the alternative discovery lane asks (#1255). That is the
 first discovery title that survives the target's own title, authors and series
 names. A product whose narrators share nobody with the recording's own credits
-is refused on it. A carried edition is kept while any audiobook authority
+is refused on it, and keeps only its identifier, so its runtime cannot
+admit the recording. A carried edition is kept while any audiobook authority
 verifies it. A lookup answers only when it returns products or no match; any
 other ending, recoverable or not, is a failure and refutes nothing. The edition
 is carried again while any carried lookup failed, or while none answered,
@@ -231,7 +232,9 @@ withheld. The owner's value always stands. A product naming the item's current
 ASIN is never withheld. When the report admitted that ASIN as a separate
 product, the other edition is no longer carried, whatever the casts. If the
 two casts also overlap, the carried products are withheld in that report too.
-One recording's sibling ASINs offer one value: the item's
+A provider that resolves one recording through two regional ASINs keeps that
+recording once, because copies that differ only in marketplace are not an
+identity conflict. One recording's sibling ASINs offer one value: the item's
 current ASIN when it is one of them, otherwise the one that was looked up. An item that already carries its own ASIN feeds nothing. Hardcover and
 Open Library have no ASIN lookup, so a plan of ASIN lanes alone, local or fed,
 sends them no request and they record `insufficient_input` with no lane, not a

@@ -1528,8 +1528,8 @@ def _carried_or_admitted_asin(
 def carried_asin_precedence(report: MetadataReport) -> frozenset[tuple[str, str]]:
     """Name the products withheld at the ASIN field once a carried edition is verified.
 
-    The one place the precedence rule lives (ADR-0088, pending owner
-    confirmation): once a direct lookup verified the carried ASIN, that is the
+    The one place the precedence rule lives (ADR-0088, the owner's decision of
+    2026-10-28): once a direct lookup verified the carried ASIN, that is the
     ASIN proposed, and a tight product naming another ASIN whose narrator cast
     is not disjoint from the carried product's is the same recording relisted
     rather than a second choice, so it is withheld. Search still runs and

@@ -1,6 +1,6 @@
 # ADR-0088: Carry an admitted audiobook edition into the next preparation
 
-- Status: accepted (precedence clause pending owner confirmation)
+- Status: accepted (precedence confirmed by the owner on 2026-10-28)
 - Date: 2026-10-28
 - Owners: project maintainers
 - Issues: #1316
@@ -67,7 +67,9 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
    variant conflict and the existing tight band, with no new constant. Only
    for a lane whose requested ASIN is the carried one, a product whose
    narrator cast is disjoint from the recording's own credits is refused;
-   unknown on either side passes. An edition first matched on the item's
+   unknown on either side passes. A refused product is another recording, so
+   it keeps only its identifier, exactly as an unadmitted one does. Its
+   runtime cannot admit this recording and its cast is never offered. An edition first matched on the item's
    alternative discovery title (#1255, a path leaf or title tag) states that
    title, not the target's. So the carried lookup's product is also admitted
    against the title the alternative WORK lane asks: the first discovery title
@@ -90,22 +92,27 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
    refutes a carry. Only when at least one carried lookup answered, none
    verified it and none failed is it refuted: it is dropped, that report
    cannot admit it again, and the search may admit a different edition.
-6. **Precedence (pending owner confirmation).** At the ASIN destination a
-   verified carried edition is the ASIN proposed. A tight product naming
-   another ASIN whose narrator cast is not disjoint from the carried product's
-   is withheld as the same recording relisted; a narrator-disjoint one is still
-   offered. Search still runs and still feeds every other field. The owner's
+6. **Precedence (owner decision, 2026-10-28: carried ASIN wins).** At the
+   ASIN destination a verified carried edition is the ASIN proposed. A tight
+   product naming another ASIN whose narrator cast is not disjoint from the
+   carried product's is withheld as the same recording relisted; a
+   narrator-disjoint one is still offered. Search still runs and still feeds every other field. The owner's
    value is never outranked: a product naming the target's own ASIN is never
    withheld. When the report admitted that ASIN as a separate product whose
    narrator cast is not disjoint from the carried product's, the owner's
    edition stands and the carried products are withheld instead. Whatever the
-   casts, clause 1 then stops carrying the other edition. The rule lives in one
-   function, `carried_asin_precedence`, so the owner's decision can change it
-   in one place.
+   casts, clause 1 then stops carrying the other edition. The owner chose this
+   precedence on #1316 on 2026-10-28. The rule lives in one function,
+   `carried_asin_precedence`.
 7. **Sibling ASINs.** At the proposal layer only, with no admission change and
    no adapter change, a candidate stating more than one valid edition ASIN
    contributes one value at the ASIN destination: the target's current ASIN if
-   it is one of them, otherwise the ASIN its lane looked up.
+   it is one of them, otherwise the ASIN its lane looked up. When one provider
+   resolves the same recording through two regional ASINs, the two copies
+   differ only in their marketplace evidence. The observation keeps the
+   recording once, under the first lane's marketplace, instead of treating
+   the copies as an identity conflict. Any other difference is still a
+   conflict.
 8. **Versions.** The report advances to `metadata-report-v60` and the proposal
    policy to `fixed-conservative-v37`. **Clean rebuild required** under
    ADR-0013.
@@ -129,8 +136,8 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
 
 ### Neutral or deferred
 
-- The precedence clause stands as recommended until the owner confirms or
-  replaces it on #1316.
+- The owner confirmed the precedence clause on #1316 on 2026-10-28: the
+  carried ASIN wins.
 - No runtime band changes, and nothing writes the Audiobookshelf ASIN outside
   the normal proposal path.
 
@@ -158,8 +165,9 @@ the choice every preparation, which is the regression #1316 records.
 what is not, the carried lane's plan, order, query bound and starvation, the
 stub and narrator refusals, re-verification on the alternative discovery
 title, carrying again after a recoverable failure at any authority, the
-precedence, the owner's value outranking a carried edition, and the sibling rule. `tests/unit/test_metadata_report_application.py`
-proves the carry across two preparations of one track set and its absence
-after a track change or with a local ASIN, and
-`tests/unit/test_provider_retry_successor.py` proves the retry rebuilds the
-carried lane.
+precedence, the owner's value outranking a carried edition, and the sibling
+rule. `tests/unit/test_metadata_report_application.py` proves the carry across
+two preparations of one track set and its absence after a track change or with
+a local ASIN. `tests/unit/test_provider_retry_successor.py` proves the retry
+rebuilds the carried lane, and `tests/unit/test_audiosilo_provider.py` proves
+one recording reached through two regional ASINs is kept once.

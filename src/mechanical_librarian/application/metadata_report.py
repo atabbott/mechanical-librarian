@@ -88,6 +88,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
+    ProviderEvidence,
     ProviderEvidenceKind,
     ProviderLaneCandidate,
     ProviderLaneDispatch,
@@ -1113,6 +1114,41 @@ _IDENTITY_CONFLICT_DIAGNOSTIC = FailureDiagnostic(
 )
 
 
+def _marketplaces(candidate: ProviderCandidate) -> set[ProviderEvidence]:
+    return {
+        value
+        for value in candidate.evidence
+        if value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+    }
+
+
+def _regional_sibling_copies(
+    previous: ProviderCandidate, candidate: ProviderCandidate
+) -> bool:
+    """Whether two copies of one recording differ only in the marketplace.
+
+    A per-ASIN provider asked about two regional ASINs of one recording (#1316)
+    states the same recording twice, once for each region it resolved in. Its
+    claims, every other piece of evidence and the marketplace count agree, so
+    the copies are the same identity rather than a conflict. Any other
+    disagreement is still an identity conflict.
+    """
+    previous_markets = _marketplaces(previous)
+    candidate_markets = _marketplaces(candidate)
+    return (
+        len(previous_markets) == 1
+        and len(candidate_markets) == 1
+        and previous_markets != candidate_markets
+        and previous.work_identity == candidate.work_identity
+        and previous.runtime_short_of_local == candidate.runtime_short_of_local
+        and previous.identity_bindings == candidate.identity_bindings
+        and previous.claims == candidate.claims
+        and set(previous.evidence) - previous_markets
+        == set(candidate.evidence) - candidate_markets
+        and len(previous.evidence) == len(candidate.evidence)
+    )
+
+
 def provider_observation(
     provider: str,
     results: tuple[ProviderLaneResult, ...],
@@ -1147,6 +1183,10 @@ def provider_observation(
                 continue
             if previous.work_identity != candidate.work_identity:
                 conflict = True
+                continue
+            if _regional_sibling_copies(previous, candidate):
+                # One recording reached through two of its regional ASINs:
+                # the first lane's marketplace stands for the recording.
                 continue
             previous_claims = set(previous.claims)
             candidate_claims = set(candidate.claims)
@@ -1908,7 +1948,9 @@ def _identifier_lane_candidates(
     # (#1257), with or without a title to admit against: its runtime would reach
     # stated-runtime admission downstream, and its work statements and
     # media-health comparison would describe another work. The chapter route
-    # already requires exact admission and is untouched.
+    # already requires exact admission and is untouched. A carried product the
+    # narrator gate refused is another recording, so it is shaped the same
+    # way: its runtime and cast would otherwise admit and describe this one.
     shaped: list[ProviderCandidate] = []
     for candidate in observation.candidates:
         chapter = candidate.identity not in narrator_refused and (
@@ -1925,7 +1967,9 @@ def _identifier_lane_candidates(
             candidate.identity in alternative_admitted
             and candidate.identity == admitted
         )
-        if candidate.identity not in work_admitted and not chapter and not alternative:
+        if candidate.identity in narrator_refused or (
+            candidate.identity not in work_admitted and not chapter and not alternative
+        ):
             shaped.append(
                 replace(
                     candidate,
