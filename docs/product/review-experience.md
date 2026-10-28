@@ -621,7 +621,7 @@ not retain, and it is stated once per edition however it was arrived at.
 
 Cover review remains advisory: small eligible sets compare current and
 candidates equally; larger sets retain the incumbent while exposing the full
-eligible gallery. Below 900px the incumbent becomes the first item of the same
+eligible gallery. Below 1024px the incumbent becomes the first item of the same
 horizontally scrollable comparison track as every candidate, so covers stay in
 one row rather than stacking the current cover above the alternatives. Every
 image is contained whole at its intrinsic aspect ratio inside a quiet 5:8
