@@ -3686,7 +3686,8 @@ def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
 def test_attention_drawer_holds_focus_and_returns_it() -> None:
     """Opening Attention focuses its heading. Between 761 and 1199px the rail
     is a drawer: the page behind it, but for the toolbar that toggles it, is
-    inert and Tab wraps inside it; Escape closes it at any width and hands
+    inert and Tab wraps inside it, and crossing out of that range while it is
+    open releases the page. Escape or Close shuts it at any width and hands
     focus back to the toggle (#1288)."""
     inert = """() => ['.masthead', '.library-works', '.workspace-detail']
       .filter(selector => document.querySelector(selector)?.closest('[inert]'))"""
@@ -3731,7 +3732,17 @@ def test_attention_drawer_holds_focus_and_returns_it() -> None:
                             assert page.evaluate(inside), (
                                 f"{where}: {key} left the drawer"
                             )
-                page.keyboard.press("Escape")
+                if width == 1100:
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    page.wait_for_function(f"() => ({inert})().length === 0")
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.wait_for_function(f"() => ({inert})().length === 3")
+                    expect(rail).to_be_visible()
+                # Each width leaves once by Escape and once by Close.
+                if scheme == "light":
+                    page.keyboard.press("Escape")
+                else:
+                    rail.get_by_role("button", name="Close", exact=True).click()
                 expect(rail).to_have_count(0)
                 expect(toggle).to_be_focused()
                 assert page.evaluate(inert) == [], where
