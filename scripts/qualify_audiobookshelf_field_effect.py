@@ -2812,7 +2812,16 @@ def _installed_automatic_series_qualification(
                     if len(decisions) > 1:
                         raise QualificationError("installed_series_decision_ambiguous")
                     before = target.read(
-                        type("Read", (), {"work_id": item, "destination": "series"})()
+                        type(
+                            "Read",
+                            (),
+                            {
+                                "work_id": item,
+                                "destination": "series",
+                                # A read outside a plan has no subtitle companion.
+                                "subtitle_plan": lambda _self: None,
+                            },
+                        )()
                     ).value
                     cases[scenario] = (
                         item,
@@ -2908,7 +2917,16 @@ def _installed_automatic_series_qualification(
                         if operation.plan.work_id == item
                     )
                     after = target.read(
-                        type("Read", (), {"work_id": item, "destination": "series"})()
+                        type(
+                            "Read",
+                            (),
+                            {
+                                "work_id": item,
+                                "destination": "series",
+                                # A read outside a plan has no subtitle companion.
+                                "subtitle_plan": lambda _self: None,
+                            },
+                        )()
                     ).value
                     _require_installed_automatic_series_evidence(
                         scenario,

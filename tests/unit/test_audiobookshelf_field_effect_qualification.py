@@ -476,6 +476,31 @@ def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane
     assert isbn_data["books"][0]["id"] != work_data["books"][0]["id"]
 
 
+def test_generated_canary_catalogues_agree_with_the_generated_epub() -> None:
+    # #1427: split title or author evidence is a material conflict the policy
+    # keeps for the owner, so it can never prove an automatic decision.
+    corrections = {"After": "Before", "Guarded qualification title": "Before"}
+    with _qualification_hardcover_client(corrections, {}, {}, {}) as client:
+        responses = (
+            client.post(
+                "https://qualification.invalid/graphql",
+                json={"variables": {"isbns": ["9780306406157"]}},
+            ),
+            client.post(
+                "https://qualification.invalid/graphql",
+                json={"variables": {"title": "After", "authors": ["Seed Author"]}},
+            ),
+        )
+
+    for response in responses:
+        edition = json.loads(response.content)["data"]["editions"][0]
+        assert edition["title"] == "Before"
+        assert [value["author"]["name"] for value in edition["contributions"]] == [
+            "Synthetic Author",
+            "Second Qualified Author",
+        ]
+
+
 def test_missing_installed_destination_fails_full_chain_qualification() -> None:
     expected = {"title": "automatic_policy", "cover": "human"}
     with pytest.raises(
