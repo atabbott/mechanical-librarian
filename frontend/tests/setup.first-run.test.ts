@@ -2323,6 +2323,10 @@ it.each([
   ['unreachable', 'OpenRouter could not be reached'],
   ['timed_out', 'OpenRouter did not answer in time. Check network access, then retry.'],
   [
+    'malformed_response',
+    'OpenRouter returned an invalid response. Retry later or choose another model.',
+  ],
+  [
     'response_too_large',
     'OpenRouter returned an answer too large to read. Retry later, or choose another model.',
   ],
