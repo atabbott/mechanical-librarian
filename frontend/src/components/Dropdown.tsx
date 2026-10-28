@@ -146,12 +146,12 @@ export function Dropdown(props: {
       event.preventDefault()
       focusOption(props.options.length - 1)
     }
+    // Tab closes like Escape: the menu is portaled to the end of the page, so
+    // focus goes back to the trigger rather than past everything else.
     if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault()
+      returnFocusOnCloseRef.current = true
       setOpen(false)
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        returnFocusOnCloseRef.current = true
-      }
     }
   }
   const choose = (value: string) => {

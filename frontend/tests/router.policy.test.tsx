@@ -2219,3 +2219,159 @@ it('counts a manual availability change without an elected value', async () => {
   expect(screen.getByText('Audiobooks: 1 sampled work · 1 changed field')).toBeVisible()
   expect(screen.queryByText('No policy-caused changes in this sample')).toBeNull()
 })
+
+describe('Policy keyboard focus (#1288)', () => {
+  const emptyPreview = {
+    active_policy_id: 'policy-active',
+    policy_id: 'policy-draft',
+    schema_version: 'metadata-policy-preview-v1',
+    active_generation: 1,
+    libraries: [
+      {
+        library: 'Empty library',
+        affected_categories: [],
+        cases: [],
+        comparisons: [],
+        cases_total: 0,
+        cases_truncated: false,
+        current_unapplied_count: 0,
+        resolved_policy_id: 'resolved-policy',
+      },
+    ],
+  }
+
+  it('closes a representation menu onto its trigger when Tab leaves it', async () => {
+    const user = userEvent.setup()
+    renderRoute('/policy?section=identity')
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    const trigger = within(title).getByRole('combobox', {
+      name: 'Title and subtitle representation',
+    })
+    for (const tab of ['{Tab}', '{Shift>}{Tab}{/Shift}']) {
+      await user.click(trigger)
+      expect(await screen.findByRole('listbox')).toBeVisible()
+      expect(document.activeElement).toHaveAttribute('role', 'option')
+      await user.keyboard(tab)
+      expect(screen.queryByRole('listbox')).toBeNull()
+      expect(trigger).toHaveFocus()
+    }
+  })
+
+  it('keeps focus on Validate and preview while it runs, then moves it to the preview', async () => {
+    const user = userEvent.setup()
+    let release: () => void = () => undefined
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      if (path === 'validate') await new Promise<void>((resolve) => (release = resolve))
+      if (path === 'drafts')
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
+      if (path === 'preview') return emptyPreview
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
+    })
+    renderRoute('/policy?section=identity', {
+      ...createHttp(),
+      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+    })
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    const validate = screen.getByRole('button', { name: 'Validate and preview' })
+    validate.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(validate).toHaveTextContent('Validating…'))
+    // The same button, still focused and still in the page, refuses a second press.
+    expect(validate).toHaveFocus()
+    expect(validate).toBeEnabled()
+    expect(validate).toHaveAttribute('aria-disabled', 'true')
+    await user.keyboard('{Enter}')
+    expect(policyCommand).toHaveBeenCalledTimes(1)
+    release()
+    expect(
+      await screen.findByText('Impact preview is current. The active policy is unchanged.'),
+    ).toBeVisible()
+    await waitFor(() => expect(document.querySelector('.cm-policy-result')).toHaveFocus())
+  })
+
+  it('says a refused validation where focus lands', async () => {
+    const user = userEvent.setup()
+    const policyCommand = vi.fn(async (): Promise<unknown> => {
+      throw new ApiError(422, 'policy_profile_invalid')
+    })
+    renderRoute('/policy?section=identity', {
+      ...createHttp(),
+      policyCommand: <T,>() => policyCommand() as Promise<T>,
+    })
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    const validate = screen.getByRole('button', { name: 'Validate and preview' })
+    validate.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(document.querySelector('.policy-status')).toHaveFocus())
+    expect(validate).toHaveTextContent('Validate and preview')
+  })
+
+  it('keeps focus through a reconciliation retry, then moves it to the transition notice', async () => {
+    const user = userEvent.setup()
+    let release: () => void = () => undefined
+    let retried = false
+    const transition = {
+      schema_version: 'metadata-policy-transition-v1' as const,
+      transition_id: 'policy_transition_2',
+      from_policy_id: 'policy-a',
+      to_policy_id: 'policy-b',
+      generation: 2,
+      state: 'completed_with_failures',
+      completed: 9,
+      total: 11,
+      failed: 2,
+      acknowledged: false,
+      origin: 'activation',
+    }
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      await new Promise<void>((resolve) => (release = resolve))
+      retried = true
+      return { ...transition, state: 'processing', failed: 0, path }
+    })
+    renderRoute('/policy', {
+      ...createHttp(),
+      getPolicyTransition: vi.fn(
+        async () =>
+          (retried ? { ...transition, state: 'processing', failed: 0 } : transition) as never,
+      ),
+      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+    })
+    const retry = await screen.findByRole('button', { name: 'Retry failed reconciliation' })
+    retry.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(retry).toHaveAttribute('aria-disabled', 'true'))
+    expect(retry).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(policyCommand).toHaveBeenCalledTimes(1)
+    release()
+    const notice = await screen.findByRole('region', { name: 'Policy activation progress' })
+    await waitFor(() => expect(notice).toHaveFocus())
+    expect(
+      await within(notice).findByRole('heading', { name: 'Applying updated policy' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Retry failed reconciliation' })).toBeNull()
+  })
+
+  it('describes the activation review by its write-permission line', async () => {
+    const user = userEvent.setup()
+    const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
+      if (path === 'drafts')
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
+      if (path === 'preview') return emptyPreview
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
+    })
+    renderRoute('/policy?section=identity', {
+      ...createHttp(),
+      policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+    })
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+    const review = await screen.findByRole('group', { name: 'Review policy activation' })
+    await waitFor(() => expect(review).toHaveFocus())
+    expect(review).toHaveAccessibleDescription(/write permission/iu)
+  })
+})

@@ -2,7 +2,7 @@ import { invalidateBackgroundQueries } from '../queryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   AmbiguousMutationError,
@@ -957,8 +957,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             : 'Policy state updated from the authoritative server.',
       })
       if (action === 'automatic-safety/recover') safetySummaryRef.current?.focus()
-      // The dismissed update took its focused button with it.
+      // The dismissed update took its focused button with it, and a retry that
+      // reconciles the failures will take its own.
       if (action.endsWith('/acknowledge')) finishMessageRef.current?.focus()
+      if (action.endsWith('/retry')) cutoverRef.current?.focus()
     } catch (error) {
       setStatus(
         error instanceof AmbiguousMutationError
@@ -1293,12 +1295,22 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const editorRef = useRef<HTMLDivElement>(null)
   const trayRef = useRef<HTMLElement>(null)
   const policyStatusRef = useRef<HTMLParagraphElement>(null)
+  // A preview takes focus from the button that produced it; a refusal or
+  // uncertainty that returns here is said by the status, which runs after.
+  const resultRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (stage !== 'preview') return
+    resultRef.current?.focus({ preventScroll: true })
+    resultRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [stage])
   useEffect(() => {
     if (!['error', 'warning'].includes(status.tone)) return
     policyStatusRef.current?.focus({ preventScroll: true })
     policyStatusRef.current?.scrollIntoView({ block: 'nearest' })
   }, [status])
   const activationReviewRef = useRef<HTMLElement>(null)
+  const activationDescriptionId = useId()
+  const cutoverRef = useRef<HTMLElement>(null)
   useEffect(() => {
     if (stage !== 'activation') return
     activationReviewRef.current?.focus({ preventScroll: true })
@@ -1676,7 +1688,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           </div>
         </section>
         {(stage === 'preview' || stage === 'activation') && preview ? (
-          <section className="cm-policy-result">
+          <section className="cm-policy-result" ref={resultRef} tabIndex={-1}>
             <div className="cm-policy-preview">
               <header>
                 <div>
@@ -1827,10 +1839,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 className="cm-policy-activation"
                 ref={activationReviewRef}
                 tabIndex={-1}
+                role="group"
                 aria-label="Review policy activation"
+                aria-describedby={activationDescriptionId}
               >
                 <strong>Activate this reviewed draft?</strong>
-                <span>
+                <span id={activationDescriptionId}>
                   The active policy changes only after this guarded command succeeds. Applied
                   history remains untouched.{' '}
                   {keptPermission === undefined
@@ -1913,18 +1927,17 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   Back to preview
                 </button>
               ) : null}
-              {stage === 'editing' ? (
+              {/* One button through validation, so focus stays on it while it runs. */}
+              {stage === 'editing' || stage === 'validating' ? (
                 <Button
                   variant="primary"
-                  disabled={command.isPending || !draftDisplay.changed}
-                  onClick={() => void validateAndPreview()}
+                  disabled={stage === 'editing' && !draftDisplay.changed}
+                  aria-disabled={command.isPending || stage === 'validating' || undefined}
+                  onClick={() => {
+                    if (stage === 'editing' && !command.isPending) void validateAndPreview()
+                  }}
                 >
-                  Validate and preview
-                </Button>
-              ) : null}
-              {stage === 'validating' ? (
-                <Button variant="primary" disabled>
-                  Validating…
+                  {stage === 'validating' ? 'Validating…' : 'Validate and preview'}
                 </Button>
               ) : null}
               {stage === 'preview' ? (
@@ -1995,6 +2008,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       <section
         className={activationNotice ? 'policy-cutover' : undefined}
         aria-label={activationNotice ? 'Policy activation progress' : undefined}
+        ref={cutoverRef}
+        tabIndex={-1}
       >
         <div role="status">
           {activationNotice ? (
@@ -2019,10 +2034,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           <div className="policy-workflow-actions">
             {activationNotice.failed ? (
               <button
-                disabled={command.isPending}
-                onClick={() =>
-                  void runAuxiliary(`transitions/${activationNotice.transition_id}/retry`)
-                }
+                aria-disabled={command.isPending || undefined}
+                onClick={() => {
+                  if (!command.isPending)
+                    void runAuxiliary(`transitions/${activationNotice.transition_id}/retry`)
+                }}
               >
                 Retry failed reconciliation
               </button>

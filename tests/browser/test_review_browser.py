@@ -2511,6 +2511,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 for option in page.get_by_role("option").all():
                     assert option.bounding_box()["height"] >= 44
                 page.keyboard.press("Escape")
+                # Tab closes the portaled menu onto its trigger, in both
+                # directions, instead of leaving for the end of the page (#1288).
+                for leaving in ("Tab", "Shift+Tab"):
+                    representation.click()
+                    page.get_by_role("listbox", name="Genres representation").wait_for()
+                    page.keyboard.press(leaving)
+                    expect(representation).to_be_focused()
+                    assert page.locator(".cm-dropdown-menu").count() == 0
                 for control in page.locator(
                     ".cm-policy-sidebar nav button, .cm-segmented button, "
                     ".cm-dropdown-trigger, .cm-finish-actions button"

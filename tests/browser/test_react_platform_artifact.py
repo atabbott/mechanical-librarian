@@ -2561,6 +2561,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_text("Draft has unreviewed changes", exact=False).first.wait_for()
         page.get_by_role("button", name="Validate and preview").click()
         page.get_by_text("Impact preview is current.", exact=False).wait_for()
+        # Focus follows the command to its result instead of falling to the
+        # page while it validates (#1288).
+        expect(page.locator(".cm-policy-result")).to_be_focused()
         primary = page.locator(".cm-policy-preview-list")
         assert primary.locator(":scope > div").count() == 6
         assert (
