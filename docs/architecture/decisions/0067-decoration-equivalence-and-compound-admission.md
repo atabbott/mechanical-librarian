@@ -257,6 +257,14 @@ first, and report validation refuses a rule admission beside an alternative
 lane that was not asked or did not end `no_match`, or beside an admitted ASIN
 lane. A rule admission records every rung the walk sent.
 
+The three kinds of lane block the rule differently. An admitted ASIN lane,
+the carried one included, blocks it, because an exact path already answered.
+A carried lookup that failed does not: under #1316 a failed carried lookup is
+no answer, so the rule reads the asserted lane's refused pages as if no ASIN
+had been carried. A failed alternative lane does block it, because that lane
+was never answered as `no_match` and an exact admission there may still be
+waiting.
+
 A provider retry (#1257) sees only the lanes it retries. It keeps the rule
 only when every planned alternative lane is retried with it or already ended
 `no_match`, and no ASIN lane left out of it admitted. An alternative lane
@@ -301,9 +309,17 @@ Journey Home", "Example Journey: The Return" and a separate subtitle "The
 Return" all run on past "Example Journey", and "Example Journey Home" runs on
 past a product "Example Journey". Decoration does not run on: the stop list
 both audiobook title grammars share ("book", "edition", "unabridged", ...),
-"a novel", numbers, roman numerals and the series names either side states.
-So "Example Journey: A Novel", "Example Journey: Example Saga, Book 2" and a
-bare "12 Example Journey" do not need a series. A local title with a
+"a novel" and the series names either side states. A number or roman numeral
+is decoration only before the shorter title and only when it is not the
+product's own series position: a bare "12 Example Journey" beside "Example
+Journey" does not need a series, unless the product sits at 12 in its
+series. After the shorter title it is a sequel's mark, so "Example Journey
+2", "Example Journey II", "Example Journey: Volume 2" and "Example Journey:
+Example Saga, Book 2" need their series to agree. A roman numeral is two to
+six letters worth at most 39, so a word that only spells one ("mix", "mi",
+"i") runs on like any other word. So "Example Journey: A Novel" and
+"Example Journey (Unabridged)" do not need a series. Neither the number rule
+nor the numeral bound changed any rescue in the #1294 replay. A local title with a
 subtitle the product lacks ("Example Journey: Into the Fold" beside "Example
 Journey") does; no measured rescue had that shape.
 

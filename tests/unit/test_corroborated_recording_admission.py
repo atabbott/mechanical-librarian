@@ -1279,6 +1279,16 @@ def test_refused_product_comparison_links_replay() -> None:
         # The local title is the longer one.
         ("Synthetic Journey Home", "Synthetic Journey", None),
         ("Synthetic Journey: Into the Fold", "Synthetic Journey", None),
+        # A number or numeral after the shorter title marks a sequel.
+        ("Synthetic Journey", "Synthetic Journey 2", None),
+        ("Synthetic Journey", "Synthetic Journey II", None),
+        ("Synthetic Journey", "Synthetic Journey: Volume 2", None),
+        ("Synthetic Journey", "Synthetic Journey", "Example Saga, Book 2"),
+        ("Synthetic Journey 2", "Synthetic Journey", None),
+        # Words that only spell a numeral are words.
+        ("Synthetic Journey", "Synthetic Journey Mix", None),
+        ("Synthetic Journey", "Mi Synthetic Journey", None),
+        ("Synthetic Journey", "Synthetic Journey I", None),
     ),
 )
 def test_a_title_extended_on_either_side_needs_its_series_to_agree(
@@ -1303,8 +1313,9 @@ def test_a_title_extended_on_either_side_needs_its_series_to_agree(
     ("local", "title", "subtitle"),
     (
         ("Synthetic Journey", "Synthetic Journey: A Novel", None),
-        ("Synthetic Journey", "Synthetic Journey", "Example Saga, Book 2"),
+        ("Synthetic Journey", "Synthetic Journey", "Example Saga"),
         ("12 Synthetic Journey", "Synthetic Journey", None),
+        ("Synthetic Journey", "12 Synthetic Journey", None),
         ("Synthetic Journey (Unabridged)", "Synthetic Journey", None),
     ),
 )
@@ -1312,6 +1323,18 @@ def test_decoration_does_not_extend_a_title(
     local: str, title: str, subtitle: str | None
 ) -> None:
     assert not work_title_extends(local, title, subtitle, decorations=("Example Saga",))
+
+
+def test_a_leading_number_that_is_the_series_position_extends_a_title() -> None:
+    # "12 X" against "X" stays decoration, but not when 12 is where the
+    # product sits in its own series: then it reads as "X, part 12".
+    product = _candidate(title="12 Synthetic Journey", series=(("Example Saga", "12"),))
+
+    assert not work_title_extends("Synthetic Journey", "12 Synthetic Journey")
+    assert work_title_extends(
+        "Synthetic Journey", "12 Synthetic Journey", sequences=("12",)
+    )
+    assert None is _ruled(product, title="Synthetic Journey")
 
 
 def test_the_feed_takes_an_exactly_tight_hint_before_a_floor_only_one() -> None:

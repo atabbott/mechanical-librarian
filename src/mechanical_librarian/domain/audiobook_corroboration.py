@@ -1508,6 +1508,11 @@ def _corroborated_distance(
                     *_candidate_series(candidate),
                 )
             ),
+            sequences=tuple(
+                sequence
+                for _, sequence in _candidate_series(candidate)
+                if sequence is not None
+            ),
         )
         and series is not _Signal.AGREE
     ):

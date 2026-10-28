@@ -1221,12 +1221,15 @@ def work_title_related(
 _TITLE_DECORATION_TOKENS = _DISCOVERY_STOP_WORDS | frozenset({"novel", "stories"})
 
 
-def _decoration_token(token: str, decorations: frozenset[str]) -> bool:
-    return (
-        token in _TITLE_DECORATION_TOKENS
-        or token in decorations
-        or any(character.isdigit() for character in token)
-        or _ROMAN_NUMERAL.fullmatch(token) is not None
+# A roman numeral two to six letters long, up to 39: "ii", "xiv". A single
+# letter ("i", "v", "x") and a word that only spells one ("mix", "mi", "di")
+# are words, not numerals.
+_TITLE_ROMAN_NUMERAL = re.compile(r"x{0,3}(?:ix|iv|v?i{0,3})")
+
+
+def _number_token(token: str) -> bool:
+    return any(character.isdigit() for character in token) or (
+        2 <= len(token) <= 6 and _TITLE_ROMAN_NUMERAL.fullmatch(token) is not None
     )
 
 
@@ -1236,6 +1239,7 @@ def work_title_extends(
     provider_subtitle: str | None = None,
     *,
     decorations: tuple[str, ...] = (),
+    sequences: tuple[str, ...] = (),
 ) -> bool:
     """Whether one title runs on past the whole other with a new word (#1307).
 
@@ -1244,10 +1248,17 @@ def work_title_extends(
     extend "Example Journey", whichever side holds them. That is the shape of
     a sequel or companion in the same series, which title relation alone
     cannot tell from the same book. Words that only decorate a title -- the
-    shared stop list ("book", "edition", "unabridged", ...), "a novel",
-    numbers, roman numerals and the words of `decorations`, the series names
-    either side states -- do not extend it, so "Example Journey: A Novel" and
-    "Example Journey: Example Saga, Book 2" do not.
+    shared stop list ("book", "edition", "unabridged", ...), "a novel" and the
+    words of `decorations`, the series names either side states -- do not
+    extend it, so "Example Journey: A Novel" does not.
+
+    A number or roman numeral is a sequel's mark rather than decoration when
+    it follows the shorter title ("Example Journey 2", "Example Journey II",
+    "Example Journey: Volume 2") or equals one of `sequences`, the product's
+    own series positions. A number before the shorter title, as in "12
+    Example Journey" against "Example Journey", stays decoration unless it is
+    that position. A roman numeral is two to six letters up to 39, so "mix",
+    "mi" and "i" are words.
     """
     if (
         type(local_title) is not str
@@ -1256,6 +1267,8 @@ def work_title_extends(
         and type(provider_subtitle) is not str
         or type(decorations) is not tuple
         or any(type(value) is not str for value in decorations)
+        or type(sequences) is not tuple
+        or any(type(value) is not str for value in sequences)
     ):
         raise ValueError("work title relation input is invalid")
     local = _relation_tokens(local_title)
@@ -1278,10 +1291,19 @@ def work_title_extends(
     named = frozenset(
         token for value in decorations for token in _relation_tokens(value)
     )
-    return any(
-        not _decoration_token(token, named)
-        for token in (*longer[:index], *longer[index + len(shorter) :])
+    positions = frozenset(
+        token for value in sequences for token in _relation_tokens(value)
     )
+    before = longer[:index]
+    after = longer[index + len(shorter) :]
+    for token in (*before, *after):
+        if _number_token(token):
+            if token in positions or token in after:
+                return True
+            continue
+        if token not in _TITLE_DECORATION_TOKENS and token not in named:
+            return True
+    return False
 
 
 def work_title_has_variant_marker(value: str) -> bool:
