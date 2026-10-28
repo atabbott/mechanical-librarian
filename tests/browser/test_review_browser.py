@@ -4852,7 +4852,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 "response",
                 lambda response: (
                     library_responses.append(time.monotonic())
-                    if "/api/v1/library" in response.url
+                    if urlparse(response.url).path == "/api/v1/library"
                     else decision_responses.append(response.url)
                     if response.url.endswith("/decisions")
                     else None
@@ -4862,7 +4862,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
             def capture_request(request: Request) -> None:
                 if request.url.endswith("/decisions"):
                     decision_requests.append(request.headers.get("idempotency-key"))
-                elif "/api/v1/library" in request.url:
+                elif urlparse(request.url).path == "/api/v1/library":
                     library_requests.append(request.url)
                     field = page.locator(_CURRENT_FIELD_SELECTOR).first
                     library_request_fields.append(
@@ -10791,8 +10791,8 @@ def test_fetching_transition_browse_and_manual_recovery(
                     route = "/library?attention=open" if attention else "/library"
                     with page.expect_response(
                         lambda response: (
-                            ("/api/v1/attention" if attention else "/api/v1/library")
-                            in response.url
+                            urlparse(response.url).path
+                            == ("/api/v1/attention" if attention else "/api/v1/library")
                         )
                     ) as pending:
                         page.goto(origin + route)
