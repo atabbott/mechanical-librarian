@@ -2354,6 +2354,45 @@ describe('Policy keyboard focus (#1288)', () => {
     expect(screen.queryByRole('button', { name: 'Retry failed reconciliation' })).toBeNull()
   })
 
+  it('moves focus to the finish message when a retry reconciles the notice away', async () => {
+    const user = userEvent.setup()
+    let retried = false
+    const transition = {
+      schema_version: 'metadata-policy-transition-v1' as const,
+      transition_id: 'policy_transition_2',
+      from_policy_id: 'policy-a',
+      to_policy_id: 'policy-b',
+      generation: 2,
+      state: 'completed_with_failures',
+      completed: 9,
+      total: 11,
+      failed: 2,
+      acknowledged: false,
+      origin: 'activation',
+    }
+    const reconciled = { ...transition, state: 'completed', completed: 11, failed: 0 }
+    const policyCommand = vi.fn(async (): Promise<unknown> => {
+      retried = true
+      return reconciled
+    })
+    renderRoute('/policy', {
+      ...createHttp(),
+      getPolicyTransition: vi.fn(async () => (retried ? reconciled : transition) as never),
+      policyCommand: <T,>() => policyCommand() as Promise<T>,
+    })
+    const retry = await screen.findByRole('button', { name: 'Retry failed reconciliation' })
+    retry.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Policy activation progress' })).toBeNull(),
+    )
+    await waitFor(() => expect(document.querySelector('.cm-policy-finish-message')).toHaveFocus())
+    // The emptied status region can no longer take focus at all.
+    expect(document.querySelector('section:not([class]):not([aria-label])')).not.toHaveAttribute(
+      'tabindex',
+    )
+  })
+
   it('describes the activation review by its write-permission line', async () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {

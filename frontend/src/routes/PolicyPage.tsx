@@ -960,7 +960,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       // The dismissed update took its focused button with it, and a retry that
       // reconciles the failures will take its own.
       if (action.endsWith('/acknowledge')) finishMessageRef.current?.focus()
-      if (action.endsWith('/retry')) cutoverRef.current?.focus()
+      if (action.endsWith('/retry')) setRetried(true)
     } catch (error) {
       setStatus(
         error instanceof AmbiguousMutationError
@@ -1324,6 +1324,15 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     finishMessageRef.current?.focus({ preventScroll: true })
     finishMessageRef.current?.scrollIntoView({ block: 'nearest' })
   }, [stage])
+  // After a retry renders, focus goes to the notice while it is shown, or to
+  // the finish message once a reconciled notice is gone, never to the empty
+  // region it leaves.
+  const [retried, setRetried] = useState(false)
+  useEffect(() => {
+    if (!retried) return
+    setRetried(false)
+    ;(activationNotice ? cutoverRef : finishMessageRef).current?.focus({ preventScroll: true })
+  }, [activationNotice, retried])
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -2009,7 +2018,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         className={activationNotice ? 'policy-cutover' : undefined}
         aria-label={activationNotice ? 'Policy activation progress' : undefined}
         ref={cutoverRef}
-        tabIndex={-1}
+        tabIndex={activationNotice ? -1 : undefined}
       >
         <div role="status">
           {activationNotice ? (
