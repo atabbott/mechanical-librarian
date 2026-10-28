@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import time
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from tests.support import continuous_review_scale as harness
@@ -229,15 +229,8 @@ def test_current_authority_and_predecessor_refusal_without_history(
     with closing(open_repository(path, create=False)) as repository:
         assert document in repository.get_review_case_decisions(case)
     for historical in fixture["decisions"].values():
-        old = AutomaticDecision.from_json(historical)
-        assert old.to_json() == historical
-        assert not qualification_manifest_is_current(
-            old.policy_category, old.policy_option, old.qualification_manifest_sha256
-        )
         with pytest.raises(AutomaticDecisionError):
-            AutomaticDecision.create(
-                **cast("dict[str, Any]", old._core()), occurred_at=old.occurred_at
-            )
+            AutomaticDecision.from_json(historical)
     import hashlib
     from types import SimpleNamespace
 
