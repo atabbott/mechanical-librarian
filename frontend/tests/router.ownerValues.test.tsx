@@ -360,7 +360,7 @@ describe('owner-entered values', () => {
     http.getCaseDetail = vi.fn(async () => (failing ? await unavailable() : detail))
     http.getLibrary = vi.fn(async () => (failing ? await unavailable() : library))
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
-    const choice = await screen.findByRole('button', { name: 'Choose proposed value: New title' })
+    const choice = await screen.findByRole('radio', { name: 'Choose proposed value: New title' })
     await user.click(choice)
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
     failing = true

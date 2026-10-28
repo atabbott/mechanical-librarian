@@ -804,7 +804,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .variant-m-workspace .field-filmstrip button.is-recorded { color: var(--accent-strong); background: color-mix(in srgb, var(--accent-soft) 27%, transparent); }
 .decision-canvas { animation: library-field-arrive 180ms cubic-bezier(.16,1,.3,1); }
 .decision-canvas.is-recording .protected-choice { opacity: .68; }
-.metadata-choice.is-selected { background:color-mix(in srgb, var(--accent-soft) 72%, var(--surface)); box-shadow:inset 0 -3px var(--accent-strong); }
 .library-cover-card.is-selected { border-color:var(--accent-strong); background:color-mix(in srgb, var(--accent-soft) 62%, var(--surface)); box-shadow:inset 0 -3px var(--accent-strong); }
 .library-no-action.is-selected { border-bottom:2px solid var(--accent-strong); background:color-mix(in srgb, var(--accent-soft) 42%, transparent); }
 .decision-confirmed { display: flex; min-height: 190px; align-items: center; justify-content: center; gap: 14px; border: 1px solid var(--accent); border-radius: 12px; color: var(--accent-strong); background: var(--accent-soft); text-align: left; }
@@ -820,7 +819,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .protected-choice .proposed-choice-list > header strong { font-size: .75rem; }
 .protected-choice .proposed-choice-list > header small { color: var(--soft); font-size: .75rem; text-align: right; }
 .protected-choice .proposed-choice-list > header small.is-active { color: var(--accent-strong); font-weight: 700; }
-.metadata-choice.is-recommended { background: color-mix(in srgb, var(--accent-soft) 64%, var(--surface)); }
 .protected-choice .proposed-choice-list.has-one-choice { position:relative; align-content:center; }
 .protected-choice .proposed-choice-list.has-one-choice > header { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
 .protected-choice .proposed-value { min-height: 76px; text-align: left; }
@@ -830,8 +828,19 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .metadata-choice .choice-select { min-height:152px; padding:20px 24px; }
 .metadata-choice .choice-evidence-toggle { position:static; justify-self:start; margin:12px 24px; min-height:40px; padding:0 10px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); color:var(--accent-strong); font-size:.75rem; font-weight:700; }
 .metadata-choice.is-evidence-open { padding-bottom:0; }
-.metadata-choice:hover, .metadata-choice:has(:focus-visible) { background:var(--accent-soft); }
+.metadata-choice:hover, .metadata-choice:has(:focus-visible) { background:color-mix(in srgb, var(--accent-soft) 45%, var(--surface-strong)); }
 .metadata-choice:hover .choice-select, .metadata-choice:has(:focus-visible) .choice-select { background:transparent; }
+/* Each choice is a radio: a ring on the field line (3:1), whose dot hover
+   previews on a lighter wash than chosen. Chosen fills the ring beside a 2px
+   edge and the words "Your choice"; recommended keeps only its words (#1290). */
+.metadata-choice .choice-select > small { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
+.metadata-choice .choice-select > small::before { content:''; flex:none; box-sizing:border-box; width:20px; height:20px; border:2px solid var(--field-line); border-radius:50%; background:var(--surface-strong); }
+.metadata-choice:hover .choice-select:not(:disabled) > small::before { border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--surface-strong), inset 0 0 0 10px color-mix(in srgb, var(--accent) 30%, var(--surface-strong)); }
+.metadata-choice.is-selected, .metadata-choice.is-selected:hover { background:var(--accent-soft); box-shadow:inset 0 0 0 2px var(--accent); }
+.metadata-choice.is-selected .choice-select > small::before { border-color:var(--accent-strong); background:var(--accent-strong); box-shadow:inset 0 0 0 4px var(--surface-strong); }
+.choice-chosen { margin-left:auto; color:var(--accent-strong); }
+/* Focus is drawn inside the card, so the panel's rounded clipping cannot cut it. */
+.metadata-choice .choice-select:focus-visible { outline:3px solid var(--focus); outline-offset:-7px; border-radius:12px; }
 .choice-recommendation { color:var(--soft); font-size:.75rem; }
 .choice-evidence { display:grid; gap:10px; padding:14px 24px 18px; border-top:1px solid var(--line); background:color-mix(in srgb, var(--surface) 80%, var(--accent-soft)); }
 .choice-evidence > p,.choice-evidence p { margin:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.45; }

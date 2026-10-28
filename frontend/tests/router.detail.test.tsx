@@ -23,6 +23,7 @@ describe('Library review ownership', () => {
     expect(document.querySelector('#main-content .diagnostic-route > :first-child')).toBe(back)
     expect(back).toHaveAttribute('href', '/library?lens=needs_attention&preview=case-1&field=title')
     expect(screen.queryByRole('button', { name: /Choose|Return|Resume|Try again/u })).toBeNull()
+    expect(screen.queryByRole('radio')).toBeNull()
     await userEvent.setup().click(back)
     await waitFor(() =>
       expect(router.state.location.search).toEqual({
@@ -238,6 +239,7 @@ describe('Library review ownership', () => {
     )
     expect(await screen.findByRole('heading', { name: 'History' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /Choose|Return|Resume/u })).toBeNull()
+    expect(screen.queryByRole('radio')).toBeNull()
     router.history.back()
     await waitFor(() => expect(router.state.location.search.subview).toBe('evidence'))
     router.history.forward()
@@ -336,6 +338,7 @@ describe('Library review ownership', () => {
     }
     expect(screen.getAllByText(/External observation/u)).toHaveLength(observations.length)
     expect(screen.queryByRole('button', { name: /Choose|Accept|Apply/u })).toBeNull()
+    expect(screen.queryByRole('radio')).toBeNull()
     expect(current.fields.find((field) => field.destination === 'isbn')?.proposedValues).toEqual([])
   })
 
@@ -876,7 +879,7 @@ describe('Library review ownership', () => {
       getCaseDetail: vi.fn(async () => current),
       recordDecision,
     })
-    await user.click(await screen.findByRole('button', { name: /Choose proposed value/u }))
+    await user.click(await screen.findByRole('radio', { name: /Choose proposed value/u }))
     await waitFor(() =>
       expect(recordDecision).toHaveBeenCalledWith(
         'case-1',
@@ -900,7 +903,7 @@ describe('Library review ownership', () => {
         fields: [{ ...field, preservationOnly: true, proposedValues: [] }],
       })),
     })
-    expect(await screen.findByRole('button', { name: /Choose current value/u })).toBeVisible()
+    expect(await screen.findByRole('radio', { name: /Choose current value/u })).toBeVisible()
     expect(screen.queryByText('Choose a new value')).toBeNull()
   })
 
@@ -980,7 +983,7 @@ describe('Library review ownership', () => {
         'The recorded outcome is marked below. You can select another eligible value.',
       ),
     ).toBeVisible()
-    expect(screen.getByRole('button', { name: /Choose current value/u })).toBeVisible()
+    expect(screen.getByRole('radio', { name: /Choose current value/u })).toBeVisible()
     expect(screen.queryByText('Current review case')).toBeNull()
   })
 
@@ -1176,6 +1179,7 @@ it('keeps automatic withholding attached to its field on direct Evidence entry',
   expect(await screen.findByText(reason)).toBeVisible()
   expect(screen.getByRole('heading', { name: 'Title' })).toBeVisible()
   expect(screen.queryByRole('button', { name: /Choose/ })).toBeNull()
+  expect(screen.queryByRole('radio')).toBeNull()
 })
 
 describe('bounded diagnostic return context', () => {
@@ -1358,6 +1362,7 @@ it.each(['evidence', 'history'])(
     expect(
       screen.queryByRole('button', { name: /Choose advised|Retry description|Use advised/ }),
     ).toBeNull()
+    expect(screen.queryByRole('radio', { name: /Choose advised|Use advised/ })).toBeNull()
     expect(screen.queryByRole('article', { name: 'Advised description' })).toBeNull()
     if (subview === 'history') {
       expect(

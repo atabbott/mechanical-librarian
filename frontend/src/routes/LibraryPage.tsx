@@ -53,6 +53,7 @@ import type {
   TargetDestination,
   WorkSummaryState,
 } from '../api/http'
+import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import {
@@ -1184,6 +1185,7 @@ function MetadataChoice({
   label,
   longDescription,
   onChoose,
+  radio,
   recording,
   selected,
   toggle,
@@ -1198,6 +1200,7 @@ function MetadataChoice({
   label: string
   longDescription: boolean
   onChoose: () => void
+  radio: ReturnType<typeof choiceRadios>[number]['radio']
   recording: boolean
   selected: boolean
   toggle: () => void
@@ -1224,13 +1227,14 @@ function MetadataChoice({
         type="button"
         className="value-choice choice-select"
         aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} ${longDescription ? 'description' : `value: ${value}`}`}
-        aria-pressed={selected}
+        {...radio}
         disabled={disabled}
         onClick={onChoose}
       >
         <small>
           {label}
           {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
+          {selected ? <b className="choice-chosen">Your choice</b> : null}
         </small>
         <strong>
           {longDescription
@@ -3649,9 +3653,10 @@ export default function LibraryPage({
     centreFieldRail(rail, active)
     if (!advanceFocus.current) return
     advanceFocus.current = false
-    const action = document.querySelector<HTMLButtonElement>(
-      '.decision-canvas button:not(:disabled)',
-    )
+    // The next field's choices take focus at their one Tab stop (#1290).
+    const action =
+      document.querySelector<HTMLButtonElement>('.decision-canvas [role="radio"][tabindex="0"]') ??
+      document.querySelector<HTMLButtonElement>('.decision-canvas button:not(:disabled)')
     action?.focus({ preventScroll: true })
     if (!action) return
     const bounds = action.getBoundingClientRect()
@@ -4144,6 +4149,137 @@ export default function LibraryPage({
           ? 'One tap records and opens the next field'
           : ''
   const writesActive = detail.data?.writesConsented === true
+  // The direct choices in reading order, so the radio group's one Tab stop and
+  // each position come from a single list (#1290).
+  type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
+  const currentChoice: DirectChoice | null = selected?.decisionActions.includes('keep_current')
+    ? {
+        context: choiceContext(selected, null),
+        current: true,
+        disabled: false,
+        expanded: expandedChoices.has(`${selected.destination}:current`),
+        label: 'Current value',
+        longDescription: isLongDescription(selected.destination, selected.currentValue),
+        onChoose: () => choose(selected, 'keep_current'),
+        recording:
+          commandSelected(
+            selectedProgress?.command ?? null,
+            selected.destination,
+            'keep_current',
+          ) && selectedProgress?.phase === 'recording',
+        selected: choiceSelected(selected, selectedProgress, 'keep_current'),
+        toggle: () => toggleChoiceEvidence(`${selected.destination}:current`),
+        value: valueText(selected.destination, selected.currentValue),
+      }
+    : null
+  const proposedChoices: (DirectChoice & { id: string })[] =
+    selected && selected.decisionActions.includes('accept') && !selected.preservationOnly
+      ? selected.proposedValues.map((value, index) => {
+          const context = choiceContext(
+            selected,
+            selected.choiceContexts.filter((item) => item.selection === 'proposed')[index]
+              ?.alternativeId ?? null,
+          )
+          const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
+          return {
+            id: key,
+            context,
+            current: false,
+            disabled: false,
+            expanded: expandedChoices.has(key),
+            label: `Alternative ${String(index + 1)}`,
+            longDescription: isLongDescription(selected.destination, displayValue(value.value)),
+            onChoose: () => choose(selected, 'accept', value),
+            recording:
+              commandSelected(
+                selectedProgress?.command ?? null,
+                selected.destination,
+                'accept',
+                value,
+              ) && selectedProgress?.phase === 'recording',
+            selected: choiceSelected(selected, selectedProgress, 'accept', value),
+            toggle: () => toggleChoiceEvidence(key),
+            value: valueText(selected.destination, displayValue(value.value)),
+          }
+        })
+      : []
+  const retainedAdviceChoice: (DirectChoice & { id: string })[] =
+    selectedAdvice?.selected_advice &&
+    selectedAdvice.selected_advice.candidate.candidate_id !== selectedAdvice.candidate?.candidate_id
+      ? [
+          {
+            id: 'advice:retained',
+            advice: selectedAdvice,
+            retainedAdvice: true,
+            context: undefined,
+            current: false,
+            disabled: true,
+            expanded: false,
+            label: 'Advised · Authored content · Recorded choice',
+            longDescription: isLongDescription(
+              'description',
+              selectedAdvice.selected_advice.candidate.output.description,
+            ),
+            onChoose: () => undefined,
+            recording: false,
+            selected: Boolean(
+              selectedAdvice.selected_advice.current || selectedAdvice.application_outcome,
+            ),
+            toggle: () => undefined,
+            value: selectedAdvice.selected_advice.candidate.output.description,
+          },
+        ]
+      : []
+  const adviceCandidate = selectedAdvice?.candidate
+  const adviceChoice: (DirectChoice & { id: string })[] =
+    selected && selectedAdvice && adviceCandidate
+      ? [
+          {
+            id: 'advice:candidate',
+            advice: selectedAdvice,
+            retainedAdvice: selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
+            context: undefined,
+            current: false,
+            disabled:
+              !selected.editable ||
+              !selectedAdvice.current ||
+              controller.recording ||
+              selectedAdvice.state === 'requested' ||
+              selectedAdvice.state === 'running',
+            expanded: false,
+            label: 'Advised · Authored content',
+            longDescription: isLongDescription('description', adviceCandidate.output.description),
+            onChoose: () => {
+              if (!selectedAdvice.current || !selected.editable) return
+              choose(
+                selected,
+                'accept',
+                { kind: 'text', value: adviceCandidate.output.description },
+                { candidateId: adviceCandidate.candidate_id, binding: selectedAdvice.binding },
+              )
+            },
+            recording:
+              selectedProgress?.command.authoredDescription?.candidateId ===
+                adviceCandidate.candidate_id && selectedProgress.phase === 'recording',
+            selected:
+              selectedProgress && selectedProgress.phase !== 'failed'
+                ? selectedProgress.command.authoredDescription?.candidateId ===
+                  adviceCandidate.candidate_id
+                : Boolean(
+                    (selectedAdvice.selected_advice?.current === true ||
+                      selectedAdvice.application_outcome) &&
+                    selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
+                  ),
+            toggle: () => undefined,
+            value: adviceCandidate.output.description,
+          },
+        ]
+      : []
+  const newChoices = [...proposedChoices, ...retainedAdviceChoice, ...adviceChoice]
+  const directChoices = choiceRadios(
+    [...(currentChoice ? [{ ...currentChoice, id: 'current' }] : []), ...newChoices],
+    (choice) => ({ checked: choice.selected, disabled: choice.disabled }),
+  )
 
   return (
     <div className="library-page variant-m-workspace">
@@ -4882,9 +5018,10 @@ export default function LibraryPage({
                     ) : (
                       <section
                         className="direct-choice protected-choice"
+                        // The radio group inside is named by the question.
                         aria-label={
                           selectedActionable
-                            ? decisionQuestion(selected.destination)
+                            ? undefined
                             : selectedOptional
                               ? `${destinationLabel(selected.destination)} choices`
                               : `${destinationLabel(selected.destination)} recorded choices`
@@ -4925,31 +5062,15 @@ export default function LibraryPage({
                         </p>
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
+                          role="radiogroup"
+                          aria-label={decisionQuestion(selected.destination)}
+                          onKeyDown={moveChoiceFocus}
                         >
-                          {selected.decisionActions.includes('keep_current') ? (
-                            <MetadataChoice
-                              context={choiceContext(selected, null)}
-                              current
-                              disabled={false}
-                              expanded={expandedChoices.has(`${selected.destination}:current`)}
-                              label="Current value"
-                              longDescription={isLongDescription(
-                                selected.destination,
-                                selected.currentValue,
-                              )}
-                              onChoose={() => choose(selected, 'keep_current')}
-                              recording={
-                                commandSelected(
-                                  selectedProgress?.command ?? null,
-                                  selected.destination,
-                                  'keep_current',
-                                ) && selectedProgress?.phase === 'recording'
-                              }
-                              selected={choiceSelected(selected, selectedProgress, 'keep_current')}
-                              toggle={() => toggleChoiceEvidence(`${selected.destination}:current`)}
-                              value={valueText(selected.destination, selected.currentValue)}
-                            />
-                          ) : null}
+                          {directChoices
+                            .filter((choice) => choice.current)
+                            .map(({ id, ...choice }) => (
+                              <MetadataChoice key={id} {...choice} />
+                            ))}
                           {(selected.decisionActions.includes('accept') &&
                             !selected.preservationOnly) ||
                           selectedAdvice?.candidate ||
@@ -4966,142 +5087,11 @@ export default function LibraryPage({
                                   {teachingLine}
                                 </small>
                               </header>
-                              {(selected.decisionActions.includes('accept') &&
-                              !selected.preservationOnly
-                                ? selected.proposedValues
-                                : []
-                              ).map((value, index) => {
-                                const context = choiceContext(
-                                  selected,
-                                  selected.choiceContexts.filter(
-                                    (item) => item.selection === 'proposed',
-                                  )[index]?.alternativeId ?? null,
-                                )
-                                const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
-                                return (
-                                  <MetadataChoice
-                                    context={context}
-                                    current={false}
-                                    disabled={false}
-                                    expanded={expandedChoices.has(key)}
-                                    label={`Alternative ${String(index + 1)}`}
-                                    longDescription={isLongDescription(
-                                      selected.destination,
-                                      displayValue(value.value),
-                                    )}
-                                    onChoose={() => choose(selected, 'accept', value)}
-                                    recording={
-                                      commandSelected(
-                                        selectedProgress?.command ?? null,
-                                        selected.destination,
-                                        'accept',
-                                        value,
-                                      ) && selectedProgress?.phase === 'recording'
-                                    }
-                                    selected={choiceSelected(
-                                      selected,
-                                      selectedProgress,
-                                      'accept',
-                                      value,
-                                    )}
-                                    toggle={() => toggleChoiceEvidence(key)}
-                                    value={valueText(
-                                      selected.destination,
-                                      displayValue(value.value),
-                                    )}
-                                    key={key}
-                                  />
-                                )
-                              })}
-                              {selectedAdvice?.selected_advice &&
-                              selectedAdvice.selected_advice.candidate.candidate_id !==
-                                selectedAdvice.candidate?.candidate_id ? (
-                                <MetadataChoice
-                                  advice={selectedAdvice}
-                                  retainedAdvice
-                                  context={undefined}
-                                  current={false}
-                                  disabled
-                                  expanded={false}
-                                  label="Advised · Authored content · Recorded choice"
-                                  longDescription={isLongDescription(
-                                    'description',
-                                    selectedAdvice.selected_advice.candidate.output.description,
-                                  )}
-                                  onChoose={() => undefined}
-                                  recording={false}
-                                  selected={Boolean(
-                                    selectedAdvice.selected_advice.current ||
-                                    selectedAdvice.application_outcome,
-                                  )}
-                                  toggle={() => undefined}
-                                  value={
-                                    selectedAdvice.selected_advice.candidate.output.description
-                                  }
-                                />
-                              ) : null}
-                              {selectedAdvice?.candidate ? (
-                                <MetadataChoice
-                                  advice={selectedAdvice}
-                                  retainedAdvice={
-                                    selectedAdvice.selection?.candidate_id ===
-                                    selectedAdvice.candidate.candidate_id
-                                  }
-                                  context={undefined}
-                                  current={false}
-                                  disabled={
-                                    !selected.editable ||
-                                    !selectedAdvice.current ||
-                                    controller.recording ||
-                                    selectedAdvice.state === 'requested' ||
-                                    selectedAdvice.state === 'running'
-                                  }
-                                  expanded={false}
-                                  label="Advised · Authored content"
-                                  longDescription={isLongDescription(
-                                    'description',
-                                    selectedAdvice.candidate.output.description,
-                                  )}
-                                  onChoose={() => {
-                                    if (
-                                      !selectedAdvice.current ||
-                                      !selectedAdvice.candidate ||
-                                      !selected.editable
-                                    )
-                                      return
-                                    choose(
-                                      selected,
-                                      'accept',
-                                      {
-                                        kind: 'text',
-                                        value: selectedAdvice.candidate.output.description,
-                                      },
-                                      {
-                                        candidateId: selectedAdvice.candidate.candidate_id,
-                                        binding: selectedAdvice.binding,
-                                      },
-                                    )
-                                  }}
-                                  recording={
-                                    selectedProgress?.command.authoredDescription?.candidateId ===
-                                      selectedAdvice.candidate.candidate_id &&
-                                    selectedProgress.phase === 'recording'
-                                  }
-                                  selected={
-                                    selectedProgress && selectedProgress.phase !== 'failed'
-                                      ? selectedProgress.command.authoredDescription
-                                          ?.candidateId === selectedAdvice.candidate.candidate_id
-                                      : Boolean(
-                                          (selectedAdvice.selected_advice?.current === true ||
-                                            selectedAdvice.application_outcome) &&
-                                          selectedAdvice.selection?.candidate_id ===
-                                            selectedAdvice.candidate.candidate_id,
-                                        )
-                                  }
-                                  toggle={() => undefined}
-                                  value={selectedAdvice.candidate.output.description}
-                                />
-                              ) : null}
+                              {directChoices
+                                .filter((choice) => !choice.current)
+                                .map(({ id, ...choice }) => (
+                                  <MetadataChoice key={id} {...choice} />
+                                ))}
                             </div>
                           ) : null}
                         </div>
