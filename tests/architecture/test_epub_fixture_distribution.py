@@ -97,11 +97,11 @@ def test_both_carry_the_vendored_inter_face_and_its_licence(
     assert all("interfaces/web/react_assets/assets/inter-" in name for name in fonts)
     assert not any(name.endswith((".woff2.br", ".woff2.gz")) for name in wheel_names)
     assert any(
-        ".dist-info/licenses/frontend/src/fonts/LICENSE" in name for name in wheel_names
+        name.endswith(".dist-info/licenses/LICENSES/Inter-OFL-1.1.txt")
+        for name in wheel_names
     )
-    for file in (
-        "inter-latin-wght-normal.woff2",
-        "inter-latin-ext-wght-normal.woff2",
-        "LICENSE",
-    ):
+    # The installed payload names no frontend directory, licences included.
+    assert not any("frontend" in name.split("/") for name in wheel_names)
+    for file in ("inter-latin-wght-normal.woff2", "inter-latin-ext-wght-normal.woff2"):
         assert any(name.endswith(f"/frontend/src/fonts/{file}") for name in sdist_names)
+    assert any(name.endswith("/LICENSES/Inter-OFL-1.1.txt") for name in sdist_names)

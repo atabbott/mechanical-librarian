@@ -315,9 +315,12 @@ allowlist entry or Renovate rule covers it.
 
 Inter is OFL-1.1. The package's licence text, SHA-256
 `3b0a5fca3d17942cde889069889dedbbbd075e9b599968c82a95f4d944e9b345`, is
-retained beside the faces in `frontend/src/fonts/LICENSE` under a provenance
-header, ships in the sdist, and is a wheel `license-files` entry, so the
-package declares `AGPL-3.0-or-later AND OFL-1.1`. The faces are content-hashed
+retained in `LICENSES/Inter-OFL-1.1.txt` under a provenance header, ships in
+the sdist, and is a wheel `license-files` entry, so the package declares
+`AGPL-3.0-or-later AND OFL-1.1`. It sits outside `frontend/` because a
+`license-files` entry keeps its path inside the wheel's `.dist-info/licenses/`,
+and the exact-artifact and container qualifiers refuse any installed path that
+names a `frontend` directory. The faces are content-hashed
 into the review asset bundle and served same-origin; they receive no authority.
 Changing their version, subsets, source or checksum is an ordinary tracked
 change that updates this table and the licence header together.

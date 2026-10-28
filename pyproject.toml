@@ -9,7 +9,7 @@ description = "Evidence-driven ebook and audiobook metadata curation"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
 license = "AGPL-3.0-or-later AND OFL-1.1"
-license-files = ["LICENSE", "frontend/src/fonts/LICENSE"]
+license-files = ["LICENSE", "LICENSES/Inter-OFL-1.1.txt"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Environment :: Web Environment",
