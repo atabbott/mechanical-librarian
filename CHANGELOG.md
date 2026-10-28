@@ -7,6 +7,7 @@
   Books pacing hold carried by a retried report no longer brings the next retry
   forward from hours away, so a pacing pause no longer uses up a recovery
   attempt (#1318).
+- The shared review test double now satisfies every port it is bound into (#780).
 
 - A review case's history now shows the same owner decisions, description
   advice and description selections on every read when several share one
