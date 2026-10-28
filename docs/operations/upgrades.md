@@ -1,5 +1,13 @@
 # Upgrades and compatibility
 
+#1396 binds qualification authority to the permitted operations alone
+(ADR-0087), so the F19a/F20/F46 digests rotate once and decisions minted under
+any earlier digest no longer decode. Rich outcome action identities embed the F20
+digest, so outcomes advance to `shadow-outcome-set-v11`. **Clean rebuild
+required** for every predecessor application database, including an empty one;
+startup refuses v10 outcomes before mutation. No migration, adoption,
+conversion, import or downgrade is supplied.
+
 #1424 advances the report to `metadata-report-v58`: an Audiobookshelf
 incumbent description is admitted as the text it shows rather than its stored,
 HTML-escaped form. **Clean rebuild required** for every predecessor application
@@ -144,7 +152,7 @@ decodable history without current authority; no adoption or migration is supplie
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v58`, `proposal-set-v8` under
-`fixed-conservative-v36`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
+`fixed-conservative-v36`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
 and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.

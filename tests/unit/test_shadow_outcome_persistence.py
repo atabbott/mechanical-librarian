@@ -8828,10 +8828,10 @@ def test_actual_shadow_v6_store_is_rejected_without_mutation(tmp_path, name):
     assert path.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == inventory
     for document in json.loads((fixture / f"{name}-automatic.json").read_text()):
-        decision = AutomaticDecision.from_json(
-            json.dumps(document, separators=(",", ":"), sort_keys=True)
-        )
-        assert decision.to_data() == document
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.from_json(
+                json.dumps(document, separators=(",", ":"), sort_keys=True)
+            )
 
 
 def _automatic_titles(repository, case_id: str) -> list[str]:
@@ -10161,13 +10161,12 @@ def test_frozen_proposal_and_v20_outcome_are_both_refused(name):
 @pytest.fixture
 def retained_rich_predecessor(tmp_path, request):
     from mechanical_librarian.domain import shadow_outcome
-    from mechanical_librarian.domain.automatic_decision import (
-        _PRIOR_F20_QUALIFICATION_MANIFESTS,
-    )
     from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
     from tests.support.metadata_report_schemas import retained_report_as_current
 
-    name = getattr(request, "param", "rich")
+    name, digest = (
+        request.param if type(request.param) is tuple else (request.param, None)
+    )
     frozen = json.loads(
         (
             Path(__file__).parents[1]
@@ -10193,10 +10192,11 @@ def retained_rich_predecessor(tmp_path, request):
         case, packet, _, _ = repository._persisted_shadow_sources(
             admitted["review_case_id"], include_policy_ignored=True
         )
-        digest = _PRIOR_F20_QUALIFICATION_MANIFESTS[-2][0]
-        assert digest != shadow_outcome.F20_QUALIFICATION_CANDIDATE_SHA256
-        assert digest != _PRIOR_F20_QUALIFICATION_MANIFESTS[-1][0]
-        with patch.object(shadow_outcome, "F20_QUALIFICATION_CANDIDATE_SHA256", digest):
+        with patch.object(
+            shadow_outcome,
+            "F20_QUALIFICATION_CANDIDATE_SHA256",
+            digest or shadow_outcome.F20_QUALIFICATION_CANDIDATE_SHA256,
+        ):
             outcome = ShadowOutcomeSet.create(
                 case,
                 metadata.decide_shadow_packet(packet),
@@ -10206,8 +10206,8 @@ def retained_rich_predecessor(tmp_path, request):
                 proposal,
                 media_kind=case.media_kind,
             )
-        # Ephemeral current-schema fixture with a historical binding; the frozen
-        # predecessor documents above remain untouched and are never migrated.
+        # Ephemeral current-schema row, under a non-current F20 digest when one
+        # is given; the frozen predecessor documents above are never migrated.
         current = {
             **frozen,
             "outcome_row": [
@@ -10250,11 +10250,7 @@ def test_retained_rich_outcome_reaches_policy_and_isbn_activity(
         assert refusal["event_id"] == retained.outcome_set_id + ":isbn"
         assert refusal["record"]["source_kind"] == "isbn_refusal"
         assert refusal["record"]["reason_code"] == "source_value_absent"
-    assert repository._validate_shadow_outcome_row(row)[0] == row[-1]
-    current = ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(row[1], 4))
-    retained = ShadowOutcomeSet.from_json(row[-1])
-    assert current.to_json() != retained.to_json()
-    assert retained.authority == current.authority == "none"
+    assert retained.authority == "none"
     if proposal.media_kind != "audiobook":
         assert {field.disposition for field in retained.outcomes} >= {
             "manual",
@@ -10263,13 +10259,31 @@ def test_retained_rich_outcome_reaches_policy_and_isbn_activity(
     assert repository._validate_shadow_outcome_row(row)[0] == retained.to_json()
 
 
+# The F20 digest before ADR-0087 bound authority to permitted operations alone.
+_PRE_1396_F20_DIGEST = (
+    "df47dad078d56d9ae6ab52557aa055cdd3f4dde5d1ac1e42236e708bd38cab47"
+)
+
+
+@pytest.mark.parametrize(
+    "retained_rich_predecessor",
+    [(name, _PRE_1396_F20_DIGEST) for name in ("rich", "isbn", "ebook-asin")],
+    indirect=True,
+)
+def test_retained_rich_outcome_under_noncurrent_digest_is_refused(
+    retained_rich_predecessor,
+):
+    repository, frozen, *_ = retained_rich_predecessor
+    with pytest.raises(MetadataReportError):
+        repository._validate_shadow_outcome_row(tuple(frozen["outcome_row"]))
+
+
 @pytest.mark.parametrize("retained_rich_predecessor", ("ebook-asin",), indirect=True)
 @pytest.mark.parametrize(
     "corruption",
     (
         "unknown",
-        "mixed",
-        "current_mixed",
+        "prior",
         "reason",
         "ordinary_reason",
         "canonical",
@@ -10279,9 +10293,6 @@ def test_retained_rich_outcome_reaches_policy_and_isbn_activity(
 def test_retained_rich_outcome_refuses_changed_semantics(
     retained_rich_predecessor, corruption
 ):
-    from mechanical_librarian.domain.automatic_decision import (
-        _PRIOR_F20_QUALIFICATION_MANIFESTS,
-    )
     from mechanical_librarian.domain.rich_metadata_preview import (
         compile_rich_metadata_preview,
     )
@@ -10300,19 +10311,9 @@ def test_retained_rich_outcome_refuses_changed_semantics(
         field = next(
             value for value in data["outcomes"] if value["destination"] == "asin"
         )
-    if corruption in {"unknown", "mixed", "current_mixed"}:
-        from mechanical_librarian.domain.rich_metadata_qualification import (
-            F20_QUALIFICATION_CANDIDATE_SHA256,
-        )
-
+    if corruption in {"unknown", "prior"}:
         preview = rich[field["policy_category"]]
-        digest = (
-            "0" * 64
-            if corruption == "unknown"
-            else F20_QUALIFICATION_CANDIDATE_SHA256
-            if corruption == "current_mixed"
-            else _PRIOR_F20_QUALIFICATION_MANIFESTS[-1][0]
-        )
+        digest = "0" * 64 if corruption == "unknown" else _PRE_1396_F20_DIGEST
         field["action_id"] = "action_" + _digest(
             {
                 "candidate_id": preview.source_candidate_id
@@ -10329,7 +10330,7 @@ def test_retained_rich_outcome_refuses_changed_semantics(
         field["reason_code"] = "source_value_absent"
     elif corruption == "canonical":
         field["outcome_id"] = "shadow_outcome_" + "0" * 64
-    if corruption in {"unknown", "mixed", "current_mixed", "reason", "ordinary_reason"}:
+    if corruption in {"unknown", "prior", "reason", "ordinary_reason"}:
         field["qualification_candidate_id"] = "qualification_candidate_" + _digest(
             {
                 "action_id": field["action_id"],

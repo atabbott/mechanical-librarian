@@ -507,28 +507,21 @@ def test_series_owner_reachability_ignore_and_finality(tmp_path, media, mode, ch
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))
-def test_actual_different_name_base_decisions_remain_history_only(media):
+def test_actual_different_name_base_decisions_are_rejected(media):
     from pathlib import Path
 
-    from mechanical_librarian.domain.automatic_decision import (
-        qualification_manifest_is_current,
-    )
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
 
     path = (
         Path(__file__).parents[1]
         / "fixtures/same-name-series-predecessor"
         / f"{media}-different-decisions.json"
     )
-    decisions = [
-        AutomaticDecision.from_json(raw) for raw in json.loads(path.read_text())
-    ]
-    assert {decision.destination for decision in decisions} == {"title", "series"}
-    for decision in decisions:
-        assert not qualification_manifest_is_current(
-            decision.policy_category,
-            decision.policy_option,
-            decision.qualification_manifest_sha256,
-        )
+    documents = json.loads(path.read_text())
+    assert {json.loads(raw)["destination"] for raw in documents} == {"title", "series"}
+    for raw in documents:
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.from_json(raw)
 
 
 @pytest.mark.parametrize("route", ("ebook", "admitted", "work"))

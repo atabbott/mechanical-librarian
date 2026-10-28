@@ -14,7 +14,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
-    _qualification_manifest_is_valid,
+    qualification_manifest_is_current,
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
@@ -220,7 +220,7 @@ class CoverAutomaticDecision:
                 or self.policy_option != self.qualification_identity.split(":", 1)[1]
             ):
                 raise AutomaticDecisionError("invalid")
-            if not _qualification_manifest_is_valid(
+            if not qualification_manifest_is_current(
                 self.policy_category,
                 self.policy_option,
                 self.qualification_manifest_sha256,

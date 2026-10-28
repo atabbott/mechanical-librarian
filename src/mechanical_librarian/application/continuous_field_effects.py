@@ -25,10 +25,7 @@ from mechanical_librarian.domain.activity_records import (
     ReadableActivityEvent,
     project_readable_activity_event,
 )
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    qualification_manifest_is_current,
-)
+from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
@@ -934,17 +931,6 @@ class ContinuousGuardedApplication:
                 # is history, not pending work. Advancing past it keeps the
                 # schedule moving and forms no plan the target could ever
                 # receive (#968).
-                self._advance_schedule_cursor(decision, generation)
-                continue
-            if (
-                type(decision) is AutomaticDecision
-                or type(decision) is CoverAutomaticDecision
-                and decision.qualification_identity is not None
-            ) and not qualification_manifest_is_current(
-                decision.policy_category,
-                decision.policy_option,
-                decision.qualification_manifest_sha256,
-            ):
                 self._advance_schedule_cursor(decision, generation)
                 continue
             # This is intentionally before authority, consent and capability: an

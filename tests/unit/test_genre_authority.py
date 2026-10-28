@@ -254,6 +254,7 @@ def test_genre_actual_predecessors_refuse_without_mutation(tmp_path):
     from mechanical_librarian.adapters.persistence.metadata_reports import (
         MetadataReportError,
     )
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
     from mechanical_librarian.domain.metadata_report import ReportValueError
     from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
 
@@ -263,10 +264,10 @@ def test_genre_actual_predecessors_refuse_without_mutation(tmp_path):
             MetadataReport.from_json(path.read_text().strip())
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json((fixtures / "proposal-v29.json").read_text().strip())
-    historical = AutomaticDecision.from_json(
-        (fixtures / "automatic-v48.json").read_text().strip()
-    )
-    assert historical.destination == "genres"
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.from_json(
+            (fixtures / "automatic-v48.json").read_text().strip()
+        )
     path = tmp_path / "old.sqlite"
     with sqlite3.connect(path) as connection:
         connection.executescript((fixtures / "reports-v48.sql").read_text())

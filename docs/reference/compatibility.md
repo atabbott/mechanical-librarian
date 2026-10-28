@@ -17,6 +17,14 @@ F19a/F20/F46 records are displaced because the application read model, audio
 health and Activity persistence adapter they bind changed, with permission
 sets unchanged.
 
+#1396 binds qualification authority to the permitted operations alone
+(ADR-0087), so the F19a/F20/F46 digests rotate once and decisions minted under
+any earlier digest no longer decode. Rich outcome action identities embed the F20
+digest, so outcomes advance to `shadow-outcome-set-v11`. **Clean rebuild
+required** for every predecessor application database, including an empty one;
+startup refuses v10 outcomes before mutation. No migration, adoption,
+conversion, import or downgrade is supplied.
+
 #1424 advances the report to `metadata-report-v58`: an Audiobookshelf
 incumbent description is admitted as the text it shows, and a description
 write Audiobookshelf stored escaped or sanitised verifies when the stored form
@@ -174,7 +182,7 @@ The current installed contract is intentionally narrow:
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v23`,
-  `shadow-review-action-policy-v5`, `shadow-outcome-set-v10`,
+  `shadow-review-action-policy-v5`, `shadow-outcome-set-v11`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v3`, `review-case-detail-v6`,
