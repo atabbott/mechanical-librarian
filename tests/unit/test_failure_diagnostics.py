@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 import pytest
 
-from mechanical_librarian.application import failure_diagnostics
 from mechanical_librarian.application.failure_diagnostics import (
     FailureCategory,
     FailureComponent,
@@ -69,6 +68,9 @@ _PROVIDER_SIGNALS: dict[str, tuple[str, str | None]] = {
     "provider.quota": ("http_429", None),
     "provider.no_match": ("none", "no_match"),
     "provider.response_malformed": ("response_malformed", None),
+    "provider.response_oversized": ("response_oversized", None),
+    "provider.candidate_limit": ("candidate_limit_exceeded", None),
+    "provider.not_found": ("not_found", None),
     "provider.transport": ("transport_connect_error", None),
     "provider.deadline": ("deadline", None),
     "provider.cancellation": ("cancellation", None),
@@ -103,7 +105,22 @@ _EXPECTED_PROVIDER_MAPPINGS: dict[
         FailureStage.RESPONSE,
     ),
     "provider.response_malformed": (
-        FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+        FailureCategory.MALFORMED_RESPONSE,
+        FailureComponent.PROVIDER,
+        FailureStage.RESPONSE,
+    ),
+    "provider.response_oversized": (
+        FailureCategory.OVERSIZED_RESPONSE,
+        FailureComponent.PROVIDER,
+        FailureStage.RESPONSE,
+    ),
+    "provider.candidate_limit": (
+        FailureCategory.CANDIDATE_LIMIT_EXCEEDED,
+        FailureComponent.PROVIDER,
+        FailureStage.RESPONSE,
+    ),
+    "provider.not_found": (
+        FailureCategory.EMPTY_NO_MATCH,
         FailureComponent.PROVIDER,
         FailureStage.RESPONSE,
     ),
@@ -129,6 +146,7 @@ def test_category_vocabulary_is_exact_and_closed() -> None:
     assert {
         "authentication",
         "burst_throttle",
+        "candidate_limit_exceeded",
         "cancellation",
         "citation_membership",
         "currentness",
@@ -139,7 +157,8 @@ def test_category_vocabulary_is_exact_and_closed() -> None:
         "live_schema_rejection",
         "lookup_construction",
         "malformed_output",
-        "malformed_over_bound_response",
+        "malformed_response",
+        "oversized_response",
         "persistence",
         "provider_declared_error",
         "quota_rate_limit",
@@ -224,7 +243,7 @@ def test_provider_attempts_are_redacted_and_stably_aggregated() -> None:
 
     assert (
         FailureCategory.HTTP_NON_SUCCESS,
-        FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+        FailureCategory.MALFORMED_RESPONSE,
         FailureCategory.PROVIDER_DECLARED_ERROR,
         FailureCategory.TRANSPORT,
     ) == tuple(value.category for value in diagnostics)
@@ -269,7 +288,7 @@ def test_incomplete_causes_are_closed_truthful_and_redacted() -> None:
 
     assert (
         FailureCategory.LOOKUP_CONSTRUCTION,
-        FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+        FailureCategory.OVERSIZED_RESPONSE,
         FailureCategory.TIMEOUT,
     ) == tuple(value.category for value in diagnostics)
     assert FailureCategory.TIMEOUT not in tuple(
@@ -299,22 +318,50 @@ def test_incomplete_causes_fail_closed_when_absent_or_malformed(
 
 
 def test_sole_identity_conflict_reserves_the_malformed_response_category() -> None:
-    """An identity conflict is not a malformed or over-bound response."""
+    """An identity conflict is not a malformed response."""
     suppressed = provider_attempt_diagnostics(
         (), status="malformed", identity_conflict_only=True
     )
     assert () == suppressed
 
     unobserved = provider_attempt_diagnostics((), status="malformed")
-    assert (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,) == tuple(
+    assert (FailureCategory.MALFORMED_RESPONSE,) == tuple(
         value.category for value in unobserved
     )
 
     oversized = provider_attempt_diagnostics(
         (), status="oversized", identity_conflict_only=True
     )
-    assert (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,) == tuple(
+    assert (FailureCategory.OVERSIZED_RESPONSE,) == tuple(
         value.category for value in oversized
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "category"),
+    (
+        ("malformed", FailureCategory.MALFORMED_RESPONSE),
+        ("oversized", FailureCategory.OVERSIZED_RESPONSE),
+        ("candidate_limit_exceeded", FailureCategory.CANDIDATE_LIMIT_EXCEEDED),
+    ),
+)
+def test_each_over_bound_status_names_its_own_category(
+    status: str, category: FailureCategory
+) -> None:
+    """The three statuses #1294's run found under one name each keep their own (#1308)."""
+    assert ((category, FailureStage.RESPONSE, False),) == tuple(
+        (value.category, value.stage, value.retryable)
+        for value in provider_attempt_diagnostics((), status=status)
+    )
+
+
+def test_a_not_found_attempt_is_a_miss_rather_than_an_http_failure() -> None:
+    """An adapter's own `not_found` joins the no-match it answers, never twice."""
+    diagnostics = provider_attempt_diagnostics(
+        (_Attempt("not_found", "terminal"),), status="no_match"
+    )
+    assert ((FailureCategory.EMPTY_NO_MATCH, 1),) == tuple(
+        (value.category, value.count) for value in diagnostics
     )
 
 
@@ -362,15 +409,15 @@ _IDENTITY_DIAGNOSTIC = FailureDiagnostic(
     retryable=False,
 )
 _MALFORMED_DIAGNOSTIC = FailureDiagnostic(
-    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+    FailureCategory.MALFORMED_RESPONSE,
     FailureComponent.PROVIDER,
     FailureStage.RESPONSE,
     retryable=False,
 )
 _IDENTITY_LANE = _failed_lane("a", (_IDENTITY_DIAGNOSTIC,))
 _INDEPENDENT_LANE = _failed_lane("b", (_MALFORMED_DIAGNOSTIC,))
-# A candidate-limited lane is over-bound for its own reason and never carries
-# the identity diagnostic, so it must defeat the suppression on its own.
+# A candidate-limited lane names its own category on the lane, so it neither
+# needs nor defeats the suppression of the observation's malformed aggregate.
 _OVER_BOUND_LANE = _failed_lane("c", (), ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
 
 
@@ -388,23 +435,20 @@ _OVER_BOUND_LANE = _failed_lane("c", (), ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
             (_IDENTITY_DIAGNOSTIC,),
             (
                 FailureCategory.IDENTITY,
-                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+                FailureCategory.MALFORMED_RESPONSE,
             ),
             id="conflict_with_independent_malformed_lane",
         ),
         pytest.param(
             (_IDENTITY_LANE, _OVER_BOUND_LANE),
             (_IDENTITY_DIAGNOSTIC,),
-            (
-                FailureCategory.IDENTITY,
-                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
-            ),
-            id="conflict_with_independent_over_bound_lane",
+            (FailureCategory.IDENTITY,),
+            id="conflict_beside_candidate_limited_lane",
         ),
         pytest.param(
             (_INDEPENDENT_LANE,),
             (),
-            (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,),
+            (FailureCategory.MALFORMED_RESPONSE,),
             id="malformed_only",
         ),
     ),
@@ -414,24 +458,25 @@ def test_independent_malformed_lane_keeps_the_response_category(
     diagnostics: tuple[FailureDiagnostic, ...],
     expected: tuple[FailureCategory, ...],
 ) -> None:
-    """Suppression needs every over-bound lane to state the identity conflict."""
+    """Suppression needs every malformed lane to state the identity conflict."""
     observed = provider_result_diagnostics(
         _over_bound_observation(lanes, diagnostics), ProviderOperationalEvidence()
     )
     assert expected == tuple(value.category for value in observed)
 
 
-def test_over_bound_statuses_match_the_status_mapping() -> None:
-    """Every status that yields the over-bound category must defeat suppression."""
+def test_only_the_malformed_status_yields_the_malformed_category() -> None:
+    """The identity suppression reads malformed lanes only, so no other status may
+    name the category it suppresses."""
     mapped = frozenset(
         status
         for status in ProviderStatus
         if any(
-            value.category is FailureCategory.MALFORMED_OVER_BOUND_RESPONSE
+            value.category is FailureCategory.MALFORMED_RESPONSE
             for value in provider_attempt_diagnostics((), status=status.value)
         )
     )
-    assert mapped == failure_diagnostics._OVER_BOUND_STATUSES
+    assert {ProviderStatus.MALFORMED} == mapped
 
 
 def test_provider_signal_mappings_cover_every_declared_signal() -> None:
@@ -582,7 +627,7 @@ def test_status_derived_empty_no_match_is_suppressed_only_on_request() -> None:
     assert (FailureCategory.EMPTY_NO_MATCH,) == tuple(
         value.category for value in provider_attempt_diagnostics((), status="no_match")
     )
-    assert (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,) == tuple(
+    assert (FailureCategory.MALFORMED_RESPONSE,) == tuple(
         value.category
         for value in provider_attempt_diagnostics(
             (), status="malformed", work_identity_refused_only=True

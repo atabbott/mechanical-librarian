@@ -110,7 +110,7 @@ markup only once decoded, or that would decode again, is kept as stored. A
 description also records `restorable`: whether writing its text back would
 store it as it is stored now. Text whose only defect is C1 control characters is refused by the
 validator with its own reason, but the report and UI still show that field only
-as `malformed` (#1251). The report is `metadata-report-v58`. For the title
+as `malformed` (#1251). The report is `metadata-report-v59`. For the title
 specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
@@ -775,13 +775,17 @@ members are not diagnostic fields. Counts saturate at the fixed diagnostic
 bound, and provider status retains its existing neutral meaning. One provider
 restating one candidate identity with claims or evidence that disagree is
 `malformed` with an `identity/provider/identity` diagnostic on every candidate
-lane and on the observation. The status-derived
-`malformed_over_bound_response` is withheld only when the observation itself
-carries that identity diagnostic and every one of its lanes reporting
-`malformed`, `oversized`, or `candidate_limit_exceeded` carries it too, and at
-least one such lane exists. A lane holding any of those three statuses for its
-own reason therefore keeps `malformed_over_bound_response` alongside the
-identity diagnostic.
+lane and on the observation. The `malformed`, `oversized` and
+`candidate_limit_exceeded` statuses each have their own category,
+`malformed_response`, `oversized_response` and `candidate_limit_exceeded`
+(#1308); an exhausted aggregate byte budget is `oversized_response`. The
+status-derived `malformed_response` is withheld only when the observation
+itself carries that identity diagnostic and every `malformed` lane carries it
+too, and at least one such lane exists. A lane that is malformed for its own
+reason therefore keeps `malformed_response` alongside the identity diagnostic.
+An adapter that names a lookup miss `not_found` (AudioSilo's 404) counts it as
+`empty_no_match`, never as `http_non_success`, and it is never a
+`provider_request_failed` event.
 A lane's `work_identity_refused/provider/identity` count is lifted once to the
 observation. The status-derived `empty_no_match` is withheld only when every
 `no_match` lane exhausted its ladder without an empty rung, so a refusal is never

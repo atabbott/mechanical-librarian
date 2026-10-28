@@ -519,7 +519,7 @@ def test_a_byte_identical_repeated_collection_stays_a_malformed_response() -> No
 
     assert ProviderStatus.MALFORMED is observation.status
     assert () == observation.candidates
-    assert [FailureCategory.MALFORMED_OVER_BOUND_RESPONSE] == [
+    assert [FailureCategory.MALFORMED_RESPONSE] == [
         value.category for value in observation.diagnostics
     ]
     assert [] == [value for lane in observation.lanes for value in lane.diagnostics]

@@ -136,6 +136,31 @@ the alternative title but none of which the runtime band corroborates is a
 refused rung: its products count toward `work_identity_refused` and the ladder
 continues. No new category is added.
 
+## Amendment: over-bound statuses named apart (2026-10-28, #1308)
+
+`malformed_over_bound_response` is replaced by three provider categories at
+provider/response, none retryable: `malformed_response` for a `malformed`
+status or a `response_malformed` attempt, `oversized_response` for an
+`oversized` status, a `response_oversized` attempt or an exhausted
+`aggregate_bytes` budget, and `candidate_limit_exceeded` for that status or
+attempt. #1294's 53 events under the old name were malformed and
+candidate-limited answers, with no response over a byte bound, so one name hid
+which happened. The shared provider session names its own malformed and
+oversized failures, and Hardcover names a candidate-count overflow
+`candidate_limit_exceeded` rather than `response_oversized`.
+
+An identity conflict withholds the status-derived `malformed_response` only
+when every `malformed` lane carries the identity diagnostic; an oversized or
+candidate-limited lane names its own category and no longer decides it. An
+adapter may name an ordinary lookup miss `not_found`, which maps to
+`empty_no_match` and is never a `provider_request_failed` event. AudioSilo
+names its 404s that way.
+
+The report discriminator advances to `metadata-report-v59`. **Clean rebuild
+required** under ADR-0013: a v58 report can name the removed category, and there
+is no adoption or legacy fallback. Provider status, admission rules, proposal,
+packet, reviewer and target-write authority remain unchanged.
+
 ## Consequences
 
 ### Positive

@@ -92,6 +92,10 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _MAX_VALUES = 8
 _MAX_RECORDINGS = 16
 _MAX_REGIONAL_IDENTIFIERS = len(AUDIOBOOK_MARKETPLACES)
+# A regional map over the bound above is still scanned this far for the queried
+# ASIN's own entry (#1308): AudioSilo lists marketplaces outside the closed set,
+# so a product sold everywhere states more regions than the report admits.
+_MAX_REGIONAL_SCAN = 64
 # A work document is around 2 KB and a chapter document around 2 KB.
 _MAX_AGGREGATE_RESPONSE_BYTES = 1_048_576
 _MAX_ATTEMPTS_PER_QUERY = 3
@@ -345,8 +349,11 @@ class AudioSiloMetadataProvider:
                 {},
                 deadline=deadline,
                 extra_dispatch=True,
+                optional=True,
             )
         except ProviderFailure:
+            # The session's attempt record already names the failure, so an
+            # over-bound body is a stated diagnostic rather than a silent drop.
             return None
         try:
             return _chapter_structure(payload, self._reject_schema_members)
@@ -398,6 +405,7 @@ class AudioSiloMetadataProvider:
         *,
         deadline: float | None,
         extra_dispatch: bool = False,
+        optional: bool = False,
     ) -> dict[str, Any]:
         return self._session.request_json(
             url,
@@ -409,6 +417,7 @@ class AudioSiloMetadataProvider:
             deadline=deadline,
             query_retry=extra_dispatch,
             classify=_classify,
+            oversize_keeps_budget=optional,
         )
 
 
@@ -438,7 +447,8 @@ def _classify(facts: ProviderResponseFacts) -> ProviderFailure | None:
 
     A `404` is a no-match whatever the body is: the service answers an unknown
     API path with an HTML document, and reading that body as evidence is exactly
-    what must not happen.  429 is named explicitly because the session treats an
+    what must not happen.  It is named `not_found`, a miss rather than a failed
+    request (#1308).  429 is named explicitly because the session treats an
     unrecognised status as terminal.
     """
     if facts.status_code == 429:
@@ -451,7 +461,7 @@ def _classify(facts: ProviderResponseFacts) -> ProviderFailure | None:
             ),
         )
     if facts.status_code == 404:
-        return ProviderFailure(ProviderStatus.NO_MATCH, category="http_404")
+        return ProviderFailure(ProviderStatus.NO_MATCH, category="not_found")
     if facts.status_code == 401:
         return ProviderFailure(ProviderStatus.AUTHENTICATION, category="http_401")
     if facts.status_code == 403:
@@ -545,7 +555,7 @@ def _candidate(
             )
         )
 
-    regional = _regional_asins(recording.get("asin"), schema_rejections)
+    regional = _regional_asins(recording.get("asin"), queried_asin, schema_rejections)
     for asin in sorted(set(regional.values())):
         add(ClaimKind.ASIN, asin)
     if not regional:
@@ -608,13 +618,30 @@ def _candidate(
 
 
 def _regional_asins(
-    value: object, schema_rejections: Callable[[int], None]
+    value: object, queried_asin: str, schema_rejections: Callable[[int], None]
 ) -> dict[str, str]:
-    """Read the per-region identifier map, keeping only admitted marketplaces."""
+    """Read the per-region identifier map, keeping only admitted marketplaces.
+
+    A map over the entry bound counts one rejection and keeps only the queried
+    ASIN's own admitted entry, found by a bounded scan: the lookup already named
+    that product, and the rest of an over-bound map is not read as evidence.
+    """
     if value is None:
         return {}
-    if type(value) is not list or len(value) > _MAX_REGIONAL_IDENTIFIERS:
+    if type(value) is not list:
         schema_rejections(1)
+        return {}
+    if len(value) > _MAX_REGIONAL_IDENTIFIERS:
+        schema_rejections(1)
+        for item in value[:_MAX_REGIONAL_SCAN]:
+            if type(item) is not dict:
+                continue
+            region = item.get("region")
+            if (
+                region in AUDIOBOOK_MARKETPLACES
+                and canonical_asin(item.get("asin")) == queried_asin
+            ):
+                return {region: queried_asin}
         return {}
     regional: dict[str, str] = {}
     for item in value:

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Clean rebuild required.** An AudioSilo answer whose recording lists more
+  regions than the ten admitted marketplaces now keeps the queried ASIN's own
+  entry instead of failing as malformed. Malformed, oversized and
+  candidate-limited responses are named apart, an AudioSilo lookup miss is no
+  longer a failed request, and an over-bound chapter document no longer starves
+  the next lookup (#1308).
+
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.
   Automatic decisions recorded under an earlier qualification are refused

@@ -245,7 +245,7 @@ def retained_report_as_current(document: str) -> MetadataReport:
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v58"
+    data["schema_version"] = "metadata-report-v59"
     for provider in data["providers"]:
         for lane in provider["lanes"]:
             lane["exhausted_dispatch"] = []
@@ -342,7 +342,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v58'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v59'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -361,10 +361,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v58'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v59'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v58'", f"= '{version}'"
+            "= 'metadata-report-v59'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

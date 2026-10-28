@@ -1401,8 +1401,12 @@ contract differs by provider and is not provider-wide:
   structured error: a `404` is classified from its status alone, and an HTML
   `200` fails the strict `application/json` check, so no HTML body is ever read
   as evidence on either path. A lookup that does not name both a work and its
-  recording fails closed. It acquires no cover bytes and constructs no cover
-  source.
+  recording fails closed. A recording's regional identifier map over the
+  ten-marketplace bound is read no further than its first 64 entries, and only
+  for the queried ASIN's own entry in an admitted marketplace; nothing else in
+  that map becomes evidence (#1308). A chapter document over its bound is
+  dropped and named `oversized_response`, charging the aggregate budget only for
+  the bytes read. It acquires no cover bytes and constructs no cover source.
 - **iTunes Search** issues `GET` requests only, to the single fixed origin
   `https://itunes.apple.com` on the single fixed path `/search`. The query
   travels entirely in the `term` parameter beside a fixed `media=audiobook` and

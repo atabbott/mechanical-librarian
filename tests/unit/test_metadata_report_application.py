@@ -999,7 +999,7 @@ def test_incomplete_cause_property_is_mapped_without_private_material() -> None:
     report = MetadataReport.from_json(service.run("item-1", 0))
 
     assert [
-        FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+        FailureCategory.OVERSIZED_RESPONSE,
     ] == [diagnostic.category for diagnostic in report.providers[0].diagnostics]
     assert FailureCategory.TIMEOUT not in [
         diagnostic.category for diagnostic in report.providers[0].diagnostics
@@ -1093,7 +1093,7 @@ def test_ambiguous_provider_identity_reserves_the_malformed_response_category() 
         for lane in observed.lanes
         for value in lane.diagnostics
     ]
-    assert FailureCategory.MALFORMED_OVER_BOUND_RESPONSE not in [
+    assert FailureCategory.MALFORMED_RESPONSE not in [
         value.category for value in observed.diagnostics
     ]
 
@@ -1195,7 +1195,7 @@ def test_provider_parser_attempt_and_incomplete_diagnostics_merge_once_on_reopen
             1,
         ),
         (
-            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+            FailureCategory.OVERSIZED_RESPONSE,
             FailureStage.RESPONSE,
             False,
             1,
@@ -3595,7 +3595,7 @@ def _emitted_events(
                 ),
                 _dispatch_event(
                     "provider_request_failed",
-                    "malformed_over_bound_response",
+                    "malformed_response",
                     attempt_outcome="terminal",
                 ),
             ],
@@ -3603,11 +3603,7 @@ def _emitted_events(
         (
             ProviderStatus.MALFORMED,
             (_attempt("none", "response_received"),),
-            [
-                _dispatch_event(
-                    "provider_request_failed", "malformed_over_bound_response"
-                )
-            ],
+            [_dispatch_event("provider_request_failed", "malformed_response")],
         ),
         (
             ProviderStatus.UNAVAILABLE,
