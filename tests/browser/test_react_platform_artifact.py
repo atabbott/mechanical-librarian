@@ -4141,7 +4141,7 @@ _MASTHEAD_GEOMETRY = """() => {
 }"""
 
 # The preparation states the masthead names, as overrides of the cohort's read.
-_PREPARATION_STATES = {
+_PREPARATION_STATES: dict[str, dict[str, object]] = {
     "absent": {"libraries": []},
     "Preparation idle": {"active": False, "actionable": False},
     "Preparing libraries": {"actionable": False},
@@ -4637,7 +4637,9 @@ def test_library_handoff_arrives_with_the_works() -> None:
     """With the handoff's consent read held for 1.5s, the works appear with the
     handoff above them, so from the moment the first row paints nothing moves
     it (#1291)."""
+    held: list[Route] = []
     for width in (1440, 390):
+        held.clear()
         with ExitStack() as stack:
             playwright = stack.enter_context(sync_playwright())
             browser = playwright.chromium.launch(headless=True)
@@ -4648,7 +4650,6 @@ def test_library_handoff_arrives_with_the_works() -> None:
             page.add_init_script(_LIVE_UPDATE_STREAM)
             page.add_init_script(_FIRST_ROW_AND_SHIFTS)
             _serve_cohort(page, writes_off_handoff=True)
-            held: list[Route] = []
             page.route(
                 "**/api/v1/activity/consent-state", lambda route: held.append(route)
             )
