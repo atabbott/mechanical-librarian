@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Setup and sign-in failures now say what went wrong: an unresolvable name, a
+  refused connection, an unverified certificate, a timeout or a rejected key,
+  naming the address and one remedy. Setup suggests providers per library and
+  confirms each step; sign-in clears a rejected password, explains a forgotten
+  one and opens in your theme with the workspace type (#1287).
+
 - **Clean rebuild required.** Automatic authority now binds only the operations
   each qualification permits, so ordinary source changes no longer rotate it.
   Automatic decisions recorded under an earlier qualification are refused

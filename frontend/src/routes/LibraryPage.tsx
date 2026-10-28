@@ -226,17 +226,18 @@ const preparationTriggerCopy: Record<
 // A request accepted once is just how the run began; a number there would be
 // noise on every ordinary run. Repeats are the case worth counting, so only
 // they carry one.
+// Initial setup records one acceptance per library, which is not a repeated
+// owner request, so it never carries a count.
 const preparationRepeatedTriggerCopy: Record<
-  PreparationPresentation['triggers'][number]['trigger'],
+  Exclude<PreparationPresentation['triggers'][number]['trigger'], 'initial_setup'>,
   string
 > = {
-  initial_setup: 'Initial setup requested',
   manual_scan: 'Owner scan requested',
   library_added: 'Library addition requested',
   title_recovery: 'Title recovery requested',
 }
 const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][number]) =>
-  trigger.accepted_count > 1
+  trigger.accepted_count > 1 && trigger.trigger !== 'initial_setup'
     ? `${preparationRepeatedTriggerCopy[trigger.trigger]} ${String(trigger.accepted_count)} times`
     : preparationTriggerCopy[trigger.trigger]
 // The scope every count on this page reconciles to: one run, whose books are
@@ -385,7 +386,7 @@ const PreparationDetail = ({
       break
     case 'running':
       heading = 'Preparing your library'
-      introduction = 'Preparation continues here while prepared works remain selectable.'
+      introduction = 'Prepared works remain selectable while the rest of this run finishes.'
       break
     case 'blocked':
       heading = 'Preparation needs attention'

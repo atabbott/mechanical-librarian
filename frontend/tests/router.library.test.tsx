@@ -643,7 +643,7 @@ describe('Library route', () => {
     [
       'running',
       'Preparing your library',
-      'Preparation continues here while prepared works remain selectable.',
+      'Prepared works remain selectable while the rest of this run finishes.',
       'Preparation continues',
     ],
     [
@@ -845,6 +845,31 @@ describe('Library route', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /Preparing your library/u }))
     expect(await screen.findByText('Owner scan requested 3 times')).toBeVisible()
+
+    // Initial setup accepts once per library; that is never a repeated request.
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...running,
+        presentation: {
+          ...runningPresentation,
+          run_id: `preparation_run_${'d'.repeat(64)}`,
+          state: 'running',
+          triggers: [
+            {
+              trigger: 'initial_setup' as const,
+              accepted_count: 2,
+              first_accepted_at: 200,
+              last_accepted_at: 220,
+            },
+          ],
+          passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+          recent_completions: [],
+          updated_at: 222,
+        },
+      })
+    })
+    expect(await screen.findByText('Started by initial setup')).toBeVisible()
+    expect(screen.queryByText(/Initial setup requested/u)).toBeNull()
     expect(screen.queryByText(/Preparation unavailable/u)).toBeNull()
     expect(screen.queryByRole('link', { name: 'Find in Works' })).toBeNull()
   })

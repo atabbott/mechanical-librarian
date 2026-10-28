@@ -780,7 +780,12 @@ Every response carries a restrictive CSP, frame denial, no-referrer, and
 no-sniff; browser HTTPS additionally receives HSTS. The CSP admits scripts,
 styles and fonts from the same origin only (`font-src 'self'`, #1289): the
 workspace's Inter faces are vendored, content-hashed manifest assets, so no
-untrusted font input is parsed. Every response is
+untrusted font input is parsed. Sign-in and the setup app reuse those faces;
+setup admits `font-src 'self'` and serves only manifest font assets under
+`/assets/review-app/`, under its own no-store policy. Setup reach failures are
+closed codes (`name_resolution`, `refused`, `tls`, `timeout`, `unauthorized`,
+`unavailable`); the page builds the origin it names from the owner's own
+input, so no key, userinfo or password is echoed (#1287). Every response is
 private/no-store except two route-set families whose bytes their URL fixes:
 manifest-admitted hashed scripts, styles and fonts, and session-checked cover previews
 addressed by a content-derived consideration and reference. Those are
