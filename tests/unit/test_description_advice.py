@@ -16,6 +16,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceOutput,
     DescriptionAdviceSettings,
     DescriptionPreferences,
+    automatic_description_floor_met,
     description_document,
 )
 from tests.support.automatic_no_change import _automatic_no_change_inputs
@@ -104,3 +105,30 @@ def test_output_is_exactly_bounded_description_and_disposition(
 ) -> None:
     with pytest.raises(ValidationError):
         DescriptionAdviceOutput.model_validate(output)
+
+
+@pytest.mark.parametrize(
+    ("text", "met"),
+    [
+        ("A synthetic reader explores an old library.", True),
+        ("n/a", False),
+        ('"A triumph." \u2014 Critic', False),
+        ("A story that ends...", False),
+        ("A story that ends\u2026", False),
+        ("<p>A story.</p>", False),
+        ("A story\x00 with a control character.", False),
+        ("", False),
+    ],
+    ids=[
+        "plain",
+        "placeholder",
+        "praise",
+        "cutoff",
+        "ellipsis_cutoff",
+        "markup",
+        "invalid_canonical",
+        "empty",
+    ],
+)
+def test_automatic_description_floor(text: str, met: bool) -> None:
+    assert automatic_description_floor_met(text) is met

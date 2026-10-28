@@ -37,7 +37,7 @@
     "google_books": "Publisher descriptions, categories and page counts for books.",
     "hardcover": "Community book records with series, edition and contributor detail.",
     "inventaire": "Work identity, editions and cover images for books.",
-    "itunes_search": "Audiobook runtime, narrator and publication detail from the iTunes catalogue.",
+    "itunes_search": "Checks an ebook's title and author against iTunes audiobook listings; audiobooks are never sent to it.",
     "open_library": "Book editions, ISBNs, publication dates and cover images."
   },
   "audible_marketplace_order": ["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"],

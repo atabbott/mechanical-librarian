@@ -366,6 +366,41 @@ merged or reconciled as CLEAN on current `main`; one installed walkthrough
 at desktop, 375 and 320 px, and at 200% text; and Project, issue, dependency
 and milestone tracking read back.
 
+## Delivery checkpoint 0.30.0: audiobook matching and editions
+
+Formerly 0.22.5; renumbered by #1321. Audiobooks match the edition the library
+actually holds, keep that match across re-searches, and get better data in.
+This checkpoint is shaped from two independent, verified analyses of #1294's
+full-library run and three experiments: an Audible probe, an offline matching
+replay and a local transcription evaluation. On that run 112 of 237 audiobooks
+had no accepted recording, 68 of them with no candidate, at 8.87 dispatches per
+audiobook. Better matches and data come first; fewer dispatches is an aim, not
+a gate.
+
+Every unit is focused work with `Delivery slice: Not applicable`.
+
+| Order | Issues | Outcome |
+| --- | --- | --- |
+| 1 | #1308 | AudioSilo answers that hold the queried ASIN are kept, and over-bound and lookup-miss diagnostics name what happened. It records this checkpoint and is its first unit. |
+| 2 | #1316 | The admitted ASIN is carried forward with direct-lookup verification, and sibling ASINs read as one edition. |
+| 3 | #1307 | The corroborated admission rule, the "NN Title" strip rung, band-first, the apostrophe fold and the floor-aware runtime. |
+| 4 | #984 | Hardcover and Open Library on the bounded provider SDK, with behaviour unchanged. |
+| 5 | #962 | Hardcover's audio editions fill recording gaps and find Audible ASIN leads, on #984's port. |
+| 6 | #1315, then #1305 | The library language list, then the work-path variant and language check. |
+| 7 | #1314 | The canonical language display name. |
+| 8 | #1309 | Dispatch cuts that lose no data. |
+| 9 | #1310 | Per-case attention and settlements, with the subtitle guard. |
+| 10 | #1317 | Placeholder descriptions, marketing subtitles and foreign-marketplace genres. |
+| 11 | #1319 | An item holding audio and an EPUB is prepared as an audiobook, with the EPUB as local evidence. |
+| 12 | #1320 | The closing full-library run. |
+
+No release, tag, deployment, production-library operation, new provider or
+credential, marketplace widening, series+sequence query (#1262),
+opening-audio promotion (#24) or Google Books deferral (#1318) is included.
+Exit requires every in-scope issue merged or reconciled as CLEAN on current
+`main`, #1320's run measured against the milestone's targets, and Project,
+issue, dependency and milestone tracking read back.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit

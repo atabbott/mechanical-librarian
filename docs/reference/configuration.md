@@ -55,15 +55,19 @@ leaves the saved revision and active runtime unchanged. The private
 after activation; deploy-managed TLS, origin, proxy, mount, and listener values
 still require an operator restart.
 
-Settings shows a Cover evidence switch for the two audiobook sources that state
-a cover asset of their own, `audible_catalog` and `itunes_search`. The control
-is unreachable while the provider is disabled and is forced off when the owner
-disables one. Both the settings contract and the configuration boundary refuse
-the pair outright, so `cover_enabled` can never be true for a provider that is
-off. `audnexus` and `audiosilo` restate Audible's art and carry no switch, and
-Hardcover, Open Library and Inventaire keep exactly the controls they had.
-Guided setup still records `cover_enabled: false` for Audible and iTunes, so
-their covers start off and become evidence only when the owner turns them on.
+Settings shows a Cover evidence switch for the two audiobook-set providers
+that state a cover asset of their own, `audible_catalog` and `itunes_search`.
+Audible's switch makes its art an audiobook cover source. No audiobook is
+dispatched to iTunes (#1254, #1247), so its switch supplies no audiobook cover:
+on an ebook it lets the artwork of a matching iTunes audiobook listing be
+offered as a cover alternative. The control is unreachable while the provider is
+disabled and is forced off when the owner disables one. Both the settings
+contract and the configuration boundary refuse the pair outright, so
+`cover_enabled` can never be true for a provider that is off. `audnexus` and
+`audiosilo` restate Audible's art and carry no switch, and Hardcover, Open
+Library and Inventaire keep exactly the controls they had. Guided setup still
+records `cover_enabled: false` for Audible and iTunes, so their covers start off
+and become evidence only when the owner turns them on.
 Setup, Settings and the review surfaces state one canonical name per provider,
 from one table every one of them reads. The instance `name` remains the owner's
 own identifier and never becomes a display label, so field ids,
@@ -493,7 +497,10 @@ and the predecessor table definition, even empty, are rejected without adoption.
 Cover price observations are bound to the saved model. Refresh replaces them
 through revision comparison; failure retains the prior observation. Deselecting,
 clearing the key or skipping setup clears cover metadata without borrowing
-another model's prices. Description capability and required-price gates remain.
+another model's prices. Description capability and prompt and completion price
+gates remain. A description model may have no request fee in the catalogue: it
+is saved as `null` and shown as Unavailable. A present invalid request fee is
+still refused. No clean rebuild is needed for this (#1400).
 
 Setup and Settings separate observed prompt, completion, image and request
 rates from measured request estimates. Missing cover rates are unavailable,
@@ -516,9 +523,13 @@ are excluded. Output is exactly a bounded description and `ready` or
 `needs_review`. Every candidate is permanently `authored_content` and `advised`.
 
 Automatic OFF retains ordinary deterministic description fill authority.
-Automatic ON admits a current ready result through existing policy and write
-requirements, including replacement of a populated field. Owner-final choices
-win; in-flight effects are not raced. Same text produces a no-change record,
+Automatic ON admits a current ready result that passes the description floor
+through existing policy and write requirements, including replacement of a
+populated field. The floor is the one qualified automatic description fill
+uses: valid plain text with no markup or visible cut-off, not a placeholder
+and not mostly quoted praise. A result below it is neither admitted nor
+written automatically; the owner can still choose it (#1400). Owner-final
+choices win; in-flight effects are not raced. Same text produces a no-change record,
 not a PATCH or Attention item. Explicit owner selection references an immutable
 candidate and expected binding; arbitrary replacement text is not a command.
 Existing description choices and keep-current provide guarded reversal.

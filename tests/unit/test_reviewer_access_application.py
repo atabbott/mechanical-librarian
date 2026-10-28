@@ -215,7 +215,19 @@ def test_openrouter_configuration_validates_then_atomically_maps_without_disclos
     assert calls.count(("probe", "dots-studio/dots-3-note-preview:free")) == 1
 
 
-def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure() -> None:
+@pytest.mark.parametrize(
+    "code",
+    (
+        "rate_limited",
+        "response_too_large",
+        "timed_out",
+        "data_policy_refused",
+        "image_limit_exceeded",
+    ),
+)
+def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure(
+    code: str,
+) -> None:
     operations, _auth, calls, _codex = _operations()
     operations.configure_openrouter(
         expected_revision=1, api_key="secret-key", model="example/vision"
@@ -224,14 +236,14 @@ def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure() 
     assert operations.read().openrouter.state == "configured"
     assert calls == []
 
-    class _RateLimited(_OpenRouter):
+    class _Refused(_OpenRouter):
         def probe(self):
-            raise OpenRouterReviewerError("rate_limited")
+            raise OpenRouterReviewerError(cast("OpenRouterFailure", code))
 
-    operations._openrouter_factory = lambda key, model: _RateLimited(key, model, calls)
+    operations._openrouter_factory = lambda key, model: _Refused(key, model, calls)
     refreshed = operations.refresh_openrouter()
-    assert refreshed.openrouter.state == "rate_limited"
-    assert refreshed.openrouter.reason == "rate_limited"
+    assert refreshed.openrouter.state == code
+    assert refreshed.openrouter.reason == code
 
 
 @pytest.mark.parametrize(
@@ -245,6 +257,10 @@ def test_ordinary_read_does_not_probe_but_explicit_refresh_maps_typed_failure() 
         ("malformed_response", "malformed_response"),
         ("unreachable", "unreachable"),
         ("transport", "unreachable"),
+        ("response_too_large", "response_too_large"),
+        ("timed_out", "timed_out"),
+        ("data_policy_refused", "data_policy_refused"),
+        ("image_limit_exceeded", "image_limit_exceeded"),
     ),
 )
 def test_configuration_preserves_closed_value_free_provider_failure(
@@ -546,7 +562,7 @@ def test_description_deselection_discards_prices_but_preserves_cover(next_engine
     assert cleared.description_metadata is None
 
 
-@pytest.mark.parametrize("missing_price", ["prompt_price", "request_price"])
+@pytest.mark.parametrize("missing_price", ["prompt_price", "completion_price"])
 def test_missing_description_prices_do_not_disable_cover_and_refresh_recovers(
     missing_price,
 ):
@@ -569,9 +585,6 @@ def test_missing_description_prices_do_not_disable_cover_and_refresh_recovers(
             return replace(super().probe_description(), **{missing_price: None})
 
     operations._openrouter_factory = lambda key, model: MissingPrices(key, model, calls)
-    if missing_price == "request_price":
-        with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
-            operations.test_description_model("", "example/b")
     with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
         operations.configure_openrouter(
             expected_revision=both.revision,
@@ -965,7 +978,41 @@ def test_cover_prices_persist_refresh_and_clear_without_changing_description(
         assert result.description_mapping == both.description_mapping
 
 
-def test_description_missing_request_fee_precedes_stale_revision(monkeypatch):
+def test_description_missing_required_price_precedes_stale_revision(monkeypatch):
+    from dataclasses import replace
+
+    operations, _, calls, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="secret", model="example/a"
+    )
+
+    class MissingPrice(_OpenRouter):
+        def probe_description(self):
+            return replace(super().probe_description(), prompt_price=None)
+
+    class MissingFee(_OpenRouter):
+        def probe_description(self):
+            return replace(super().probe_description(), request_price=None)
+
+    operations._openrouter_factory = lambda key, model: MissingPrice(key, model, calls)
+    with monkeypatch.context() as stale:
+        stale.setattr(
+            operations._repository, "revision_is_current", lambda _revision: False
+        )
+        with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
+            operations.test_description_model("", "example/b")
+        operations._openrouter_factory = lambda key, model: MissingFee(
+            key, model, calls
+        )
+        with pytest.raises(ReviewerAccessApplicationError, match="access_changed"):
+            operations.test_description_model("", "example/b")
+    assert operations.read().mapping == cover.mapping
+    assert operations.read().description_mapping is None
+    assert operations._repository.openrouter_key() == "secret"
+    assert not any(kind == "run" for kind, _ in calls)
+
+
+def test_description_model_without_request_fee_validates_saves_refreshes_and_dispatches():
     from dataclasses import replace
 
     operations, _, calls, _ = _operations()
@@ -978,18 +1025,69 @@ def test_description_missing_request_fee_precedes_stale_revision(monkeypatch):
             return replace(super().probe_description(), request_price=None)
 
     operations._openrouter_factory = lambda key, model: MissingFee(key, model, calls)
-    with monkeypatch.context() as stale:
-        stale.setattr(
-            operations._repository, "revision_is_current", lambda _revision: False
+    disclosed = operations.test_description_model("", "example/b")
+    assert disclosed.model == "example/b"
+    assert disclosed.prompt_price == "0.000001"
+    assert disclosed.completion_price == "0.000002"
+    assert disclosed.request_price is None
+    assert operations.read().revision == cover.revision
+    saved = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="",
+        model="example/b",
+        task="description_rewrite",
+    )
+    assert saved.description_metadata == disclosed
+    assert saved.description is not None
+    assert saved.description.state == "usable"
+    assert saved.mapping == cover.mapping
+    assert saved.cover_metadata == cover.cover_metadata
+    refreshed = operations.refresh_openrouter("description_rewrite")
+    assert refreshed.description is not None
+    assert refreshed.description.state == "usable"
+    assert refreshed.description_metadata == disclosed
+    assert refreshed.mapping == cover.mapping
+    assert refreshed.cover_metadata == cover.cover_metadata
+    dispatch = operations.dispatch_description_rewrite()
+    assert dispatch.engine == "openrouter"
+    assert dispatch.model == "example/b"
+    dispatch.close()
+    assert not any(kind == "run" for kind, _ in calls)
+
+
+@pytest.mark.parametrize(
+    "request_price",
+    ["-1", "abc", "1000001", ""],
+    ids=["negative", "malformed", "over_bound", "empty"],
+)
+def test_present_invalid_description_request_fee_is_refused_without_mutation(
+    request_price,
+):
+    from dataclasses import replace
+
+    operations, _, calls, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="secret", model="example/a"
+    )
+    before = operations.read()
+
+    class InvalidFee(_OpenRouter):
+        def probe_description(self):
+            return replace(super().probe_description(), request_price=request_price)
+
+    operations._openrouter_factory = lambda key, model: InvalidFee(key, model, calls)
+    with pytest.raises(ValueError):
+        operations.test_description_model("", "example/b")
+    with pytest.raises(ValueError):
+        operations.configure_openrouter(
+            expected_revision=cover.revision,
+            api_key="replacement-secret",
+            model="example/b",
+            task="description_rewrite",
         )
-        with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
-            operations.test_description_model("", "example/b")
-        operations._openrouter_factory = lambda key, model: _OpenRouter(
-            key, model, calls
-        )
-        with pytest.raises(ReviewerAccessApplicationError, match="access_changed"):
-            operations.test_description_model("", "example/b")
-    assert operations.read().mapping == cover.mapping
-    assert operations.read().description_mapping is None
+    after = operations.read()
+    assert after.revision == before.revision
+    assert after.description_metadata == before.description_metadata
+    assert after.description_mapping is None
     assert operations._repository.openrouter_key() == "secret"
     assert not any(kind == "run" for kind, _ in calls)

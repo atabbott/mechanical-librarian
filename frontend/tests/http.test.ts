@@ -118,6 +118,10 @@ describe('reviewer access transport vocabulary', () => {
     'model_text_only',
     'malformed_response',
     'unreachable',
+    'response_too_large',
+    'timed_out',
+    'data_policy_refused',
+    'image_limit_exceeded',
   ] as const)('preserves the closed %s refusal', (state) => {
     const mapped = mapReviewerAccess(
       reviewerAccessPayload({
@@ -234,6 +238,46 @@ describe('reviewer access transport vocabulary', () => {
         failure,
       }).failure,
     ).toBe(failure)
+  })
+
+  it('admits an unavailable description request price and keeps the other prices required', async () => {
+    const metadata = {
+      model: 'example/text',
+      observed_at: 1,
+      prompt_price: '0.000001',
+      completion_price: '0.000002',
+      request_price: null,
+      text_input: true,
+      text_output: true,
+      structured_outputs: true,
+    }
+    expect(
+      mapReviewerAccess(reviewerAccessPayload({ description_metadata: metadata }))
+        .description_metadata?.request_price,
+    ).toBeNull()
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(async () => Response.json(metadata)),
+      buildIdentity: 'c'.repeat(64),
+    })
+    expect(
+      (
+        await client.testDescriptionModel({
+          expected_revision: 3,
+          api_key: '',
+          model: 'example/text',
+        })
+      ).request_price,
+    ).toBeNull()
+    for (const invalid of [
+      { ...metadata, prompt_price: null },
+      { ...metadata, request_price: '-1' },
+      { ...metadata, request_price: '' },
+    ]) {
+      expect(() =>
+        mapReviewerAccess(reviewerAccessPayload({ description_metadata: invalid })),
+      ).toThrow('invalid_description_metadata')
+    }
   })
 
   it('accepts only the fixed issued prompt shape', () => {
@@ -711,6 +755,60 @@ describe('ReviewApiClient', () => {
         ?.reviewerUnavailableReason,
     ).toBe('profile contract requires process_limit=32')
     expect(() => mapCoverConsideration(payload('/private/profile token=secret'))).toThrow(ApiError)
+  })
+  it('maps only a closed reviewer failure code on a failed review', () => {
+    const payload = (reviewer_status: string, reviewer_failure_code?: unknown) => ({
+      schema_version: 'cover-consideration-v4',
+      consideration_id: 'consideration',
+      current: true,
+      candidates: [],
+      choice_contexts: [
+        {
+          alternative_id: null,
+          selection: 'current',
+          recommendation: 'no_recommendation',
+          recommendation_reason: 'No recommendation retained.',
+          rationale: 'Retained cover choice.',
+          limitations: [],
+          evidence: [],
+        },
+      ],
+      incumbent: { state: 'absent', reference: null },
+      omissions: [],
+      policy: null,
+      policy_preferences: {
+        avoid_promotional_text: false,
+        avoid_tie_in_branding: false,
+        prefer_minimal_composition: false,
+      },
+      policy_reference: 'policy',
+      provider_fetching: false,
+      ready: false,
+      reviewer_access_revision: 3,
+      reviewer_engine: 'openrouter',
+      reviewer_model: 'provider/model',
+      reviewer_status,
+      ...(reviewer_failure_code === undefined ? {} : { reviewer_failure_code }),
+      reviewer_unavailable_reason: null,
+      supersedes_id: null,
+      target_fingerprint: 'fingerprint',
+    })
+
+    for (const code of [
+      'timed_out',
+      'response_too_large',
+      'data_policy_refused',
+      'image_limit_exceeded',
+    ] as const)
+      expect(mapCoverConsideration(payload('failed', code))?.reviewerFailureCode).toBe(code)
+    expect(mapCoverConsideration(payload('failed'))).not.toHaveProperty('reviewerFailureCode')
+    expect(mapCoverConsideration(payload('failed', null))).not.toHaveProperty('reviewerFailureCode')
+    expect(() => mapCoverConsideration(payload('failed', 'transport'))).toThrow(
+      new ApiError(502, 'invalid_cover_reviewer_failure_code'),
+    )
+    expect(() => mapCoverConsideration(payload('completed', 'timed_out'))).toThrow(
+      new ApiError(502, 'invalid_cover_reviewer_failure_code'),
+    )
   })
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (

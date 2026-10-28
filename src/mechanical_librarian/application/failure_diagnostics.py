@@ -123,17 +123,17 @@ def provider_attempt_diagnostics(
             False,
         ),
         "malformed": (
-            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+            FailureCategory.MALFORMED_RESPONSE,
             FailureStage.RESPONSE,
             False,
         ),
         "oversized": (
-            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+            FailureCategory.OVERSIZED_RESPONSE,
             FailureStage.RESPONSE,
             False,
         ),
         "candidate_limit_exceeded": (
-            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+            FailureCategory.CANDIDATE_LIMIT_EXCEEDED,
             FailureStage.RESPONSE,
             False,
         ),
@@ -161,7 +161,7 @@ def provider_attempt_diagnostics(
             cause_mapping = {
                 "deadline": (FailureCategory.TIMEOUT, FailureStage.REQUEST),
                 "aggregate_bytes": (
-                    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+                    FailureCategory.OVERSIZED_RESPONSE,
                     FailureStage.RESPONSE,
                 ),
                 "dispatch_count": (
@@ -203,11 +203,10 @@ def provider_attempt_diagnostics(
         )
         and not (
             # An ambiguous provider identity is already stated on every lane the
-            # conflict failed, and it is not a malformed or over-bound
-            # response. The caller resolves that from the lanes, so a lane that
-            # was malformed, over-bound, or candidate-limited for its own reason
-            # still keeps the status-derived aggregate alongside the identity
-            # diagnostic.
+            # conflict failed, and it is not a malformed response. The caller
+            # resolves that from the lanes, so a lane that was malformed for its
+            # own reason still keeps the status-derived aggregate alongside the
+            # identity diagnostic.
             status == "malformed" and identity_conflict_only
         )
         and not (
@@ -292,11 +291,14 @@ def _provider_attempt_category(
         return FailureCategory.QUOTA_RATE_LIMIT, FailureStage.RESPONSE
     if category.startswith("http_"):
         return FailureCategory.HTTP_NON_SUCCESS, FailureStage.RESPONSE
-    if category in {"response_malformed", "response_oversized"}:
-        return (
-            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
-            FailureStage.RESPONSE,
-        )
+    if category == "not_found":
+        return FailureCategory.EMPTY_NO_MATCH, FailureStage.RESPONSE
+    if category == "response_malformed":
+        return FailureCategory.MALFORMED_RESPONSE, FailureStage.RESPONSE
+    if category == "response_oversized":
+        return FailureCategory.OVERSIZED_RESPONSE, FailureStage.RESPONSE
+    if category == "candidate_limit_exceeded":
+        return FailureCategory.CANDIDATE_LIMIT_EXCEEDED, FailureStage.RESPONSE
     if category == "provider_declared_error":
         return FailureCategory.PROVIDER_DECLARED_ERROR, FailureStage.RESPONSE
     if category == "provider_failure":
@@ -316,35 +318,26 @@ __all__ = [
 ]
 
 
-# Every provider status this module routes to MALFORMED_OVER_BOUND_RESPONSE.
-# Only a lane the identity conflict itself failed carries the identity
-# diagnostic, so a lane holding any of these for its own reason -- an
-# independently unparsable page, an over-bound payload, or a candidate limit --
-# keeps the aggregate. ``test_over_bound_statuses_match_the_status_mapping``
-# fails if a status joins that category without joining this set.
-_OVER_BOUND_STATUSES = frozenset(
-    {
-        ProviderStatus.MALFORMED,
-        ProviderStatus.OVERSIZED,
-        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
-    }
-)
-
-
-def _identity_conflict_is_the_only_over_bound_reason(
+def _identity_conflict_is_the_only_malformed_reason(
     observation: ProviderObservation,
 ) -> bool:
-    """Report whether an ambiguous identity is the whole of this over-bound status."""
+    """Report whether an ambiguous identity is the whole of this malformed status.
+
+    Only a lane the identity conflict itself failed carries the identity
+    diagnostic, so a lane that is malformed for its own reason -- an
+    independently unparsable page -- keeps the aggregate. An oversized or
+    candidate-limited lane names its own category and is not read here.
+    """
     if not any(
         value.category is FailureCategory.IDENTITY for value in observation.diagnostics
     ):
         return False
-    over_bound = tuple(
-        lane for lane in observation.lanes if lane.status in _OVER_BOUND_STATUSES
+    malformed = tuple(
+        lane for lane in observation.lanes if lane.status is ProviderStatus.MALFORMED
     )
-    return bool(over_bound) and all(
+    return bool(malformed) and all(
         any(value.category is FailureCategory.IDENTITY for value in lane.diagnostics)
-        for lane in over_bound
+        for lane in malformed
     )
 
 
@@ -387,7 +380,7 @@ def provider_result_diagnostics(
             evidence.attempt_records,
             status=observation.status.value,
             incomplete_causes=evidence.incomplete_causes,
-            identity_conflict_only=_identity_conflict_is_the_only_over_bound_reason(
+            identity_conflict_only=_identity_conflict_is_the_only_malformed_reason(
                 observation
             ),
             work_identity_refused_only=(
@@ -413,6 +406,8 @@ _THROTTLES = frozenset(
 _HTTP_STATUS = re.compile(r"http_([1-5][0-9]{2})")
 # A provider's ordinary "not found", which its adapter answers as no match. A
 # tuple compares by equality, so an unhashable category cannot raise here.
+# `not_found` is an adapter's own statement that the status was a miss (#1308),
+# so it never names a failure; the HTTP forms do only beside a failed lane.
 _NOT_FOUND = ("http_404", "region_unavailable")
 _MAX_EVENT_MS = 86_400_000
 
@@ -535,8 +530,9 @@ def provider_dispatch_events(
     the lane when no attempt already named that class. A request the deadline
     stopped before dispatch is counted from the incomplete causes, and on an
     audiobook only where a lane was recorded as starved. A clean dispatch has
-    no event, and neither has a "not found" attempt when every lane answered
-    with candidates or no match: that is the provider's ordinary answer.
+    no event, and neither has an adapter's `not_found` attempt, or an HTTP "not
+    found" attempt when every lane answered with candidates or no match: that is
+    the provider's ordinary answer.
     """
     shapes = {lane.identity: _lane_shape(lane) for lane in lanes}
     answered = (
@@ -590,7 +586,11 @@ def provider_dispatch_events(
             if type(category) is str
             else (FailureCategory.UNKNOWN, FailureStage.RESPONSE)
         )
-        if mapped is None or (answered_cleanly and category in _NOT_FOUND):
+        if (
+            mapped is None
+            or category == "not_found"
+            or (answered_cleanly and category in _NOT_FOUND)
+        ):
             continue
         http = _HTTP_STATUS.fullmatch(category) if type(category) is str else None
         attempt_key = (
@@ -621,8 +621,8 @@ def provider_dispatch_events(
         (
             ProviderStatus.MALFORMED,
             "provider_request_failed",
-            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE.value,
-            FailureCategory.MALFORMED_OVER_BOUND_RESPONSE.value in named,
+            FailureCategory.MALFORMED_RESPONSE.value,
+            FailureCategory.MALFORMED_RESPONSE.value in named,
         ),
         (
             ProviderStatus.RATE_LIMITED,

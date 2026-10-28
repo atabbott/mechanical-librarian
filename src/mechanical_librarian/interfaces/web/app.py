@@ -79,6 +79,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     DeviceAuthFailure,
     DeviceAuthStatus,
+    OpenRouterPublicFailure,
 )
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.description_advice import (
@@ -429,6 +430,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_engine: Literal["codex", "openrouter"] | None
     reviewer_model: str | None
     reviewer_access_revision: StrictInt | None
+    reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: str
     reviewer_unavailable_reason: str | None
     schema_version: Literal["cover-consideration-v4"]
@@ -2462,7 +2464,7 @@ def reviewer_failure_response(error: Exception) -> tuple[int, str]:
     if isinstance(error, ReviewerAccessApplicationError):
         if error.code == "access_changed":
             return 409, "reviewer_access_stale"
-        if error.code in {"credential_clear_failed", "unreachable"}:
+        if error.code in {"credential_clear_failed", "unreachable", "timed_out"}:
             return 503, error.code
         return 422, error.code
     return 422, "reviewer_access_invalid"
@@ -2799,18 +2801,6 @@ def _register_session_and_operations_routes(
             )
         except OperationsError:
             raise HTTPException(503, detail={"code": "support_unavailable"}) from None
-
-    @app.get("/login", include_in_schema=False)
-    def login_page() -> HTMLResponse:
-        return HTMLResponse(review_frontend.login_html())
-
-    @app.get("/assets/login.css", include_in_schema=False)
-    def login_css() -> Response:
-        return Response(review_frontend.LOGIN_CSS, media_type="text/css")
-
-    @app.get("/assets/login.js", include_in_schema=False)
-    def login_js() -> Response:
-        return Response(review_frontend.LOGIN_JS, media_type="text/javascript")
 
     @app.post(
         "/api/v1/session/login",
@@ -4283,6 +4273,31 @@ def _register_html_routes(
     @app.get("/", include_in_schema=False)
     def root_page() -> RedirectResponse:
         return RedirectResponse(url="/login", status_code=303)
+
+    @app.get("/login", include_in_schema=False)
+    def login_page() -> HTMLResponse:
+        return HTMLResponse(review_frontend.login_html())
+
+    @app.get("/assets/login.css", include_in_schema=False)
+    def login_css() -> Response:
+        # Sign-in uses the workspace's own Inter faces when the build has them.
+        bundle = asset_loader.load()
+        faces = (
+            ""
+            if isinstance(bundle, ReactAssetRecovery)
+            else review_frontend.inter_font_faces(
+                asset.path for asset in bundle.assets if asset.kind == "font"
+            )
+        )
+        return Response(faces + review_frontend.LOGIN_CSS, media_type="text/css")
+
+    @app.get("/assets/login.js", include_in_schema=False)
+    def login_js() -> Response:
+        return Response(review_frontend.LOGIN_JS, media_type="text/javascript")
+
+    @app.get("/assets/theme.js", include_in_schema=False)
+    def theme_js() -> Response:
+        return Response(review_frontend.THEME_JS, media_type="text/javascript")
 
     @app.get("/review/{review_case_id}", include_in_schema=False)
     def review_page(

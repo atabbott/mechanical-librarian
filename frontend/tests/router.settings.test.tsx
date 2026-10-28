@@ -1105,6 +1105,30 @@ describe('owner settings route', () => {
     expect(screen.queryByText(/prior sign-in was interrupted/u)).not.toBeInTheDocument()
   })
 
+  it.each([
+    ['response_too_large', /answer too large to read\. Retry later, or choose another model\./u],
+    ['timed_out', /did not answer in time\. Check network access, then retry\./u],
+    ['data_policy_refused', /Change your privacy settings on OpenRouter, or choose a model/u],
+    ['image_limit_exceeded', /fewer images than a cover review sends\. Choose another vision/u],
+  ] as const)('says what to change for an OpenRouter %s status', async (state, copy) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'openrouter' as const, model: 'provider/model' },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state,
+        reason: state,
+        model: 'provider/model',
+        tier: null,
+      },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+    expect(await screen.findByText(copy)).toHaveAttribute('role', 'alert')
+  })
+
   it('keeps current host failure copy ahead of an older cached device failure', async () => {
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())
@@ -1764,6 +1788,64 @@ it('discloses description prices before activation and preserves the cover task 
   )
   expect(http.writeSettings).not.toHaveBeenCalled()
   expect(document.description_advice.automatic_application).toBe(false)
+})
+
+it('discloses an unavailable description request price and still saves the model', async () => {
+  const http = createHttp()
+  const initial: ReviewerAccessView = {
+    ...reviewerView,
+    mapping: { engine: 'openrouter', model: 'example/cover-a' },
+    openrouter_key_configured: true,
+  }
+  const metadata = {
+    model: 'example/text-b',
+    observed_at: 100,
+    prompt_price: '0.000001',
+    completion_price: '0.000002',
+    request_price: null,
+    text_input: true as const,
+    text_output: true as const,
+    structured_outputs: true as const,
+  }
+  const prices = '0.000001 per input token, 0.000002 per output token, Unavailable per request.'
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => initial)
+  http.testDescriptionModel = vi.fn(async () => metadata)
+  http.configureOpenRouter = vi.fn(async () => ({
+    ...initial,
+    revision: 4,
+    description_mapping: { engine: 'openrouter' as const, model: metadata.model },
+    description_metadata: metadata,
+    description: {
+      engine: 'openrouter' as const,
+      state: 'usable' as const,
+      reason: null,
+      model: metadata.model,
+      tier: 'paid' as const,
+      host_headroom_bytes: null,
+    },
+  }))
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const enable = await screen.findByRole('button', {
+    name: 'Use this OpenRouter model for descriptions',
+  })
+  await user.click(screen.getByRole('combobox', { name: 'Description model' }))
+  await user.click(screen.getByRole('option', { name: 'Custom model ID' }))
+  await user.type(screen.getByRole('textbox', { name: 'Description model ID' }), metadata.model)
+  await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
+  expect(await screen.findByText(prices, { selector: 'dd' })).toBeVisible()
+  await user.click(enable)
+  expect(
+    await screen.findByText('Selected: example/text-b. Advisory availability: ready to use.'),
+  ).toBeVisible()
+  expect(http.configureOpenRouter).toHaveBeenCalledWith({
+    expected_revision: 3,
+    api_key: '',
+    model: metadata.model,
+    task: 'description_rewrite',
+  })
+  expect(screen.getByText(prices, { selector: 'dd' })).toBeVisible()
 })
 
 it('inspects the exact contained description model before selection without starting a request', async () => {

@@ -14,6 +14,7 @@ from mechanical_librarian.application.cover_observation import Reviewer
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     OpenRouterAccountStatus,
+    OpenRouterPublicFailure,
     OpenRouterReviewerError,
     ReviewerDispatch,
     ReviewerProvisioningStatus,
@@ -42,13 +43,7 @@ ReviewerAccessFailure = Literal[
     "host_unsupported",
     "credential_unavailable",
     "access_changed",
-    "invalid_key",
-    "quota_exhausted",
-    "rate_limited",
-    "model_unavailable",
-    "model_text_only",
-    "malformed_response",
-    "unreachable",
+    OpenRouterPublicFailure,
     "credential_clear_failed",
 ]
 
@@ -523,7 +518,11 @@ class ReviewerAccessOperations:
                 raise ValueError("invalid reviewer credential")
             try:
                 account = self._probe_openrouter(key, model, "description_rewrite")
-                if account.request_price is None:
+                if (
+                    account.observed_at is None
+                    or account.prompt_price is None
+                    or account.completion_price is None
+                ):
                     raise ReviewerAccessApplicationError("model_unavailable")
                 self._require_revision(document.revision)
                 return DescriptionModelMetadata.model_validate(
@@ -565,7 +564,6 @@ class ReviewerAccessOperations:
             account.observed_at is None
             or account.prompt_price is None
             or account.completion_price is None
-            or account.request_price is None
         ):
             raise ReviewerAccessApplicationError("model_unavailable")
         replacement = ReviewerAccessDocument.model_validate(

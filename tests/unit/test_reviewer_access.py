@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from mechanical_librarian.domain.reviewer_access import (
+    DescriptionModelMetadata,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
@@ -111,3 +112,57 @@ def test_cover_prices_reject_absent_or_different_model(model):
                 },
             }
         )
+
+
+_DESCRIPTION_METADATA = {
+    "model": "example/text",
+    "observed_at": 1,
+    "prompt_price": "0.000001",
+    "completion_price": "0.000002",
+    "request_price": "0",
+}
+_ABSENT = object()
+
+
+@pytest.mark.parametrize(
+    ("changes", "admitted"),
+    [
+        ({"request_price": None}, True),
+        ({"request_price": "0"}, True),
+        ({"request_price": _ABSENT}, False),
+        ({"request_price": "-1"}, False),
+        ({"request_price": "NaN"}, False),
+        ({"request_price": "abc"}, False),
+        ({"request_price": "1000001"}, False),
+        ({"request_price": ""}, False),
+        ({"request_price": 0}, False),
+        ({"prompt_price": None}, False),
+        ({"completion_price": None}, False),
+    ],
+    ids=[
+        "null_fee",
+        "predecessor_fee",
+        "absent_key",
+        "negative",
+        "not_a_number",
+        "malformed",
+        "over_bound",
+        "empty",
+        "non_string",
+        "missing_prompt",
+        "missing_completion",
+    ],
+)
+def test_description_request_price_is_optional_but_bounded(changes, admitted) -> None:
+    document = {
+        key: value
+        for key, value in {**_DESCRIPTION_METADATA, **changes}.items()
+        if value is not _ABSENT
+    }
+
+    if admitted:
+        metadata = DescriptionModelMetadata.model_validate(document)
+        assert metadata.request_price == changes["request_price"]
+        return
+    with pytest.raises(ValidationError):
+        DescriptionModelMetadata.model_validate(document)

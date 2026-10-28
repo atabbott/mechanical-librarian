@@ -28,9 +28,13 @@ from mechanical_librarian.application.review_web import _needs_attention
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
 )
-from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
+from mechanical_librarian.application.reviewer_contracts import (
+    OpenRouterFailure,
+    ReviewerDispatch,
+)
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.reviewer_access import ReviewerEngine
 from tests.support.audiobook_reports import asserted_asin_report
 from tests.support.metadata_report_schemas import retained_report_as_current
 from tests.unit.test_cover_packets import (
@@ -1539,3 +1543,75 @@ def test_base_produced_observation_is_refused_and_current_semantics_create_one_s
     assert len(dispatches) == 2
     assert repository.current_cover_consideration_document(current_case_id) == document
     repository.close()
+
+
+@pytest.mark.parametrize(
+    ("engine", "code", "exposed"),
+    (
+        ("openrouter", "timed_out", "timed_out"),
+        ("openrouter", "data_policy_refused", "data_policy_refused"),
+        ("openrouter", "image_limit_exceeded", "image_limit_exceeded"),
+        ("openrouter", "response_too_large", "response_too_large"),
+        ("openrouter", "transport", None),
+        ("codex", "timeout", None),
+    ),
+)
+def test_chat_time_reviewer_failure_exposes_only_a_closed_code(
+    case: _Case, engine: str, code: str, exposed: str | None
+) -> None:
+    from mechanical_librarian.application.reviewer_contracts import (
+        OpenRouterReviewerError,
+    )
+    from mechanical_librarian.interfaces.web.app import _CoverConsiderationResponse
+
+    profile = b"reviewer-profile"
+
+    def reviewer(*_args: object) -> str:
+        if engine == "openrouter":
+            raise OpenRouterReviewerError(cast("OpenRouterFailure", code))
+        error = RuntimeError("private reviewer canary")
+        error.code = code
+        raise error
+
+    model = "example/vision" if engine == "openrouter" else "gpt-5.6-sol"
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        reviewer_dispatch=lambda: ReviewerDispatch(
+            7,
+            cast("ReviewerEngine", engine),
+            model,
+            profile,
+            cast("ReviewRunner", reviewer),
+        ),
+        reviewer_identity=lambda: (7, engine, model, profile),
+        reviewer_revision_current=lambda revision: revision == 7,
+    )
+    case_id = "review_case_" + "k" * 64
+    projected = service.ensure(case_id, case.report.to_json(), case.proposal)
+    persisted = json.loads(case.store.current[case_id])
+
+    assert projected["reviewer_status"] == "failed"
+    assert projected["reviewer_failure_code"] == exposed
+    # The persisted document is unchanged: the open stored code is only read.
+    assert persisted["reviewer_failure"]["code"] == code
+    assert "reviewer_failure_code" not in persisted
+    response = _CoverConsiderationResponse.model_validate(projected)
+    assert response.reviewer_failure_code == exposed
+    assert "canary" not in response.model_dump_json()
+
+    # A legacy or unknown stored code surfaces as no code, never as an error.
+    legacy = dict(persisted, reviewer_failure={"attempts": [], "code": "legacy"})
+    identity = {
+        key: value
+        for key, value in legacy.items()
+        if key not in {"consideration_id", "created_at"}
+    }
+    legacy["consideration_id"] = (
+        "cover_consideration_"
+        + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+    )
+    historical = service.project_historical(canonical_packet_json(legacy))
+    assert historical["reviewer_failure_code"] is None

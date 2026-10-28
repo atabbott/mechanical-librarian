@@ -365,6 +365,7 @@ def test_captured_predecessor_closes_only_after_request_release() -> None:
 
 def test_real_activity_generations_keep_root_and_successor_usable(tmp_path):
     import threading
+    import time
 
     from mechanical_librarian.adapters.persistence.activity_facts import (
         ActivityFactStore,
@@ -395,6 +396,12 @@ def test_real_activity_generations_keep_root_and_successor_usable(tmp_path):
                 root, tmp_path / "application.sqlite3", sessions, facts=facts
             ) as successor,
         ):
+            # Only the background projector publishes before a read, and it
+            # starts with the generation, so its first step can come after
+            # composition returns (seen under loaded parallel runs).
+            deadline = time.monotonic() + 10
+            while facts.snapshot() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
             assert facts.snapshot() is not None
             projection = old._activity_projection
             assert projection is not None

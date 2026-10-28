@@ -77,6 +77,7 @@ import {
   preparationOutcomes,
   preparationStageLabels,
   preparationStatusLabels,
+  reviewerFailureCopy,
   sourceStatusLabels,
   writeHoldReasons,
 } from '../labels'
@@ -260,17 +261,18 @@ const preparationTriggerCopy: Record<
 // A request accepted once is just how the run began; a number there would be
 // noise on every ordinary run. Repeats are the case worth counting, so only
 // they carry one.
+// Initial setup records one acceptance per library, which is not a repeated
+// owner request, so it never carries a count.
 const preparationRepeatedTriggerCopy: Record<
-  PreparationPresentation['triggers'][number]['trigger'],
+  Exclude<PreparationPresentation['triggers'][number]['trigger'], 'initial_setup'>,
   string
 > = {
-  initial_setup: 'Initial setup requested',
   manual_scan: 'Owner scan requested',
   library_added: 'Library addition requested',
   title_recovery: 'Title recovery requested',
 }
 const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][number]) =>
-  trigger.accepted_count > 1
+  trigger.accepted_count > 1 && trigger.trigger !== 'initial_setup'
     ? `${preparationRepeatedTriggerCopy[trigger.trigger]} ${String(trigger.accepted_count)} times`
     : preparationTriggerCopy[trigger.trigger]
 // The scope every count on this page reconciles to: one run, whose books are
@@ -421,7 +423,7 @@ const PreparationDetail = ({
       break
     case 'running':
       heading = 'Preparing your library'
-      introduction = 'Preparation continues here while prepared works remain selectable.'
+      introduction = 'Prepared works remain selectable while the rest of this run finishes.'
       break
     case 'blocked':
       heading = 'Preparation needs attention'
@@ -2403,7 +2405,10 @@ function LibraryCoverChoicesContent({
       : reviewerUnavailable
         ? 'Visual review is unavailable. Only the eligible choices shown below can be selected.'
         : 'Manual cover comparison'
-  const reviewerDetail = reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
+  // A review that failed at chat time says what to change (#1330-#1332).
+  const reviewerDetail = consideration.reviewerFailureCode
+    ? reviewerFailureCopy[consideration.reviewerFailureCode]
+    : reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
   // A merged duplicate is the same image as a card shown, not an unavailable
   // candidate, so it is counted apart (#1290).
   const merged = consideration.omissions.filter(
@@ -2440,6 +2445,7 @@ function LibraryCoverChoicesContent({
         </small>
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
+      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
       {consideration.reviewerModel ? (
         <p>Reviewer: {coverReviewerLabel(consideration.reviewerModel)}</p>
       ) : null}
@@ -2455,7 +2461,6 @@ function LibraryCoverChoicesContent({
           Automatically selected. Only a strictly better confirmed cover can update this choice.
         </p>
       ) : null}
-      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
       <WriteStateLine active={writesActive} />
       <p className="cover-track-hint">
         Every cover is shown whole in one row. Scroll the row, or move between covers with the arrow
