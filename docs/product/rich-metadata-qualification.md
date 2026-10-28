@@ -89,6 +89,18 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Review history tie-break successor (#1209)
+
+The current F19a, F20 and F46 records move to semantic revision 80 over base
+`860b4b4d`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. Nothing
+persisted changes; no clean rebuild is required. Review history now cuts owner
+decisions, description advice and description selections at its limit in the
+order it displays them when times tie. That changes which history rows a read
+shows, not which values are proposed or what any qualified operation may do, so
+no operation gains or loses authority.
+
 ## Vendored typeface successor (#1289)
 
 The current F19a, F20 and F46 records move to semantic revision 79 over base
