@@ -3088,6 +3088,7 @@ describe('Library route', () => {
       expect(await screen.findByText('Candidate source')).toBeVisible()
       expect(screen.queryByText('Current source')).toBeNull()
       if (!editable) expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
+      if (!editable) expect(screen.queryByRole('radio')).toBeNull()
     },
   )
 
@@ -6867,6 +6868,7 @@ describe('Library route', () => {
     ).toHaveAttribute('role', 'alert')
     expect(screen.queryByRole('button', { name: /Current value/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Specific proposed value/ })).toBeNull()
+    expect(screen.queryByRole('radio')).toBeNull()
   })
 
   it('preserves the selected field in Library and clears it when another work is selected', async () => {
@@ -10155,6 +10157,7 @@ describe('Provider evidence rail', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
     expect(await screen.findByText(reason)).toBeVisible()
     expect(screen.queryByRole('button', { name: /New title/ })).toBeNull()
+    expect(screen.queryByRole('radio')).toBeNull()
   })
 
   it('shows the field-local reason while keeping direct choices available', async () => {

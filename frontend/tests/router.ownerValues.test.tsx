@@ -560,6 +560,7 @@ describe('owner review fixes', () => {
       ),
     ).toBeVisible()
     expect(document.querySelector('[aria-pressed="true"]')).toBeNull()
+    expect(document.querySelector('[role="radio"][aria-checked="true"]')).toBeNull()
     // Nothing is marked, so the header does not say something is.
     expect(screen.getByText(/Your earlier decision still holds this field\./u)).toBeVisible()
     expect(screen.queryByText(/The recorded outcome is marked below/u)).toBeNull()
