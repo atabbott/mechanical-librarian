@@ -829,7 +829,8 @@ effect validation still compile retained evidence through their existing guards.
 
 Outcome v10: **clean rebuild required** for prior derived stores;
 there is no adoption or migration. F19a, F20 and F46 semantic revision 4 preserves
-the existing permission sets. Earlier documents remain historical decoding only.
+the existing permission sets. Earlier documents remain historical decoding only;
+under ADR-0087, #1396 removed that decoding, so only current digests decode.
 
 ## Material ISBN/title conflict precedence (#1132)
 
