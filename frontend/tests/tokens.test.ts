@@ -151,6 +151,11 @@ describe('Design tokens', () => {
     expect(failing(dark, boundaryPairs('var(--field-line)'))).toEqual([])
     // The strong catalogue line alone is a divider, not a field boundary.
     expect(failing(dark, boundaryPairs('var(--line-strong)'))).not.toEqual([])
+    // A select drawn as a Dropdown trigger is a field like any other.
+    const trigger = rules(styles).find(({ selector }) => selector === '.cm-dropdown-trigger')
+    const edge = /^1px solid (.+)$/.exec(property(trigger?.body ?? '', 'border') ?? '')?.[1] ?? ''
+    expect(failing(dark, boundaryPairs(edge))).toEqual([])
+    expect(failing(dark, boundaryPairs('var(--line)'))).not.toEqual([])
     const ring = rules(styles).find(({ selector }) => selector === ':focus-visible')?.body ?? ''
     const outline = /^3px solid (.+)$/.exec(property(ring, 'outline') ?? '')?.[1] ?? ''
     expect(failing(dark, boundaryPairs(outline))).toEqual([])
