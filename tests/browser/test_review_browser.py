@@ -2273,16 +2273,24 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
                 # A theme chosen at sign-in is remembered like the workspace's,
                 # so it survives the profile restart below (#1013). Until one is
                 # saved, sign-in follows the system live; afterwards it does not.
+                # The system theme is followed by the stylesheet alone, so no
+                # choice is written to the document until the owner saves one.
                 html = page.locator("html")
+                body = page.locator("body")
+                toggle = page.locator(".theme-toggle")
                 page.emulate_media(color_scheme="dark")
-                expect(html).to_have_attribute("data-theme", "dark")
+                expect(body).to_have_css("background-color", "rgb(15, 21, 18)")
+                expect(toggle).to_contain_text("Light mode")
                 page.emulate_media(color_scheme="light")
-                expect(html).to_have_attribute("data-theme", "light")
+                expect(body).to_have_css("background-color", "rgb(244, 242, 236)")
+                expect(toggle).to_contain_text("Dark mode")
+                assert html.get_attribute("data-theme") is None
                 page.get_by_role("button", name="Dark mode").click()
                 expect(html).to_have_attribute("data-theme", "dark")
                 page.emulate_media(color_scheme="dark")
                 page.emulate_media(color_scheme="light")
                 expect(html).to_have_attribute("data-theme", "dark")
+                expect(body).to_have_css("background-color", "rgb(15, 21, 18)")
                 _login(page, origin)
                 assert persisted_sessions() == [(1_100, 1_400)]
                 context.close()
@@ -7064,7 +7072,15 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     (nonces[0], "mistyped-token"),
                     (nonces[1], _CLAIM_TOKEN),
                 ]
-                for provider in ("Open Library", "Hardcover", "Google Books"):
+                # Open Library needs only a contact email, so it has no
+                # account link; the two keyed providers keep theirs (#1287).
+                expect(
+                    page.get_by_role("link", name="Get Open Library access")
+                ).to_have_count(0)
+                expect(
+                    page.locator(".option", has_text="Open Library")
+                ).to_contain_text("Needs only a contact email")
+                for provider in ("Hardcover", "Google Books"):
                     access = page.get_by_role("link", name=f"Get {provider} access")
                     expect(access).to_be_visible()
                     expect(access).to_have_class(re.compile(r"\bprovider-access\b"))
@@ -7107,7 +7123,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     for width, height in protected_viewports:
                         page.set_viewport_size({"width": width, "height": height})
                         expect(
-                            page.get_by_role("link", name="Get Open Library access")
+                            page.get_by_role("link", name="Get Hardcover access")
                         ).to_be_visible()
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
@@ -7142,9 +7158,13 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 page.get_by_role(
                     "checkbox", name="A very long library name", exact=False
                 ).check()
-                expect(page.get_by_label("Library name").first).to_be_hidden()
-                page.get_by_role("button", name="Change name").first.click()
-                display_name = page.get_by_label("Library name").first
+                expect(
+                    page.get_by_label("New name for Books", exact=True)
+                ).to_be_hidden()
+                page.get_by_role(
+                    "button", name="Change name of Books", exact=True
+                ).click()
+                display_name = page.get_by_label("New name for Books", exact=True)
                 expect(display_name).to_be_visible()
                 expect(display_name).to_have_value("Books")
                 display_name.fill("My Reading Shelf")
@@ -7256,6 +7276,12 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         model
                     )
                     expect(page.get_by_label("Model ID", exact=True)).to_be_focused()
+                # Data use and limits are reference detail, read on demand (#1287).
+                caveat = page.get_by_text(
+                    "Cover requests deny provider data collection", exact=False
+                )
+                expect(caveat).to_be_hidden()
+                page.get_by_text("OpenRouter limits, data use and key sharing").click()
                 expect(
                     page.get_by_text(
                         "Cover requests deny provider data collection", exact=False
