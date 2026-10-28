@@ -1067,7 +1067,6 @@ const useAnnounceRetaining = (retaining: boolean) => {
   }, [setRetaining, retaining])
 }
 const Shell = () => {
-  const shell = useRef<HTMLDivElement>(null)
   const masthead = useRef<HTMLElement>(null)
   const main = useRef<HTMLElement>(null)
   const previousPath = useRef('')
@@ -1102,22 +1101,27 @@ const Shell = () => {
     else delete document.documentElement.dataset.reducedMotion
   }, [appearance.data?.reduced_motion])
   useLayoutEffect(() => {
-    const shellElement = shell.current
     const mastheadElement = masthead.current
-    if (!shellElement || !mastheadElement) return
+    if (!mastheadElement) return
+    const root = document.documentElement
+    // The masthead sticks only while it takes at most a quarter of the
+    // viewport. Taller -- a phone, a short window, enlarged text -- it scrolls
+    // away with the page, so it never covers what the owner reads or focuses.
     const updateMastheadClearance = () => {
-      const clearance = mastheadElement.getBoundingClientRect().height + 8
-      shellElement.style.setProperty('--masthead-clearance', `${clearance.toString()}px`)
+      const height = mastheadElement.getBoundingClientRect().height
+      root.style.setProperty('--masthead-clearance', `${(height + 8).toString()}px`)
+      if (height > window.innerHeight / 4) root.dataset.masthead = 'static'
+      else delete root.dataset.masthead
     }
     updateMastheadClearance()
-    if (!('ResizeObserver' in window)) {
-      return () => shellElement.style.removeProperty('--masthead-clearance')
-    }
-    const observer = new ResizeObserver(updateMastheadClearance)
-    observer.observe(mastheadElement)
+    addEventListener('resize', updateMastheadClearance)
+    const observer = 'ResizeObserver' in window ? new ResizeObserver(updateMastheadClearance) : null
+    observer?.observe(mastheadElement)
     return () => {
-      observer.disconnect()
-      shellElement.style.removeProperty('--masthead-clearance')
+      observer?.disconnect()
+      removeEventListener('resize', updateMastheadClearance)
+      root.style.removeProperty('--masthead-clearance')
+      delete root.dataset.masthead
     }
   }, [])
   useEffect(() => {
@@ -1158,7 +1162,7 @@ const Shell = () => {
     }
   }
   return (
-    <div ref={shell} className="app-shell">
+    <div className="app-shell">
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
@@ -1167,7 +1171,7 @@ const Shell = () => {
           to="/library"
           search={{ lens: 'all' }}
           className="brand"
-          aria-label="Mechanical Librarian home"
+          aria-label="Mechanical Librarian"
         >
           <span className="brand-mark" aria-hidden="true">
             ML
@@ -1206,9 +1210,12 @@ const Shell = () => {
             Settings
           </Link>
         </nav>
-        <div className="shell-actions">
+        {/* Status has a slot of its own, so a notice arriving moves nothing else. */}
+        <div className="shell-status">
           <LiveStreamNotice state={streamState} />
           <PreparationActivity />
+        </div>
+        <div className="shell-actions">
           <ThemeControl />
           <button className="sign-out" type="button" onClick={() => void signOut()}>
             Sign out

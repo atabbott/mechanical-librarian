@@ -4911,7 +4911,8 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                           const control = document.activeElement
                           const bounds = control?.getBoundingClientRect()
                           const masthead = document.querySelector('.masthead')
-                          const visibleTop = (masthead?.getBoundingClientRect().bottom ?? 0) + 8
+                          // A static masthead may have scrolled away above the top.
+                          const visibleTop = Math.max(0, masthead?.getBoundingClientRect().bottom ?? 0) + 8
                           window.__compactReveal = {
                             requested: typeof options === 'object' ? options.top : null,
                             beforeTop: bounds?.top ?? null,
@@ -4936,7 +4937,7 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                         return null
                       const bounds = control.getBoundingClientRect()
                       const masthead = document.querySelector('.masthead')
-                      const mastheadBottom = masthead?.getBoundingClientRect().bottom ?? 0
+                      const mastheadBottom = Math.max(0, masthead?.getBoundingClientRect().bottom ?? 0)
                       const hit = document.elementFromPoint(
                         Math.min(innerWidth - 1, Math.max(0, bounds.left + bounds.width / 2)),
                         Math.min(innerHeight - 1, Math.max(0, bounds.top + 1)),
@@ -7644,7 +7645,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                           const main = document.querySelector('#main-content')?.getBoundingClientRect();
                           const brandMarkElement = document.querySelector('.brand-mark');
                           const brandMark = brandMarkElement?.getBoundingClientRect();
-                          const shellActions = document.querySelector('.shell-actions')?.getBoundingClientRect();
+                          const shellControls = [...document.querySelectorAll('.shell-status > *, .shell-actions')].map((node) => node.getBoundingClientRect());
                           return {
                             overlaps: overlapElements.length,
                             overlapDiagnostic: {
@@ -7672,9 +7673,9 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                               ? brandMarkElement.scrollWidth <= brandMarkElement.clientWidth
                                 && brandMarkElement.scrollHeight <= brandMarkElement.clientHeight
                               : false,
-                            brandActionsOverlap: brandMark && shellActions
-                              ? Math.min(brandMark.right, shellActions.right) > Math.max(brandMark.left, shellActions.left)
-                                && Math.min(brandMark.bottom, shellActions.bottom) > Math.max(brandMark.top, shellActions.top)
+                            brandActionsOverlap: brandMark
+                              ? shellControls.some((controls) => Math.min(brandMark.right, controls.right) > Math.max(brandMark.left, controls.left)
+                                && Math.min(brandMark.bottom, controls.bottom) > Math.max(brandMark.top, controls.top))
                               : false,
                             compactHeaderShare: masthead ? masthead.height / innerHeight : null,
                             compactContentTopShare: main ? main.top / innerHeight : null,

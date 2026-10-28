@@ -675,6 +675,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     # The masthead now carries a status message whose width
                     # is its own text, and this cohort's stream ends at once,
                     # so the degraded notice is present on every route here.
+                    _fits_its_container(page, ".shell-status", width)
                     _fits_its_container(page, ".shell-actions", width)
                     _fits_its_container(page, ".masthead", width)
                 for width in (1440, 900, 390):
@@ -1212,7 +1213,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         ).all():
                             assert control.bounding_box()["height"] >= 40
                         for control in page.locator(
-                            ".masthead nav a, .shell-actions button"
+                            ".masthead nav a, .shell-status button, .shell-actions button"
                         ).all():
                             assert control.bounding_box()["height"] >= 44
                         # Authority controls and disclosures take no dense
@@ -1773,7 +1774,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert search_box.input_value() == ""
         stage[0] = "library:touch-targets"
         page.goto("https://react-platform.invalid/library?lens=all")
-        for control in page.locator(".masthead nav a, .shell-actions button").all():
+        for control in page.locator(
+            ".masthead nav a, .shell-status button, .shell-actions button"
+        ).all():
             assert control.bounding_box()["height"] >= 44
         for control in page.locator(
             ".lenses a, .library-work-row, .library-pager button"
@@ -1882,12 +1885,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert (
                 item.evaluate("node => getComputedStyle(node).whiteSpace") == "nowrap"
             )
-        assert (
-            page.locator(".masthead").evaluate(
-                "node => getComputedStyle(node).flexWrap"
-            )
-            == "wrap"
-        )
+        # The destinations take a row of their own below the brand's.
         assert page.locator(".masthead nav").bounding_box()["y"] >= (
             page.locator(".brand").bounding_box()["y"]
             + page.locator(".brand").bounding_box()["height"]
@@ -2290,7 +2288,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.get_by_role("heading", name="Evidence").count() == 0
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
-        for control in page.locator(".masthead nav a, .shell-actions button").all():
+        for control in page.locator(
+            ".masthead nav a, .shell-status button, .shell-actions button"
+        ).all():
             assert control.bounding_box()["height"] >= 44
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
 
