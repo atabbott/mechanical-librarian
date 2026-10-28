@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Review choices are one radio group: arrows move between them, Space or Enter
+  records. Field tabs say their status in words. A cover records in one tap,
+  states its pixel size and every source, and a duplicate image is one choice.
+  Works show the cover the library holds, read only by the digest their report
+  retains, and initials use letters (#1290).
+
 - Text and field edges meet WCAG AA contrast in both themes, no text is below
   12px, and every disclosure and authority control is a 44px target. Focus no
   longer falls to the page after a command, failed retry or read failure;

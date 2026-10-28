@@ -550,7 +550,23 @@ boundary in one responsive route. On wide entry it selects the first
 server-ordered reviewable work without recording a decision; compact entry is
 list-first. The rail preserves its ordered fields after a recorded decision,
 allows direct revisiting, compresses labels before scrolling, and is never
-replaced by a competing review back control.
+replaced by a competing review back control. Each field tab names its status in
+words beneath the field: Needs you, Decided, Automatic, Optional or No change.
+Fields with nothing to show are gathered behind one "Show N more fields" tab
+that stays on one line at every width.
+
+A field's direct choices, and a cover comparison's cards, are one radio group
+named by the field's question. The group is one Tab stop, on the recorded
+choice or else the first available one; the arrow keys move focus between
+choices, wrapping and skipping unavailable ones, and never record. Space, Enter
+or a tap records the focused choice once and then focuses the next field's
+choice. Each choice states its position in the group, and the recorded one says
+"Your choice" in words.
+
+A work whose current report retains the cover its library holds shows that
+cover as its mark in the work list and in the open work's header, read only by
+the digest that report binds. Every other work keeps its spine of initials,
+built from letters only.
 
 A book reached from a preparation completion arrives as an ordinary bounded
 search over the work index. A book that produced a report is found by the name
@@ -848,7 +864,8 @@ does not defer or replace this baseline.
 
 The production interface does not embed a full-library dataset into one static
 document. Collection endpoints are paginated, case detail and evidence are
-loaded on demand, and covers outside the active context are lazy-loaded.
+loaded on demand, and cover images, in a comparison or a work's mark, load
+lazily as they come into view.
 
 F16a defines measurable first-release budgets for its individual queue,
 case-detail, evidence, and decision round trip:
@@ -1087,15 +1104,19 @@ digests live in an advanced identity disclosure. Usable advice does not imply
 application permission: Policy owns the separate automatic preference, and
 Activity owns current consent and renewal. Reviewer selection never enables it.
 
-## Explicit retained-cover confirmation (#1078)
+## Explicit retained-cover choice (#1078, #1290)
 
-A current intact retained alternative can be owner-confirmed even with lower visual
-quality or an unconfirmed match. The confirmation shows the whole retained image,
-explains “Match not confirmed” where applicable and distinguishes recording from
-application. Contradictory identity stays excluded. Cancel/Escape records nothing
-and returns focus to the initiating card. Pending confirmation prevents duplicate
-submission; only authoritative exact-case confirmation advances the workflow.
-Failure or uncertainty stays visible with deliberate reload/retry. A fresh explicit
-confirmation may revise the exact target choice before application begins; verified
-cover writes cannot be revised. History retains the unconfirmed match label and
-distinguishes owner-confirmed authority from automatic evidence.
+A current intact retained alternative can be owner-chosen even with lower visual
+quality or an unconfirmed match. Its card shows the whole retained image, its
+pixel size and every source that offered it, and says “Match not confirmed”
+where applicable before it is chosen; the comparison states, as direct choices
+do, that recording a choice is not applying it. One tap on that card is the
+explicit choice: there is no confirming dialog, and the command carries the
+same confirmation binding it did. Contradictory identity stays excluded. A
+recording in flight prevents duplicate submission; only authoritative
+exact-case confirmation advances the workflow. Failure or uncertainty stays
+visible with deliberate reload/retry, and a choice made against a superseded
+comparison shows the current one rather than retrying the stale choice. A fresh
+explicit choice may revise the exact target choice before application begins;
+verified cover writes cannot be revised. History retains the unconfirmed match
+label and distinguishes owner-chosen authority from automatic evidence.
