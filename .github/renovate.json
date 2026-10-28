@@ -74,12 +74,24 @@
       "groupName": "Python runtime"
     },
     {
-      "description": "Move all uv resolver declarations together",
+      "description": "Look up the workflow uv pin in the same registry as the image pin, so both see the same releases",
+      "matchManagers": [
+        "github-actions"
+      ],
       "matchDepNames": [
-        "astral-sh/uv",
+        "astral-sh/uv"
+      ],
+      "overrideDatasource": "docker",
+      "overrideDepName": "ghcr.io/astral-sh/uv",
+      "overridePackageName": "ghcr.io/astral-sh/uv"
+    },
+    {
+      "description": "Move all uv resolver declarations together; the registry publishes no release dates, so the release age cannot hold them",
+      "matchDepNames": [
         "ghcr.io/astral-sh/uv"
       ],
-      "groupName": "uv resolver"
+      "groupName": "uv resolver",
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
       "description": "Move all npm package manager declarations together",
