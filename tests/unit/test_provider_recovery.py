@@ -38,7 +38,16 @@ from mechanical_librarian.bootstrap.composition import (
     _provider_recovery_jobs,
     _record_provider_recovery_observations,
 )
-from mechanical_librarian.domain.metadata_report import ProviderStatus
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ProviderRequestAccounting,
+    ProviderStatus,
+)
 from mechanical_librarian.domain.provider_recovery import (
     MAX_TIMESTAMP,
     ProviderRecovery,
@@ -3944,6 +3953,68 @@ def test_latest_authoritative_deferral_replaces_waiting_deadline(
         ] == store._connection.execute(
             "SELECT state,attempt,next_eligible_at,occurred_at "
             "FROM provider_recovery_events ORDER BY sequence"
+        ).fetchall()
+        store.close()
+
+
+def test_expired_pacer_deferral_never_pulls_forward_an_earned_backoff() -> None:
+    """A carried, undispatched Google Books observation spends no attempt (#1318)."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        identity = {
+            "connection": "google-books-main",
+            "adapter": "google_books",
+            "scope": "books",
+            "generation": 1,
+        }
+        # A transient failure, then a failed recovery attempt: attempt 2 has
+        # earned a four-hour backoff.
+        store.observe_failure(**identity, failure="transient", now=0)
+        claimed = store.claim_one(generation=1, now=7_200, token="first")
+        assert claimed is not None
+        store.complete(token="first", recovery=claimed, now=7_200, failure="transient")
+        limited = SimpleNamespace(status=ProviderStatus.RATE_LIMITED, diagnostics=())
+        report = SimpleNamespace(
+            providers=(
+                SimpleNamespace(
+                    provider="google-books-main",
+                    status=ProviderStatus.RATE_LIMITED,
+                    authority="google_books",
+                    diagnostics=(
+                        FailureDiagnostic(
+                            FailureCategory.QUOTA_RATE_LIMIT,
+                            FailureComponent.PROVIDER,
+                            FailureStage.RESPONSE,
+                        ),
+                    ),
+                    request_accounting=ProviderRequestAccounting(
+                        logical_requests=2, undispatched_incomplete=2
+                    ),
+                    lanes=(limited, limited),
+                ),
+            ),
+            audio=None,
+        )
+        # The known window has expired, so the fold is a one-second burst.
+        _record_provider_recovery_observations(
+            store,
+            report,
+            adapters={"google-books-main": "google_books"},
+            scope="books",
+            generation=1,
+            now=8_000,
+            google_burst_remaining=lambda: 0,
+        )
+        assert [("waiting", 2, 21_600)] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        assert store.claim_one(generation=1, now=8_001, token="early") is None
+        # A deferral longer than the backoff still lengthens it.
+        store.observe_failure(
+            **identity, failure="quota_exhausted", now=8_000, retry_after=90_000
+        )
+        assert [("waiting", 2, 98_000)] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
         ).fetchall()
         store.close()
 

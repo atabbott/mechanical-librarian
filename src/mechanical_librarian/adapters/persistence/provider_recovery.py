@@ -978,6 +978,10 @@ class SQLiteProviderRecoveryStore:
             # generation, checking and dormant take precedence.  The latest
             # authoritative deferral replaces a waiting deadline while keeping
             # its recovery attempt; ambiguous observations remain idempotent.
+            # A deferral only paces.  Once a transient or rate-limited failure
+            # in this episode has earned a backoff, a deferral may lengthen
+            # that wait but never shorten it, or the next attempt is spent
+            # early (#1318); an evidence-free enqueue fallback still yields.
             successor = observed
             if current is not None:
                 if current[0] < observed.generation:
@@ -996,6 +1000,29 @@ class SQLiteProviderRecoveryStore:
                         raise ProviderRecoveryStoreError(
                             "provider recovery observation is invalid"
                         )
+                    identity = (
+                        observed.connection,
+                        observed.adapter,
+                        observed.scope,
+                        observed.generation,
+                    )
+                    if (
+                        current[2] > 0
+                        and deadline <= current[3]
+                        and self._connection.execute(
+                            "SELECT 1 FROM provider_recovery_events INDEXED BY provider_recovery_events_scope_latest "
+                            "WHERE connection=? AND adapter=? AND scope=? AND generation=? "
+                            "AND job_attempt IS NULL AND outcome IN ('transient','rate_limited') "
+                            "AND sequence>(SELECT COALESCE(MAX(sequence),0) FROM provider_recovery_events "
+                            "INDEXED BY provider_recovery_events_scope_latest WHERE connection=? "
+                            "AND adapter=? AND scope=? AND generation=? AND job_attempt IS NULL "
+                            "AND state='recovered') LIMIT 1",
+                            (*identity, *identity),
+                        ).fetchone()
+                        is not None
+                    ):
+                        self._connection.execute("COMMIT")
+                        return
                     successor = ProviderRecovery(
                         observed.connection,
                         observed.adapter,
