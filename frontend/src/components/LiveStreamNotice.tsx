@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import type { LiveStreamState } from '../liveUpdates'
+import { StatusPill } from './StatusPill'
 
 /**
  * The one visible consequence of a stream that is down: the surfaces go back to
@@ -24,9 +25,9 @@ export const LiveStreamNotice = ({ state }: { state: LiveStreamState }) => {
   }, [state])
   if (state !== 'degraded' || !settled) return null
   return (
-    <span className="live-state is-degraded" role="status">
+    <StatusPill tone="notice" className="live-state" role="status">
       <i aria-hidden="true" />
       Reconnecting · checking for updates
-    </span>
+    </StatusPill>
   )
 }

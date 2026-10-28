@@ -18,7 +18,9 @@ const block = (selector: string) => {
   return styles.slice(start, styles.indexOf('}', start))
 }
 const declarations = (css: string) =>
-  [...css.matchAll(/(--[\w-]+)\s*:([^;]*)/g)].map(([, token, value]) => [token, value] as const)
+  [...css.matchAll(/(--[\w-]+)\s*:([^;]*)/g)].map(
+    ([, token, value = '']) => [token, value] as const,
+  )
 
 describe('Design tokens', () => {
   it('resolves every token a stylesheet uses without a fallback', () => {

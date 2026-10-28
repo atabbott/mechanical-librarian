@@ -27,6 +27,7 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 from playwright.sync_api import (
     BrowserContext,
+    Locator,
     Page,
     Request,
     Route,
@@ -1944,6 +1945,24 @@ def _read_back_title(
     return admitted["review_case_id"], successor
 
 
+_FILL_AND_ACCENT = """node => {
+    const probe = document.createElement('span');
+    probe.style.backgroundColor = 'var(--accent-strong)';
+    document.body.append(probe);
+    const accent = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return [getComputedStyle(node).backgroundColor, accent];
+}"""
+
+
+def _assert_primary_fill(primary: Locator, secondary: Locator | None) -> None:
+    """The primary is filled with the theme's accent, unlike its neighbour (#1289)."""
+    fill, accent = primary.evaluate(_FILL_AND_ACCENT)
+    assert fill == accent, (fill, accent)
+    if secondary is not None:
+        assert secondary.evaluate(_FILL_AND_ACCENT)[0] != fill
+
+
 def _login(page: Page, origin: str) -> None:
     page.route("**/favicon.ico", lambda route: route.fulfill(status=204, body=""))
     page.goto(f"{origin}/login")
@@ -2542,6 +2561,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 ).is_disabled()
                 genres.get_by_role("button", name="Ignore").click()
                 assert policy_chapters.locator("button b").all_inner_texts() == ["1"]
+                _assert_primary_fill(
+                    page.get_by_role("button", name="Validate and preview"), None
+                )
 
                 def assert_text_zoom_policy_layout(width: int) -> None:
                     page.set_viewport_size({"width": width, "height": 844})
@@ -2625,9 +2647,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
                 page.get_by_role("button", name="Back to preview").click()
                 review_activation.wait_for()
+                back_to_editing = page.get_by_role("button", name="Back to editing")
+                _assert_primary_fill(review_activation, back_to_editing)
                 dark_mode = page.get_by_role("button", name="Use dark mode")
                 dark_mode.click()
                 page.get_by_role("button", name="Use light mode").wait_for()
+                _assert_primary_fill(review_activation, back_to_editing)
                 page.set_viewport_size({"width": 1440, "height": 900})
                 unsupported_description.wait_for()
                 assert page.get_by_role(
@@ -2745,6 +2770,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 expect(
                     page.get_by_role("button", name="Confirm write permissions")
                 ).to_be_disabled()
+                # The guarded confirmation is the filled primary beside a plain
+                # Cancel, rather than reading as a second Cancel (#1289).
+                _assert_primary_fill(
+                    page.get_by_role("button", name="Confirm write permissions"),
+                    page.get_by_role("button", name="Cancel permission review"),
+                )
                 expect(
                     page.get_by_role(
                         "heading", name="Prepared work needs your permission"
@@ -7079,6 +7110,13 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "window.scrollTo(0, document.documentElement.scrollHeight)"
                 )
                 assert_settings_layout(sidebar_visible=False)
+                # Save is the filled primary beside a plain Discard, in each theme.
+                for _theme in range(2):
+                    _assert_primary_fill(
+                        page.get_by_role("button", name="Save settings"),
+                        page.get_by_role("button", name="Discard all"),
+                    )
+                    page.locator(".theme-toggle").click()
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[

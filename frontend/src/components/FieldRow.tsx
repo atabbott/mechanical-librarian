@@ -1,6 +1,7 @@
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
 import { controlId, descriptionId, errorId, unitId } from '../fieldControls'
+import { StatusPill } from './StatusPill'
 
 // `unit` says the control's unit is shown beside it, at `unitId`, so the
 // unit is announced with the value as well as seen (#1286).
@@ -60,7 +61,7 @@ export const FieldRow = ({
         ) : (
           <strong>{title}</strong>
         )}
-        {changed ? <small>Changed</small> : null}
+        {changed ? <StatusPill tone="notice">Changed</StatusPill> : null}
       </span>
       {description ? (
         <p id={fieldId ? descriptionId(fieldId) : undefined}>{description}</p>
