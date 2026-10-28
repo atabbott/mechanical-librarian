@@ -1920,6 +1920,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="history-tie-break-predecessor-f46",
         ),
+        pytest.param(
+            "cadc86efc218c2cfe287d331157502fd01a07e4962b43413b90ee62e6aa0d594",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="burst-deferral-predecessor-f19a",
+        ),
+        pytest.param(
+            "bba580dee52e2be6b4c0e4f679779184856c705c5dd9bb0a481b187481f77ec8",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="burst-deferral-predecessor-f20",
+        ),
+        pytest.param(
+            "d8878d5ed2b45954f18a05f8929202defff3bc044da801eff5655ff4f6040c06",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="burst-deferral-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(

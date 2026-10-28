@@ -89,6 +89,17 @@ Historical decisions remain readable but are refused by authority resolution,
 scheduling and persisted-plan currentness checks before any effect. Ebook cover
 qualification is unchanged.
 
+## Recovery deferral successor (#1318)
+
+The current F19a, F20 and F46 records move to semantic revision 81 over base
+`aa8c84d5`, whose record bytes the archive index keeps. Their runtime digests
+join the prior-manifest histories with their frozen permission sets, so
+decisions minted under them stay readable without current authority. Nothing
+persisted changes; no clean rebuild is required. Once a failure has earned a
+provider recovery wait, a later throttle can lengthen it but no longer shorten
+it. That changes when a provider is retried, not which values are proposed or
+what any qualified operation may do, so no operation gains or loses authority.
+
 ## Review history tie-break successor (#1209)
 
 The current F19a, F20 and F46 records move to semantic revision 80 over base

@@ -524,6 +524,11 @@
       "docs/reference/f19a-qualification-current.json": "b4e8386fc796ba4c7b1a300e59810adb4122329136c88829a7a2c14bee0a6b9d",
       "docs/reference/f20-rich-metadata-qualification-current.json": "9c84cb3db111249f2e26be72fc00c699dfd5d67d2ea4366b5ca339ecb645f120",
       "docs/reference/f46-audiobook-qualification-current.json": "69119e512338fd2cea86a4c9664a61f3108fe5d7eb678eea1d45df1ac83a3efb"
+    },
+    "aa8c84d5b0f0b768063ca7974b123584cd42316d": {
+      "docs/reference/f19a-qualification-current.json": "4a4972ae53f671804077da63fea211f5f3fdbf017fdc4e38f66feab9d4bb2530",
+      "docs/reference/f20-rich-metadata-qualification-current.json": "dee07105268a439fad93fa2d63eb46b44f803698dacb1d2abf8e197a9d69f754",
+      "docs/reference/f46-audiobook-qualification-current.json": "5f1b5f6e3c8e92a2549b14a615360b29f9ffb54d11fac5cc796b2227d3ad26c4"
     }
   }
 }
