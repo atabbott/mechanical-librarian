@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import stat
 import threading
@@ -4005,9 +4004,6 @@ def run_review_server(
                 Path(review.owner_password_hash_file)
             )
             assert configuration is not None and review is not None
-            logging.getLogger(__name__).info(
-                "owner settings authority selected", extra={"authority": authority}
-            )
             from mechanical_librarian.adapters.operational_evidence import (
                 LocalTimingStore,
                 SupportBundle,

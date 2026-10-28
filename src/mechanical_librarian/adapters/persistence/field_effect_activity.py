@@ -38,10 +38,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 import sqlite3
 import stat
+import sys
 import time
 from collections import deque
 from collections.abc import Callable
@@ -342,24 +342,35 @@ def _validate_activity_query(
 
 
 def activity_projector_event(
-    code: str, *, level: str = "info", error: str | None = None
+    code: str,
+    *,
+    level: Literal["info", "warning"] = "info",
+    error: str | None = None,
 ) -> None:
-    """Log one value-free projector lifecycle event.
+    """Write one value-free projector lifecycle event as a stderr JSON line.
 
     It carries a closed code and at most an exception type name, never a
-    message, document or path, so it needs no further redaction (#1231).
+    message, document or path, so it needs no further redaction (#1231). Like
+    the preparation and provider events it bypasses `logging`, whose default
+    handler drops INFO (#1304), and a failing sink cannot stop the caller.
     """
-    extra = {"event": "activity_projector", "code": code}
-    message, values = "activity projector %s", [code]
+    event: dict[str, str | None] = {
+        "code": code,
+        "event": "activity_projector",
+        "level": level,
+    }
     if error is not None:
-        extra["error"] = error
-        message, values = "activity projector %s (%s)", [code, error]
-    logging.getLogger(__name__).log(
-        logging.INFO if level == "info" else logging.WARNING,
-        message,
-        *values,
-        extra=extra,
-    )
+        event["error"] = (
+            error
+            if error.isascii() and error.isidentifier() and len(error) <= 128
+            else None
+        )
+    try:
+        sys.stderr.write(
+            json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+    except Exception:
+        pass
 
 
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):

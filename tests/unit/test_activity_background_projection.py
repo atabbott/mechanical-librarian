@@ -13,7 +13,6 @@ from __future__ import annotations
 import dataclasses
 import enum
 import json
-import logging
 import sqlite3
 import threading
 import time
@@ -1186,34 +1185,50 @@ def test_the_projector_steps_as_background_work(
         close()
 
 
-def _events(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
-    """The projector's records: its logger, closed fields, and nothing else."""
+def _projector_lines(text: str) -> list[dict[str, object]]:
+    """The projector's stderr lines, each one JSON object of closed fields."""
     events = []
-    for record in caplog.records:
-        if getattr(record, "event", None) != "activity_projector":
+    for line in text.splitlines():
+        if not line.startswith('{"'):
             continue
-        assert record.name == field_effect_activity.__name__
-        detail = f" ({record.error})" if hasattr(record, "error") else ""
-        assert record.exc_info is None
-        assert record.getMessage() == f"activity projector {record.code}{detail}"
-        events.append(
-            {
-                key: getattr(record, key)
-                for key in ("code", "error", "event")
-                if hasattr(record, key)
-            }
-            | {"level": record.levelname.lower()}
-        )
-    caplog.clear()
+        event = json.loads(line)
+        if event.get("event") == "activity_projector":
+            assert set(event) <= {"code", "error", "event", "level"}
+            events.append(event)
     return events
+
+
+def _events(capsys: pytest.CaptureFixture[str]) -> list[dict[str, object]]:
+    return _projector_lines(capsys.readouterr().err)
+
+
+def test_projector_events_are_bounded_lines_that_never_raise(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INFO events reach stderr without `logging`, and a value cannot (#1304)."""
+    field_effect_activity.activity_projector_event("stopped")
+    field_effect_activity.activity_projector_event(
+        "unexpected", level="warning", error="/private/path secret"
+    )
+    assert capsys.readouterr().err == (
+        '{"code":"stopped","event":"activity_projector","level":"info"}\n'
+        '{"code":"unexpected","error":null,"event":"activity_projector",'
+        '"level":"warning"}\n'
+    )
+
+    class Unwritable:
+        def write(self, text: str) -> int:
+            raise OSError("closed")
+
+    monkeypatch.setattr("sys.stderr", Unwritable())
+    field_effect_activity.activity_projector_event("stopped")
 
 
 def test_an_unexpected_projector_failure_is_logged_without_its_values(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     _poll(monkeypatch)
     reader = _reader(ledger)
     activity = reader._field_effect_activity
@@ -1229,8 +1244,8 @@ def test_an_unexpected_projector_failure_is_logged_without_its_values(
         thread.start()
         thread.join(10)
         assert not thread.is_alive()
-        captured = caplog.text
-        assert _events(caplog) == [
+        captured = capsys.readouterr().err
+        assert _projector_lines(captured) == [
             {
                 "code": "unexpected",
                 "error": "RuntimeError",
@@ -1250,14 +1265,13 @@ def test_an_unexpected_projector_failure_is_logged_without_its_values(
 def test_a_stopped_projector_logs_its_exit(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     _poll(monkeypatch)
     reader = _reader(ledger)
     try:
         _projecting(reader)()
-        assert _events(caplog) == [
+        assert _events(capsys) == [
             {"code": "stopped", "event": "activity_projector", "level": "info"}
         ]
     finally:
@@ -1267,14 +1281,13 @@ def test_a_stopped_projector_logs_its_exit(
 def test_close_waits_out_the_step_in_progress_past_its_join_bound(
     ledger: _Ledger,  # noqa: F811
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The join bound only warns; closing admission waits for the step's lease.
 
     The step blocks inside its real admitted read, so close logs the overrun,
     keeps waiting while that one step runs, and returns once it ends.
     """
-    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     _poll(monkeypatch)
     monkeypatch.setattr(composition, "_ACTIVITY_PROJECTOR_JOIN_SECONDS", 0.1)
     history, _, close = open_field_effect_activity_readers(
@@ -1297,12 +1310,12 @@ def test_close_waits_out_the_step_in_progress_past_its_join_bound(
     ledger.commit()
     assert entered.wait(10)
     assert admission._active is not None
-    caplog.clear()
+    capsys.readouterr()
     closing = threading.Thread(target=close)
     closing.start()
     try:
         deadline = time.monotonic() + 5
-        while not (events := _events(caplog)):
+        while not (events := _events(capsys)):
             assert time.monotonic() < deadline
             time.sleep(0.01)
         time.sleep(0.2)
@@ -1317,7 +1330,7 @@ def test_close_waits_out_the_step_in_progress_past_its_join_bound(
         deadline = time.monotonic() + 5
         while len(events) < 2:
             assert time.monotonic() < deadline
-            events += _events(caplog)
+            events += _events(capsys)
             time.sleep(0.01)
         timeout, stopped = events
         assert {"code": "join_timeout", "level": "warning"}.items() <= timeout.items()
@@ -1333,18 +1346,17 @@ def test_close_waits_out_the_step_in_progress_past_its_join_bound(
 
 def test_close_returns_promptly_when_no_step_is_in_progress(
     ledger: _Ledger,  # noqa: F811
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    caplog.set_level(logging.INFO, logger=field_effect_activity.__name__)
     history, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     assert _settled(cast("SQLiteMetadataReportRepository", history._repository))
-    caplog.clear()
+    capsys.readouterr()
     started = time.monotonic()
     close()
     assert time.monotonic() - started < 1
-    assert _events(caplog) == [
+    assert _events(capsys) == [
         {"code": "stopped", "event": "activity_projector", "level": "info"}
     ]
 
