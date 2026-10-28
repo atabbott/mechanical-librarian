@@ -4839,6 +4839,13 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                     f"{origin}/library?lens=needs_attention&preview={case_id}&field=title"
                 )
                 page.locator(".decision-canvas").wait_for()
+                # The write handoff above the work arrives on its own reads. Until
+                # it does, the browser's scroll anchoring moves scrollY by its
+                # height while the view stays still, which a cold run measured
+                # as a scroll (#1240, #1290).
+                expect(page.locator("#library-handoff-title")).to_contain_text(
+                    "1 work is in Library"
+                )
                 # Same-work manual field navigation retains the real browser
                 # scroll position after the router's restoration frame (#1070).
                 for width in (390, 320):
