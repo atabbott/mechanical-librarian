@@ -1840,12 +1840,11 @@ def _identifier_lane_candidates(
     # product whose narrators the recording's own credits never name is a
     # different recording of the work and is refused here (#1316, ADR-0088).
     carried = carried_asin_claim(lookup.local_claims)
+    carried_lane = carried is not None and lookup.requested_asin == carried.canonical
     narrator_refused = {
         c.identity
         for c in observation.candidates
-        if carried is not None
-        and lookup.requested_asin == carried.canonical
-        and candidate_narrator_disjoint(c, lookup.local_claims)
+        if carried_lane and candidate_narrator_disjoint(c, lookup.local_claims)
     }
     # A requested identifier and equal duration are not evidence of the work.
     work_admitted = {
@@ -1860,12 +1859,35 @@ def _identifier_lane_candidates(
             audiobook=lookup.audio is not None,
         ).admitted
     }
+    # The carried edition may first have been matched on the item's
+    # alternative discovery title (#1255), so its lookup is admitted against
+    # that title too. As on the alternative lane, such a product is kept only
+    # as the recording the tight band corroborates; otherwise it is a stub.
+    alternative_admitted = (
+        {
+            c.identity
+            for c in observation.candidates
+            if c.identity not in work_admitted
+            and lookup.work_authors
+            and any(
+                provider_candidate_exact_work_identity_admission(
+                    c,
+                    title,
+                    lookup.work_authors,
+                    audiobook=True,
+                ).admitted
+                for title in _carried_alternative_titles(lookup)
+            )
+        }
+        if carried_lane
+        else set()
+    )
     runtime_candidates = tuple(
         c
         for c in observation.candidates
         if recording_variant_conflict(c, lookup.local_claims, lookup.work_title or "")
         is None
-        and c.identity in work_admitted
+        and (c.identity in work_admitted or c.identity in alternative_admitted)
         and c.identity not in narrator_refused
     )
     corroborated = runtime_corroborated_candidate(
@@ -1889,7 +1911,11 @@ def _identifier_lane_candidates(
                 lookup.requested_asin,
             )
         )
-        if candidate.identity not in work_admitted and not chapter:
+        alternative = (
+            candidate.identity in alternative_admitted
+            and candidate.identity == admitted
+        )
+        if candidate.identity not in work_admitted and not chapter and not alternative:
             shaped.append(
                 replace(
                     candidate,
@@ -1909,6 +1935,17 @@ def _identifier_lane_candidates(
             )
         )
     return tuple(shaped)
+
+
+def _carried_alternative_titles(lookup: MetadataLookup) -> tuple[str, ...]:
+    """The alternative discovery-lane title a carried lookup may admit against.
+
+    It is the title the item's alternative WORK lane asks (#1255): the first
+    discovery title that survives the target's own title, authors and series.
+    """
+    if lookup.audio is None:
+        return ()
+    return tuple(value.title for value in lookup.audio.discovery_titles[:1])
 
 
 def qualify_provider_observation(

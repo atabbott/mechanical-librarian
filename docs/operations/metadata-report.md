@@ -216,10 +216,17 @@ all. Their first-phase observation is replaced rather than merged, so every
 provider still states exactly one observation per report. Across every origin
 an item runs at most four ASIN lanes, in the order local, carried, promoted,
 asserted, and there is no second promotion round. A carried lookup is judged as
-an asserted one, and a product whose narrators share nobody with the
-recording's own credits is refused on it; a verified carried edition is the ASIN
+an asserted one, except that its product may also admit against the
+alternative discovery title (#1255) under the tight band. A product whose
+narrators share nobody with the recording's own credits is refused on it. A
+carried edition is kept while any audiobook authority verifies it, and carried
+again while any carried lookup failed recoverably. It is dropped only when
+every carried lookup answered and none verified it; a verified carried edition is the ASIN
 proposed, and a tight search product with another ASIN and a shared or unknown
-cast is withheld. One recording's sibling ASINs offer one value: the item's
+cast is withheld. The owner's value always stands. A product naming the item's
+current ASIN is never withheld, and when that product was admitted with a cast
+that overlaps the carried product's, the carried edition gives way and is no
+longer carried. One recording's sibling ASINs offer one value: the item's
 current ASIN when it is one of them, otherwise the one that was looked up. An item that already carries its own ASIN feeds nothing. Hardcover and
 Open Library have no ASIN lookup, so a plan of ASIN lanes alone, local or fed,
 sends them no request and they record `insufficient_input` with no lane, not a

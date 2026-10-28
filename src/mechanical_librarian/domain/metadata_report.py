@@ -6180,12 +6180,7 @@ def _report_from_data(value: object) -> MetadataReport:
         target["connection"],
         target["library"],
         target["item"],
-        tuple(
-            _target_field_from_data(
-                item, flagged=root["schema_version"] == REPORT_SCHEMA
-            )
-            for item in _list(target["fields"])
-        ),
+        tuple(_target_field_from_data(item) for item in _list(target["fields"])),
     )
     return MetadataReport(
         root["report_id"],
@@ -6336,7 +6331,7 @@ def _audio_chapter_from_data(value: object) -> AudioChapter:
 
 def _target_field_from_data(value: object, *, flagged: bool = True) -> TargetField:
     # A report of an earlier schema is read in its own shape, without the
-    # description's restore flag, so it is refused for its schema as before.
+    # description's restore flag (scripts/qualification_state_bridge.py).
     described = (
         flagged and type(value) is dict and value.get("destination") == "description"
     )

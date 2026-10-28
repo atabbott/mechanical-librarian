@@ -41,7 +41,11 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
    edition marketplace evidence and a narrator cast not disjoint from the
    recording's own credits, names the same edition. A multi-ASIN statement
    counts as the ASIN its lane looked up. A chapter-only admission is not
-   carried. An item whose surfaces now name an ASIN carries nothing.
+   carried. An item whose surfaces now name an ASIN carries nothing. When the
+   target already records an ASIN that the report admitted as a separate
+   product, no other edition is carried, so a carried edition never contests
+   the owner's value across preparations. A product that states both ASINs is
+   one recording's siblings and does not count as a separate product.
 2. **A new origin that only obtains evidence (amends ADR-0061).** The carried
    ASIN is recorded as a local claim of basis `prior_admission` (kind ASIN,
    edition scope), reported under its own owner-facing source,
@@ -63,20 +67,31 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
    variant conflict and the existing tight band, with no new constant. Only
    for a lane whose requested ASIN is the carried one, a product whose
    narrator cast is disjoint from the recording's own credits is refused;
-   unknown on either side passes. An ASIN-only stub has no title to admit, so
-   it is refused.
-5. **Carrying again.** A carried ASIN that a lookup verified is carried again.
-   One whose catalogue lookup ended in a recovery-eligible status or a
-   disabled provider, or was never made, is carried again unverified. Any other
-   answer refutes it: it is dropped, that report cannot admit it again, and the
-   search may admit a different edition.
+   unknown on either side passes. An edition first matched on the item's
+   alternative discovery title (#1255, a path leaf or title tag) states that
+   title, not the target's. So the carried lookup's product is also admitted
+   against the alternative WORK lane's title. As on that lane, such a product
+   is kept only as the recording the tight band corroborates, and otherwise
+   keeps only its identifier. An ASIN-only stub has no title to admit, so it
+   is refused.
+5. **Carrying again.** A carried ASIN that any audiobook authority's lookup
+   verified is carried again. When none verified it, it is carried again
+   unverified if at least one carried lookup ended in a recovery-eligible
+   status or a disabled provider, or if no carried lookup was made. Only when
+   every carried lookup answered and none verified it is it refuted: it is
+   dropped, that report cannot admit it again, and the search may admit a
+   different edition.
 6. **Precedence (pending owner confirmation).** At the ASIN destination a
    verified carried edition is the ASIN proposed. A tight product naming
    another ASIN whose narrator cast is not disjoint from the carried product's
    is withheld as the same recording relisted; a narrator-disjoint one is still
-   offered. Search still runs and still feeds every other field. The rule lives
-   in one function, `carried_asin_precedence`, so the owner's decision can
-   change it in one place.
+   offered. Search still runs and still feeds every other field. The owner's
+   value is never outranked: a product naming the target's own ASIN is never
+   withheld. When the report admitted that ASIN as a product whose narrator
+   cast is not disjoint from the carried product's, the owner's edition stands
+   and the carried products are withheld instead. The rule lives in one
+   function, `carried_asin_precedence`, so the owner's decision can change it
+   in one place.
 7. **Sibling ASINs.** At the proposal layer only, with no admission change and
    no adapter change, a candidate stating more than one valid edition ASIN
    contributes one value at the ASIN destination: the target's current ASIN if
@@ -96,8 +111,9 @@ A written Audiobookshelf ASIN alone does not feed identifier evidence
 
 ### Negative
 
-- A carried edition the catalogue delists is only refuted when the lookup
-  answers; until then a recoverable failure keeps carrying it unverified.
+- A carried edition the catalogue delists is only refuted once every carried
+  lookup answers; until then a recoverable failure at any of them keeps
+  carrying it unverified.
 - An owner who prefers a newer sibling edition must choose it explicitly,
   because the carried one is what is proposed.
 
@@ -130,8 +146,9 @@ the choice every preparation, which is the regression #1316 records.
 
 `tests/unit/test_carried_recording_admission.py` proves what is carried and
 what is not, the carried lane's plan, order, query bound and starvation, the
-stub and narrator refusals, carrying again after a recoverable failure, the
-precedence and the sibling rule. `tests/unit/test_metadata_report_application.py`
+stub and narrator refusals, re-verification on the alternative discovery
+title, carrying again after a recoverable failure at any authority, the
+precedence, the owner's value outranking a carried edition, and the sibling rule. `tests/unit/test_metadata_report_application.py`
 proves the carry across two preparations of one track set and its absence
 after a track change or with a local ASIN, and
 `tests/unit/test_provider_retry_successor.py` proves the retry rebuilds the

@@ -49,6 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     RecordingLookupHint,
     TargetDestination,
+    TargetFieldState,
     candidate_asins,
     canonical_asin,
     discovery_lane_identity,
@@ -941,6 +942,7 @@ __all__ = [
     "candidate_narrator_disjoint",
     "carried_asin_claim",
     "carried_asin_precedence",
+    "target_current_asin",
 ]
 
 
@@ -1407,6 +1409,35 @@ def _verified_carried_candidates(
     return tuple(verified)
 
 
+def target_current_asin(report: MetadataReport) -> str | None:
+    """Return the canonical ASIN the target records, if it records one."""
+    return next(
+        (
+            canonical_asin(field.value)
+            for field in report.target.fields
+            if field.destination is TargetDestination.ASIN
+            and field.state is TargetFieldState.VALUE
+            and type(field.value) is str
+        ),
+        None,
+    )
+
+
+def _admitted_candidates(
+    report: MetadataReport,
+) -> tuple[tuple[ProviderObservation, ProviderCandidate], ...]:
+    """The tight, narrator-compatible recordings audiobook authorities admitted."""
+    return tuple(
+        (observation, candidate)
+        for observation in report.providers
+        if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and observation.status is ProviderStatus.CANDIDATES
+        for candidate in observation.candidates
+        if _tight_recording(candidate, report.local_claims)
+        and not candidate_narrator_disjoint(candidate, report.local_claims)
+    )
+
+
 def admitted_recording_asin(report: MetadataReport) -> str | None:
     """Return the one edition ASIN this report admitted, to carry forward (#1316).
 
@@ -1418,49 +1449,67 @@ def admitted_recording_asin(report: MetadataReport) -> str | None:
     the same edition, a multi-ASIN statement counting as the ASIN its lane
     looked up, or nothing is carried.
 
-    An ASIN this report itself carried is kept while a lookup of it verified
-    it, and kept again while the catalogue's lookup of it failed in a way a
-    later one may not (a recovery-eligible status, or a disabled provider) or
-    was never made. Answered any other way and verified nowhere, it is
-    refuted: it is dropped, and this report cannot admit it again.
+    An ASIN this report itself carried is kept while any audiobook
+    authority's lookup of it verified it, and kept again unverified while at
+    least one of those lookups failed in a way a later one may not (a
+    recovery-eligible status, or a disabled provider) or none was made. Only
+    when every carried lookup answered and none verified it is it refuted: it
+    is dropped, and this report cannot admit it again.
+
+    The owner's value is never displaced: when the target already records an
+    ASIN this report admitted as a distinct product, no other edition is
+    carried.
     """
     if type(report) is not MetadataReport:
         raise CorroborationValueError("provider observation is invalid")
     if report.audio is None or _local_identifier_asins(report.local_claims):
         return None
+    admitted_candidates = _admitted_candidates(report)
+    asin = _carried_or_admitted_asin(report, admitted_candidates)
+    current = target_current_asin(report)
+    if (
+        asin is not None
+        and current is not None
+        and asin != current
+        and any(
+            current in (edition_asins := _edition_asins(candidate))
+            and asin not in edition_asins
+            for _observation, candidate in admitted_candidates
+        )
+    ):
+        # Carrying another edition would contest the owner's admitted one
+        # every preparation, and the carried edition would never settle. A
+        # product stating both is one recording's siblings, not a contest.
+        return None
+    return asin
+
+
+def _carried_or_admitted_asin(
+    report: MetadataReport,
+    admitted_candidates: tuple[tuple[ProviderObservation, ProviderCandidate], ...],
+) -> str | None:
     carried = carried_asin_claim(report.local_claims)
     refuted: str | None = None
     if carried is not None:
         asin = cast("str", carried.canonical)
         if _verified_carried_candidates(report):
             return asin
-        # The catalogue's own lookup is the carried lane; a per-ASIN mirror
-        # that lacks the product refutes nothing while the catalogue is there.
+        # Verified nowhere: one carried lane that failed in a way a later
+        # lookup may not, or no carried lane at all, leaves the question open.
+        # Only when every carried lane answered, and none admitted it, is the
+        # carried edition refuted.
         lanes = _carried_lanes(report, carried)
-        catalogue = tuple(
-            lane
-            for observation, lane in lanes
-            if observation.authority == "audible_catalog"
-        )
-        if all(
+        if not lanes or any(
             lane.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
             or lane.status is ProviderStatus.DISABLED
-            for lane in (catalogue or tuple(lane for _observation, lane in lanes))
+            for _observation, lane in lanes
         ):
             return asin
         refuted = asin
-    admitted: set[str | None] = set()
-    for observation in report.providers:
-        if (
-            observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-            or observation.status is not ProviderStatus.CANDIDATES
-        ):
-            continue
-        for candidate in observation.candidates:
-            if _tight_recording(
-                candidate, report.local_claims
-            ) and not candidate_narrator_disjoint(candidate, report.local_claims):
-                admitted.add(candidate_edition_asin(observation, candidate))
+    admitted: set[str | None] = {
+        candidate_edition_asin(observation, candidate)
+        for observation, candidate in admitted_candidates
+    }
     admitted.discard(refuted)
     if len(admitted) != 1:
         return None
@@ -1468,28 +1517,55 @@ def admitted_recording_asin(report: MetadataReport) -> str | None:
 
 
 def carried_asin_precedence(report: MetadataReport) -> frozenset[tuple[str, str]]:
-    """Name the products a verified carried edition outranks at the ASIN field.
+    """Name the products withheld at the ASIN field once a carried edition is verified.
 
     The one place the precedence rule lives (ADR-0088, pending owner
     confirmation): once a direct lookup verified the carried ASIN, that is the
-    ASIN proposed, and a tight search product naming another ASIN whose
-    narrator cast is not disjoint from the carried product's is the same
-    recording relisted rather than a second choice, so it is withheld. Search
-    still runs and still feeds every other field. Returned as provider name
-    and candidate identity pairs.
+    ASIN proposed, and a tight product naming another ASIN whose narrator cast
+    is not disjoint from the carried product's is the same recording relisted
+    rather than a second choice, so it is withheld. Search still runs and
+    still feeds every other field.
+
+    The owner's value is never outranked. When this report admitted the
+    target's own ASIN as the recording, and that product's narrator cast is
+    not disjoint from the carried product's, the owner's edition stands and it
+    is the carried products that are withheld; a product naming the target's
+    own ASIN is never withheld. Returned as provider name and candidate
+    identity pairs.
     """
     carried = _verified_carried_candidates(report)
     claim = carried_asin_claim(report.local_claims)
     if not carried or claim is None:
         return frozenset()
+    current = target_current_asin(report)
     narrators = tuple(
         value for candidate in carried for value in _candidate_narrators(candidate)
     )
-    return frozenset(
-        (observation.provider, candidate.identity)
+    products = tuple(
+        (observation, candidate)
         for observation in report.providers
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         for candidate in observation.candidates
+        if current not in _edition_asins(candidate)
+    )
+    owner = tuple(
+        candidate
+        for _observation, candidate in _admitted_candidates(report)
+        if current in _edition_asins(candidate)
+        and claim.canonical not in _edition_asins(candidate)
+    )
+    owner_narrators = tuple(
+        value for candidate in owner for value in _candidate_narrators(candidate)
+    )
+    if owner and not narrator_cast_disjoint(narrators, owner_narrators):
+        return frozenset(
+            (observation.provider, candidate.identity)
+            for observation, candidate in products
+            if claim.canonical in _edition_asins(candidate)
+        )
+    return frozenset(
+        (observation.provider, candidate.identity)
+        for observation, candidate in products
         if claim.canonical not in _edition_asins(candidate)
         and _tight_recording(candidate, report.local_claims)
         and not narrator_cast_disjoint(narrators, _candidate_narrators(candidate))

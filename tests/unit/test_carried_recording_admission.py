@@ -42,6 +42,8 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     carried_asin_precedence,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AudioDiscoveryTitle,
+    AudioFacts,
     ClaimKind,
     ClaimScope,
     FieldSource,
@@ -66,7 +68,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     finalize_candidate_comparisons,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.work_identity import work_query_ladder
 from tests.support.audiobook_providers import audio_target, payload
 from tests.support.audiobook_reports import (
@@ -158,10 +160,12 @@ def _snapshot(asin: str | None = None) -> TargetSnapshot:
 
 
 def _plan(
-    claims: tuple[LocalClaim, ...], asin: str | None = None
+    claims: tuple[LocalClaim, ...],
+    asin: str | None = None,
+    audio: AudioFacts | None = None,
 ) -> MetadataDiscoveryPlan:
     return audiobook_discovery_plan(
-        _snapshot(asin), claims, audio=single_track_audio_facts(_DIGEST)
+        _snapshot(asin), claims, audio=audio or single_track_audio_facts(_DIGEST)
     )
 
 
@@ -277,6 +281,7 @@ def _report(
     claims: tuple[LocalClaim, ...],
     observations: tuple[ProviderObservation, ...],
     asin: str | None = None,
+    audio: AudioFacts | None = None,
 ) -> MetadataReport:
     return MetadataReport.create(
         target=TargetFacts("primary", "audio", "item-1", _fields(asin)),
@@ -289,7 +294,7 @@ def _report(
                 key=lambda value: value.provider,
             )
         ),
-        audio=single_track_audio_facts(_DIGEST),
+        audio=audio or single_track_audio_facts(_DIGEST),
     )
 
 
@@ -299,9 +304,10 @@ def _catalogue(
     carried: tuple[ProviderCandidate, ...] | ProviderStatus = (),
     search: tuple[ProviderCandidate, ...] = (),
     asin: str | None = None,
+    audio: AudioFacts | None = None,
 ) -> ProviderObservation:
     """The catalogue's phase-one answer: its carried lookup and its search."""
-    plan = audiobook_carried_plan(_plan(claims, asin))
+    plan = audiobook_carried_plan(_plan(claims, asin, audio))
     results = []
     for lane in plan.lanes:
         if lane.kind is ProviderQueryKind.ASIN:
@@ -658,6 +664,112 @@ def test_a_refuted_carried_admission_yields_to_a_fresh_one() -> None:
     assert _SIBLING == admitted_recording_asin(replaced)
 
 
+_LEAF = "The Leaf Title"
+
+
+def _leaf_audio() -> AudioFacts:
+    return replace(
+        single_track_audio_facts(_DIGEST),
+        discovery_titles=(AudioDiscoveryTitle("path_leaf", _LEAF),),
+    )
+
+
+def test_a_carried_edition_first_matched_on_the_path_leaf_re_verifies() -> None:
+    """A carried lookup admits against the alternative discovery title (#1316).
+
+    The edition was first matched on the path-leaf lane (#1255), so its product
+    states that title rather than the target's own. Its direct lookup admits
+    against the same alternative title, under the tight band, and verifies.
+    """
+    audio = _leaf_audio()
+    leaf = _candidate("audible", (_CARRIED,), title=_LEAF)
+    first_claims = _claims(carried=None)
+    first = _report(
+        first_claims,
+        (_catalogue(first_claims, search=(leaf,), audio=audio),),
+        audio=audio,
+    )
+    assert _CARRIED == admitted_recording_asin(first)
+
+    claims = _claims()
+    second = _report(
+        claims, (_catalogue(claims, carried=(leaf,), audio=audio),), audio=audio
+    )
+
+    (carried,) = second.providers[0].candidates
+    assert any(
+        value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for value in carried.evidence
+    )
+    assert _CARRIED == admitted_recording_asin(second)
+    # Without that discovery title the same product is an unadmitted stub.
+    plain = _report(claims, (_catalogue(claims, carried=(leaf,)),))
+    (stub,) = plain.providers[0].candidates
+    assert {ClaimKind.ASIN} == {value.kind for value in stub.claims}
+    assert admitted_recording_asin(plain) is None
+
+
+def test_a_loose_alternative_title_product_stays_a_stub() -> None:
+    audio = _leaf_audio()
+    claims = _claims()
+    loose = _candidate("audible", (_CARRIED,), title=_LEAF, duration="57000.000")
+    report = _report(
+        claims, (_catalogue(claims, carried=(loose,), audio=audio),), audio=audio
+    )
+
+    (stub,) = report.providers[0].candidates
+    assert {ClaimKind.ASIN} == {value.kind for value in stub.claims}
+
+
+def _silo_carried(
+    claims: tuple[LocalClaim, ...],
+    candidates: tuple[ProviderCandidate, ...] = (),
+    status: ProviderStatus = ProviderStatus.CANDIDATES,
+) -> ProviderObservation:
+    """AudioSilo answering the carried ASIN it was fed in phase two."""
+    feed = audiobook_asin_feed_plan(_snapshot(), _plan(claims), ())
+    assert feed is not None
+    lane = next(value for value in feed.lanes if value.canonical_asin == _CARRIED)
+    return provider_observation(
+        "silo",
+        (_lane_result(feed, lane, "silo", "audiosilo", candidates, status),),
+        authority="audiosilo",
+    )
+
+
+def test_a_carried_edition_refuted_at_audible_is_kept_while_another_lookup_waits() -> (
+    None
+):
+    """Keep-or-refute reads every audiobook authority's carried lane (#1316)."""
+    claims = _claims()
+    loose = (_candidate("audible", (_CARRIED,), duration="57000.000"),)
+    waiting = _report(
+        claims,
+        (
+            _catalogue(claims, carried=loose),
+            _silo_carried(claims, status=ProviderStatus.RATE_LIMITED),
+        ),
+    )
+    verified = _report(
+        claims,
+        (
+            _catalogue(claims, carried=loose),
+            _silo_carried(claims, (_candidate("silo", (_CARRIED,)),)),
+        ),
+    )
+    refuted = _report(
+        claims,
+        (
+            _catalogue(claims, carried=loose),
+            _silo_carried(claims, status=ProviderStatus.NO_MATCH),
+        ),
+    )
+
+    assert _CARRIED == admitted_recording_asin(waiting)
+    assert _CARRIED == admitted_recording_asin(verified)
+    assert admitted_recording_asin(refuted) is None
+
+
 # -- the ASIN destination ------------------------------------------------------
 
 
@@ -687,6 +799,115 @@ def test_a_verified_carried_edition_outranks_a_tight_search_sibling() -> None:
         _prior_claim().reference not in value.evidence_references
         for value in result.alternatives
     )
+
+
+def _owner_claims(narrator: str | None = _NARRATOR) -> tuple[LocalClaim, ...]:
+    """A carried admission on an item whose owner records a sibling edition."""
+    return (
+        *_claims(narrator=narrator),
+        _local(
+            ClaimKind.ASIN,
+            _SIBLING,
+            0,
+            basis="target_metadata",
+            scope=ClaimScope.EDITION,
+        ),
+    )
+
+
+def _asin_outcome(report: MetadataReport) -> ProposalOutcome:
+    return next(
+        value.outcome
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.ASIN
+    )
+
+
+def test_the_owners_admitted_edition_outranks_the_carried_one() -> None:
+    """A verified carried edition never contests the owner's own value (#1316).
+
+    One preparation admitted C while the owner records S; the next verifies C
+    and search returns S as the same recording. S is kept, C is not offered,
+    and C is not carried again, so the field settles.
+    """
+    claims = _owner_claims()
+    report = _report(
+        claims,
+        (
+            _catalogue(
+                claims,
+                carried=(_candidate("audible", (_CARRIED,)),),
+                search=(_candidate("audible", (_SIBLING,)),),
+                asin=_SIBLING,
+            ),
+            _fed(claims, _SIBLING, _candidate("enrichment", (_SIBLING,))),
+        ),
+        asin=_SIBLING,
+    )
+
+    withheld = carried_asin_precedence(report)
+    assert ("audible", f"audible-{_SIBLING}") not in withheld
+    assert ("enrichment", f"enrichment-{_SIBLING}") not in withheld
+    assert {("audible", f"audible-{_CARRIED}")} == withheld
+    assert {_SIBLING} == _asin_values(report)
+    assert ProposalOutcome.KEEP is _asin_outcome(report)
+    assert admitted_recording_asin(report) is None
+
+
+def test_an_admitted_owner_edition_stops_an_unverified_carry() -> None:
+    claims = _owner_claims()
+    report = _report(
+        claims,
+        (
+            _catalogue(
+                claims,
+                carried=ProviderStatus.UNAVAILABLE,
+                search=(_candidate("audible", (_SIBLING,)),),
+                asin=_SIBLING,
+            ),
+        ),
+        asin=_SIBLING,
+    )
+
+    assert admitted_recording_asin(report) is None
+    assert ProposalOutcome.KEEP is _asin_outcome(report)
+
+
+def test_an_owner_edition_nothing_admitted_does_not_stop_the_carry() -> None:
+    claims = _owner_claims()
+    report = _report(
+        claims,
+        (
+            _catalogue(
+                claims, carried=(_candidate("audible", (_CARRIED,)),), asin=_SIBLING
+            ),
+        ),
+        asin=_SIBLING,
+    )
+
+    assert _CARRIED == admitted_recording_asin(report)
+
+
+def test_a_differently_narrated_owner_edition_is_offered_beside_the_carried_one() -> (
+    None
+):
+    claims = _owner_claims(narrator=None)
+    report = _report(
+        claims,
+        (
+            _catalogue(
+                claims,
+                carried=(_candidate("audible", (_CARRIED,)),),
+                search=(_candidate("audible", (_SIBLING,), narrator="Someone Else"),),
+                asin=_SIBLING,
+            ),
+        ),
+        asin=_SIBLING,
+    )
+
+    assert frozenset() == carried_asin_precedence(report)
+    assert {_CARRIED, _SIBLING} == _asin_values(report)
+    assert admitted_recording_asin(report) is None
 
 
 def test_a_narrator_disjoint_search_product_is_still_offered() -> None:
