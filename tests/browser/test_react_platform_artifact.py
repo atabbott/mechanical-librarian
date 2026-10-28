@@ -4612,3 +4612,66 @@ def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> No
                     for failure in page.evaluate(_ESCAPED_CONTROLS, controls)
                 ]
         assert failures == [], "\n".join(failures)
+
+
+# Layout shifts, and where the first works row stands when it first paints.
+_FIRST_ROW_AND_SHIFTS = """(() => {
+  window.__shifts = [];
+  new PerformanceObserver(list => {
+    for (const entry of list.getEntries())
+      if (!entry.hadRecentInput) window.__shifts.push([entry.startTime, entry.value]);
+  }).observe({type: 'layout-shift', buffered: true});
+  const look = () => {
+    const row = document.querySelector('.library-work-row');
+    if (row && row.getBoundingClientRect().height) {
+      window.__firstRow = {at: performance.now(), top: row.getBoundingClientRect().top + scrollY};
+      return;
+    }
+    requestAnimationFrame(look);
+  };
+  requestAnimationFrame(look);
+})()"""
+
+
+def test_library_handoff_arrives_with_the_works() -> None:
+    """With the handoff's consent read held for 1.5s, the works appear with the
+    handoff above them, so from the moment the first row paints nothing moves
+    it (#1291)."""
+    for width in (1440, 390):
+        with ExitStack() as stack:
+            playwright = stack.enter_context(sync_playwright())
+            browser = playwright.chromium.launch(headless=True)
+            stack.callback(browser.close)
+            page = browser.new_page(
+                viewport={"width": width, "height": 900}, locale="en-US"
+            )
+            page.add_init_script(_LIVE_UPDATE_STREAM)
+            page.add_init_script(_FIRST_ROW_AND_SHIFTS)
+            _serve_cohort(page, writes_off_handoff=True)
+            held: list[Route] = []
+            page.route(
+                "**/api/v1/activity/consent-state", lambda route: held.append(route)
+            )
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.wait_for_timeout(1_500)
+            assert held, "the consent read was never made"
+            for route in held:
+                route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(_WRITES_OFF_CONSENT),
+                )
+            expect(page.locator(".cm-library-handoff h2")).to_be_visible()
+            expect(page.locator(".library-work-row").first).to_be_visible()
+            page.wait_for_timeout(2_000)
+            first = page.evaluate("() => window.__firstRow")
+            now = page.evaluate(
+                "() => document.querySelector('.library-work-row')"
+                ".getBoundingClientRect().top + scrollY"
+            )
+            moved = sum(
+                value
+                for start, value in page.evaluate("() => window.__shifts")
+                if start >= first["at"] - 1
+            )
+            assert abs(now - first["top"]) <= 1, (width, first, now)
+            assert moved == 0, (width, moved)
