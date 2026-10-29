@@ -1078,7 +1078,10 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   .cm-activity-pagination-summary { flex-wrap:wrap; min-width:0; white-space:normal; }
   .cm-activity-page-size { flex-wrap:wrap; min-width:0; max-width:100%; margin-left:0; }
   .cm-activity-page-size .cm-dropdown { min-width:0; max-width:100%; }
-  .cm-activity-page-size .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
+  .cm-activity-page-size .cm-dropdown-trigger > span, .cm-activity-range .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
+  /* The search field and the date range follow the ledger, never their own content's width. */
+  .cm-activity-search, .cm-activity-range { min-width:0; max-width:100%; grid-template-columns:minmax(0,1fr); }
+  .cm-activity-search input { min-width:0; width:100%; }
   /* The page jump takes a row of its own above the four pages, which share the rows below. */
   .cm-activity-pagination-nav { display:flex; flex-wrap:wrap; min-width:0; }
   .cm-activity-pagination-nav button { flex:1 0 auto; padding-inline:.45rem; }

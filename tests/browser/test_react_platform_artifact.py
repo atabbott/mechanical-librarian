@@ -4862,7 +4862,8 @@ _ROW_OVERLAPS = """() => [...document.querySelectorAll('.cm-activity-event-group
 # cutting what it scrolls to.
 _CUT_CONTROLS = """() => [...document.querySelectorAll(
     '.cm-activity-pagination :is(button, input, .cm-dropdown-trigger, strong, span),'
-    + ' .cm-activity-filters button')]
+    + ' .cm-activity-filters button, .cm-activity-search input,'
+    + ' .cm-activity-range :is(.cm-dropdown-trigger, .cm-dropdown-trigger > span)')]
   .filter((node) => node.getClientRects().length)
   .flatMap((node) => {
     const name = `${node.className || node.tagName} "${node.textContent.trim().slice(0, 32)}"`;
