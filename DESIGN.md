@@ -266,9 +266,9 @@ labels wrap within the row rather than clip. The masthead is sticky only
 while it takes at most a quarter of the viewport; taller—a
 phone, a short window, enlarged text—it scrolls away with the page, so it
 never covers what the owner reads or focuses, and sticky regions then sit at
-the top of the window. Between 1025px and 1199px the product name recedes and
-the mark remains. Attention stays contextual to Library instead of competing as
-a permanent destination.
+the top of the window. Between 1025px and 1199px of shell width the product
+name recedes and the mark remains. Attention stays contextual to Library
+instead of competing as a permanent destination.
 
 Wide task surfaces use asymmetric grids. Library pairs a sticky 310–380px work
 index with a flexible preview; Policy pairs a 220px chapter index with notebook
@@ -294,7 +294,11 @@ wider than 320px.
 
 The masthead's arrangements follow the shell's width in rem at the same
 steps, through container queries rather than width media queries, so enlarged
-text takes the compact arrangements a narrower window would. The same holds
+text takes the compact arrangements a narrower window would. The shell is the
+window less a classic scrollbar's gutter, which is reserved even on a short
+page, so a page becoming scrollable never moves the masthead. With such a
+scrollbar the masthead therefore steps about 15px wider than the page's width
+breakpoints; that offset is an accepted difference. The same holds
 for surfaces measured by their own width: the Activity ledger folds its rows
 into cards when it is narrower than 47.5rem, Policy's finish tray stacks inside
 a narrow editor, and a Settings field's label and control stack inside a narrow

@@ -4422,6 +4422,41 @@ _MASTHEAD_GEOMETRY = """() => {
   };
 }"""
 
+
+def test_masthead_holds_still_as_a_page_becomes_scrollable() -> None:
+    """With classic scrollbars, a page growing tall enough to scroll moves no
+    part of the masthead, even at the widths where the scrollbar's gutter would
+    cross one of its steps (#1291)."""
+    for width in (1025, 761):
+        with ExitStack() as stack:
+            playwright = stack.enter_context(sync_playwright())
+            # Headless Chromium hides scrollbars unless asked not to.
+            browser = playwright.chromium.launch(
+                headless=True, ignore_default_args=["--hide-scrollbars"]
+            )
+            stack.callback(browser.close)
+            page = browser.new_page(
+                viewport={"width": width, "height": 900}, locale="en-US"
+            )
+            page.add_init_script(_LIVE_UPDATE_STREAM)
+            _serve_cohort(page)
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.wait_for_load_state("networkidle")
+            expect(page.locator("#main-content h1").first).to_be_visible()
+            scrolls = "document.scrollingElement.scrollHeight > innerHeight"
+            page.evaluate(
+                "Object.assign(document.querySelector('main').style,"
+                " {height: '0', overflow: 'hidden'})"
+            )
+            page.evaluate(_TWO_FRAMES)
+            assert not page.evaluate(scrolls), width
+            short = page.evaluate(_MASTHEAD_GEOMETRY)
+            page.evaluate("document.querySelector('main').removeAttribute('style')")
+            page.evaluate(_TWO_FRAMES)
+            assert page.evaluate(scrolls), width
+            assert page.evaluate(_MASTHEAD_GEOMETRY) == short, width
+
+
 # The preparation states the masthead names, as overrides of the cohort's read.
 _PREPARATION_STATES: dict[str, dict[str, object]] = {
     "absent": {"libraries": []},
