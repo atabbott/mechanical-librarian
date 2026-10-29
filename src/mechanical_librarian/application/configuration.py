@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
+from mechanical_librarian.domain.field_outcomes import library_languages_valid
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
@@ -286,6 +287,9 @@ class LibraryConfiguration:
     mount: str | None
     provider_connections: tuple[str, ...]
     policy_override: dict[str, dict[str, str]] | None = None
+    # The languages the owner says this library holds, first preferred
+    # (#1315). Matching reads it as a prior; nothing writes it into an item.
+    languages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.name, "library name")
@@ -309,6 +313,8 @@ class LibraryConfiguration:
             )
         for value in self.provider_connections:
             _name(value, "library provider reference")
+        if not library_languages_valid(self.languages):
+            raise ConfigurationError("library languages are invalid")
         if self.policy_override is not None:
             if type(self.policy_override) is not dict:
                 raise ConfigurationError("library policy override is invalid")

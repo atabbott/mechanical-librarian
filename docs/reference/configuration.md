@@ -171,6 +171,33 @@ provider names are unique. Each library refers to exactly one target connection
 and lists its provider connections explicitly; duplicate references are
 invalid. List order has no priority meaning and is canonicalized by name.
 
+## Library languages
+
+A library may declare the languages it holds as an ordered `languages` list,
+the first one preferred, for example `"languages": ["de", "en"]`. It is
+optional and defaults to an empty list, which declares nothing. Each entry is
+a lowercase ISO 639 language tag with an optional script and region, such as
+`en`, `deu` or `zh-Hant`; at most eight are accepted, no two may name the same
+language and script, and `und`, `mul`, `mis` and `zxx` are refused, since none
+of them is a language a library holds. There is no environment variable for
+it, and this build reads it only from the configuration file: Settings neither
+shows nor edits it, and a store-managed library declares nothing (#1466).
+
+Matching reads the list as a prior and never writes it into an item; an
+item's language still comes only from its own evidence. Today only audiobook
+matching reads it ([ADR-0064](../architecture/decisions/0064-audiobook-provider-evidence-vocabularies.md)):
+
+- the Audible marketplaces an audiobook is searched and looked up in are
+  reordered so the configured ones in the first language come first, then
+  those in the second; none is added or removed, and English keeps the
+  default order;
+- a recording that states no language of its own is held to the list: an
+  edition in another language is not matched as its recording. With one
+  language that is exactly a language claim; with several, any of them is
+  accepted. A language the recording states itself always wins.
+
+Changing the list prepares the library's items again.
+
 ## Sparse policy overrides
 
 The built-in metadata policy needs no configuration. A library may instead

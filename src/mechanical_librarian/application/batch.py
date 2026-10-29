@@ -75,6 +75,9 @@ def batch_fingerprint(
                 "library_id": item.library_id,
                 "mount": item.mount,
                 "provider_connections": list(item.provider_connections),
+                # A report states the languages it was prepared under, so a
+                # changed list is new report authority (#1315).
+                "languages": list(item.languages),
             }
             for item in libraries
         ],

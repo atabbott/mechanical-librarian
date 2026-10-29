@@ -236,6 +236,13 @@ what a v61 report records, and the proposal policy moves to
 `fixed-conservative-v38` (ADR-0067). Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Issues #1315 and #1305 also take the clean-rebuild branch.
+`metadata-report-v62` records the library languages an audiobook report was
+prepared under (`library_languages`), which its admission reads, so a v61
+report cannot state what a v62 report records, and the proposal policy moves to
+`fixed-conservative-v39` (ADR-0064). Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
 Issue #1451 also takes the clean-rebuild branch. `review_preparation_work`
 gains the nullable `research_not_before` column, which marks when an audiobook
 whose report admitted no recording is searched again (ADR-0089). A predecessor

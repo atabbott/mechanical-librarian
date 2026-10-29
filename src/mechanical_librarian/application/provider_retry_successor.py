@@ -342,8 +342,10 @@ class GenerateProviderRetrySuccessor:
                 # A successor replaces one provider's lanes and nothing the
                 # inspector read. The audio section travels unchanged, and the
                 # report refuses an audio file without one, so a retry over an
-                # audiobook could not publish without carrying it.
+                # audiobook could not publish without carrying it. So do the
+                # library languages it was prepared under (#1315).
                 audio=source.audio,
+                library_languages=source.library_languages,
             )
 
             def currentness() -> bool:
@@ -478,7 +480,12 @@ class GenerateProviderRetrySuccessor:
         ):
             raise CurrentnessError("target or media changed")
         plan = (
-            audiobook_discovery_plan(snapshot, source.local_claims, audio=source.audio)
+            audiobook_discovery_plan(
+                snapshot,
+                source.local_claims,
+                audio=source.audio,
+                library_languages=source.library_languages,
+            )
             if audio
             else metadata_discovery_plan(snapshot, source.local_claims)
         )

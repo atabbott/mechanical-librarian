@@ -65,6 +65,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
+from mechanical_librarian.domain.field_outcomes import library_languages_valid
 from mechanical_librarian.domain.validation import (
     bounded_integer,
     literal,
@@ -94,7 +95,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v61"
+REPORT_SCHEMA = "metadata-report-v62"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -3229,36 +3230,64 @@ class ProviderObservation:
 
 
 def recording_variant_conflict(
-    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...], local_title: str
+    candidate: ProviderCandidate,
+    local_claims: tuple[LocalClaim, ...],
+    local_title: str,
+    library_languages: tuple[str, ...] = (),
 ) -> str | None:
-    """Compare explicit recording facts without filling unknown variant facts."""
+    """Compare explicit recording facts without filling unknown variant facts.
+
+    A recording that states no language of its own is held to the languages
+    its library declares (#1315): a product stating a language outside every
+    one of them is refused, with its own reason so a reader can tell it from
+    a claim conflict. One declared language is therefore exactly a language
+    claim, and several accept any of them without choosing one.
+    """
     from mechanical_librarian.domain.field_outcomes import (
         language_identity,
         language_outcomes_compatible,
     )
 
+    def known(value: str | None) -> bool:
+        return (
+            value is not None
+            and (identity := language_identity(value)) is not None
+            and identity.base != "und"
+        )
+
     languages = [
         claim.value
         for claim in candidate.claims
-        if claim.kind is ClaimKind.LANGUAGE and claim.state is FieldState.VALID
+        if claim.kind is ClaimKind.LANGUAGE
+        and claim.state is FieldState.VALID
+        and known(claim.value)
     ]
     local_languages = [
         claim.canonical
         for claim in local_claims
-        if claim.kind is ClaimKind.LANGUAGE and claim.state is FieldState.VALID
+        if claim.kind is ClaimKind.LANGUAGE
+        and claim.state is FieldState.VALID
+        and known(claim.canonical)
     ]
     if any(
         not language_outcomes_compatible(left, right)
         for left in local_languages
         for right in languages
-        if left is not None
-        and right is not None
-        and (left_identity := language_identity(left)) is not None
-        and (right_identity := language_identity(right)) is not None
-        and left_identity.base != "und"
-        and right_identity.base != "und"
+        if left is not None and right is not None
     ):
         return "recording_language_conflict"
+    if (
+        not local_languages
+        and library_languages
+        and any(
+            right is not None
+            and not any(
+                language_outcomes_compatible(left, right) for left in library_languages
+            )
+            for right in languages
+        )
+    ):
+        return "recording_language_outside_library"
     formats = [
         e.value.strip().casefold()
         for e in candidate.evidence
@@ -3884,6 +3913,7 @@ def provider_candidate_set_work_identity_admission(
     band_claims: tuple[LocalClaim, ...] | None = None,
     corroboration: RecordingCorroboration | None = None,
     leading_number: bool = False,
+    library_languages: tuple[str, ...] = (),
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit exactly one work identity and one lineage from a candidate set.
 
@@ -3909,6 +3939,9 @@ def provider_candidate_set_work_identity_admission(
 
     `leading_number` is Audible's asserted audiobook lane, the one lane that
     dispatches the `leading_number_stripped` rung (#1307).
+
+    `library_languages` reach only the band's recording-conflict check, so they
+    never change a set admitted without the band (#1315).
     """
 
     def admit(
@@ -3955,7 +3988,9 @@ def provider_candidate_set_work_identity_admission(
                     provider_minutes=provider_minutes,
                 ).outcome
                 is CorroborationOutcome.CORROBORATED
-                and recording_variant_conflict(candidate, band_claims, local_title)
+                and recording_variant_conflict(
+                    candidate, band_claims, local_title, library_languages
+                )
                 is None
             )
 
@@ -3976,6 +4011,7 @@ def provider_candidate_set_work_identity_admission(
         band_claims,
         corroboration,
         tight,
+        library_languages,
     )
 
 
@@ -3987,6 +4023,7 @@ def _corroborated_set_admission(
     band_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
     tight: Callable[[ProviderCandidate], bool],
+    library_languages: tuple[str, ...],
 ) -> ProviderWorkIdentitySetAdmission:
     """Try the band-first set rule, then the corroborated rule (#1307)."""
     from mechanical_librarian.domain.audiobook_corroboration import (
@@ -4018,7 +4055,9 @@ def _corroborated_set_admission(
         ).admitted
     )
     if admitted:
-        chosen = band_first_candidate(admitted, local_title, band_claims, corroboration)
+        chosen = band_first_candidate(
+            admitted, local_title, band_claims, corroboration, library_languages
+        )
         if chosen is None:
             return refused
         # The one tight product replays alone through the path that admitted
@@ -4031,9 +4070,15 @@ def _corroborated_set_admission(
             audiobook=True,
             band_claims=band_claims,
             leading_number=True,
+            library_languages=library_languages,
         )
     chosen = corroborated_recording_candidate(
-        eligible, local_title, local_authors, band_claims, corroboration
+        eligible,
+        local_title,
+        local_authors,
+        band_claims,
+        corroboration,
+        library_languages,
     )
     if chosen is None:
         return refused
@@ -4232,6 +4277,9 @@ class MetadataReport:
     schema_version: str = REPORT_SCHEMA
     comparison_version: str = COMPARISON_VERSION
     audio: AudioFacts | None = None
+    # The library's declared languages when the report was prepared (#1315).
+    # Every admission read of this report applies them, so they travel with it.
+    library_languages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -4240,6 +4288,11 @@ class MetadataReport:
             or type(self.file) is not FileFacts
         ):
             raise ReportValueError("report identity or target is invalid")
+        # Only audiobook matching reads them, so an ebook report states none.
+        if not library_languages_valid(self.library_languages) or (
+            self.library_languages and self.file.format not in AUDIO_FILE_FORMATS
+        ):
+            raise ReportValueError("report library languages are invalid")
         is_audio = self.file.format in AUDIO_FILE_FORMATS
         if (
             self.audio is not None and type(self.audio) is not AudioFacts
@@ -4490,6 +4543,7 @@ class MetadataReport:
                     band_claims=band_claims,
                     corroboration=corroboration,
                     leading_number=corroboration is not None,
+                    library_languages=self.library_languages,
                 )
                 if (
                     not set_admission.admitted
@@ -4528,6 +4582,7 @@ class MetadataReport:
                     leading_number=corroboration is not None
                     and payload is not None
                     and payload.title_basis is None,
+                    library_languages=self.library_languages,
                 )
                 if (
                     not set_admission.admitted
@@ -4863,6 +4918,7 @@ class MetadataReport:
         identifier_evidence: tuple[IdentifierEvidence, ...] | None = None,
         cover_sources: tuple[CoverSource, ...] = (),
         audio: AudioFacts | None = None,
+        library_languages: tuple[str, ...] = (),
     ) -> Self:
         local_status = (
             "candidate"
@@ -4930,6 +4986,7 @@ class MetadataReport:
             identifiers,
             cover_sources,
             audio,
+            library_languages,
         )
         data.pop("report_id")
         return cls(
@@ -4944,6 +5001,7 @@ class MetadataReport:
             identifiers,
             cover_sources,
             audio=audio,
+            library_languages=library_languages,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -4964,6 +5022,7 @@ class MetadataReport:
             self.identifier_evidence,
             self.cover_sources,
             self.audio,
+            self.library_languages,
         )
 
     def to_json(self) -> str:
@@ -6446,10 +6505,12 @@ def _report_data(
     identifier_evidence: tuple[IdentifierEvidence, ...],
     cover_sources: tuple[CoverSource, ...],
     audio: AudioFacts | None = None,
+    library_languages: tuple[str, ...] = (),
 ) -> dict[str, object]:
     return {
         "audio": None if audio is None else audio.to_data(),
         "file": file.to_data(),
+        "library_languages": list(library_languages),
         "field_results": [value.to_data() for value in field_results],
         "identifier_evidence": [value.to_data() for value in identifier_evidence],
         "local": {
@@ -6476,6 +6537,7 @@ def _report_from_data(value: object) -> MetadataReport:
             "field_results",
             "file",
             "identifier_evidence",
+            "library_languages",
             "local",
             "providers",
             "report_id",
@@ -6536,6 +6598,7 @@ def _report_from_data(value: object) -> MetadataReport:
         root["schema_version"],
         root["comparison_version"],
         _audio_facts_from_data(root["audio"]),
+        tuple(_strings(root["library_languages"])),
     )
 
 

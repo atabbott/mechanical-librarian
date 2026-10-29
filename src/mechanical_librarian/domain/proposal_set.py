@@ -113,7 +113,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v38"
+POLICY_VERSION = "fixed-conservative-v39"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -2659,7 +2659,10 @@ def _plausible_narrator_candidates(
         candidate
         for candidate in members.values()
         if recording_variant_conflict(
-            candidate, report.local_claims, report.target.current_title or ""
+            candidate,
+            report.local_claims,
+            report.target.current_title or "",
+            report.library_languages,
         )
         is None
         and not candidate_recording_runtime_veto(
@@ -3046,6 +3049,7 @@ def _list_observations(
                         candidate,
                         report.local_claims,
                         report.target.current_title or "",
+                        report.library_languages,
                     )
                     is not None
                     or candidate_recording_runtime_veto(
@@ -3415,6 +3419,7 @@ def _target_backed_lookup_contains(
                     audiobook=report.audio is not None,
                     band_claims=_asserted_lane_band_claims(report, provider, lane),
                     corroboration=_asserted_lane_corroboration(report, provider, lane),
+                    library_languages=report.library_languages,
                 )
                 and lane.identity
                 == discovery_lane_identity(
@@ -3455,6 +3460,7 @@ def _candidate_set_replays_work_qualification(
     audiobook: bool = False,
     band_claims: tuple[LocalClaim, ...] | None = None,
     corroboration: RecordingCorroboration | None = None,
+    library_languages: tuple[str, ...] = (),
 ) -> bool:
     """Replay one unambiguous WORK candidate set before granting authority."""
     candidates_by_identity = {value.identity: value for value in provider.candidates}
@@ -3475,6 +3481,7 @@ def _candidate_set_replays_work_qualification(
         band_claims=band_claims,
         corroboration=corroboration,
         leading_number=corroboration is not None,
+        library_languages=library_languages,
     )
     return (
         admission.admitted
@@ -3659,6 +3666,7 @@ def provider_candidate_represents_target_work(
                     )
                 ),
                 leading_number=corroboration is not None,
+                library_languages=report.library_languages,
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
         else:
@@ -3687,7 +3695,10 @@ def provider_candidate_represents_target_recording(
     return (
         report.audio is not None
         and recording_variant_conflict(
-            candidate, report.local_claims, report.target.current_title or ""
+            candidate,
+            report.local_claims,
+            report.target.current_title or "",
+            report.library_languages,
         )
         is None
         and not candidate_recording_runtime_veto(

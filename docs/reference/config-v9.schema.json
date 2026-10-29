@@ -805,6 +805,17 @@
           "title": "Connection",
           "type": "string"
         },
+        "languages": {
+          "default": [],
+          "items": {
+            "maxLength": 16,
+            "minLength": 2,
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Languages",
+          "type": "array"
+        },
         "library_id": {
           "maxLength": 128,
           "minLength": 1,

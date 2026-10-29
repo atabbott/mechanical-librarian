@@ -13,6 +13,7 @@ from contextlib import AbstractContextManager, ExitStack, contextmanager, nullco
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import uvicorn
@@ -316,6 +317,7 @@ from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionOutcome,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
+from mechanical_librarian.domain.field_outcomes import language_identity
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -1932,8 +1934,23 @@ class _NonClosingRepository:
         return None
 
 
+# The marketplaces whose catalogue is in each language a library may declare
+# (#1315). A language with none here moves nothing.
+_LANGUAGE_MARKETPLACES = MappingProxyType(
+    {
+        "en": ("us", "uk", "au", "in", "ca"),
+        "de": ("de",),
+        "fr": ("fr", "ca"),
+        "it": ("it",),
+        "es": ("es",),
+        "ja": ("jp",),
+    }
+)
+
+
 def _audiobook_marketplaces(
     providers: Sequence[ProviderConnectionConfiguration],
+    languages: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     """Read the one marketplace order every ASIN lookup in this build walks.
 
@@ -1941,8 +1958,13 @@ def _audiobook_marketplaces(
     nothing else, but an ASIN is marketplace-scoped for Audnexus in exactly the
     same way and it has no configuration surface of its own. Both read the
     owner's one stated order here rather than each inventing a default.
+
+    A library's declared languages move the marketplaces in its first
+    language to the front, then those in its second, and so on, each in the
+    owner's order (#1315). The title search asks the first marketplace, so a
+    German library searches Audible.de. Nothing is added or removed.
     """
-    return next(
+    stated = next(
         (
             value.marketplaces
             for value in providers
@@ -1951,6 +1973,20 @@ def _audiobook_marketplaces(
             and value.marketplaces
         ),
         ("us",),
+    )
+    preferred = tuple(
+        code
+        for language in languages
+        if (identity := language_identity(language)) is not None
+        for code in _LANGUAGE_MARKETPLACES.get(identity.base, ())
+    )
+    return tuple(
+        sorted(
+            stated,
+            key=lambda code: (
+                preferred.index(code) if code in preferred else len(preferred)
+            ),
+        )
     )
 
 
@@ -2050,7 +2086,7 @@ def run_metadata_report_loaded(
         for provider in provider_configs
     ):
         itunes_search_pacer = ITunesSearchPacer()
-    marketplaces = _audiobook_marketplaces(provider_configs)
+    marketplaces = _audiobook_marketplaces(provider_configs, library.languages)
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
 
@@ -2517,7 +2553,9 @@ def create_review_pipeline(
         if generation != configuration.provider_recovery_generation:
             return None
         try:
-            _, _, _, configured = configuration.select(connection_name, library_name)
+            _, selected, _, configured = configuration.select(
+                connection_name, library_name
+            )
         except ConfigurationError:
             return None
         provider = next(
@@ -2603,7 +2641,9 @@ def create_review_pipeline(
                     audible_catalog_client(configuration.limits.timeout_seconds),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
-                    marketplaces=_audiobook_marketplaces(configured),
+                    marketplaces=_audiobook_marketplaces(
+                        configured, selected.languages
+                    ),
                     pacer=audible_catalog_pacer,
                 )
             if value.adapter == "audnexus":
@@ -2612,7 +2652,9 @@ def create_review_pipeline(
                     audnexus_client(configuration.limits.timeout_seconds),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
-                    marketplaces=_audiobook_marketplaces(configured),
+                    marketplaces=_audiobook_marketplaces(
+                        configured, selected.languages
+                    ),
                     pacer=audnexus_pacer,
                 )
             if value.adapter == "audiosilo":
