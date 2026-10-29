@@ -6044,24 +6044,44 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                     "That setup claim token was not accepted"
                 )
                 expect(claim_token).to_have_attribute("aria-invalid", "true")
-                page.evaluate("() => new Promise(requestAnimationFrame)")
-                box = refusal.bounding_box()
-                assert box is not None
-                assert box["y"] >= 0 and box["y"] + box["height"] <= 844, box
-                # On a narrower phone the refusal is taller than the screen:
-                # the field it names leads, in view and focused, and the
-                # refusal begins below it.
-                page.set_viewport_size({"width": 320, "height": 640})
-                page.evaluate("window.scrollTo(0, 0)")
-                page.get_by_role("button", name="Create owner access").click()
-                page.wait_for_function("scrollY > 0")
-                page.evaluate("() => new Promise(requestAnimationFrame)")
-                field = claim_token.bounding_box()
-                box = refusal.bounding_box()
-                assert field is not None and box is not None
-                assert field["y"] >= 0 and box["y"] < 640, (field, box)
-                expect(claim_token).to_be_focused()
-                page.set_viewport_size({"width": 390, "height": 844})
+
+                def assert_refusal_in_reach(height: int) -> None:
+                    # The focused field is never off screen. When it and its
+                    # refusal fit together both are in view; otherwise the
+                    # field leads and the refusal begins below it.
+                    page.evaluate("() => new Promise(requestAnimationFrame)")
+                    field = claim_token.bounding_box()
+                    box = refusal.bounding_box()
+                    assert field is not None and box is not None
+                    assert field["y"] >= 0, (height, field, box)
+                    assert field["y"] + field["height"] <= height, (height, field)
+                    assert box["y"] < height, (height, field, box)
+                    # Scroll offsets snap to whole pixels, so allow one.
+                    if box["y"] + box["height"] - field["y"] <= height:
+                        assert box["y"] + box["height"] <= height + 1, (height, box)
+                    expect(claim_token).to_be_focused()
+
+                assert_refusal_in_reach(844)
+                # Shorter and narrower phones, each refused on a fresh page; at
+                # 150% the two fit together, at 200% the field leads.
+                for width, height, size in (
+                    (375, 667, "200%"),
+                    (320, 640, "200%"),
+                    (375, 667, "150%"),
+                    (320, 640, "150%"),
+                ):
+                    page.set_viewport_size({"width": width, "height": height})
+                    page.goto(origin)
+                    page.evaluate(f"document.documentElement.style.fontSize = '{size}'")
+                    page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
+                    page.get_by_label("Confirm owner password", exact=True).fill(
+                        _PASSWORD
+                    )
+                    page.get_by_role("button", name="Create owner access").click()
+                    expect(refusal).to_contain_text(
+                        "That setup claim token was not accepted"
+                    )
+                    assert_refusal_in_reach(height)
                 assert token_file.exists()
                 claim_token.fill(token)
                 page.get_by_role("button", name="Create owner access").click()
