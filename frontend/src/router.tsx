@@ -54,6 +54,7 @@ import type { LiveUpdateStream } from './liveUpdates'
 import { formatWhen } from './dates'
 import { preparationOutcomes, scanStateLabels } from './labels'
 import { useLibraryName } from './libraryNames'
+import { handoffNeedsLibraryNames } from './writeConsent'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
@@ -1322,12 +1323,18 @@ const LibraryRouteComponent = () => {
   const search = libraryRoute.useSearch()
   const query = useRetainedQuery(libraryQuery(http, search))
   const handoff = useQuery(handoffConsentQuery(http))
+  const names = useLibraryName(http, handoffNeedsLibraryNames(handoff.data))
   const [railRetaining, setRailRetaining] = useState(false)
   useAnnounceRetaining(query.isPlaceholderData || railRetaining)
-  // Library waits for the handoff's read to settle once, either way, so the
-  // notice above the works is there when they are and never moves them. A
-  // read that failed has settled even while a later mount retries it.
-  if (!handoff.dataUpdatedAt && !handoff.errorUpdatedAt) return <RoutePending title="Library" />
+  // Library waits for the handoff's read to settle once, either way, and for
+  // the library names the notice states, so the notice above the works is
+  // there when they are and never moves them. A read that failed has settled
+  // even while a later mount retries it, and a failed names read falls through.
+  // Once open, Library never returns to pending: a later read only updates.
+  const [opened, setOpened] = useState(false)
+  const settling = (!handoff.dataUpdatedAt && !handoff.errorUpdatedAt) || !names.ready
+  if (!opened && !settling) setOpened(true)
+  if (!opened && settling) return <RoutePending title="Library" />
   return (
     <LibraryPage
       data={query.data}

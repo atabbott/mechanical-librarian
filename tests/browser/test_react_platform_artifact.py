@@ -4948,13 +4948,52 @@ _FIRST_ROW_AND_SHIFTS = """(() => {
 })()"""
 
 
+# Writes enabled for a consented destination: the handoff names its library as
+# Settings does, so it also waits on the settings read.
+_CONSENTED_HANDOFF = {
+    **_WRITES_OFF_CONSENT,
+    "capabilities": [
+        {
+            "connection": "primary",
+            "library": "Household ebooks",
+            "state": "allowed",
+            "destinations": [
+                {
+                    "destination": "title",
+                    "state": "allowed",
+                    "consented": True,
+                    "prepared": 2,
+                }
+            ],
+        }
+    ],
+    "waiting": {
+        "applying": 0,
+        "awaiting_permission": 0,
+        "held_for_recovery": 0,
+        "retrying": 0,
+        "scheduled": 2,
+    },
+}
+
+
 def test_library_handoff_arrives_with_the_works() -> None:
-    """With the handoff's consent read held for 1.5s, the works appear with the
-    handoff above them, so from the moment the first row paints nothing moves
-    it (#1291)."""
+    """With the handoff's consent read held for 1.5s, and, while writes are
+    enabled, the settings read that names its library held 1s longer, the works
+    appear with the handoff above them, so from the moment the first row paints
+    nothing moves it (#1291)."""
     held: list[Route] = []
-    for width in (1440, 390):
+    held_settings: list[Route] = []
+    for consent, width in (
+        (_WRITES_OFF_CONSENT, 1440),
+        (_WRITES_OFF_CONSENT, 390),
+        (_CONSENTED_HANDOFF, 1440),
+        (_CONSENTED_HANDOFF, 390),
+    ):
         held.clear()
+        held_settings.clear()
+        hold_settings = consent is _CONSENTED_HANDOFF
+        where = ("enabled" if hold_settings else "off", width)
         with ExitStack() as stack:
             playwright = stack.enter_context(sync_playwright())
             browser = playwright.chromium.launch(headless=True)
@@ -4968,15 +5007,25 @@ def test_library_handoff_arrives_with_the_works() -> None:
             page.route(
                 "**/api/v1/activity/consent-state", lambda route: held.append(route)
             )
+            if hold_settings:
+                page.route(
+                    "**/api/v1/settings", lambda route: held_settings.append(route)
+                )
             page.goto("https://react-platform.invalid/library?lens=all")
             page.wait_for_timeout(1_500)
             assert held, "the consent read was never made"
             for route in held:
-                route.fulfill(
-                    content_type="application/json",
-                    body=json.dumps(_WRITES_OFF_CONSENT),
-                )
-            expect(page.locator(".cm-library-handoff h2")).to_be_visible()
+                route.fulfill(content_type="application/json", body=json.dumps(consent))
+            if hold_settings:
+                page.wait_for_timeout(1_000)
+                assert held_settings, "the settings read was never made"
+                page.unroute("**/api/v1/settings")
+                for route in held_settings:
+                    route.fallback()
+            heading = page.locator(".cm-library-handoff h2")
+            expect(heading).to_be_visible()
+            if hold_settings:
+                expect(heading).to_contain_text("Writes are enabled")
             expect(page.locator(".library-work-row").first).to_be_visible()
             page.wait_for_timeout(2_000)
             first = page.evaluate("() => window.__firstRow")
@@ -4989,5 +5038,5 @@ def test_library_handoff_arrives_with_the_works() -> None:
                 for start, value in page.evaluate("() => window.__shifts")
                 if start >= first["at"] - 1
             )
-            assert abs(now - first["top"]) <= 1, (width, first, now)
-            assert moved == 0, (width, moved)
+            assert abs(now - first["top"]) <= 1, (where, first, now)
+            assert moved == 0, (where, moved)
