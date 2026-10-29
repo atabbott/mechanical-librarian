@@ -6528,6 +6528,11 @@ def _report_data(
 
 
 def _report_from_data(value: object) -> MetadataReport:
+    # A predecessor document is refused for what it is before any section of
+    # it is read under the current vocabulary, including the root key set,
+    # which v62 widened with the library languages (#1315).
+    if type(value) is dict and value.get("schema_version") != REPORT_SCHEMA:
+        raise ReportValueError("report schema is unsupported")
     root = _object(
         value,
         {
@@ -6545,10 +6550,6 @@ def _report_from_data(value: object) -> MetadataReport:
             "target",
         },
     )
-    # A predecessor document is refused for what it is before any section of
-    # it is read under the current vocabulary.
-    if root["schema_version"] != REPORT_SCHEMA:
-        raise ReportValueError("report schema is unsupported")
     target = _object(
         root["target"],
         {
