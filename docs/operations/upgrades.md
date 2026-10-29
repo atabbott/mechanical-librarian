@@ -1,5 +1,12 @@
 # Upgrades and compatibility
 
+#1451 adds the `research_not_before` column to `review_preparation_work`: an
+audiobook whose report admitted no recording is prepared again a week later,
+and that search keeps an open case unless it admits a recording (ADR-0089). No
+report or policy version moves. **Clean rebuild required** for every
+predecessor application database; startup refuses the predecessor table before
+mutation. No migration, adoption, conversion, import or downgrade is supplied.
+
 #1307 advances the report to `metadata-report-v61` and the proposal policy to
 `fixed-conservative-v38`: an audiobook ASIN lane keeps each product it refused
 with its own claims, Audible's asserted lane may admit one runtime-, title- and

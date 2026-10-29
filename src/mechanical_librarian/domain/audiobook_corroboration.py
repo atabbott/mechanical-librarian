@@ -998,6 +998,7 @@ __all__ = [
     "stated_runtime_agreement",
     "tight_runtime_distance",
     "admitted_recording_asin",
+    "recording_admitted",
     "band_first_candidate",
     "corroborated_recording_candidate",
     "candidate_edition_asin",
@@ -1810,6 +1811,20 @@ def _admitted_candidates(
 _DEFINITIVE_LANE_STATUSES: Final = frozenset(
     {ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH}
 )
+
+
+def recording_admitted(report: MetadataReport) -> bool:
+    """Whether an audiobook authority admitted a recording for this report.
+
+    It is the admission `admitted_recording_asin` carries, read without its
+    carrying rules: an item whose own surfaces name an ASIN, or one whose
+    admitted products disagree on the edition, still admitted a recording.
+    An audiobook that admitted none is searched again on a later preparation
+    (#1451).
+    """
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    return report.audio is not None and bool(_admitted_candidates(report))
 
 
 def admitted_recording_asin(report: MetadataReport) -> str | None:

@@ -567,6 +567,9 @@ _REVIEW_WORK_SQL = (
     "presentation_recovery_cycle_id TEXT CHECK(presentation_recovery_cycle_id IS NULL OR (presentation_recovery_cycle_id GLOB 'preparation_cycle_[0-9a-f]*' AND length(presentation_recovery_cycle_id)=82)), "
     "presentation_recovery_stage TEXT CHECK(presentation_recovery_stage IS NULL OR presentation_recovery_stage IN ('extraction','provider','proposal','admission','projection')), "
     "presentation_recovery_outcome TEXT CHECK(presentation_recovery_outcome IS NULL OR presentation_recovery_outcome IN ('ready','failed')), "
+    # #1451: when an audiobook whose report admitted no recording is searched
+    # again; NULL for every other item.
+    "research_not_before INTEGER CHECK(research_not_before IS NULL OR research_not_before>=0), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "CHECK((presentation_recovery_cycle_id IS NULL AND presentation_recovery_stage IS NULL AND presentation_recovery_outcome IS NULL) OR (presentation_recovery_cycle_id IS NOT NULL AND presentation_recovery_stage IS NOT NULL)), "
     "CHECK((state='complete')=(outcome IS NOT NULL)), "

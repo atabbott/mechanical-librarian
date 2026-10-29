@@ -1493,6 +1493,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         provider_failure_code: str | None = None,
         claim_next: bool = False,
         provider_failure_root: str | None = None,
+        recording_unmatched: bool = False,
     ) -> None:
         self._review_preparation.complete_review_extraction_publication(
             action,
@@ -1502,6 +1503,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             provider_failure_code,
             claim_next,
             provider_failure_root,
+            recording_unmatched,
         )
 
     def fail_review_pipeline_action(
