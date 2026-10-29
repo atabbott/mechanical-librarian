@@ -28,6 +28,17 @@ revision is absent, or a cover has no independent revision, the item timestamp
 is retained as a conservative freshness fallback so changed bytes cannot reuse
 stale evidence.
 
+An item holding audio files Audiobookshelf plays (`audioFiles` members not
+marked `exclude`) is an audiobook, and `has_audio` records exactly that: an
+empty or wholly excluded list is not audio. An item that also holds an ebook is
+the recording with a supplementary ebook, as Audiobookshelf shows it, so it is
+classified and prepared as the audiobook (#1319). One EPUB beside it is read
+only as corroborating evidence in the report's `companion` section; any other
+ebook shape is no evidence and never makes the recording unpreparable. Its
+ebook files' identities and revisions are fingerprinted beside the tracks, so
+an edited EPUB re-prepares the item while playback still does not. Items that
+hold only one medium keep their exact earlier fingerprints.
+
 Catalogue discovery and current-item validation share one adapter-owned
 normalizer for the service-relative EPUB location and opaque file identity.
 Nested item directories, flat records, and path-only records therefore bind the

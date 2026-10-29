@@ -95,7 +95,7 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v62"
+REPORT_SCHEMA = "metadata-report-v63"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1371,6 +1371,61 @@ class FileFacts:
             "format": self.format,
             "identity": self.identity,
             "selected_index": self.selected_index,
+        }
+
+
+# The claim kinds an audiobook's companion EPUB contributes (#1319): the ones
+# that name the work and its publication, read as corroboration only.
+COMPANION_EBOOK_CLAIM_KINDS = frozenset(
+    {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.ISBN, ClaimKind.PUBLISHER}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CompanionEbook:
+    """The EPUB an audiobook item holds beside its tracks (#1319).
+
+    It is corroborating local evidence about the recording's work, never the
+    preparable unit and never a source of proposed values: its claims live
+    here rather than among the report's local claims, so nothing that reads
+    those claims -- proposals, discovery, admission -- reads an ebook's ISBN
+    or title as the recording's own. `content_digest` is `None` exactly when
+    the EPUB could not be inspected; the recording is prepared regardless.
+    """
+
+    identity: str
+    content_digest: str | None
+    claims: tuple[LocalClaim, ...] = ()
+
+    def __post_init__(self) -> None:
+        if _DIGEST.fullmatch(self.identity) is None or (
+            self.content_digest is not None
+            and (
+                type(self.content_digest) is not str
+                or _DIGEST.fullmatch(self.content_digest) is None
+            )
+        ):
+            raise ReportValueError("companion ebook identity is invalid")
+        if (
+            type(self.claims) is not tuple
+            or any(
+                type(value) is not LocalClaim
+                or value.kind not in COMPANION_EBOOK_CLAIM_KINDS
+                or value.basis not in _SOURCE_CLAIM_BASES[FieldSource.EPUB]
+                for value in self.claims
+            )
+            or (self.content_digest is None and self.claims)
+        ):
+            raise ReportValueError("companion ebook claims are invalid")
+        references = tuple(value.reference for value in self.claims)
+        if len(set(references)) != len(references):
+            raise ReportValueError("companion ebook claim references are duplicated")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "claims": [value.to_data() for value in self.claims],
+            "content_digest": self.content_digest,
+            "identity": self.identity,
         }
 
 
@@ -4297,6 +4352,7 @@ class MetadataReport:
     # The library's declared languages when the report was prepared (#1315).
     # Every admission read of this report applies them, so they travel with it.
     library_languages: tuple[str, ...] = ()
+    companion: CompanionEbook | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -4315,6 +4371,10 @@ class MetadataReport:
             self.audio is not None and type(self.audio) is not AudioFacts
         ) or is_audio != (self.audio is not None):
             raise ReportValueError("audio section does not match the selected file")
+        if self.companion is not None and (
+            type(self.companion) is not CompanionEbook or self.audio is None
+        ):
+            raise ReportValueError("companion ebook does not match the selected file")
         if self.schema_version != REPORT_SCHEMA:
             raise ReportValueError("report schema is unsupported")
         if self.comparison_version != COMPARISON_VERSION:
@@ -4935,6 +4995,7 @@ class MetadataReport:
         identifier_evidence: tuple[IdentifierEvidence, ...] | None = None,
         cover_sources: tuple[CoverSource, ...] = (),
         audio: AudioFacts | None = None,
+        companion: CompanionEbook | None = None,
         library_languages: tuple[str, ...] = (),
     ) -> Self:
         local_status = (
@@ -5003,6 +5064,7 @@ class MetadataReport:
             identifiers,
             cover_sources,
             audio,
+            companion,
             library_languages,
         )
         data.pop("report_id")
@@ -5018,6 +5080,7 @@ class MetadataReport:
             identifiers,
             cover_sources,
             audio=audio,
+            companion=companion,
             library_languages=library_languages,
         )
 
@@ -5039,6 +5102,7 @@ class MetadataReport:
             self.identifier_evidence,
             self.cover_sources,
             self.audio,
+            self.companion,
             self.library_languages,
         )
 
@@ -6522,10 +6586,12 @@ def _report_data(
     identifier_evidence: tuple[IdentifierEvidence, ...],
     cover_sources: tuple[CoverSource, ...],
     audio: AudioFacts | None = None,
+    companion: CompanionEbook | None = None,
     library_languages: tuple[str, ...] = (),
 ) -> dict[str, object]:
     return {
         "audio": None if audio is None else audio.to_data(),
+        "companion": None if companion is None else companion.to_data(),
         "file": file.to_data(),
         "library_languages": list(library_languages),
         "field_results": [value.to_data() for value in field_results],
@@ -6547,13 +6613,15 @@ def _report_data(
 def _report_from_data(value: object) -> MetadataReport:
     # A predecessor document is refused for what it is before any section of
     # it is read under the current vocabulary, including the root key set,
-    # which v62 widened with the library languages (#1315).
+    # which v62 widened with the library languages (#1315) and v63 with the
+    # companion ebook (#1319).
     if type(value) is dict and value.get("schema_version") != REPORT_SCHEMA:
         raise ReportValueError("report schema is unsupported")
     root = _object(
         value,
         {
             "audio",
+            "companion",
             "comparison_version",
             "covers",
             "field_results",
@@ -6617,6 +6685,18 @@ def _report_from_data(value: object) -> MetadataReport:
         root["comparison_version"],
         _audio_facts_from_data(root["audio"]),
         tuple(_strings(root["library_languages"])),
+        _companion_from_data(root["companion"]),
+    )
+
+
+def _companion_from_data(value: object) -> CompanionEbook | None:
+    if value is None:
+        return None
+    item = _object(value, {"claims", "content_digest", "identity"})
+    return CompanionEbook(
+        item["identity"],
+        item["content_digest"],
+        tuple(_local_claim_from_data(claim) for claim in _list(item["claims"])),
     )
 
 
@@ -7476,6 +7556,8 @@ __all__ = [
     "AUDIO_DISCOVERY_TITLE_BASES",
     "AudioDiscoveryTitle",
     "AudioFacts",
+    "COMPANION_EBOOK_CLAIM_KINDS",
+    "CompanionEbook",
     "MetadataReport",
     "ProviderCandidate",
     "ProviderClaim",

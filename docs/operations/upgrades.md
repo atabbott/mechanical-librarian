@@ -11,6 +11,15 @@ language than the item's are never elected automatically. **Clean rebuild
 required** for every predecessor application database; the report schema is
 unchanged. No migration, adoption, conversion, import or downgrade is supplied.
 
+#1319 advances the report to `metadata-report-v63`: an Audiobookshelf item
+holding included audio files and an EPUB is prepared as its audiobook, and the
+EPUB's title, creator, ISBN and publisher claims are kept in the report's
+`companion` section as corroborating evidence, never as proposed values; the
+companion EPUB is bound into currentness. `has_audio` is true only when the item
+holds included audio files. No policy version moves. **Clean rebuild required**
+for every predecessor application database; startup refuses v62 reports before
+mutation. No migration, adoption, conversion, import or downgrade is supplied.
+
 #1315 and #1305 advance the report to `metadata-report-v62` and the proposal
 policy to `fixed-conservative-v39`: a library may declare its `languages`, an
 audiobook report records the list it was prepared under, an audiobook product
@@ -203,7 +212,7 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v62`, `proposal-set-v8` under
+The current build uses `metadata-report-v63`, `proposal-set-v8` under
 `fixed-conservative-v40`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
 and `deterministic-shadow-decision-policy-v24`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**

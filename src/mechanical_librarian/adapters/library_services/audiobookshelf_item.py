@@ -294,16 +294,25 @@ def _snapshot(
         raise MetadataReportError("target response is invalid")
     if len(files_source) > 128:
         raise MetadataReportError("target response is invalid")
-    files = tuple(_file(value, service_path, root) for value in files_source)
     audio_source = media.get("audioFiles")
+    # The bound is measured on the set the service plays, so the records it
+    # excludes are dropped before the count: an item of five hundred and
+    # twenty files with ten excluded is a set this build composes.
+    audio_records = included_audio_records(audio_source) or ()
+    companion = None
+    if audio_records and files_source:
+        # Included audio beside an ebook is a recording with a supplementary
+        # ebook, as the service shows it: the item is the audiobook, and one
+        # usable EPUB is kept only as corroborating evidence (#1319). Any other
+        # ebook shape is simply not evidence; it never makes the recording
+        # unpreparable.
+        companion = _companion(files_source, service_path, root)
+        files_source = []
+    files = tuple(_file(value, service_path, root) for value in files_source)
     if files:
         media_kind = "ebook"
     elif type(audio_source) is list:
         media_kind = "audiobook"
-        # The bound is measured on the set the service plays, so the records it
-        # excludes are dropped before the count: an item of five hundred and
-        # twenty files with ten excluded is a set this build composes.
-        audio_records = included_audio_records(audio_source) or ()
         if len(audio_records) > MAX_AUDIO_TRACKS:
             # A set this build cannot compose is a bound this build states,
             # not a target that answered badly: it is reported as the item's
@@ -334,7 +343,7 @@ def _snapshot(
         and type(title_field.value) is str
         else None
     )
-    return TargetSnapshot(media_kind, title, files, cover, fields)
+    return TargetSnapshot(media_kind, title, files, cover, fields, companion)
 
 
 def _target_fields(
@@ -579,6 +588,16 @@ def _file(
     except ValueError as error:
         raise MetadataReportError(str(error)) from None
     return TargetFile(location.identity, location.relative_path, location.format)
+
+
+def _companion(source: list[Any], service_path: str, item: object) -> TargetFile | None:
+    if len(source) != 1:
+        return None
+    try:
+        value = _file(source[0], service_path, item)
+    except MetadataReportError:
+        return None
+    return value if value.format == "epub" else None
 
 
 def _audio_files(

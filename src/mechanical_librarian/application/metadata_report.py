@@ -78,6 +78,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIO_DISCOVERY_TITLE_BASES,
     AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
+    COMPANION_EBOOK_CLAIM_KINDS,
     CORROBORATED_RULE_AUTHORITY,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
@@ -86,6 +87,7 @@ from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
     ClaimKind,
     ClaimScope,
+    CompanionEbook,
     DateLinkConfidence,
     DispatchOutcome,
     EditionEnrichmentOverflow,
@@ -243,10 +245,19 @@ class TargetSnapshot:
     files: tuple[TargetFile, ...]
     cover: TargetCover | None = None
     fields: tuple[TargetField, ...] = ()
+    # The one EPUB an audiobook item holds beside its tracks, read only as
+    # corroborating evidence and never prepared on its own (#1319).
+    companion: TargetFile | None = None
 
     def __post_init__(self) -> None:
         if not self.fields:
             object.__setattr__(self, "fields", default_target_fields(self.title))
+        if self.companion is not None and (
+            self.media_kind != "audiobook"
+            or type(self.companion) is not TargetFile
+            or self.companion.format != "epub"
+        ):
+            raise MetadataReportError("target companion ebook is inconsistent")
         facts = TargetFacts("snapshot", "snapshot", "snapshot", self.fields)
         if self.cover is None and facts.fields[-1].state is TargetFieldState.VALUE:
             raise MetadataReportError("target cover field is inconsistent")
@@ -3054,6 +3065,7 @@ class GenerateMetadataReport:
         repository: ReportRepository | None = None
         local: InspectionResult | None = None
         audio: AudioInspectionResult | None = None
+        companion: CompanionEbook | None = None
         try:
             repository = self._repository_factory()
             current_document = repository.current_optional(
@@ -3087,6 +3099,8 @@ class GenerateMetadataReport:
                             or type(audio.audio) is not AudioFacts
                         ):
                             raise ItemInspectionError("EPUB inspection failed")
+                        if initial.companion is not None:
+                            companion = self._inspect_companion(initial.companion)
                     else:
                         local = self._inspector.inspect(
                             self._mount,
@@ -3164,6 +3178,7 @@ class GenerateMetadataReport:
                 audio,
                 combined_claims,
                 expected_current,
+                companion,
             )
         # ``local`` is the extraction result on every remaining path: the
         # audiobook branch returned above and the gate admitted no third kind.
@@ -3477,6 +3492,7 @@ class GenerateMetadataReport:
         audio: AudioInspectionResult,
         combined_claims: tuple[LocalClaim, ...],
         expected_current: str | None,
+        companion: CompanionEbook | None = None,
     ) -> str:
         """Publish one audiobook report over its own discovery plan.
 
@@ -3606,12 +3622,43 @@ class GenerateMetadataReport:
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
                 audio=_audio_with_runtime_observations(facts, tuple(observations)),
+                companion=companion,
                 library_languages=self._library.languages,
             )
         except Exception as error:
             _release_repository(repository, error)
             raise
         return self._publish(repository, report, expected_current)
+
+    def _inspect_companion(self, companion: TargetFile) -> CompanionEbook:
+        """Read an audiobook's companion EPUB as corroboration, never as a gate.
+
+        The recording is the preparable unit, so an EPUB beside it that cannot
+        be inspected withholds only its own evidence: the report records the
+        file it could not read, which keeps currentness bound to it, and the
+        recording is prepared from its own media as it would be alone (#1319).
+        """
+        try:
+            result = self._inspector.inspect(
+                cast("MediaMountConfiguration", self._mount),
+                companion.relative_path,
+                self._limits.source_archive_bytes,
+            )
+        except Exception:
+            # Same undeclared archive, filesystem and decoding faults as the
+            # ebook branch's inspection; here they cost only this evidence.
+            return CompanionEbook(companion.identity, None)
+        if type(result) is not InspectionResult:
+            return CompanionEbook(companion.identity, None)
+        return CompanionEbook(
+            companion.identity,
+            result.content_digest,
+            tuple(
+                claim
+                for claim in result.claims
+                if claim.kind in COMPANION_EBOOK_CLAIM_KINDS
+            ),
+        )
 
     def _safe_read(self, item: str) -> TargetSnapshot:
         try:
@@ -3744,6 +3791,23 @@ def require_report_current(
             != tuple(value.sequence for value in retained.tracks)
             or _audio_set_identity_or_stale(identities) != report.file.identity
             or final.files[0].format != report.file.format
+            or (None if final.companion is None else final.companion.identity)
+            != (None if report.companion is None else report.companion.identity)
+        ):
+            raise CurrentnessError("target or media changed")
+        # A companion EPUB's claims are evidence this report states, so its
+        # bytes are re-proved like the tracks'. One the report could not read
+        # is bound by its identity alone: nothing was read from it.
+        if (
+            report.companion is not None
+            and final.companion is not None
+            and report.companion.content_digest is not None
+            and not inspector.unchanged(
+                mount,
+                final.companion.relative_path,
+                report.companion.content_digest,
+                limits.source_archive_bytes,
+            )
         ):
             raise CurrentnessError("target or media changed")
         # An audiobook's evidence is read from the files *and* from every

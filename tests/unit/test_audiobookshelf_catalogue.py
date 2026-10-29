@@ -1165,3 +1165,90 @@ def test_nested_cover_declarations_are_bound_into_catalogue_fingerprint():
         )
         fingerprints.add(entry.source_fingerprint)
     assert len(fingerprints) == len(declarations)
+
+
+def _mixed_item(
+    *, epub_revision: int = 1, updated_at: int = 1, audio: object = None
+) -> dict[str, object]:
+    detail = _audio_item(
+        [_audio_record()] if audio is None else audio,
+    )
+    detail["updatedAt"] = updated_at
+    record = cast(list[dict[str, object]], cast(dict, detail["media"])["audioFiles"])
+    for value in record:
+        cast(dict[str, object], value["metadata"])["mtimeMs"] = 1
+    cast(dict[str, object], detail["media"])["ebookFile"] = {
+        "ebookFormat": "epub",
+        "ino": "inode-epub",
+        "metadata": {"relPath": "book.epub", "size": 7, "mtimeMs": epub_revision},
+    }
+    return detail
+
+
+def test_an_item_holding_audio_and_an_epub_is_prepared_as_its_audiobook() -> None:
+    """The recording is the preparable unit; the EPUB is evidence (#1319)."""
+    entry = catalogue_entry(
+        "primary",
+        _library("audio"),
+        _AUDIO_MOUNT,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        _mixed_item(),
+    )
+
+    assert (entry.classification, entry.eligible) == ("singular-supported", True)
+    assert (entry.format, entry.service_path) == ("m4b", "book.m4b")
+    assert (entry.has_audio, entry.has_ebook) == (True, True)
+
+
+def test_a_mixed_item_moves_with_its_epub_but_not_with_playback() -> None:
+    baseline = _audio_fingerprint(_mixed_item())
+
+    assert baseline == _audio_fingerprint(_mixed_item(updated_at=9))
+    assert baseline != _audio_fingerprint(_mixed_item(epub_revision=2))
+    # The same tracks alone are a different item from the tracks with an EPUB.
+    assert baseline != _audio_fingerprint(_recorded_audio_item(1, 1))
+
+
+def test_single_medium_fingerprints_keep_their_exact_earlier_values() -> None:
+    """Fingerprints of items that hold one medium are unchanged by #1319.
+
+    The digests are the ones main produced for these fixtures before the
+    change, so no audio-only or ebook-only item is prepared again for it.
+    """
+    summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+
+    assert _audio_fingerprint(_recorded_audio_item(1, 1)) == (
+        "8323b3c382777d3b5df96fa5584bd08bacaad9abb3741d1c511c70935e4768d6"
+    )
+    assert catalogue_entry(
+        "primary", _library("audio"), None, summary, _item()
+    ).source_fingerprint == (
+        "0858270f838bc1d9b966c92b43514293ff531a310ccd41cac9f26537c67253d2"
+    )
+
+
+@pytest.mark.parametrize(
+    "audio_files",
+    (
+        pytest.param([], id="empty"),
+        pytest.param([{**_audio_record(), "exclude": True}], id="all-excluded"),
+    ),
+)
+def test_an_ebook_with_no_included_audio_has_no_audio(audio_files: object) -> None:
+    """An empty or wholly excluded `audioFiles` list is not audio (#1319).
+
+    Audiobookshelf answers an empty list for every ebook-only item, which
+    once set `has_audio` and put every ebook under the catalogue's audio
+    filter.
+    """
+    detail = _item()
+    cast(dict[str, object], detail["media"])["audioFiles"] = audio_files
+    entry = catalogue_entry(
+        "primary",
+        _library(),
+        None,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        detail,
+    )
+
+    assert (entry.has_ebook, entry.has_audio, entry.format) == (True, False, "epub")

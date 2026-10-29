@@ -8,6 +8,13 @@
   difference. Marketing lines are never chosen as subtitles, and genres or
   synopses from a store in another language wait for your choice (#1317).
 
+- **Clean rebuild required.** An Audiobookshelf item that holds an audiobook
+  and an EPUB is now prepared as the audiobook, as Audiobookshelf shows it,
+  rather than only as an ebook. The EPUB's title, authors, ISBN and publisher
+  are kept with the report as supporting evidence and are never offered as the
+  audiobook's own values. The catalogue's audio filter now lists only items
+  that hold audio files; it used to list every ebook as well (#1319).
+
 - **Clean rebuild required.** A library can declare the languages it holds in
   its configuration file (`languages`, first preferred). Audible is then
   searched in those languages' stores first, and an audiobook that states no

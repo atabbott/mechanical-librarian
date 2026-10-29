@@ -11,6 +11,15 @@ language than the item's are never elected automatically. **Clean rebuild
 required** for every predecessor application database; the report schema is
 unchanged. No migration, adoption, conversion, import or downgrade is supplied.
 
+#1319 advances the report to `metadata-report-v63`: an Audiobookshelf item
+holding included audio files and an EPUB is prepared as its audiobook, and the
+EPUB's title, creator, ISBN and publisher claims are kept in the report's
+`companion` section as corroborating evidence, never as proposed values; the
+companion EPUB is bound into currentness. `has_audio` is true only when the item
+holds included audio files. No policy version moves. **Clean rebuild required**
+for every predecessor application database; startup refuses v62 reports before
+mutation. No migration, adoption, conversion, import or downgrade is supplied.
+
 #1315 and #1305 advance the report to `metadata-report-v62` and the proposal
 policy to `fixed-conservative-v39`: a library may declare its `languages`, an
 audiobook report records the list it was prepared under, an audiobook product
@@ -222,7 +231,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v62` plus `proposal-set-v8` under
+  `metadata-report-v63` plus `proposal-set-v8` under
   `fixed-conservative-v40`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
