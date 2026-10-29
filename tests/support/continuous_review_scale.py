@@ -1270,6 +1270,19 @@ class _InstalledPreparationRun:
             ignore_https_errors=True, viewport={"width": 1280, "height": 800}
         )
         page = context.new_page()
+        # Every Settings read the session makes, from whichever surface makes
+        # it. The masthead and Library share one cached Settings read with the
+        # Settings route, which holds it fresh for 15s, so opening Settings
+        # right after Library may render from a read already answered.
+        settings_statuses: list[int] = []
+        page.on(
+            "response",
+            lambda response: (
+                settings_statuses.append(response.status)
+                if urlsplit(response.url).path == "/api/v1/settings"
+                else None
+            ),
+        )
         try:
             page.goto(self._origin + "/login")
             page.get_by_label("Password").fill("synthetic password")
@@ -1282,13 +1295,12 @@ class _InstalledPreparationRun:
             page.wait_for_url(
                 re.compile(rf"{re.escape(self._origin)}/library(?:\?.*)?$")
             )
-            with page.expect_response("**/api/v1/settings") as settings_info:
-                page.get_by_role("link", name="Settings", exact=True).click()
-            settings_response = settings_info.value
-            assert settings_response.status == 200
+            page.get_by_role("link", name="Settings", exact=True).click()
             expect(
                 page.get_by_text("Configured · ····oken", exact=True)
             ).to_be_visible()
+            assert settings_statuses, "Settings rendered without a settings read"
+            assert set(settings_statuses) == {200}, settings_statuses
             assert "synthetic-token" not in page.content()
             page.get_by_role("link", name="Activity", exact=True).click()
             page.get_by_role(
