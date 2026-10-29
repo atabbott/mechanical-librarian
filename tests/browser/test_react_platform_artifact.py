@@ -4857,11 +4857,38 @@ _ROW_OVERLAPS = """() => [...document.querySelectorAll('.cm-activity-event-group
   })"""
 
 
+# Each pagination or filter control cut short by its own box or by an
+# ancestor that clips it. A row that scrolls, as the phone filters do, is not
+# cutting what it scrolls to.
+_CUT_CONTROLS = """() => [...document.querySelectorAll(
+    '.cm-activity-pagination :is(button, input, .cm-dropdown-trigger, strong, span),'
+    + ' .cm-activity-filters button')]
+  .filter((node) => node.getClientRects().length)
+  .flatMap((node) => {
+    const name = `${node.className || node.tagName} "${node.textContent.trim().slice(0, 32)}"`;
+    const box = node.getBoundingClientRect();
+    const found = node.scrollWidth - node.clientWidth > 1
+      ? [`${name} is clipped by ${node.scrollWidth - node.clientWidth}px`] : [];
+    for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+      const overflow = getComputedStyle(parent).overflowX;
+      if (overflow === 'auto' || overflow === 'scroll') break;
+      if (overflow === 'visible') continue;
+      const bounds = parent.getBoundingClientRect();
+      const past = Math.max(box.right - bounds.right, bounds.left - box.left);
+      if (past > 0.5) {
+        found.push(`${name} is cut by ${Math.round(past)}px`);
+        break;
+      }
+    }
+    return found;
+  })"""
+
+
 def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
     """At ordinary text and with root font-size 200%, every Activity row -- a
     check's members open -- keeps its promises and whole labels, with no cell
-    clipped, past its row or over another, from the widest window to the
-    narrowest phone (#1291)."""
+    clipped, past its row or over another, and no pagination or filter control
+    cut short, from the widest window to the narrowest phone (#1291)."""
     styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
     text = "100%"
     with ExitStack() as stack:
@@ -4901,6 +4928,8 @@ def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
                     for failure in node.evaluate(_NAMED_CLIP)
                 ]
                 assert clipped == [], f"{where}: {clipped}"
+                cut = page.evaluate(_CUT_CONTROLS)
+                assert cut == [], f"{where}: {cut}"
 
 
 def test_policy_sidebar_keeps_its_header_in_view_on_short_screens() -> None:

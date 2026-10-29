@@ -1050,6 +1050,19 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
    category and Details, then the work, then the change beside its result; too
    narrow for even that, everything takes its own line. */
 .cm-activity-ledger { container-type:inline-size; }
+/* In a narrow ledger -- a phone, or enlarged text -- a filter's label wraps inside its pill, and the pager's
+   summary, page size and pages wrap rather than run past the ledger, as they do on the narrowest phones. */
+@container (max-width:47.5rem) {
+  .cm-activity-filters button { max-width:100%; white-space:normal; overflow-wrap:normal; }
+  .cm-activity-pagination-summary { flex-wrap:wrap; min-width:0; white-space:normal; }
+  .cm-activity-page-size { flex-wrap:wrap; min-width:0; max-width:100%; margin-left:0; }
+  .cm-activity-page-size .cm-dropdown { min-width:0; max-width:100%; }
+  .cm-activity-page-size .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
+  /* The page jump takes a row of its own above the four pages, which share the rows below. */
+  .cm-activity-pagination-nav { display:flex; flex-wrap:wrap; min-width:0; }
+  .cm-activity-pagination-nav button { flex:1 0 auto; padding-inline:.45rem; }
+  .cm-activity-pagination-nav > .cm-activity-page-jump { flex:1 0 100%; order:-1; min-width:0; min-height:44px; flex-wrap:wrap; justify-content:center; white-space:normal; }
+}
 @container (max-width:47.5rem) {
   .cm-activity-columns { display:none; }
   .cm-activity-event-group > h3 { padding:.55rem .9rem .3rem; }
