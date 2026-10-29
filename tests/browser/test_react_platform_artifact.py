@@ -3880,6 +3880,49 @@ def test_compact_selection_brings_back_to_works_into_view() -> None:
                     assert not page.evaluate(_FOCUS_ON_BODY), where
 
 
+_PULSE = """() => getComputedStyle(
+  document.querySelector('.route-state[aria-busy="true"] h1'), '::before').animationName"""
+
+
+def _busy_pulse(preference: str) -> str:
+    """The busy heading dot's animation while Library waits on its consent read,
+    with no system motion preference and the owner's motion setting given."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1100, "height": 800})
+        page.emulate_media(reduced_motion="no-preference")
+        _serve_cohort(page)
+        held: list[Route] = []
+        appearance = json.dumps({"reduced_motion": preference})
+        # Routes registered later take precedence over the cohort's.
+        page.route(
+            "**/api/v1/appearance",
+            lambda route: route.fulfill(
+                content_type="application/json", body=appearance
+            ),
+        )
+        page.route("**/api/v1/activity/consent-state", lambda route: held.append(route))
+        page.goto("https://react-platform.invalid/library?lens=all")
+        expect(page.get_by_role("heading", name="Loading library…")).to_be_visible()
+        if preference == "always_reduced":
+            expect(page.locator("html")).to_have_attribute(
+                "data-reduced-motion", "always-reduced"
+            )
+        animation = cast("str", page.evaluate(_PULSE))
+        for route in held:
+            route.abort()
+        return animation
+
+
+def test_the_loading_pulse_obeys_always_reduced_motion() -> None:
+    """The busy heading's dot pulses only while motion is allowed: the owner's
+    "Always reduced" setting stills it with no system preference (#1291)."""
+    assert _busy_pulse("follow_system") == "live-state-pulse"
+    assert _busy_pulse("always_reduced") == "none"
+
+
 def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
     """Closing the Attention rail over a compact selection, with its Close or
     the toolbar's toggle, brings the workspace's top, where Back to works leads
