@@ -247,14 +247,17 @@ def retained_report_as_current(document: str) -> MetadataReport:
     every refused product to its identifier and kept nothing else of it, and
     moved comparison to `closed-title-creator-publication-work-identity-v6`,
     whose only change, a lone apostrophe between letters, no relabelled
-    fixture states. Nothing is migrated: the copy is never written back.
+    fixture states. v62 added the `companion` ebook section, null here since
+    an earlier producer prepared no item beside an EPUB as an audiobook.
+    Nothing is migrated: the copy is never written back.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v61"
+    data["schema_version"] = "metadata-report-v62"
     data["comparison_version"] = COMPARISON_VERSION
+    data["companion"] = None
     for provider in data["providers"]:
         provider["refused_products"] = []
         for lane in provider["lanes"]:
@@ -369,7 +372,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v61'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v62'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -388,10 +391,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v61'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v62'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v61'", f"= '{version}'"
+            "= 'metadata-report-v62'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

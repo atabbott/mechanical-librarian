@@ -1,5 +1,14 @@
 # Upgrades and compatibility
 
+#1319 advances the report to `metadata-report-v62`: an Audiobookshelf item
+holding included audio files and an EPUB is prepared as its audiobook, and the
+EPUB's title, creator, ISBN and publisher claims are kept in the report's
+`companion` section as corroborating evidence, never as proposed values; the
+companion EPUB is bound into currentness. `has_audio` is true only when the item
+holds included audio files. No policy version moves. **Clean rebuild required**
+for every predecessor application database; startup refuses v61 reports before
+mutation. No migration, adoption, conversion, import or downgrade is supplied.
+
 #1451 adds the `research_not_before` column to `review_preparation_work`: an
 audiobook whose report admitted no recording is prepared again a week later,
 and that search keeps an open case unless it admits a recording (ADR-0089). No
@@ -183,7 +192,7 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v61`, `proposal-set-v8` under
+The current build uses `metadata-report-v62`, `proposal-set-v8` under
 `fixed-conservative-v38`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
 and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**

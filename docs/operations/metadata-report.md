@@ -110,7 +110,7 @@ markup only once decoded, or that would decode again, is kept as stored. A
 description also records `restorable`: whether writing its text back would
 store it as it is stored now. Text whose only defect is C1 control characters is refused by the
 validator with its own reason, but the report and UI still show that field only
-as `malformed` (#1251). The report is `metadata-report-v61`. For the title
+as `malformed` (#1251). The report is `metadata-report-v62`. For the title
 specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
@@ -412,6 +412,19 @@ currentness check both follow it. Audiobook
 libraries without a named read-only mount stay excluded, exactly as before. See
 [ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md) and
 [ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md).
+
+An audiobook item that also holds one EPUB, which Audiobookshelf shows as a
+supplementary ebook, records it in the report's `companion` section (#1319):
+the EPUB's identity, its content digest, and the title, creator, ISBN and
+publisher claims the isolated EPUB inspector read from it under the ordinary
+source-archive bound. These claims are corroborating evidence about the work.
+They are deliberately not among the report's local claims, so no proposal,
+discovery lane, field result or admission reads an ebook's ISBN or title as
+the recording's own. An EPUB the inspector cannot read withholds only its own
+evidence: the section keeps its identity with a null digest and no claims, and
+the recording is prepared from its own media. Currentness re-proves the
+companion beside the tracks, so an EPUB added, removed, replaced or edited
+makes the report stale. Every other report states `companion` as null.
 
 The owner-facing evidence view also states what is wrong with the media itself,
 as a closed vocabulary of typed observations distinct from the claim set: none
