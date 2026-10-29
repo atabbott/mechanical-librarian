@@ -116,7 +116,7 @@ def test_review_receipt_keeps_complete_mixed_provider_report_for_proposal():
     receipt = generate.call_args.kwargs["publication_receipt"]
     receipt(repository, report)
     repository.complete_review_extraction_publication.assert_called_once_with(
-        action, "report-current", unittest.mock.ANY, 0, None, False, None
+        action, "report-current", unittest.mock.ANY, 0, None, False, None, False
     )
 
 
@@ -168,6 +168,8 @@ def test_review_receipt_ends_an_audiobook_report_at_its_local_evidence():
         "evidence_only",
         False,
         None,
+        # No provider admitted a recording, so the item is searched again.
+        True,
     )
 
 

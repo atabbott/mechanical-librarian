@@ -113,3 +113,4 @@ an accepted ADR to make history match current preference; supersede it.
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations, not source bytes |
 | [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |
+| [0089](0089-unmatched-audiobook-research.md) | accepted | Search an unmatched audiobook again |

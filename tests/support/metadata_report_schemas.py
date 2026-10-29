@@ -296,6 +296,15 @@ PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
 )
 
 
+# Every producer before #1451 kept no re-search mark on a preparation work.
+PRIOR_REVIEW_WORK_SQL = persistence_schema._REVIEW_WORK_SQL.replace(
+    "research_not_before INTEGER CHECK(research_not_before IS NULL OR "
+    "research_not_before>=0), ",
+    "",
+)
+assert PRIOR_REVIEW_WORK_SQL != persistence_schema._REVIEW_WORK_SQL
+
+
 # Every producer before #1285 admitted only the three original human outcomes.
 PRIOR_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw')", "'reject')"
