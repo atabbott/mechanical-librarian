@@ -1110,9 +1110,15 @@ def _chapter_candidate_support(
     title: str | None,
     authors: tuple[str, ...],
     requested_asin: str | None,
+    library_languages: tuple[str, ...] = (),
 ) -> bool:
     """Qualify raw recording evidence before shaping can discard its vetoes."""
-    if recording_variant_conflict(candidate, local_claims, title or "") is not None:
+    if (
+        recording_variant_conflict(
+            candidate, local_claims, title or "", library_languages
+        )
+        is not None
+    ):
         return False
     if not provider_candidate_exact_work_identity_admission(
         candidate, title or "", authors, audiobook=audio is not None
@@ -1148,10 +1154,27 @@ def _chapter_candidate_support(
 
 
 def _stated_runtime_admitted(report: MetadataReport) -> bool:
-    """Keep the existing runtime-first decision identical for both consumers."""
+    """Keep the existing runtime-first decision identical for both consumers.
+
+    A product that conflicts with the recording on language or abridgement is
+    another recording however closely its runtime agrees, so it never admits
+    here (#1305). A WORK lane keeps such a product's runtime as a lookup hint,
+    which is how it reached this path.
+    """
+    title = report.target.current_title or ""
     return any(
         observation.status is ProviderStatus.CANDIDATES
-        and runtime_corroborated_candidate(observation.candidates, report.local_claims)
+        and runtime_corroborated_candidate(
+            tuple(
+                candidate
+                for candidate in observation.candidates
+                if recording_variant_conflict(
+                    candidate, report.local_claims, title, report.library_languages
+                )
+                is None
+            ),
+            report.local_claims,
+        )
         is not None
         for observation in report.providers
     )
@@ -1217,6 +1240,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                     report.target.current_title,
                     authors,
                     asin,
+                    report.library_languages,
                 )
             ):
                 vetoed.add(asin)
@@ -1272,6 +1296,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                 report.target.current_title,
                 authors,
                 asin,
+                report.library_languages,
             ):
                 support.append((observation.provider, candidate.identity, asin))
     eligible = tuple(
@@ -1465,6 +1490,7 @@ def _corroborated_distance(
     authors: tuple[str, ...],
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
+    library_languages: tuple[str, ...],
 ) -> int | None:
     """The tight-band distance of one product the rule admits, or ``None``."""
     local = local_claim_runtime_seconds(local_claims)
@@ -1476,7 +1502,8 @@ def _corroborated_distance(
         or claims is None
         or stated_runtime_agreement(local, candidate).outcome
         is not CorroborationOutcome.CORROBORATED
-        or recording_variant_conflict(candidate, local_claims, title) is not None
+        or recording_variant_conflict(candidate, local_claims, title, library_languages)
+        is not None
     ):
         return None
     provider_title, provider_subtitle, provider_authors = claims
@@ -1529,6 +1556,7 @@ def corroborated_recording_candidate(
     authors: tuple[str, ...],
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
+    library_languages: tuple[str, ...] = (),
 ) -> ProviderCandidate | None:
     """Choose the one product the corroborated admission rule admits (#1307).
 
@@ -1553,7 +1581,12 @@ def corroborated_recording_candidate(
         for candidate in candidates
         if (
             distance := _corroborated_distance(
-                candidate, title, authors, local_claims, corroboration
+                candidate,
+                title,
+                authors,
+                local_claims,
+                corroboration,
+                library_languages,
             )
         )
         is not None
@@ -1583,6 +1616,7 @@ def band_first_candidate(
     title: str,
     local_claims: tuple[LocalClaim, ...],
     corroboration: RecordingCorroboration,
+    library_languages: tuple[str, ...] = (),
 ) -> ProviderCandidate | None:
     """Admit the one tight product of a set of title-admitted ones (#1260, #1307).
 
@@ -1613,7 +1647,8 @@ def band_first_candidate(
         len(tight) != 1
         or sum(outcome is CorroborationOutcome.CONTRADICTED for outcome, _ in outcomes)
         != len(admitted) - 1
-        or recording_variant_conflict(tight[0], local_claims, title) is not None
+        or recording_variant_conflict(tight[0], local_claims, title, library_languages)
+        is not None
         or _narrator_signal(
             (*corroboration.narrators, *_recording_narrators(local_claims)), tight[0]
         )

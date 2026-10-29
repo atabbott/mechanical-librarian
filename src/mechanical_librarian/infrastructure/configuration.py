@@ -32,6 +32,7 @@ from mechanical_librarian.application.configuration import (
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.domain.field_outcomes import MAX_LIBRARY_LANGUAGES
 from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_DEFAULT,
     OWNER_SESSION_LIFETIME_MAXIMUM,
@@ -276,6 +277,13 @@ class LibraryInput(_Closed):
     mount: Name | None
     provider_connections: Annotated[list[Name], Field(max_length=32)]
     policy_override: PolicyOverrideInput | None = None
+    # A per-field default, like `audio_source_bytes`: a document written
+    # before this key existed still validates, so it needs no schema
+    # increment. Tag shape and distinctness are checked by the library value.
+    languages: Annotated[
+        list[Annotated[StrictStr, Field(min_length=2, max_length=16)]],
+        Field(max_length=MAX_LIBRARY_LANGUAGES),
+    ] = []
 
 
 class LimitsInput(_Closed):
@@ -407,6 +415,7 @@ def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
                                 "provider_connections": tuple(
                                     sorted(item.provider_connections)
                                 ),
+                                "languages": tuple(item.languages),
                             }
                         )
                         for item in value.libraries

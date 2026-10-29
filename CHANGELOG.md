@@ -11,6 +11,13 @@
   current on reviews and Attention, and each Activity Details names its row's
   time (#1291).
 
+- **Clean rebuild required.** A library can declare the languages it holds in
+  its configuration file (`languages`, first preferred). Audible is then
+  searched in those languages' stores first, and an audiobook that states no
+  language is never matched to an edition in another language. An edition
+  whose runtime agrees but whose language or cut contradicts the recording is
+  no longer matched as it (#1315, #1305).
+
 - **Clean rebuild required.** An audiobook whose search admitted no recording
   is now searched again once a week, because Audible's search can list a
   recording it missed before. An open review case is replaced only when the new

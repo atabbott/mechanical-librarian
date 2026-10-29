@@ -868,6 +868,7 @@ def _lane_lookup(
         work_authors=plan.work_authors,
         recording_corroboration=plan.recording_corroboration,
         corroborated_rule=plan.corroborated_rule,
+        library_languages=plan.library_languages,
         requested_asin=lane.canonical_asin,
         title_basis=lane.title_basis,
     )

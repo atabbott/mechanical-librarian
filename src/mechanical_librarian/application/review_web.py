@@ -2668,6 +2668,7 @@ def _review_unselectable_evidence(
                             candidate,
                             report.local_claims,
                             report.target.current_title or "",
+                            report.library_languages,
                         )
                         is not None
                         or candidate_recording_runtime_veto(
@@ -2695,6 +2696,7 @@ def _review_unselectable_evidence(
                         candidate,
                         report.local_claims,
                         report.target.current_title or "",
+                        report.library_languages,
                     )
                     if narrator
                     else None
@@ -2706,6 +2708,8 @@ def _review_unselectable_evidence(
                     and language_is_unknown(claim.value)
                     else "Recording language conflicts with this item. "
                     if conflict == "recording_language_conflict"
+                    else "Recording language is not one of this library's. "
+                    if conflict == "recording_language_outside_library"
                     else "Recording variant conflicts with this item. "
                     if conflict is not None
                     else "Recording timing is invalid or conflicts with this item. "

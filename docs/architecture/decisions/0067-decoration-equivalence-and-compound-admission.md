@@ -303,8 +303,9 @@ their rules unchanged.
 
 A language contradiction needs a language the local file states, as
 `recording_variant_conflict` reads it everywhere; most audiobook files state
-none. A product in another language then fails the rule only by lacking a
-narrator or series agreement, or by its runtime.
+none. Where the library declares its languages (#1315, ADR-0064), a file that
+states none is held to them instead. A product in another language then fails
+the rule only by lacking a narrator or series agreement, or by its runtime.
 
 A title that runs on past the other with a new word is the shape of a sequel
 by the same author and narrator, so it admits only when its series position

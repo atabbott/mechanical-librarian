@@ -546,3 +546,57 @@ probe items, all within the floor-read band and none with a narrator
 disagreement. All 125 stored admissions and every control are unchanged. It
 ships with ADR-0067's #1307 amendment in `metadata-report-v61`. **Clean
 rebuild required** under ADR-0013.
+
+## Library languages and the stated-runtime conflict check (#1315, #1305)
+
+The owner approved on 2026-10-21 a per-library language declaration and asked
+that it be a prior, never a fact about an item. A library's `languages` is an
+ordered list of language tags, the first preferred, at most eight, each a
+distinct language and script and none of `und`, `mul`, `mis` or `zxx`. It is a
+documented configuration field with an empty default and no environment
+variable. Nothing writes it into an item: the item's language still comes only
+from evidence.
+
+`recording_variant_conflict` reads it where the recording states no known
+language of its own. A product stating a known language outside every declared
+one conflicts with the reason `recording_language_outside_library`, kept apart
+from `recording_language_conflict` so a reader can tell a refused language
+from a contradicted claim. One declared language is therefore exactly a
+language claim; several accept any of them and never choose one. A product
+that states no language, or an undetermined one, passes, and a language the
+file states outranks the library's. The check runs wherever the conflict
+check already runs, identifier lanes included: the only stronger evidence
+that admits another language is the recording's own language claim. An ebook
+report carries no list, since no ebook path reads it yet.
+
+An audiobook report records the list it was prepared under as
+`library_languages`, so report validation, the proposal set and the review
+surfaces replay the same admission, and a provider-retry successor keeps its
+source's list. The list is part of the batch and producer fingerprint, so a
+changed list prepares the library again.
+
+The list also orders the marketplaces the Audible catalogue and Audnexus walk
+for one library: the owner's configured marketplaces in the first declared
+language come first, then those in the second, each kept in the owner's
+order, and the rest after them. English is `us`, `uk`, `au`, `in` and `ca`,
+French `fr` and `ca`, and German, Italian, Spanish and Japanese their own
+store. A title search asks the first marketplace, so a German library searches
+Audible.de first. No marketplace is added or removed.
+
+#1305 found that the stated-runtime path never ran the conflict check: a WORK
+lane keeps a non-admitted product's runtime as a lookup hint, so a product
+admitted on its exact title whose runtime fell inside the tight band admitted
+the recording even when its language or format contradicted the file. Both
+the lane's band selection and `_stated_runtime_admitted` now skip a product
+with a recording conflict. A product refused this way keeps its work
+statements; it is no longer the recording.
+
+The report advances to `metadata-report-v62` and the proposal policy to
+`fixed-conservative-v39`. **Clean rebuild required** under ADR-0013. An
+aggregate replay over #1294's stored reports found 237 audiobook reports, 57
+stating a language, and 125 admitted. Audiobook-authority products stated 286
+English, one Italian and one German edition. Under the conflict check alone no
+admission changes. With an English declaration the two non-English products
+are refused; neither was inside the tight band and both reports keep their
+English admission, so no admission changes either. English orders the
+marketplaces exactly as the default does.
