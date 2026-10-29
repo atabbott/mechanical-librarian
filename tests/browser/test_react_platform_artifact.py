@@ -3923,6 +3923,64 @@ def test_the_loading_pulse_obeys_always_reduced_motion() -> None:
     assert _busy_pulse("always_reduced") == "none"
 
 
+# Each direct choice that runs past its grid, or past its own box.
+_CLIPPED_CHOICES = """() => [...document.querySelectorAll('.workspace-detail .direct-choice-grid')]
+  .flatMap((grid) => {
+    const bounds = grid.getBoundingClientRect();
+    return [...grid.children].flatMap((choice) => {
+      const box = choice.getBoundingClientRect();
+      const past = Math.max(box.right - bounds.right, bounds.left - box.left);
+      const inside = choice.scrollWidth - choice.clientWidth;
+      return [
+        ...(box.width && past > 0.5 ? [`${choice.className} past its grid by ${Math.round(past)}px`] : []),
+        ...(inside > 1 ? [`${choice.className} clipped by ${inside}px`] : []),
+      ];
+    });
+  })"""
+
+
+def test_attention_beside_a_work_never_clips_its_choices() -> None:
+    """With Attention open at 200% text, the selected work's choices are never
+    clipped and works rows stay whole: when three columns cannot fit, Attention
+    drops below the work, and opening it still brings its heading into view
+    (#1291)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1200, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: "html { font-size: 200% !important; }")
+        failures = []
+        for width in (1200, 1240, 1280, 1320, 1360, 1440):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all&attention=open")
+            page.wait_for_load_state("networkidle")
+            expect(
+                page.locator(".workspace-detail .direct-choice-grid").first
+            ).to_be_visible()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            failures += [
+                f"{width}px: {item}" for item in page.evaluate(_CLIPPED_CHOICES)
+            ]
+            split = page.evaluate(_POLICY_MID_WORD, _WORKS_ROWS)
+            if split:
+                failures += [
+                    f"{width}px: works row {word}"
+                    for word in page.evaluate(_NEEDLESS_SPLITS, [_WORKS_ROWS, split])
+                ]
+        assert failures == [], "\n".join(failures)
+        # Reopened where it sits below the work, its heading comes into view.
+        page.set_viewport_size({"width": 1200, "height": 900})
+        page.locator(".attention-toggle").click()
+        expect(page.locator(".attention-rail")).to_have_count(0)
+        page.locator(".attention-toggle").click()
+        heading = page.locator(".attention-rail h2").first
+        expect(heading).to_be_focused()
+        expect(heading).to_be_in_viewport()
+
+
 def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
     """Closing the Attention rail over a compact selection, with its Close or
     the toolbar's toggle, brings the workspace's top, where Back to works leads
