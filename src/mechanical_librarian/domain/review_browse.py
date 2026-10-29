@@ -22,6 +22,10 @@ import json
 from dataclasses import dataclass
 from typing import Any, cast
 
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.identifiers import canonical_json
 from mechanical_librarian.domain.metadata_report import (
     MAX_REPORT_BYTES,
@@ -34,6 +38,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetDestination,
     TargetFacts,
+    _cover_source_from_data,
     _provider_lane_dispatch_from_data,
     _request_accounting,
     report_content_address,
@@ -186,6 +191,20 @@ class ProviderLaneFacts:
 
 
 @dataclass(frozen=True, slots=True)
+class LibraryCoverFacts:
+    """The cover the library itself holds for a work, as its report retained it.
+
+    Only the ABS source's retrieved artifact is the library's own cover: a
+    provider's image is a proposal, and an EPUB's embedded image is not what
+    the library shows (#1290).
+    """
+
+    preview_digest: str
+    width: int
+    height: int
+
+
+@dataclass(frozen=True, slots=True)
 class LibraryReportFacts:
     """The report fields a browse row renders, each under its canonical rule."""
 
@@ -193,6 +212,7 @@ class LibraryReportFacts:
     target: TargetFacts
     file: FileFacts
     providers: tuple[ProviderLaneFacts, ...]
+    cover: LibraryCoverFacts | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,8 +249,8 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
     """Read what a browse row renders from a report, and nothing else.
 
     The report must carry its own content address, so every value read here is
-    the one the canonical writer validated. The target and file are then
-    reconstructed by their own canonical readers, and each provider lane's
+    the one the canonical writer validated. The target, file and cover sources
+    are then reconstructed by their own canonical readers, and each provider lane's
     authority, kinds, statuses, dispatch outcome and request count are checked
     against the enums and bounds the canonical provider reader applies to them;
     its candidates, evidence and diagnostics are not rendered and not read.
@@ -284,7 +304,29 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                 )
                 for value, state, dispatch in pairs or [(kind, status, None)]
             )
-        return LibraryReportFacts(report["report_id"], target, file, tuple(lanes))
+        covers = report["covers"]
+        if type(covers) is not list:
+            raise ValueError
+        # Every source is read, so a malformed one is refused even after the
+        # library's own cover.
+        sources = tuple(map(_cover_source_from_data, covers))
+        library_cover = next(
+            (
+                LibraryCoverFacts(
+                    source.artifact.preview_digest,
+                    source.artifact.width,
+                    source.artifact.height,
+                )
+                for source in sources
+                if source.kind is CoverSourceKind.ABS
+                and source.state is CoverSourceState.RETRIEVED
+                and source.artifact is not None
+            ),
+            None,
+        )
+        return LibraryReportFacts(
+            report["report_id"], target, file, tuple(lanes), library_cover
+        )
     except (KeyError, TypeError, ValueError) as error:
         raise ReviewBrowseValueError("review browse report is invalid") from error
 
@@ -387,6 +429,7 @@ def browse_review_case_id(case_document: str) -> str:
 
 __all__ = [
     "CaseBrowseFacts",
+    "LibraryCoverFacts",
     "LibraryReportFacts",
     "ProviderLaneFacts",
     "ReviewBrowseValueError",

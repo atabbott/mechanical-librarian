@@ -29,6 +29,8 @@ from tests.browser.fidelity_cohort import (
     TERMINAL_FAILURE_COPY,
     UNBROKEN_TITLE_SEGMENT,
     rich_payload,
+    synthetic_preview,
+    synthetic_preview_key,
 )
 from tests.browser.test_live_updates_browser import _ROW_PROMISES, _WIDER_TEXT
 from tests.browser.test_review_browser import _FOCUSED, _POLICY_MID_WORD, _TWO_FRAMES
@@ -157,6 +159,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 status=200,
                 content_type="image/png",
                 body=synthetic_image("PNG", (120, 180)),
+            )
+            return
+        if path == "/api/v1/library/cover":
+            key = synthetic_preview_key(path, parsed.query)
+            assert key is not None, route.request.url
+            route.fulfill(
+                status=200, content_type="image/png", body=synthetic_preview(key)
             )
             return
         if path.startswith("/api/v1/"):
@@ -775,7 +784,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             ), f"{option.inner_text()} clipped at {width}px"
                     page.set_viewport_size({"width": 390, "height": 844})
             assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
-            assert page.locator("img, script:not([src])").count() == 0
+            # The one image a page may hold is a work's retained cover mark
+            # (#1290); hostile text never becomes markup.
+            assert (
+                page.locator(
+                    "img:not(.library-book-mark.has-cover > img), script:not([src])"
+                ).count()
+                == 0
+            )
             assert page.evaluate("() => window.__metadataExecuted") is None
             if path == "/activity":
                 stage[0] = "activity:compact-initial-geometry"
@@ -1360,9 +1376,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             comparison.get_by_text(label, exact=True).wait_for()
             comparison.get_by_text("Recommended cover ready", exact=True).wait_for()
             assert "best confirmed match is ready" in comparison.inner_text()
-            for choice in comparison.locator("button[aria-pressed]").all():
+            for choice in comparison.locator("[role=radio]").all():
                 expect(choice).to_be_enabled()
-                expect(choice).to_have_attribute("aria-pressed", "false")
+                expect(choice).to_have_attribute("aria-checked", "false")
             for evidence in comparison.get_by_role(
                 "button", name=re.compile(r"^Evidence for .+ cover$")
             ).all():
@@ -1403,18 +1419,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     in unconfirmed.inner_text()
                 )
                 unconfirmed_choice = unconfirmed.get_by_role(
-                    "button", name="Choose Alternative 2 cover", exact=True
+                    "radio", name="Choose Alternative 2 cover", exact=True
                 )
+                # The card states the unconfirmed match before any tap, and a
+                # tap on it is the explicit choice; no dialog asks again (#1290).
                 expect(unconfirmed_choice).to_be_enabled()
-                unconfirmed_choice.click()
-                dialog = page.get_by_role("dialog")
-                expect(dialog).to_be_visible()
-                expect(
-                    dialog.get_by_text("Match not confirmed.", exact=False)
-                ).to_be_visible()
-                dialog.get_by_role("button", name="Cancel", exact=True).click()
-                expect(dialog).not_to_be_visible()
-                expect(unconfirmed_choice).to_be_focused()
+                expect(unconfirmed_choice).to_contain_text("Match not confirmed")
+                expect(page.get_by_role("dialog")).to_have_count(0)
                 current_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )
@@ -1425,7 +1436,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 comparison.get_by_text("Local library record", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-current")
-                ).to_have_attribute("aria-pressed", "false")
+                ).to_have_attribute("aria-checked", "false")
                 alternative_evidence = comparison.get_by_role(
                     "button", name="Evidence for Alternative 1 cover"
                 )
@@ -1434,11 +1445,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(alternative_evidence).to_have_count(1)
                 expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
                 expect(alternative_evidence).to_have_text("Hide evidence")
-                comparison.get_by_text("Open Library", exact=True).wait_for()
+                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                    "Open Library", exact=True
+                ).wait_for()
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-recommended")
-                ).to_have_attribute("aria-pressed", "false")
+                ).to_have_attribute("aria-checked", "false")
             if case_id == "case-3":
                 recommended = comparison.locator(".library-cover-card.is-recommended")
                 expect(recommended).to_have_count(1)
@@ -1449,7 +1462,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 recommended_evidence.click()
                 expect(recommended_evidence).to_have_attribute("aria-expanded", "true")
-                comparison.get_by_text("Open Library", exact=True).wait_for()
+                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                    "Open Library", exact=True
+                ).wait_for()
                 unavailable_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )
@@ -1553,7 +1568,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Cover" in page.locator(".field-filmstrip").inner_text()
         assert "Series" in page.locator(".field-filmstrip").inner_text()
         assert "Publication date" in page.locator(".field-filmstrip").inner_text()
-        genres = page.get_by_role("button", name="Show 1 additional field")
+        genres = page.get_by_role("button", name="Show 1 more field")
         expect(genres).to_be_visible()
         assert not (
             page.locator(".automatic-resolution-details").evaluate("node => node.open")
@@ -1582,9 +1597,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         genres_reappeared = True
         page.reload()
         page.locator(".field-filmstrip").wait_for()
-        expect(
-            page.get_by_role("button", name="Show 1 additional field")
-        ).to_have_count(0)
+        expect(page.get_by_role("button", name="Show 1 more field")).to_have_count(0)
         assert [
             label.splitlines()[0]
             for label in page.locator(".field-filmstrip button").all_inner_texts()
@@ -2024,8 +2037,30 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         compact_context = page.locator(".automatic-resolution-details").inner_text()
         assert "Subtitle" in compact_context
         assert "Series" not in compact_context
-        compact_genres = page.get_by_role("button", name="Show 1 additional field")
+        compact_genres = page.get_by_role("button", name="Show 1 more field")
         expect(compact_genres).to_be_visible()
+        # The more-fields tab reads on one line and is never clipped, down to
+        # 320 px (#1290).
+        for more_width in (390, 320, 390):
+            page.set_viewport_size({"width": more_width, "height": 844})
+            compact_genres.scroll_into_view_if_needed()
+            fit = compact_genres.evaluate(
+                """button => {
+                    const range = document.createRange()
+                    range.selectNodeContents(button)
+                    const lines = new Set(
+                        [...range.getClientRects()].map((rect) => Math.round(rect.top))
+                    ).size
+                    const rail = button.closest('.field-filmstrip').getBoundingClientRect()
+                    const box = button.getBoundingClientRect()
+                    return {
+                        lines,
+                        overflow: button.scrollWidth - button.clientWidth,
+                        inside: box.left >= rail.left - 0.5 && box.right <= rail.right + 0.5,
+                    }
+                }"""
+            )
+            assert fit == {"lines": 1, "overflow": 0, "inside": True}, (more_width, fit)
         compact_genres.click()
         revealed_genres = page.get_by_role("button", name=re.compile(r"^Genres"))
         expect(revealed_genres).to_be_focused()
@@ -2110,6 +2145,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).count()
             == 0
         )
+        assert page.get_by_role("radio").count() == 0
         load_more = page.get_by_role("button", name="Load more evidence")
         assert load_more.bounding_box()["height"] >= 44
         load_more.click()
@@ -2200,6 +2236,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             ).count()
             == 0
         )
+        assert page.get_by_role("radio").count() == 0
         assert_diagnostic_layout("History")
         capture_visual_proof("case-diagnostics-history")
         page.go_back()
@@ -2341,7 +2378,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert ambiguous_decisions == before_description_choice
         capture_visual_proof("library-long-description")
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current description"
+            "radio", name="Choose current description"
         )
         full_description.wait_for()
         decide(
@@ -2358,7 +2395,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         summary.wait_for()
         summary.click()
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current description"
+            "radio", name="Choose current description"
         )
         full_description.wait_for()
         full_description.focus()
@@ -2376,7 +2413,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         summary.wait_for()
         summary.click()
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current description"
+            "radio", name="Choose current description"
         )
         full_description.wait_for()
         full_description.focus()
@@ -2716,6 +2753,10 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
                 content_type="application/json",
                 body=json.dumps({"reduced_motion": "follow_system"}),
             )
+        elif (
+            preview := synthetic_preview_key(path, urlsplit(route.request.url).query)
+        ) is not None:
+            route.fulfill(content_type="image/png", body=synthetic_preview(preview))
         elif path.startswith("/api/v1/"):
             payload = rich_payload(route.request.url)
             if checks_gone and path == "/api/v1/activity":
@@ -3124,6 +3165,10 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
                     }
                 ),
             )
+        elif (
+            preview := synthetic_preview_key(path, urlsplit(route.request.url).query)
+        ) is not None:
+            route.fulfill(content_type="image/png", body=synthetic_preview(preview))
         elif path.startswith("/api/v1/"):
             try:
                 payload = rich_payload(route.request.url)
@@ -3472,6 +3517,10 @@ def _serve_cohort(
                     content_type="application/json",
                     body=json.dumps(rich_payload(route.request.url)),
                 )
+        elif (
+            preview := synthetic_preview_key(path, urlsplit(route.request.url).query)
+        ) is not None:
+            route.fulfill(content_type="image/png", body=synthetic_preview(preview))
         elif path.startswith("/api/v1/"):
             try:
                 payload = rich_payload(route.request.url)
@@ -3607,6 +3656,196 @@ _BACK_IN_VIEW = """() => {
     top: box.top, bottom: box.bottom, masthead: masthead.bottom, height: innerHeight,
   };
 }"""
+
+
+_COVER_ROW_GEOMETRY = """() => {
+    const row = document.querySelector('button.library-work-row:has(.has-cover)')
+    const spine = document.querySelector(
+        'button.library-work-row .library-book-mark:not(.has-cover)'
+    )
+    const mark = row.querySelector('.library-book-mark')
+    const image = mark.querySelector('img')
+    const box = (node) => node.getBoundingClientRect()
+    const centre = (node) => box(node).left + box(node).width / 2
+    const shown = box(row).height
+    image.style.display = 'none'
+    const hidden = box(row).height
+    image.style.display = ''
+    return {
+        shown,
+        hidden,
+        mark: [box(mark).width, box(mark).height],
+        image: [box(image).width, box(image).height],
+        natural: [image.naturalWidth, image.naturalHeight],
+        fit: getComputedStyle(image).objectFit,
+        loading: image.loading,
+        alt: image.alt,
+        offset: Math.abs(centre(mark) - centre(spine)),
+    }
+}"""
+
+# Each works row's height beside the height it has with the spine mark in the
+# given base column: base's 48 px at desktop, the spine's own 42 px on phones.
+_ROWS_AGAINST_SPINE_COLUMN = """(column) => [...document.querySelectorAll('.library-work-row')]
+    .map((row) => {
+        const mark = row.querySelector(':scope > .library-book-mark')
+        const height = () => row.getBoundingClientRect().height
+        const pill = row.querySelector('.status-pill')
+        const lines = () => {
+            const range = document.createRange()
+            range.selectNodeContents(pill)
+            return new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size
+        }
+        const shown = { height: height(), pill: lines() }
+        const cover = mark.classList.contains('has-cover')
+        row.style.gridTemplateColumns = `${column}px minmax(0, 1fr)`
+        const image = mark.querySelector('img')
+        if (cover) {
+            mark.classList.remove('has-cover')
+            image.style.display = 'none'
+        }
+        const spine = { height: height(), pill: lines() }
+        row.style.gridTemplateColumns = ''
+        if (cover) {
+            mark.classList.add('has-cover')
+            image.style.display = ''
+        }
+        const title = row.querySelector('.library-work-title')
+        return {
+            title: title.innerText,
+            titleLeft: title.getBoundingClientRect().left,
+            column: getComputedStyle(row).gridTemplateColumns.split(' ')[0],
+            cover,
+            shown,
+            spine,
+        }
+    })"""
+
+
+def test_works_rows_show_a_retained_cover_without_growing() -> None:
+    """A work's retained cover is its mark: whole, fitted to the spine's own
+    column (48 by 72 px, 42 by 63 on phones) and centred like the spine, so
+    every title starts at one edge and no row is taller than with the spine
+    mark (#1290)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text in styles:
+            for width in (1440, 1024, 375, 320):
+                where = f"{text} at {width}px"
+                page.set_viewport_size({"width": width, "height": 900})
+                # The case is open, so its header shows the row's cover too;
+                # where the list cannot fit beside it, the list is one step back.
+                page.goto(
+                    "https://react-platform.invalid/library?lens=all&preview=case-1"
+                )
+                header = page.locator(".selected-work-header .library-book-mark")
+                expect(header).to_have_class(re.compile(r"\bhas-cover\b"))
+                back = page.get_by_role("button", name="Back to works")
+                if back.is_visible():
+                    back.click()
+                row = page.locator("button.library-work-row").filter(
+                    has=page.locator(".library-book-mark.has-cover")
+                )
+                expect(row).to_have_count(1)
+                expect(row).to_be_visible()
+                row.scroll_into_view_if_needed()
+                page.wait_for_function(
+                    "() => document.querySelector('.has-cover img')?.naturalWidth > 0"
+                )
+                geometry = page.evaluate(_COVER_ROW_GEOMETRY)
+                assert geometry["shown"] == geometry["hidden"], (where, geometry)
+                mark_width, mark_height = geometry["mark"]
+                limit = (42, 63) if width <= 760 else (48, 72)
+                assert mark_width == limit[0], (where, geometry)
+                assert mark_height <= limit[1], (where, geometry)
+                # The image fills the mark and is contained in it, whole.
+                assert geometry["image"] == geometry["mark"], (where, geometry)
+                assert geometry["fit"] == "contain", (where, geometry)
+                assert geometry["natural"] == [800, 1200], (where, geometry)
+                assert (geometry["loading"], geometry["alt"]) == ("lazy", ""), where
+                assert geometry["offset"] <= 0.5, (where, geometry)
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                ), where
+                # The cover fits the spine's column, so every row, the cover's
+                # among them, keeps one mark column, starts its title at one
+                # edge, and is no taller than with the spine mark.
+                column = 42 if width <= 760 else 48
+                rows = page.evaluate(_ROWS_AGAINST_SPINE_COLUMN, column)
+                assert len(rows) == 6, (where, rows)
+                assert {row["column"] for row in rows} == {f"{column}px"}, (where, rows)
+                lefts = [row["titleLeft"] for row in rows]
+                assert max(lefts) - min(lefts) <= 0.5, (where, rows)
+                for row_geometry in rows:
+                    assert (
+                        row_geometry["shown"]["height"]
+                        <= row_geometry["spine"]["height"] + 0.5
+                    ), (where, row_geometry)
+                    assert (
+                        row_geometry["shown"]["pill"] == row_geometry["spine"]["pill"]
+                    ), (where, row_geometry)
+                if (width, text) == (1440, "default"):
+                    catalogue = next(
+                        row for row in rows if row["title"] == "Catalogue-only work"
+                    )
+                    assert catalogue["shown"]["pill"] == 1, (where, catalogue)
+
+
+_FIELD_TAB_TEXT = """() => [...document.querySelectorAll(
+    '.field-filmstrip button > strong, .field-filmstrip button > .field-status, '
+    + '.field-filmstrip .field-more'
+)].map((node) => ({
+    text: node.innerText,
+    clipped: node.scrollWidth - node.clientWidth,
+}))"""
+
+
+def test_compact_field_tabs_show_whole_names_and_status_words() -> None:
+    """At phone widths and 200% text every field tab's name and status word
+    is whole: none is clipped and none ends in an ellipsis (#1290)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            for text in styles:
+                for width in (390, 375, 320):
+                    where = f"{scheme} {text} at {width}px"
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.goto(
+                        "https://react-platform.invalid/library?lens=all&preview=case-1"
+                    )
+                    expect(
+                        page.locator(".field-filmstrip .field-status").first
+                    ).to_be_visible()
+                    tabs = page.evaluate(_FIELD_TAB_TEXT)
+                    assert any(tab["text"] == "Needs you" for tab in tabs), (
+                        where,
+                        tabs,
+                    )
+                    assert [tab for tab in tabs if tab["clipped"] > 0] == [], (
+                        where,
+                        tabs,
+                    )
+                    assert [
+                        tab
+                        for tab in tabs
+                        if tab["text"].rstrip().endswith(("…", "..."))
+                    ] == [], (where, tabs)
+                    assert page.evaluate(
+                        "() => document.documentElement.scrollWidth <= window.innerWidth"
+                    ), where
 
 
 def test_compact_selection_brings_back_to_works_into_view() -> None:

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import functools
+import struct
 import time
+import zlib
 from copy import deepcopy
 from typing import cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
@@ -58,8 +61,10 @@ def _work(
     preparation: dict[str, object] | None = None,
     preparation_outcomes: list[dict[str, object]] | None = None,
     summary: dict[str, object] | None = None,
+    cover: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
+        **({} if cover is None else {"cover": cover}),
         "work_id": f"library_work_{number:064d}",
         "review_case_id": case,
         "title": title,
@@ -118,6 +123,9 @@ TERMINAL_LIBRARY_WORK = _work(
 )
 
 
+# The library cover case-1's row shows: its current ABS cover, at that
+# candidate's size (#1290). Every other row keeps its spine mark.
+LIBRARY_COVER_PREVIEW = "b" * 64
 LIBRARY_WORKS: tuple[dict[str, object], ...] = (
     _work(
         1,
@@ -128,6 +136,20 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         case="case-1",
         attention=2,
         dispositions=["unresolved_choice", "automatic", "ineligible"],
+        cover={
+            "height": 1200,
+            "preview_sha256": LIBRARY_COVER_PREVIEW,
+            "url": "/api/v1/library/cover?"
+            + urlencode(
+                {
+                    "connection": "synthetic",
+                    "library": "Household ebooks",
+                    "item": "synthetic-item-1",
+                    "preview": LIBRARY_COVER_PREVIEW,
+                }
+            ),
+            "width": 800,
+        },
     ),
     _work(
         2,
@@ -817,7 +839,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 0 if case_id == "case-3" else 1,
                                 "cover-ref-choice",
                             ],
-                            "height": 1200,
+                            "height": 280,
                             "identity": {
                                 "candidate_reference": "cover-ref-choice",
                                 "evidence_references": [],
@@ -836,7 +858,7 @@ def _case(case_id: str) -> dict[str, object]:
                             "manual_eligible": True,
                             "source_kinds": ["hardcover"],
                             "state": "recommended",
-                            "width": 800,
+                            "width": 169,
                         },
                         *(
                             [
@@ -845,7 +867,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "deterministic_citations": [],
                                     "deterministic_rank": None,
                                     "deterministic_rank_key": None,
-                                    "height": 1000,
+                                    "height": 480,
                                     "identity": {
                                         "candidate_reference": "cover-ref-unconfirmed",
                                         "evidence_references": [],
@@ -864,7 +886,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "manual_eligible": True,
                                     "source_kinds": ["open_library"],
                                     "state": "excluded",
-                                    "width": 700,
+                                    "width": 305,
                                 }
                             ]
                             if case_id == "case-1"
@@ -2050,6 +2072,53 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     raise AssertionError(f"unexpected API target: {target}")
 
 
+# Each synthetic preview the cohort names, at the size its payload states, so a
+# rendered cover is a real image of a real shape rather than a broken one
+# (#1290): the candidates by reference, the library cover by digest.
+_SYNTHETIC_PREVIEWS: dict[str, tuple[int, int, tuple[int, int, int]]] = {
+    "cover-ref-current": (800, 1200, (59, 85, 80)),
+    "cover-ref-choice": (169, 280, (138, 90, 22)),
+    "cover-ref-unconfirmed": (305, 480, (60, 90, 140)),
+    LIBRARY_COVER_PREVIEW: (800, 1200, (59, 85, 80)),
+}
+
+
+@functools.cache
+def synthetic_preview(key: str) -> bytes:
+    """A two-tone PNG at the named size: the lower third is lighter."""
+    width, height, colour = _SYNTHETIC_PREVIEWS[key]
+    light = tuple(min(255, value + 90) for value in colour)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data))
+        )
+
+    rows = b"".join(
+        b"\x00" + bytes(colour if row < height * 2 // 3 else light) * width
+        for row in range(height)
+    )
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows, 6))
+        + chunk(b"IEND", b"")
+    )
+
+
+def synthetic_preview_key(path: str, query: str) -> str | None:
+    if path == "/api/v1/library/cover":
+        preview = parse_qs(query).get("preview", [""])[0]
+        return preview if preview in _SYNTHETIC_PREVIEWS else None
+    if path.startswith("/api/v1/review-cases/") and "/images/" in path:
+        reference = path.rpartition("/images/")[2]
+        return reference if reference in _SYNTHETIC_PREVIEWS else None
+    return None
+
+
 class RichFidelityApiMiddleware(BaseHTTPMiddleware):
     """Replace successful read responses after the real app enforces authentication."""
 
@@ -2135,6 +2204,25 @@ class RichFidelityApiMiddleware(BaseHTTPMiddleware):
             )
             settings["document"] |= {"revision": 2, "provider_recovery_generation": 2}
             return JSONResponse(settings)
+        preview = synthetic_preview_key(original_path, target_url.query)
+        # The real app has authenticated the read; it refuses the synthetic
+        # references themselves, which no retained preview backs.
+        if (
+            request.method == "GET"
+            and preview is not None
+            and response.status_code not in {401, 403}
+        ):
+            return Response(
+                synthetic_preview(preview),
+                media_type="image/png",
+                headers={
+                    key: value
+                    for key, value in response.headers.items()
+                    if key.lower()
+                    in {"content-security-policy", "x-content-type-options"}
+                }
+                | {"cache-control": "no-store, private"},
+            )
         if request.method != "GET" or response.status_code != 200:
             return response
         try:
@@ -2154,6 +2242,7 @@ class RichFidelityApiMiddleware(BaseHTTPMiddleware):
 __all__ = [
     "BUILD_IDENTITY",
     "HOSTILE_TEXT",
+    "LIBRARY_COVER_PREVIEW",
     "LIBRARY_WORKS",
     "LONG_TITLE",
     "TERMINAL_FAILURE_COPY",
@@ -2162,4 +2251,6 @@ __all__ = [
     "UNBROKEN_TITLE_SEGMENT",
     "RichFidelityApiMiddleware",
     "rich_payload",
+    "synthetic_preview",
+    "synthetic_preview_key",
 ]

@@ -1101,6 +1101,23 @@ class ReviewApplication:
 
         return self.serialized(read)
 
+    def library_cover(
+        self, connection: str, library: str, item: str, preview: str
+    ) -> bytes:
+        """Read the library cover preview a work's current report retains."""
+        if self._cover_considerations is None:
+            raise ReviewWebError("unavailable")
+        cover_considerations = self._cover_considerations
+
+        def read() -> bytes:
+            digest = self._browse.library_cover(connection, library, item, preview)
+            try:
+                return cover_considerations.retained_preview(digest)
+            except CoverConsiderationError as error:
+                raise ReviewWebError("unavailable") from error
+
+        return self.serialized(read)
+
     def record_decision(
         self,
         review_case_id: str,

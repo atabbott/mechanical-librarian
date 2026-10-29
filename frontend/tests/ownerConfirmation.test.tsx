@@ -56,7 +56,7 @@ it('confirms an off-page decision despite a pre-ack read and repeated case/resyn
   http.getLibrary = vi.fn(async () => (recorded ? { ...library, works: [] } : library))
   const updates = createLiveStream()
   const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
-  const button = await screen.findByRole('button', { name: 'Choose current value: Old title' })
+  const button = await screen.findByRole('radio', { name: 'Choose current value: Old title' })
   await act(async () => {
     void queryClient.invalidateQueries({ queryKey: ['review-case', 'case-1'], exact: true })
   })

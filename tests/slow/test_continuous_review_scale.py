@@ -326,12 +326,12 @@ class _WorkspaceProbe:
         expect(cohort_heading).to_have_count(1)
         expect(cohort_heading).to_be_visible()
         current = page.get_by_role(
-            "button",
+            "radio",
             name=f"Choose current value: {_FIXTURE_CURRENT_TITLE}",
             exact=True,
         )
         choice = page.get_by_role(
-            "button",
+            "radio",
             name=f"Choose proposed value: {_FIXTURE_PROPOSED_TITLE}",
             exact=True,
         )
@@ -369,17 +369,17 @@ class _WorkspaceProbe:
                 f"&preview={self._case_id}&field=title"
             )
             recorded_field = page.get_by_role(
-                "button", name=re.compile(r"^Title.*Decision recorded$")
+                "button", name=re.compile(r"^Title.*Decided$")
             )
             expect(recorded_field).to_have_count(1)
             recorded_field.click()
             recorded_choice = page.get_by_role(
-                "button",
+                "radio",
                 name=f"Choose proposed value: {_FIXTURE_PROPOSED_TITLE}",
                 exact=True,
             )
             expect(recorded_choice).to_have_count(1)
-            expect(recorded_choice).to_have_attribute("aria-pressed", "true")
+            expect(recorded_choice).to_have_attribute("aria-checked", "true")
             activity_evidence = self._activity_api_evidence(page)
         page.get_by_role("link", name="Activity", exact=True).click()
         page.get_by_role("heading", name="Activity and recovery", exact=True).wait_for(

@@ -310,6 +310,8 @@ chips, and count summaries—not general containers.
 
 The signature book mark uses an asymmetric `2px 5px 5px 2px` silhouette so a
 synthetic initial block reads as a book spine without requiring cover imagery.
+Its initials are the first letter of each of the first two words that have one,
+so punctuation never stands for a word.
 In the dark theme every mark (masthead, Library, and Policy) shares one spine,
 `#315c52`, so its paper-colored initial keeps 4.5:1.
 Dashed borders distinguish current-value choices; left rules mark notices,
@@ -398,15 +400,35 @@ from Library as a contextual queue, not represented as permanent navigation.
 Library rows combine an asymmetric initialled book mark, a serif work title,
 quiet bibliographic metadata, compact status, and an optional preview action.
 Hover uses a subtle page/surface mix; selection adds an Archive Teal boundary
-and wash. The mark is identity support, never a fake cover.
+and wash. The mark is identity support, never a fake cover. When a work's report
+retains the cover its library holds, that real cover takes the mark's place in
+the row and the open work's header, contained whole. In the header it is at
+most 60 by 90px. In a row it fits the spine's own column, at most 48 by 72px (42
+by 63px below 760px), centred as the spine is, so every title starts at the same
+edge and the cover never sets the row's height. Every other work keeps its
+spine, and a cover that fails to load falls back to it.
 
 ### Direct Value Choice
 
 Field decisions are large, left-aligned surface buttons with a minimum height of
-`9.5rem`, Strong Catalogue Line, `0.7rem` corners, and serif values. Hover and
-focus move the whole choice into the teal family. A dashed edge means the
-current value; automatic, resolved, or stale fields must not present a false
-choice.
+`9.5rem`, Strong Catalogue Line, `0.7rem` corners, and serif values. A field's
+choices are one radio group: each states its state with a 20px ring in the
+field-line colour, which hover previews with a dot. The recorded choice fills
+the ring, takes the Archive Teal Wash with a 2px inner accent edge, and says
+"Your choice" in words; a recommendation is stated in its label, not by a wash.
+Keyboard focus is a 3px focus-colour outline drawn inside the choice. A dashed
+edge means the current value; automatic, resolved, or stale fields must not
+present a false choice. Field tabs name their status in words (Needs you,
+Decided, Automatic, Optional, No change), never by a glyph.
+
+### Cover Choice
+
+Cover candidates join the same radio model and record in one tap: a card that
+says "Match not confirmed" is itself the explicit choice, with no confirming
+dialog. Each card states its pixel size and every source that offered the image
+on their own lines, then its rationale; one image offered by several sources is
+one card naming them all, and the merged count is said apart from unavailable
+candidates. Off-screen cover images load lazily.
 
 ### Cover Observation Evidence
 

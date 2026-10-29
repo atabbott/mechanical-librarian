@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Review choices are one radio group: arrows move between them, Space or Enter
+  records. Field tabs say their status in words. A cover records in one tap,
+  states its pixel size and every source, and a duplicate image is one choice.
+  Works show the cover the library holds, read only by the digest their report
+  retains, and initials use letters (#1290).
+
 - **Clean rebuild required.** An audiobook whose Audible edition agrees on
   runtime but whose title differs in shape (a joined subtitle, a bare leading
   number, a series-position title) can now be matched when its narrator or

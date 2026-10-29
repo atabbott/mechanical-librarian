@@ -576,6 +576,14 @@ export interface ReportDetailView {
   reportId: string
   title: string
 }
+// The cover the library holds for a work, retained by its current report and
+// served only at the address the server names for it (#1290).
+export interface LibraryCoverView {
+  previewSha256: string
+  width: number
+  height: number
+  url: string
+}
 export interface LibraryWorkView {
   id: string
   reviewCaseId?: string
@@ -597,6 +605,7 @@ export interface LibraryWorkView {
   preparation: PreparationFailureView | null
   preparationOutcomes: readonly ProviderOutcomeView[]
   summary: WorkSummaryView | null
+  cover?: LibraryCoverView
 }
 export interface LibraryView {
   lens: LibraryLens
@@ -3374,6 +3383,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
         throw new ApiError(502, 'invalid_preparation_outcomes')
       const preparationOutcomes = (item.preparation_outcomes as unknown[]).map(mapProviderOutcome)
       const workId = stringValue(item.work_id, 'work_id')
+      const cover = item.cover == null ? undefined : mapLibraryCover(item.cover)
       const summary =
         item.summary == null
           ? null
@@ -3426,9 +3436,30 @@ export const mapLibrary = (value: unknown): LibraryView => {
         preparation,
         preparationOutcomes,
         summary,
+        ...(cover ? { cover } : {}),
       }
     }),
   }
+}
+
+// A cover is shown only from the route that serves the preview its report
+// binds, named by that same digest, so a row cannot point the image elsewhere.
+const mapLibraryCover = (value: unknown): LibraryCoverView => {
+  if (!record(value)) throw new ApiError(502, 'invalid_library_cover')
+  const previewSha256 = stringValue(value.preview_sha256, 'library_cover_preview')
+  const width = integerValue(value.width, 'library_cover_width')
+  const height = integerValue(value.height, 'library_cover_height')
+  const url = stringValue(value.url, 'library_cover_url')
+  const prefix = '/api/v1/library/cover?'
+  if (
+    !/^[0-9a-f]{64}$/u.test(previewSha256) ||
+    width < 1 ||
+    height < 1 ||
+    !url.startsWith(prefix) ||
+    new URLSearchParams(url.slice(prefix.length)).get('preview') !== previewSha256
+  )
+    throw new ApiError(502, 'invalid_library_cover')
+  return { previewSha256, width, height, url }
 }
 
 export const mapAttention = (value: unknown): AttentionView => {
