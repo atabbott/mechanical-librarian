@@ -165,7 +165,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-metrics dd { order:-1; margin:0; font-family:Georgia,serif; font-size:1.25rem; font-weight:700; }
 .library-workspace { display:grid; grid-template-columns:minmax(310px,380px) minmax(0,1fr); align-items:start; gap:1.1rem; }
 .library-works, .selected-work-surface > aside, .library-selection { min-width:0; border:1px solid var(--line); border-radius:1rem; background:var(--surface); }
-.library-works { position:sticky; top:var(--sticky-top); max-height:calc(100vh - 108px); overflow:auto; padding:1.05rem; }
+.library-works { position:sticky; top:var(--sticky-top); max-height:calc(100vh - var(--sticky-top) - 1.625rem); overflow:auto; padding:1.05rem; }
 .library-works-heading { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:0 1rem; }
 .library-works-heading h2 { margin:0; font-family:Georgia,serif; font-size:1.45rem; overflow-wrap:normal; }
 .library-works-heading > span { color:var(--soft); font-size:.75rem; }
