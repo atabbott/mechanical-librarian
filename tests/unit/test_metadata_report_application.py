@@ -4152,3 +4152,173 @@ def test_the_persisted_discovery_titles_are_the_ones_a_lane_may_ask() -> None:
         plan.audio is not None and (tag,) == plan.audio.discovery_titles
         for plan in plans
     )
+
+
+_COMPANION = TargetFile("e" * 64, "book.epub", "epub")
+
+
+def _companion_claims() -> tuple[LocalClaim, ...]:
+    def claim(kind: ClaimKind, value: str, **fields: object) -> LocalClaim:
+        return LocalClaim.create(
+            kind=kind,
+            observed=value,
+            canonical=value,
+            excerpt=value,
+            applicability=cast(str, fields.pop("applicability", "not_applicable")),
+            basis="package_metadata",
+            checksum=cast(str, fields.pop("checksum", "not_applicable")),
+            applicability_basis=cast(
+                str, fields.pop("applicability_basis", "not_applicable")
+            ),
+            **cast(dict[str, Any], fields),
+        )
+
+    return (
+        claim(ClaimKind.TITLE, "Companion title"),
+        claim(ClaimKind.CREATOR, "Ada Author", role="author"),
+        claim(
+            ClaimKind.ISBN,
+            "9780306406157",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        ),
+        claim(ClaimKind.PUBLISHER, "Example Press", scope=ClaimScope.EDITION),
+        claim(ClaimKind.LANGUAGE, "en"),
+    )
+
+
+def _companion_snapshot(companion: TargetFile | None = _COMPANION) -> TargetSnapshot:
+    selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    return TargetSnapshot(
+        "audiobook", "Recorded title", (selected,), companion=companion
+    )
+
+
+class _FailingInspector(FakeInspector):
+    def inspect(self, mount, relative_path, maximum_bytes):
+        self.inspections += 1
+        raise OSError("unreadable archive")
+
+
+def test_an_audiobook_reads_its_companion_epub_as_corroboration_only() -> None:
+    """A mixed item is its recording; the EPUB adds evidence, not values (#1319).
+
+    The four corroborating kinds are kept in their own section, so nothing
+    that reads the report's local claims -- proposals, discovery, admission --
+    takes the ebook's ISBN or title for the recording's own.
+    """
+    snapshot = _companion_snapshot()
+    target = FakeTarget([snapshot, snapshot])
+    inspector = FakeInspector(InspectionResult("c" * 64, _companion_claims()))
+    audio_inspector = FakeAudioInspector(audio_result())
+    limits = ReportLimits()
+
+    published = MetadataReport.from_json(
+        _audiobook_service(
+            target,
+            FakeReportRepository(),
+            audio_inspector,
+            inspector=inspector,
+            limits=limits,
+        ).run("item-1", 0)
+    )
+
+    assert published.file.format == "m4b"
+    assert (audio_inspector.inspections, inspector.inspections) == (1, 1)
+    assert inspector.ceilings == [limits.source_archive_bytes]
+    assert published.companion is not None
+    assert (published.companion.identity, published.companion.content_digest) == (
+        "e" * 64,
+        "c" * 64,
+    )
+    assert [value.kind for value in published.companion.claims] == [
+        ClaimKind.TITLE,
+        ClaimKind.CREATOR,
+        ClaimKind.ISBN,
+        ClaimKind.PUBLISHER,
+    ]
+    assert not {value.reference for value in published.companion.claims} & {
+        value.reference for value in published.local_claims
+    }
+    isbn = next(
+        value for value in published.field_results if value.kind is ClaimKind.ISBN
+    )
+    assert isbn.state is FieldState.ABSENT
+
+
+def test_an_unreadable_companion_withholds_only_its_own_evidence() -> None:
+    snapshot = _companion_snapshot()
+    inspector = _FailingInspector(InspectionResult("c" * 64, ()))
+
+    published = MetadataReport.from_json(
+        _audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            FakeReportRepository(),
+            FakeAudioInspector(audio_result()),
+            inspector=inspector,
+        ).run("item-1", 0)
+    )
+
+    assert published.audio is not None
+    assert published.companion is not None
+    assert (published.companion.content_digest, published.companion.claims) == (
+        None,
+        (),
+    )
+
+
+@pytest.mark.parametrize(
+    ("final", "digest", "current"),
+    (
+        pytest.param(_COMPANION, "c" * 64, True, id="unchanged"),
+        pytest.param(_COMPANION, "f" * 64, False, id="epub-bytes-changed"),
+        pytest.param(None, "c" * 64, False, id="epub-removed"),
+        pytest.param(
+            TargetFile("f" * 64, "other.epub", "epub"),
+            "c" * 64,
+            False,
+            id="epub-replaced",
+        ),
+    ),
+)
+def test_a_companion_epub_is_bound_into_the_report_s_currentness(
+    final: TargetFile | None, digest: str, current: bool
+) -> None:
+    snapshot = _companion_snapshot()
+    inspector = FakeInspector(InspectionResult("c" * 64, _companion_claims()))
+    audio_inspector = FakeAudioInspector(audio_result())
+    published = MetadataReport.from_json(
+        _audiobook_service(
+            FakeTarget([snapshot, snapshot]),
+            FakeReportRepository(),
+            audio_inspector,
+            inspector=inspector,
+        ).run("item-1", 0)
+    )
+    inspector.result = InspectionResult(digest, ())
+
+    def check() -> bool:
+        return require_report_current(
+            FakeTarget([_companion_snapshot(final)]),
+            inspector,
+            MediaMountConfiguration("audiobooks", "/media", "/library", True),
+            ReportLimits(),
+            published,
+            audio_inspector=audio_inspector,
+        )
+
+    if current:
+        assert check()
+    else:
+        with pytest.raises(CurrentnessError):
+            check()
+
+
+def test_a_companion_needs_an_audiobook_and_an_epub() -> None:
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    with pytest.raises(MetadataReportError):
+        TargetSnapshot("ebook", "Title", (selected,), companion=_COMPANION)
+    with pytest.raises(MetadataReportError):
+        _companion_snapshot(TargetFile("e" * 64, "book.pdf", "pdf"))

@@ -64,6 +64,7 @@ class ReviewBrowseValueError(ValueError):
 
 _REPORT = closed_document(
     "audio",
+    "companion",
     "comparison_version",
     "covers",
     "field_results",
