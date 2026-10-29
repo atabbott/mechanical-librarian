@@ -755,7 +755,7 @@ def test_asin_lane_requires_one_canonical_identifier_and_nothing_else() -> None:
         )
 
 
-def _feed_claims(asin: str | None = "B08G9PRS1K") -> tuple[LocalClaim, ...]:
+def _feed_claims(asin: str | None = "B0SYNE7P1K") -> tuple[LocalClaim, ...]:
     """One asserted audiobook's evidence: no local ASIN, one running time."""
     return (
         target_title_claim(),
@@ -769,7 +769,7 @@ def _search_observation(
     local_claims: tuple[LocalClaim, ...],
     *,
     provider: str = "catalogue",
-    asin: str = "B08G9PRS1K",
+    asin: str = "B0SYNE7P1K",
 ) -> ProviderObservation:
     """One work-lane observation whose candidate the runtime band admitted."""
     lane = next(value for value in plan.lanes if value.kind is ProviderQueryKind.WORK)
@@ -788,13 +788,13 @@ def _search_observation(
             ),
             ProviderQueryKind.WORK,
             "audible_catalog",
-            dispatch_lineage=_work_dispatch("Project Hail Mary", ("Andy Weir",)),
+            dispatch_lineage=_work_dispatch("Ember Tide Protocol", ("Corin Halloway",)),
         ),
         MetadataLookup(
             ProviderQueryKind.WORK,
             local_claims,
-            "Project Hail Mary",
-            ("Andy Weir",),
+            "Ember Tide Protocol",
+            ("Corin Halloway",),
         ),
     )
     return provider_observation(
@@ -829,7 +829,7 @@ def test_asserted_asin_feeds_one_lane_after_local_lanes() -> None:
     # an older document retained.
     assert (
         audiobook_asin_feed_plan(
-            _audio_target("Project Hail Mary", ("Andy Weir",)), plan, ()
+            _audio_target("Ember Tide Protocol", ("Corin Halloway",)), plan, ()
         )
         is None
     )
@@ -878,7 +878,7 @@ def test_feed_lane_identities_never_collide_across_origins() -> None:
         if claim.basis == "target_metadata" and claim.kind is ClaimKind.ASIN
     )
     search = (_search_observation(plan, local_claims),)
-    unasserted = _audio_target("Project Hail Mary", ("Andy Weir",))
+    unasserted = _audio_target("Ember Tide Protocol", ("Corin Halloway",))
 
     asserted_only = audiobook_asin_feed_plan(target, plan, ())
     promoted_only = audiobook_asin_feed_plan(unasserted, plan, search)
@@ -948,8 +948,8 @@ def test_an_asin_lane_without_a_local_asin_is_corroboration_gated(
         MetadataLookup(
             ProviderQueryKind.ASIN,
             local_claims,
-            work_title="Project Hail Mary" if titled else None,
-            work_authors=("Andy Weir",) if titled else (),
+            work_title="Ember Tide Protocol" if titled else None,
+            work_authors=("Corin Halloway",) if titled else (),
         ),
     )
 
@@ -961,7 +961,7 @@ def test_an_asin_lane_without_a_local_asin_is_corroboration_gated(
 
 def test_a_local_asin_retains_candidate_without_inventing_recording_support() -> None:
     """The item's own identifier is the warrant, so nothing re-derives it."""
-    local_claims = (*_feed_claims(), _audio_claim(ClaimKind.ASIN, "B08G9PRS1K", 9))
+    local_claims = (*_feed_claims(), _audio_claim(ClaimKind.ASIN, "B0SYNE7P1K", 9))
     candidate = _audiobook_candidate(local_claims, duration="51000.000")
     qualified = qualify_provider_observation(
         ProviderObservation(
@@ -1137,8 +1137,8 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
         MetadataReport.from_json(canonical_json(previous))
 
 
-_REFUSED_TITLE = "Project Hail Mary: A Novel"
-_REFUSED_AUTHORS = ("Andy Weir",)
+_REFUSED_TITLE = "Ember Tide Protocol: A Novel"
+_REFUSED_AUTHORS = ("Corin Halloway",)
 _REFUSED_LADDER = tuple(
     WorkDispatchLineage.from_query(query)
     for query in work_query_ladder(_REFUSED_TITLE, _REFUSED_AUTHORS, audiobook=True)
@@ -1510,7 +1510,7 @@ def test_a_dispatch_record_is_read_back_only_in_its_closed_shape(
             },
             {},
         ),
-        ({}, {"title": "Project Hail Mary"}),
+        ({}, {"title": "Ember Tide Protocol"}),
         ({}, {"audio": False}),
     ),
     ids=("out_of_order", "truncated", "out_of_ladder", "other_target", "ebook"),
@@ -1703,7 +1703,7 @@ def test_an_ebook_ladder_keeps_no_recording_lookup_hint() -> None:
         )
 
     lookup = MetadataLookup(
-        ProviderQueryKind.WORK, local, "Other Title", ("Andy Weir",)
+        ProviderQueryKind.WORK, local, "Other Title", ("Corin Halloway",)
     )
     ebook = app.observe_work_ladder(lookup, observe)
     audio = app.observe_work_ladder(
@@ -3478,7 +3478,7 @@ def test_a_runtime_corroborated_audiobook_candidate_keeps_its_edition_identity()
         ClaimKind.DURATION,
         ClaimKind.CONTRIBUTOR,
     } == {claim.kind for claim in candidate.claims}
-    assert "B08G9PRS1K" == next(
+    assert "B0SYNE7P1K" == next(
         claim.value for claim in candidate.claims if claim.kind is ClaimKind.ASIN
     )
     assert {"narrator"} == {
@@ -3725,7 +3725,7 @@ def test_failed_work_set_keeps_individual_recordings_and_original_runtime_order(
         ProviderQueryKind.WORK,
         "audnexus",
         dispatch_lineage=WorkDispatchLineage.from_query(
-            work_query_ladder("Project Hail Mary", ("Andy Weir",))[0]
+            work_query_ladder("Ember Tide Protocol", ("Corin Halloway",))[0]
         ),
     )
     plan = work_plan(*(c for c in report.local_claims if c.basis != "target_metadata"))
@@ -3779,7 +3779,7 @@ def test_requested_asin_is_canonical_and_asin_only(kind, requested, valid) -> No
 
 
 @pytest.mark.parametrize("local", (False, True))
-@pytest.mark.parametrize("requested_asin", (None, "B08G9PRS1K", "B000000002"))
+@pytest.mark.parametrize("requested_asin", (None, "B0SYNE7P1K", "B000000002"))
 def test_request_binding_precedes_local_shortcut_and_chapter_widening(
     local: bool, requested_asin: str | None
 ) -> None:
@@ -3803,8 +3803,8 @@ def test_request_binding_precedes_local_shortcut_and_chapter_widening(
             ProviderQueryKind.ASIN,
             report.local_claims,
             audio=report.audio,
-            work_title="Project Hail Mary",
-            work_authors=("Andy Weir",),
+            work_title="Ember Tide Protocol",
+            work_authors=("Corin Halloway",),
             requested_asin=requested_asin,
         ),
     )
@@ -4203,8 +4203,8 @@ def test_a_fed_asin_naming_another_work_keeps_only_its_identifier(
         MetadataLookup(
             ProviderQueryKind.ASIN,
             local_claims,
-            work_title="Project Hail Mary",
-            work_authors=("Andy Weir",),
+            work_title="Ember Tide Protocol",
+            work_authors=("Corin Halloway",),
         ),
     )
 

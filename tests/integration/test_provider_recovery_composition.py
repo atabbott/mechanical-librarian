@@ -1095,7 +1095,7 @@ def test_google_remaining_burst_is_committed_without_renewal(
     if audio:
         snapshot = TargetSnapshot(
             "audiobook",
-            "Project Hail Mary",
+            "Ember Tide Protocol",
             (TargetFile("f" * 64, "book.m4b", "m4b"),),
             fields=audio_target_fields(),
         )
@@ -1349,9 +1349,9 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
     composition.CoverArtifactStore(tmp_path / "artifacts", create=True)
     asin = LocalClaim.create(
         kind=ClaimKind.ASIN,
-        observed="B08G9PRS1K",
-        canonical="B08G9PRS1K",
-        excerpt="B08G9PRS1K",
+        observed="B0SYNE7P1K",
+        canonical="B0SYNE7P1K",
+        excerpt="B0SYNE7P1K",
         applicability="not_applicable",
         basis="embedded_tag",
         checksum="not_applicable",

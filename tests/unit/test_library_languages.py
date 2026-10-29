@@ -301,7 +301,7 @@ def test_a_product_is_held_to_the_library_languages_without_a_local_one(
         candidate = _with_language(candidate, product, claims)
 
     assert expected == recording_variant_conflict(
-        candidate, claims, "Project Hail Mary", library
+        candidate, claims, "Ember Tide Protocol", library
     )
 
 
@@ -322,13 +322,15 @@ def _work_observation(
             (candidate,),
             ProviderQueryKind.WORK,
             "audible_catalog",
-            dispatch_lineage=_audio_work_dispatch("Project Hail Mary", ("Andy Weir",)),
+            dispatch_lineage=_audio_work_dispatch(
+                "Ember Tide Protocol", ("Corin Halloway",)
+            ),
         ),
         MetadataLookup(
             ProviderQueryKind.WORK,
             claims,
-            "Project Hail Mary",
-            ("Andy Weir",),
+            "Ember Tide Protocol",
+            ("Corin Halloway",),
             library_languages=library,
         ),
     )
@@ -374,9 +376,9 @@ def test_a_matching_recording_is_still_admitted_on_its_runtime() -> None:
         # The reproduction: a WORK lane admits the title exactly, the runtime
         # is inside the tight band, and the edition's language contradicts
         # the recording's own.
-        ("en", (), "Project Hail Mary"),
+        ("en", (), "Ember Tide Protocol"),
         # The same product where only the library declares a language.
-        (None, ("en",), "Project Hail Mary"),
+        (None, ("en",), "Ember Tide Protocol"),
         # A format conflict on the same path: the edition states two cuts.
         (None, (), "format"),
     ),

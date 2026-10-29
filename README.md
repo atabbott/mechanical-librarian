@@ -103,3 +103,19 @@ domains, tokens, or unredacted reports in issues, tests, or pull requests.
 
 Development and review expectations are in [CONTRIBUTING.md](CONTRIBUTING.md).
 Mechanical Librarian is licensed under [AGPL-3.0-or-later](LICENSE).
+
+### Third-party components
+
+The repository also carries a few third-party works under their own licences:
+
+- **Inter** typeface, shipped in the review workspace: OFL-1.1, see
+  [LICENSES/Inter-OFL-1.1.txt](LICENSES/Inter-OFL-1.1.txt).
+- **Contained-reviewer seccomp profile**, a modified copy of the Moby Profiles
+  default seccomp profile loaded by the supported Compose file: Apache-2.0, see
+  [config/seccomp/](config/seccomp/README.md).
+- **DejaVu Sans Bold** subset, used only by browser tests and never shipped in
+  the package or container: Bitstream Vera and Arev font licences, see
+  [tests/browser/fonts/LICENSE](tests/browser/fonts/LICENSE).
+
+[Dependencies](docs/development/dependencies.md) records their provenance and
+checksums.

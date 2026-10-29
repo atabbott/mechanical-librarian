@@ -8,7 +8,7 @@ import json
 
 from tests.support.audio_containers import Mp4Fixture, mp4_audiobook
 
-ASIN = "B08G9PRS1K"
+ASIN = "B0SYNE7P1K"
 STARTS = (0, 113000, 284000, 527000, 844000, 1245000)
 END = 1747998
 SPANS = tuple(zip(STARTS, (*STARTS[1:], END), strict=True))

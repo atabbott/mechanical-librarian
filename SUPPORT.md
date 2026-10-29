@@ -1,12 +1,12 @@
 # Support
 
-Mechanical Librarian is in pre-development planning. There are no supported releases yet.
+Mechanical Librarian is pre-release software under active development. Its current checkpoint curates Audiobookshelf ebook and audiobook metadata in one owner workspace, running as a single self-hosted container that you build from source with the supplied `Dockerfile` and `compose.yaml` (see [Deployment](docs/operations/deployment.md)); there is no published image and no supported release yet, and pre-release state may require a clean rebuild between versions (see [CHANGELOG.md](CHANGELOG.md)).
 
 This policy describes the support model the project intends to use once public releases begin.
 
 ## Where to ask for help
 
-Use the repository's discussion forum for:
+Use the repository's [discussion forum](https://github.com/atabbott/mechanical-librarian/discussions) for:
 
 - installation and configuration questions;
 - integration questions;
@@ -21,13 +21,13 @@ Do not post API tokens, credentials, private URLs, complete library exports, boo
 
 Support is limited to the platforms, versions, and deployment modes listed in the published compatibility matrix. See [Compatibility policy](docs/reference/compatibility.md).
 
-The primary deployment is the official single-container image with persistent `/data` storage. Source builds and alternative container runtimes are welcome, but maintainers may first ask reporters to reproduce a problem with a supported image and configuration.
+Until releases begin, the deployment is the single container built from source with persistent `/data` storage. Once releases begin, the primary deployment will be the official single-container image; source builds and alternative container runtimes will remain welcome, but maintainers may first ask reporters to reproduce a problem with a supported image and configuration.
 
 ## What a useful report contains
 
 Include:
 
-- the Mechanical Librarian version and image digest;
+- the Mechanical Librarian version and image digest, or the source revision you built;
 - host operating system, architecture, and container runtime;
 - relevant adapter and target-service versions;
 - the smallest reproducible configuration, with secrets removed;
