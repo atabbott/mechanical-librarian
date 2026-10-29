@@ -295,7 +295,7 @@ from mechanical_librarian.domain.audio_inspection import (
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
-    recording_admitted,
+    recording_unmatched,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -2210,8 +2210,7 @@ def run_metadata_report_loaded(
                 # An audiobook that admitted no recording is searched again
                 # later, and that search keeps an open case unless it admits
                 # one (#1451).
-                report.file.format in AUDIO_FILE_FORMATS
-                and not recording_admitted(report),
+                recording_unmatched(report),
             )
         ),
         require_singular_target=review_action is not None,

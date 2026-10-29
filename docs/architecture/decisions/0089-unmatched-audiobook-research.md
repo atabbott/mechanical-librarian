@@ -48,6 +48,9 @@ clears the mark. The discovery scan returns a finished work to extraction once
 its mark has passed, whether it holds a case or completed `evidence_only`, and
 it keeps the mark while the work runs. A changed file, a stale report or a
 failed provider stage starts the work afresh, and that clears the mark.
+A provider-retry successor is a fresh search too: staging it sets the mark
+from the successor's own answer, a week on if it is still unmatched and cleared
+if it admits a recording.
 
 **What a search may replace.** When a marked work publishes a report that still
 admits no recording, and the item's current case was admitted from a report of
@@ -122,6 +125,7 @@ none of them would be rescued.
 - a search that admits a recording supersedes the case and clears the mark;
 - an `evidence_only` item takes the new evidence;
 - a changed file clears the mark;
+- a provider-retry successor sets the mark from its own answer;
 - the composition root marks only audiobook reports `recording_admitted`
   refuses.
 

@@ -332,3 +332,57 @@ def test_a_changed_file_clears_the_research_mark(application_path: Path) -> None
     finally:
         repository.close()
     assert work == ("extraction", "queued", None)
+
+
+def _stage_successor(path: Path, report: MetadataReport, at: int) -> object:
+    repository = open_repository(path)
+    try:
+        target = report.target
+        current = repository.current_optional(
+            target.connection, target.library, target.item, report.file.identity
+        )
+        assert current is not None
+        source = MetadataReport.from_json(current).report_id
+        repository.publish(
+            report,
+            lambda: True,
+            source,
+            after_publication=lambda bound, value: bound.stage_provider_retry_successor(
+                source, value, at
+            ),
+            expected_package=repository.current_review_package(
+                target.connection, target.library, target.item
+            ),
+        )
+        return repository._connection.execute(
+            "SELECT stage,research_not_before FROM review_preparation_work"
+        ).fetchone()
+    finally:
+        repository.close()
+
+
+def test_a_matched_provider_retry_successor_clears_the_mark(
+    application_path: Path,
+) -> None:
+    old = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, old, 20, unmatched=True))
+    assert _state(application_path)[0][5] == 20 + _WEEK
+
+    # An ebook successor is never unmatched, as a recovered audiobook that
+    # now admits a recording is not: it is not searched again.
+    assert _stage_successor(application_path, _report("Recovered", "a", "c"), 30) == (
+        "provider",
+        None,
+    )
+
+
+def test_an_unmatched_provider_retry_successor_waits_its_own_interval(
+    application_path: Path,
+) -> None:
+    _audio_scan(application_path, _audio_report("Recorded work"), 10)
+    assert _state(application_path)[0][5] == 14 + _WEEK
+
+    assert _stage_successor(application_path, _audio_report("Recovered"), 30) == (
+        "provider",
+        30 + _WEEK,
+    )

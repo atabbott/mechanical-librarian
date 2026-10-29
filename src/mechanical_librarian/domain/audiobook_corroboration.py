@@ -32,6 +32,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ASSERTED_ASIN_BASES,
+    AUDIO_FILE_FORMATS,
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     AudioFacts,
     ClaimKind,
@@ -999,6 +1000,7 @@ __all__ = [
     "tight_runtime_distance",
     "admitted_recording_asin",
     "recording_admitted",
+    "recording_unmatched",
     "band_first_candidate",
     "corroborated_recording_candidate",
     "candidate_edition_asin",
@@ -1825,6 +1827,15 @@ def recording_admitted(report: MetadataReport) -> bool:
     if type(report) is not MetadataReport:
         raise CorroborationValueError("provider observation is invalid")
     return report.audio is not None and bool(_admitted_candidates(report))
+
+
+def recording_unmatched(report: MetadataReport) -> bool:
+    """Whether this is an audiobook report that admitted no recording (#1451).
+
+    Its preparation is searched again after `RESEARCH_INTERVAL_SECONDS`; an
+    ebook, or an audiobook that admitted a recording, never is.
+    """
+    return report.file.format in AUDIO_FILE_FORMATS and not recording_admitted(report)
 
 
 def admitted_recording_asin(report: MetadataReport) -> str | None:

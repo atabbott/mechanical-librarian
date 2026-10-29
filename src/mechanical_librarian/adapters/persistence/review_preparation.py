@@ -69,6 +69,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineClaimContention,
 )
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
+from mechanical_librarian.domain.audiobook_corroboration import recording_unmatched
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionStaleError,
@@ -564,9 +565,19 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
                 "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
                 "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,"
-                "outcome=NULL,updated_at=? "
+                "outcome=NULL,research_not_before=?,updated_at=? "
                 "WHERE work_id=? AND state IN ('complete','failed','stale')",
-                (report.report_id, source_report_id, staged_at, row[0]),
+                (
+                    report.report_id,
+                    source_report_id,
+                    # A successor is a fresh search, so its own answer sets
+                    # when the item is searched again (#1451).
+                    staged_at + RESEARCH_INTERVAL_SECONDS
+                    if recording_unmatched(report)
+                    else None,
+                    staged_at,
+                    row[0],
+                ),
             ).rowcount
             != 1
         ):
@@ -722,169 +733,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             for ordinal, entry in enumerate(
                 sorted(eligible, key=lambda value: value.item_id)
             ):
-                assert entry.file_identity is not None
-                material = (
-                    f"review-preparation-work-v1\0{action.connection}\0"
-                    f"{action.library}\0{entry.item_id}"
-                )
-                work_id = (
-                    "review_work_"
-                    + hashlib.sha256(material.encode("utf-8")).hexdigest()
-                )
-                existing = self._connection.execute(
-                    "SELECT file_identity,source_fingerprint,producer_fingerprint,"
-                    "stage,state,report_id,proposal_set_id,review_case_id,outcome,"
-                    "research_not_before "
-                    "FROM review_preparation_work WHERE work_id=?",
-                    (work_id,),
-                ).fetchone()
-                stage = "extraction"
-                state = "queued"
-                report_id = proposal_set_id = review_case_id = None
-                failure_code = failure_root = outcome = None
-                research_not_before = None
-                if existing is not None and existing[:3] == (
-                    entry.file_identity,
-                    entry.source_fingerprint,
-                    action.producer_fingerprint,
-                ):
-                    stage, previous_state = existing[3], existing[4]
-                    report_id, proposal_set_id, review_case_id = existing[5:8]
-                    previous_outcome = existing[8]
-                    research_not_before = existing[9]
-                    report_current = True
-                    if report_id is not None:
-                        report_current = self._connection.execute(
-                            "SELECT report_id FROM current_metadata_reports "
-                            "WHERE connection_name=? AND library_name=? AND item_id=? "
-                            "AND file_identity=?",
-                            (
-                                action.connection,
-                                action.library,
-                                entry.item_id,
-                                entry.file_identity,
-                            ),
-                        ).fetchone() == (report_id,)
-                    if not report_current or previous_state == "stale":
-                        stage = "extraction"
-                        report_id = proposal_set_id = review_case_id = None
-                        research_not_before = None
-                    elif (
-                        previous_state == "complete"
-                        and research_not_before is not None
-                        and research_not_before <= completed_at
-                    ):
-                        # An audiobook that admitted no recording is searched
-                        # again once its interval has passed (#1451). The
-                        # retained mark tells publication this is a re-search,
-                        # which keeps an open case unless a recording is now
-                        # admitted.
-                        stage = "extraction"
-                        report_id = proposal_set_id = review_case_id = None
-                    elif (
-                        previous_state == "complete"
-                        and previous_outcome == "evidence_only"
-                    ):
-                        # The file this outcome is terminal about has not moved:
-                        # re-inspecting it would re-hash gigabytes to reach the
-                        # same recorded evidence.
-                        stage = "complete"
-                        state = "complete"
-                        outcome = previous_outcome
-                    elif previous_state == "failed" and stage == "provider":
-                        stage = "extraction"
-                        report_id = proposal_set_id = review_case_id = None
-                        research_not_before = None
-                    elif previous_state == "complete":
-                        pointer = self._connection.execute(
-                            "SELECT proposal_set_id,report_id,review_case_id,outcome "
-                            "FROM current_review_case_lineages WHERE connection_name=? "
-                            "AND library_name=? AND item_id=?",
-                            (action.connection, action.library, entry.item_id),
-                        ).fetchone()
-                        pointer_matches = (
-                            pointer is not None
-                            and pointer[:3]
-                            == (proposal_set_id, report_id, review_case_id)
-                            and (
-                                pointer[3] in {"admitted", "superseded"}
-                                if review_case_id is not None
-                                else pointer[3] in {"no_case", "retired"}
-                            )
-                        )
-                        pending_description = (
-                            self._connection.execute(
-                                "SELECT 1 FROM description_preparation_pending WHERE review_case_id=?",
-                                (review_case_id,),
-                            ).fetchone()
-                            is not None
-                        )
-                        if pointer_matches and pending_description:
-                            stage = "projection"
-                            state = "queued"
-                            outcome = None
-                        elif pointer_matches:
-                            stage = "complete"
-                            state = "complete"
-                            outcome = (
-                                "case" if review_case_id is not None else "no_case"
-                            )
-                        else:
-                            stage = "admission"
-                            review_case_id = None
-                self._connection.execute(
-                    "INSERT INTO review_preparation_work("
-                    "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
-                    "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
-                    "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,"
-                    "report_id,proposal_set_id,review_case_id,failure_code,failure_root,outcome,"
-                    "research_not_before,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                    "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
-                    "library_id=excluded.library_id,file_identity=excluded.file_identity,"
-                    "source_revision=excluded.source_revision,"
-                    "source_fingerprint=excluded.source_fingerprint,"
-                    "producer_fingerprint=excluded.producer_fingerprint,"
-                    "catalogue_generation=excluded.catalogue_generation,"
-                    "catalogue_fingerprint=excluded.catalogue_fingerprint,"
-                    "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,retry_not_before=0,"
-                    "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
-                    "review_case_id=excluded.review_case_id,recovery_source_report_id="
-                    "CASE WHEN excluded.report_id IS NULL THEN NULL "
-                    "ELSE review_preparation_work.recovery_source_report_id END,"
-                    "failure_code=excluded.failure_code,"
-                    "failure_root=excluded.failure_root,"
-                    "outcome=excluded.outcome,"
-                    "research_not_before=excluded.research_not_before,"
-                    "updated_at=excluded.updated_at",
-                    (
-                        work_id,
-                        action.scan_id,
-                        ordinal,
-                        action.connection,
-                        action.library,
-                        action.library_id,
-                        entry.item_id,
-                        entry.file_identity,
-                        entry.updated_at,
-                        entry.source_fingerprint,
-                        action.producer_fingerprint,
-                        generation,
-                        fingerprint,
-                        stage,
-                        state,
-                        0,
-                        0,
-                        0,
-                        report_id,
-                        proposal_set_id,
-                        review_case_id,
-                        failure_code,
-                        failure_root,
-                        outcome,
-                        research_not_before,
-                        completed_at,
-                    ),
+                self._reconcile_discovered_work(
+                    action, generation, fingerprint, ordinal, entry, completed_at
                 )
             for work_id, item_id in self._connection.execute(
                 "SELECT work_id,item_id FROM review_preparation_work WHERE scan_id=?",
@@ -930,6 +780,177 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             else:
                 raise
         raise interruption from None
+
+    def _reconcile_discovered_work(
+        self,
+        action: PipelineAction,
+        generation: int,
+        fingerprint: str,
+        ordinal: int,
+        entry: CatalogueEntry,
+        completed_at: int,
+    ) -> None:
+        """Carry one eligible item's work forward, or queue it afresh.
+
+        A work whose file, source and producer are unchanged keeps the stage
+        its report and lineage still support; anything else starts again at
+        extraction. Runs inside `complete_review_discovery`'s transaction.
+        """
+        assert entry.file_identity is not None
+        material = (
+            f"review-preparation-work-v1\0{action.connection}\0"
+            f"{action.library}\0{entry.item_id}"
+        )
+        work_id = "review_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+        existing = self._connection.execute(
+            "SELECT file_identity,source_fingerprint,producer_fingerprint,"
+            "stage,state,report_id,proposal_set_id,review_case_id,outcome,"
+            "research_not_before "
+            "FROM review_preparation_work WHERE work_id=?",
+            (work_id,),
+        ).fetchone()
+        stage = "extraction"
+        state = "queued"
+        report_id = proposal_set_id = review_case_id = None
+        failure_code = failure_root = outcome = None
+        research_not_before = None
+        if existing is not None and existing[:3] == (
+            entry.file_identity,
+            entry.source_fingerprint,
+            action.producer_fingerprint,
+        ):
+            stage, previous_state = existing[3], existing[4]
+            report_id, proposal_set_id, review_case_id = existing[5:8]
+            previous_outcome = existing[8]
+            research_not_before = existing[9]
+            report_current = True
+            if report_id is not None:
+                report_current = self._connection.execute(
+                    "SELECT report_id FROM current_metadata_reports "
+                    "WHERE connection_name=? AND library_name=? AND item_id=? "
+                    "AND file_identity=?",
+                    (
+                        action.connection,
+                        action.library,
+                        entry.item_id,
+                        entry.file_identity,
+                    ),
+                ).fetchone() == (report_id,)
+            if not report_current or previous_state == "stale":
+                stage = "extraction"
+                report_id = proposal_set_id = review_case_id = None
+                research_not_before = None
+            elif (
+                previous_state == "complete"
+                and research_not_before is not None
+                and research_not_before <= completed_at
+            ):
+                # An audiobook that admitted no recording is searched
+                # again once its interval has passed (#1451). The
+                # retained mark tells publication this is a re-search,
+                # which keeps an open case unless a recording is now
+                # admitted.
+                stage = "extraction"
+                report_id = proposal_set_id = review_case_id = None
+            elif previous_state == "complete" and previous_outcome == "evidence_only":
+                # The file this outcome is terminal about has not moved:
+                # re-inspecting it would re-hash gigabytes to reach the
+                # same recorded evidence.
+                stage = "complete"
+                state = "complete"
+                outcome = previous_outcome
+            elif previous_state == "failed" and stage == "provider":
+                stage = "extraction"
+                report_id = proposal_set_id = review_case_id = None
+                research_not_before = None
+            elif previous_state == "complete":
+                pointer = self._connection.execute(
+                    "SELECT proposal_set_id,report_id,review_case_id,outcome "
+                    "FROM current_review_case_lineages WHERE connection_name=? "
+                    "AND library_name=? AND item_id=?",
+                    (action.connection, action.library, entry.item_id),
+                ).fetchone()
+                pointer_matches = (
+                    pointer is not None
+                    and pointer[:3] == (proposal_set_id, report_id, review_case_id)
+                    and (
+                        pointer[3] in {"admitted", "superseded"}
+                        if review_case_id is not None
+                        else pointer[3] in {"no_case", "retired"}
+                    )
+                )
+                pending_description = (
+                    self._connection.execute(
+                        "SELECT 1 FROM description_preparation_pending WHERE review_case_id=?",
+                        (review_case_id,),
+                    ).fetchone()
+                    is not None
+                )
+                if pointer_matches and pending_description:
+                    stage = "projection"
+                    state = "queued"
+                    outcome = None
+                elif pointer_matches:
+                    stage = "complete"
+                    state = "complete"
+                    outcome = "case" if review_case_id is not None else "no_case"
+                else:
+                    stage = "admission"
+                    review_case_id = None
+        self._connection.execute(
+            "INSERT INTO review_preparation_work("
+            "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
+            "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
+            "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,"
+            "report_id,proposal_set_id,review_case_id,failure_code,failure_root,outcome,"
+            "research_not_before,updated_at"
+            ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
+            "library_id=excluded.library_id,file_identity=excluded.file_identity,"
+            "source_revision=excluded.source_revision,"
+            "source_fingerprint=excluded.source_fingerprint,"
+            "producer_fingerprint=excluded.producer_fingerprint,"
+            "catalogue_generation=excluded.catalogue_generation,"
+            "catalogue_fingerprint=excluded.catalogue_fingerprint,"
+            "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,retry_not_before=0,"
+            "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
+            "review_case_id=excluded.review_case_id,recovery_source_report_id="
+            "CASE WHEN excluded.report_id IS NULL THEN NULL "
+            "ELSE review_preparation_work.recovery_source_report_id END,"
+            "failure_code=excluded.failure_code,"
+            "failure_root=excluded.failure_root,"
+            "outcome=excluded.outcome,"
+            "research_not_before=excluded.research_not_before,"
+            "updated_at=excluded.updated_at",
+            (
+                work_id,
+                action.scan_id,
+                ordinal,
+                action.connection,
+                action.library,
+                action.library_id,
+                entry.item_id,
+                entry.file_identity,
+                entry.updated_at,
+                entry.source_fingerprint,
+                action.producer_fingerprint,
+                generation,
+                fingerprint,
+                stage,
+                state,
+                0,
+                0,
+                0,
+                report_id,
+                proposal_set_id,
+                review_case_id,
+                failure_code,
+                failure_root,
+                outcome,
+                research_not_before,
+                completed_at,
+            ),
+        )
 
     def _commit_review_absences(self, scan_id: str) -> None:
         scan = self._connection.execute(
