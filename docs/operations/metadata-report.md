@@ -356,6 +356,15 @@ staged, including a disappeared ebook's in a mixed-format library. Each file's d
 than the EPUB archive limit, and its catalogue fingerprint follows the audio
 files' own revisions, so playing an audiobook does not re-prepare it.
 
+An audiobook whose report admitted no recording is the exception: its work is
+marked to be prepared again seven days after publication, because Audible's
+search can list the recording on a later day (ADR-0089). The scan returns it to
+extraction once the mark has passed, even though its files have not changed.
+When that search still admits no recording, an open case stays as it was: its
+report becomes current again and the new one is kept only as history. A search
+that admits a recording replaces the case through ordinary admission. An item
+without a case takes the new evidence either way.
+
 A local `no_candidate` result is not an extraction failure and does not negate
 provider evidence. A WORK match identifies a work, not this recording; provider
 unavailability or overflow does not establish that no matching recording exists.

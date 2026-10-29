@@ -254,3 +254,10 @@ about evidence, not about containers.
   rules on real audiobook evidence, and an ebook replay at base and at head
   proves the ebook outcomes are unchanged apart from version strings.
 - The restart validation of the #954 class is re-run against the candidate.
+
+## Amendment: searching an unmatched audiobook again (#1451)
+
+A caseless or case-holding audiobook whose report admitted no recording is no
+longer final while its files are unchanged. ADR-0089 marks its work to be
+prepared again after seven days, and keeps an open case when that search still
+admits no recording. The terminal vocabulary is unchanged.

@@ -11,6 +11,12 @@
   current on reviews and Attention, and each Activity Details names its row's
   time (#1291).
 
+- **Clean rebuild required.** An audiobook whose search admitted no recording
+  is now searched again once a week, because Audible's search can list a
+  recording it missed before. An open review case is replaced only when the new
+  search admits a recording, so an unchanged answer leaves your queue alone
+  (#1451).
+
 - Review choices are one radio group: arrows move between them, Space or Enter
   records. Field tabs say their status in words. A cover records in one tap,
   states its pixel size and every source, and a duplicate image is one choice.

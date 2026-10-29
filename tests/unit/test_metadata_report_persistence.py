@@ -50,6 +50,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL,
     PRIOR_REPORT_BROWSE_FACTS_SQL,
     PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+    PRIOR_REVIEW_WORK_SQL,
     create_legacy_schema,
     create_prior_schema,
     forged_latin_work_report_json,
@@ -815,6 +816,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         )
         old.setattr(schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL)
+        old.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes and #1232's
@@ -2511,6 +2513,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         old.setattr(
             persistence_schema, "_HUMAN_DECISIONS_SQL", PRIOR_HUMAN_DECISIONS_SQL
         )
+        old.setattr(persistence_schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
         old.setattr(
             persistence_schema,
             "_ATTENTION_FACT_OBJECTS",
