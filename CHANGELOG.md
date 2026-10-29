@@ -3,11 +3,13 @@
 ## Unreleased
 
 - The masthead holds still as its status changes and scrolls away once taller
-  than a quarter of the window; Library opens with its write handoff in place.
-  Words break only where they must. At 200% text, Activity rows, Policy and
-  Settings controls and setup refusals stay in view. Saving settings moves
-  nothing, loading reads as one quiet line, Library stays current on reviews
-  and Attention, and each Activity Details names its row's time (#1291).
+  than a quarter of the window; Library opens with its write handoff in place,
+  and a Library read that fails while it is still opening is retried once,
+  silently. Words break only where they must. At 200% text, Activity rows,
+  Policy and Settings controls and setup refusals stay in view. Saving
+  settings moves nothing, loading reads as one quiet line, Library stays
+  current on reviews and Attention, and each Activity Details names its row's
+  time (#1291).
 
 - Review choices are one radio group: arrows move between them, Space or Enter
   records. Field tabs say their status in words. A cover records in one tap,
