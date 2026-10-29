@@ -4932,6 +4932,78 @@ def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
                 assert cut == [], f"{where}: {cut}"
 
 
+# Each Policy selected value cut short inside its control.
+_TRUNCATED_VALUES = """() => [...document.querySelectorAll(
+    '.cm-policy-route .cm-dropdown-trigger > span')]
+  .filter((node) => node.getClientRects().length && node.scrollWidth > node.clientWidth + 1)
+  .map((node) => `"${node.textContent.trim()}" by ${node.scrollWidth - node.clientWidth}px`)"""
+# Each word split across lines although the column it sits in could hold it.
+_SPLIT_THOUGH_THE_COLUMN_FITS = """([selector, column]) => {
+  const room = document.querySelector(column).clientWidth;
+  const found = [];
+  for (const node of document.querySelectorAll(selector)) {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/[^\\s\\u2010-\\u2014-]+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+        if (new Set(rects.map((rect) => Math.round(rect.top))).size < 2) continue;
+        const width = rects.reduce((sum, rect) => sum + rect.width, 0);
+        if (width < room) found.push(`${match[0]} (${Math.round(width)}px; the column is ${room}px)`);
+      }
+  }
+  return found;
+}"""
+
+
+def test_insets_and_columns_never_cut_a_word_short() -> None:
+    """A Policy value is never truncated in its control, at any width and
+    either text size, and on the narrowest phones at 200% text the provider
+    recovery card's insets leave its words the line the Activity column
+    allows (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        failures = []
+        for text in styles:
+            for width in (1440, 1200, 1100, 1024, 884, 761, 760, 390, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto("https://react-platform.invalid/policy?section=identity")
+                page.wait_for_load_state("networkidle")
+                expect(page.locator(".cm-policy-field").first).to_be_visible()
+                page.evaluate(_TWO_FRAMES)
+                failures += [
+                    f"Policy, {text} text at {width}px: {value}"
+                    for value in page.evaluate(_TRUNCATED_VALUES)
+                ]
+        text = "200%"
+        for width in (390, 375, 320):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.goto(
+                "https://react-platform.invalid/activity"
+                "?eventType=all&rangeDays=30&page=1&pageSize=25"
+            )
+            page.wait_for_load_state("networkidle")
+            expect(page.locator(".activity-recovery")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            failures += [
+                f"recovery, 200% text at {width}px: {word}"
+                for word in page.evaluate(
+                    _SPLIT_THOUGH_THE_COLUMN_FITS,
+                    [".activity-recovery", ".cm-activity-route"],
+                )
+            ]
+        assert failures == [], "\n".join(failures)
+
+
 def test_policy_sidebar_keeps_its_header_in_view_on_short_screens() -> None:
     """The Policy sidebar's header and first chapter can each be brought into
     view and pressed, clear of the masthead and the finish tray, on short

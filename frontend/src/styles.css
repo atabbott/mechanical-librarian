@@ -548,6 +548,21 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .cm-policy-result > aside { grid-template-columns:minmax(180px,.8fr) minmax(0,1.2fr); border-right:0; border-bottom:1px solid var(--line); }
   .cm-policy-result dl { grid-template-columns:repeat(3,1fr); }
 }
+/* Policy's fields follow their list's width in rem: with enlarged text they take the two-column and then the
+   stacked arrangement a narrower window would, so a control is never narrower than its words. These sit
+   before the phone rules, which still stack every field on a phone. A selected value wraps, never truncates. */
+.cm-policy-field-list { container:policy-fields / inline-size; }
+.cm-policy-route .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
+@container policy-fields (max-width:44rem) {
+  .cm-policy-field { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .cm-policy-field > header { grid-column:1 / -1; }
+  .cm-policy-field > header p { max-width:64ch; }
+}
+@container policy-fields (max-width:28rem) {
+  .cm-policy-field { grid-template-columns:minmax(0,1fr); gap:.7rem; padding:.85rem 1rem; }
+  .cm-policy-field > header { grid-column:1; }
+  .cm-policy-field > header p { max-width:52ch; }
+}
 @media (max-width:760px) {
   .cm-policy-editor { grid-template-columns:minmax(0,1fr); overflow:visible; }
   .cm-policy-result { grid-column:1; }
@@ -1044,6 +1059,12 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
    leaves the row or loses its word (#636). */
 @media (max-width:1199px) and (min-width:761px) { .cm-activity-columns,.cm-activity-event-group article { grid-template-columns:52px 116px minmax(0,1fr) minmax(0,1.15fr) 82px minmax(104px,auto); gap:.65rem; padding-inline:.9rem; }.cm-activity-event-group article > button { min-width:0; padding-inline:.65rem; }.cm-activity-evidence dl { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:760px) { .cm-activity-route { display:flex; flex-direction:column; }.cm-activity-route > .cm-page-heading { order:1; align-items:start; flex-direction:column; gap:.55rem; margin-bottom:.75rem; padding-bottom:.75rem; }.cm-activity-route > .cm-activity-ledger { order:2; }.cm-activity-route > .cm-write-consent,.cm-activity-route > .activity-consent-ledger,.cm-activity-route > .cm-activity-status { order:3; }.cm-activity-route > .cm-page-heading h1 { font-size:1.65rem; }.cm-activity-status { grid-template-columns:minmax(0,1fr); gap:.75rem; padding:.9rem; }.cm-activity-status dl div { padding:.15rem .5rem; }.cm-activity-status dl div:first-child { border-left:0; }.cm-activity-waiting { grid-column:1; }.cm-activity-authority > summary { padding-top:.45rem; }.cm-activity-authority-actions { align-items:stretch; flex-direction:column; }.cm-activity-authority-actions > button { width:100%; }.cm-activity-ledger-heading { align-items:stretch; flex-direction:column; padding:1rem .9rem .75rem; }.cm-activity-range { flex-basis:auto; }.cm-activity-tools { align-items:stretch; flex-direction:column; gap:.35rem; padding:.75rem .9rem; }.cm-activity-search { width:100%; }.cm-activity-filters { min-width:0; max-width:100%; flex-wrap:nowrap; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; }.cm-activity-filters button { min-height:44px; }.cm-activity-filter-notice { padding-inline:.9rem; }.cm-activity-pagination { align-items:stretch; flex-direction:column; padding:.75rem .9rem; }.cm-activity-pagination-summary { justify-content:space-between; }.cm-activity-pagination-nav { display:grid; grid-template-columns:auto auto minmax(0,1fr) auto auto; }.cm-activity-page-jump { justify-content:center; }.cm-activity-page-jump input,.cm-activity-pagination button { min-height:44px; } }
+/* Narrower than any screen at ordinary text: the status strip and the recovery card inside it tighten their
+   insets, so its words keep the line the column allows. */
+@container shell (max-width:15rem) {
+  .cm-activity-status { padding-inline:.25rem; }
+  .activity-recovery { padding-inline:.375rem; }
+}
 @media (max-width:390px) { .cm-activity-pagination-summary { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.15rem .3rem; }.cm-activity-page-size { grid-column:1 / -1; justify-content:space-between; margin:.35rem 0 0; }.cm-activity-page-size .cm-dropdown { min-width:9rem; }.cm-activity-pagination-nav { display:flex; flex-wrap:wrap; }.cm-activity-pagination-nav button { flex:1 0 auto; padding-inline:.45rem; }.cm-activity-page-jump { flex:1 0 100%; order:-1; justify-content:center; min-height:44px; } }
 /* The ledger's rows follow the ledger's own width in rem, so enlarged text
    turns them into cards just as a phone does. A card leads with the time, the
