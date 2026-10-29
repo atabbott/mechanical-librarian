@@ -787,8 +787,9 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 @container (max-width:64rem) { .library-header .cm-library-handoff { grid-template-columns:minmax(0,1fr); } }
 .attention-toggle, .compact-workspace-back { flex:none; display: inline-flex; flex-wrap: wrap; min-height: 44px; align-items: center; gap: 4px 9px; padding: 4px 15px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface-strong); color: var(--accent-strong); font-weight:650; }
 .attention-toggle strong { flex: none; display: grid; min-width: 24px; min-height: 24px; padding-inline: .45rem; place-items: center; border-radius: 999px; white-space: nowrap; background: var(--notice-soft); color: var(--notice); }
-.variant-m-workspace .library-workspace { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); align-items: start; max-width: 1480px; margin: 0 auto; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow: clip; }
-.variant-m-workspace .library-workspace.attention-open { grid-template-columns: minmax(220px, 280px) minmax(460px, 1fr) minmax(220px, 260px); }
+/* The works track grows with enlarged text, from 10.5rem past its 300px (280px beside Attention), so a row's words stay whole; at 100% and 150% it is unchanged. */
+.variant-m-workspace .library-workspace { display: grid; grid-template-columns: minmax(240px, max(300px, 10.5rem)) minmax(0, 1fr); align-items: start; max-width: 1480px; margin: 0 auto; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); overflow: clip; }
+.variant-m-workspace .library-workspace.attention-open { grid-template-columns: minmax(220px, max(280px, 10.5rem)) minmax(460px, 1fr) minmax(220px, 260px); }
 .variant-m-workspace .library-works { min-height: 72vh; padding: 28px; border: 0; border-right: 1px solid var(--line); background: var(--surface); }
 .variant-m-workspace .library-works-heading h2, .selected-work-header h2, .decision-canvas > header h3 { font-family: Georgia, 'Times New Roman', serif; letter-spacing: -.025em; }
 /* The question and the completion are the work's h3s, sized as the h2s they were. */

@@ -4604,7 +4604,8 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
 
 # The words an owner reads as interface: headings, controls, labels and the
 # pager's status. The #1290 review choices, covers and works rows are proved
-# by their own tests.
+# by their own tests; works rows are walked here too, at desktop widths, where
+# enlarged text must widen their column rather than split their words.
 _UI_LABELS = (
     ":is(h1, h2, h3, h4, button, a, label, summary, legend, dt, th, "
     ".library-pager > span):not(:is({owned}), :is({owned}) *)".format(
@@ -4612,6 +4613,7 @@ _UI_LABELS = (
         ".library-cover-card, .library-work-row, .metadata-choice"
     )
 )
+_WORKS_ROWS = ".library-work-row"
 # Of the split words `_POLICY_MID_WORD` found, those the layout split without
 # need. A word may break only when it is wider than its whole line box. For a
 # word of the interface that box must also hold at least half the page's
@@ -4655,7 +4657,8 @@ _NEEDLESS_SPLITS = """([selector, words]) => {
 def test_words_break_only_where_they_must() -> None:
     """No interface word splits where the layout could have kept it whole, on
     every route state at every frozen width and both text sizes, and no page
-    is wider than the window (#1291). Enlarged text is root font-size 200%."""
+    is wider than the window (#1291). Enlarged text is root font-size 200%.
+    From 1100px up a works row's words, title included, stay whole too."""
     routes = {
         "library": "/library?lens=all",
         "selected": "/library?lens=all&preview=case-1",
@@ -4677,7 +4680,7 @@ def test_words_break_only_where_they_must() -> None:
         failures = []
         for text in styles:
             for name, route in routes.items():
-                for width in (1440, 1100, 1024, 884, 760, 390, 375, 320):
+                for width in (1440, 1200, 1100, 1024, 884, 760, 390, 375, 320):
                     where = f"{name}, {text} text at {width}px"
                     page.set_viewport_size({"width": width, "height": 900})
                     page.goto("https://react-platform.invalid" + route)
@@ -4688,6 +4691,10 @@ def test_words_break_only_where_they_must() -> None:
                     if split:
                         needless = page.evaluate(_NEEDLESS_SPLITS, [_UI_LABELS, split])
                         failures += [f"{where}: {word}" for word in needless]
+                    rows = page.evaluate(_POLICY_MID_WORD, _WORKS_ROWS)
+                    if rows and width >= 1100:
+                        needless = page.evaluate(_NEEDLESS_SPLITS, [_WORKS_ROWS, rows])
+                        failures += [f"{where}: works row {word}" for word in needless]
                     overflow = page.evaluate(
                         "document.scrollingElement.scrollWidth - innerWidth"
                     )
