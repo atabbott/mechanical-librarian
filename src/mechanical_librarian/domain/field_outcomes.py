@@ -110,6 +110,28 @@ def language_outcomes_compatible(left: str, right: str) -> bool:
     return left_class == right_class
 
 
+# A library's declared languages (#1315): an ordered, duplicate-free list of
+# supported tags naming real languages. Undetermined, multiple, uncoded and
+# non-linguistic content are not a language a library can hold.
+MAX_LIBRARY_LANGUAGES = 8
+_NOT_LIBRARY_LANGUAGES = frozenset({"und", "mul", "mis", "zxx"})
+
+
+def library_languages_valid(value: object) -> bool:
+    """Accept one library's ordered language list, first entry preferred."""
+    if type(value) is not tuple or len(value) > MAX_LIBRARY_LANGUAGES:
+        return False
+    classes = []
+    for tag in value:
+        if type(tag) is not str or _LANGUAGE_TAG.fullmatch(tag) is None:
+            return False
+        identity = language_identity(tag)
+        if identity is None or identity.base in _NOT_LIBRARY_LANGUAGES:
+            return False
+        classes.append((identity.base, identity.script))
+    return len(set(classes)) == len(classes)
+
+
 def publisher_statement_valid(value: str) -> bool:
     """Validate a broad publisher/imprint/brand/group statement syntax."""
     return (
@@ -128,9 +150,11 @@ def publisher_statement_valid(value: str) -> bool:
 
 
 __all__ = [
+    "MAX_LIBRARY_LANGUAGES",
     "LanguageIdentity",
     "language_equivalence_class",
     "language_identity",
     "language_outcomes_compatible",
+    "library_languages_valid",
     "publisher_statement_valid",
 ]

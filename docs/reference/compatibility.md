@@ -1,5 +1,14 @@
 # Pre-release compatibility policy
 
+#1315 and #1305 advance the report to `metadata-report-v62` and the proposal
+policy to `fixed-conservative-v39`: a library may declare its `languages`, an
+audiobook report records the list it was prepared under, an audiobook product
+in another language is refused when the recording states none, and the
+stated-runtime path now runs the recording language and format check. **Clean
+rebuild required** for every predecessor application database; startup refuses
+v61 reports before mutation. No migration, adoption, conversion, import or
+downgrade is supplied.
+
 #1307 advances the report to `metadata-report-v61` and the proposal policy to
 `fixed-conservative-v38`: an audiobook ASIN lane keeps each product it refused
 with its own claims, Audible's asserted lane may admit one runtime-, title- and
@@ -202,8 +211,8 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v61` plus `proposal-set-v8` under
-  `fixed-conservative-v38`, or the separate `catalogue-v2` schema;
+  `metadata-report-v62` plus `proposal-set-v8` under
+  `fixed-conservative-v39`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v23`,
@@ -608,6 +617,22 @@ stores are refused before mutation. No migration, adoption or relabelling is
 supplied. The comparison version moves to
 `closed-title-creator-publication-work-identity-v6` because a lone apostrophe
 between letters now folds (ADR-0018). The packet, outcome and review envelopes
+are unchanged.
+
+## Library languages (#1315, #1305)
+
+Report `metadata-report-v62` adds the top-level `library_languages`: the
+ordered languages the item's library declared when an audiobook report was
+prepared, and an empty list on every ebook report. Every admission read of the
+report applies them, so they travel with it and are part of its content
+address. A v61 report cannot state them, so the exact SQLite discriminator
+requires a **clean rebuild** under ADR-0013, and the proposal policy moves to
+`fixed-conservative-v39` because a product the list refuses supplies no
+recording narrators and the stated-runtime path now runs the recording
+conflict check. Prior stores are refused before mutation. No migration,
+adoption or relabelling is supplied. `config-v9` gains the optional library
+`languages` field with an empty default, so existing configuration files load
+unchanged. The comparison version and the packet, outcome and review envelopes
 are unchanged.
 
 ## Provider log events (#1299)

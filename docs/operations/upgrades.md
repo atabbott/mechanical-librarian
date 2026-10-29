@@ -1,5 +1,14 @@
 # Upgrades and compatibility
 
+#1315 and #1305 advance the report to `metadata-report-v62` and the proposal
+policy to `fixed-conservative-v39`: a library may declare its `languages`, an
+audiobook report records the list it was prepared under, an audiobook product
+in another language is refused when the recording states none, and the
+stated-runtime path now runs the recording language and format check. **Clean
+rebuild required** for every predecessor application database; startup refuses
+v61 reports before mutation. No migration, adoption, conversion, import or
+downgrade is supplied.
+
 #1451 adds the `research_not_before` column to `review_preparation_work`: an
 audiobook whose report admitted no recording is prepared again a week later,
 and that search keeps an open case unless it admits a recording (ADR-0089). No
@@ -183,8 +192,8 @@ decodable history without current authority; no adoption or migration is supplie
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The current build uses `metadata-report-v61`, `proposal-set-v8` under
-`fixed-conservative-v38`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
+The current build uses `metadata-report-v62`, `proposal-set-v8` under
+`fixed-conservative-v39`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
 and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.

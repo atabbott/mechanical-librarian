@@ -321,9 +321,10 @@ def test_actual_v32_baseline_table_refuses_before_rows_without_mutation(
     # The capsule's producer wrote metadata-report-v49, which differs from this
     # provider-less current report only in its schema label (#1245), in the
     # description's restore flag v58 added (#1424), in the field-result
-    # source v60 added (#1316) and in the comparison version v61 moved
-    # (#1307).
+    # source v60 added (#1316), in the comparison version v61 moved
+    # (#1307) and in the library languages v62 added (#1315).
     produced = report.to_data()
+    produced.pop("library_languages")
     produced["schema_version"] = "metadata-report-v49"
     produced["comparison_version"] = "closed-title-creator-publication-work-identity-v5"
     for field in produced["target"]["fields"]:
