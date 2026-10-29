@@ -236,9 +236,16 @@ what a v61 report records, and the proposal policy moves to
 `fixed-conservative-v38` (ADR-0067). Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
-Issue #1319 also takes the clean-rebuild branch. `metadata-report-v62` adds
+Issues #1315 and #1305 also take the clean-rebuild branch.
+`metadata-report-v62` records the library languages an audiobook report was
+prepared under (`library_languages`), which its admission reads, so a v61
+report cannot state what a v62 report records, and the proposal policy moves to
+`fixed-conservative-v39` (ADR-0064). Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1319 also takes the clean-rebuild branch. `metadata-report-v63` adds
 the `companion` section, the EPUB an audiobook item holds beside its tracks
-with the claims read from it, so a v61 report cannot state what a v62 report
+with the claims read from it, so a v62 report cannot state what a v63 report
 records. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
 

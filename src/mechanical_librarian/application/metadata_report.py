@@ -72,6 +72,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
+from mechanical_librarian.domain.field_outcomes import library_languages_valid
 from mechanical_librarian.domain.metadata_report import (
     ASSERTED_ASIN_BASES,
     AUDIO_DISCOVERY_TITLE_BASES,
@@ -307,6 +308,9 @@ class MetadataLookup:
     # A retry that cannot see every exact path withholds the rule itself but
     # still walks the asserted lane's full ladder (#1307).
     corroborated_rule: bool = True
+    # The library's declared languages, which an audiobook's recording-conflict
+    # check holds a product to when the item states no language (#1315).
+    library_languages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
@@ -318,6 +322,7 @@ class MetadataLookup:
             )
         ) or (
             type(self.corroborated_rule) is not bool
+            or not library_languages_valid(self.library_languages)
             or type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -466,6 +471,7 @@ class MetadataDiscoveryPlan:
     work_authors: tuple[str, ...] = ()
     recording_corroboration: RecordingCorroboration | None = None
     corroborated_rule: bool = True
+    library_languages: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
@@ -477,6 +483,7 @@ class MetadataDiscoveryPlan:
             )
         ) or (
             type(self.corroborated_rule) is not bool
+            or not library_languages_valid(self.library_languages)
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.lanes) is not tuple
@@ -893,6 +900,7 @@ def audiobook_discovery_plan(
     local_claims: tuple[LocalClaim, ...],
     *,
     audio: AudioFacts | None = None,
+    library_languages: tuple[str, ...] = (),
 ) -> MetadataDiscoveryPlan:
     """Plan one audiobook's discovery from its own identifier surfaces.
 
@@ -927,7 +935,13 @@ def audiobook_discovery_plan(
     canonical_asins = sorted(_local_identifier_asins(local_claims))
     if len(canonical_asins) > MAX_ASIN_DISCOVERY_LANES:
         return MetadataDiscoveryPlan(
-            local_claims, (), True, audio, context.title, context.authors
+            local_claims,
+            (),
+            True,
+            audio,
+            context.title,
+            context.authors,
+            library_languages=library_languages,
         )
     lanes: list[MetadataDiscoveryLane] = []
     for asin in canonical_asins:
@@ -949,7 +963,13 @@ def audiobook_discovery_plan(
         > MAX_PROVIDER_DISCOVERY_QUERIES
     ):
         return MetadataDiscoveryPlan(
-            local_claims, (), True, audio, context.title, context.authors
+            local_claims,
+            (),
+            True,
+            audio,
+            context.title,
+            context.authors,
+            library_languages=library_languages,
         )
     return MetadataDiscoveryPlan(
         local_claims,
@@ -960,6 +980,7 @@ def audiobook_discovery_plan(
         recording_corroboration=(
             None if audio is None else recording_corroboration(target.fields)
         ),
+        library_languages=library_languages,
     )
 
 
@@ -1214,6 +1235,7 @@ def audiobook_asin_feed_plan(
         work_authors=plan.work_authors,
         recording_corroboration=plan.recording_corroboration,
         corroborated_rule=plan.corroborated_rule,
+        library_languages=plan.library_languages,
     )
 
 
@@ -2034,7 +2056,10 @@ def _identifier_lane_candidates(
                     candidate, lookup.local_claims, lookup.audio
                 )
                 and recording_variant_conflict(
-                    candidate, lookup.local_claims, lookup.work_title or ""
+                    candidate,
+                    lookup.local_claims,
+                    lookup.work_title or "",
+                    lookup.library_languages,
                 )
                 is None,
                 lookup.local_claims,
@@ -2106,6 +2131,7 @@ def _identifier_lane_candidates(
                 lookup.work_authors,
                 lookup.local_claims,
                 lookup.recording_corroboration,
+                lookup.library_languages,
             )
             is not None
         }
@@ -2118,7 +2144,9 @@ def _identifier_lane_candidates(
     runtime_candidates = tuple(
         c
         for c in observation.candidates
-        if recording_variant_conflict(c, lookup.local_claims, lookup.work_title or "")
+        if recording_variant_conflict(
+            c, lookup.local_claims, lookup.work_title or "", lookup.library_languages
+        )
         is None
         and (c.identity in work_admitted or c.identity in alternative_admitted)
         and c.identity not in narrator_refused
@@ -2145,6 +2173,7 @@ def _identifier_lane_candidates(
                 lookup.work_title,
                 lookup.work_authors,
                 lookup.requested_asin,
+                lookup.library_languages,
             )
         )
         alternative = (
@@ -2311,6 +2340,7 @@ def qualify_provider_observation(
         ),
         leading_number=asserted_band
         and observation.authority == CORROBORATED_RULE_AUTHORITY,
+        library_languages=lookup.library_languages,
     )
     if not set_admission.admitted:
         return ProviderObservation(
@@ -2347,9 +2377,23 @@ def qualify_provider_observation(
     # A band that does not pass falls through to the work-scope shape every
     # other authority gets, so the widening below is dead code for an ebook
     # provider: none of them is an audiobook authority and none states a
-    # `DURATION` claim to compare.
+    # `DURATION` claim to compare. A product with a recording conflict is
+    # never the one the band selects (#1305).
     corroborated = (
-        runtime_corroborated_candidate(set_admission.candidates, lookup.local_claims)
+        runtime_corroborated_candidate(
+            tuple(
+                candidate
+                for candidate in set_admission.candidates
+                if recording_variant_conflict(
+                    candidate,
+                    lookup.local_claims,
+                    lookup.work_title or "",
+                    lookup.library_languages,
+                )
+                is None
+            ),
+            lookup.local_claims,
+        )
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         else None
     )
@@ -3494,7 +3538,12 @@ class GenerateMetadataReport:
                 audio.audio.discovery_titles, initial.fields
             ),
         )
-        plan = audiobook_discovery_plan(initial, combined_claims, audio=facts)
+        plan = audiobook_discovery_plan(
+            initial,
+            combined_claims,
+            audio=facts,
+            library_languages=self._library.languages,
+        )
         cover_aggregate_deadline = time.monotonic() + 60.0
         try:
             with self._timing.measure("cover", "target"):
@@ -3574,6 +3623,7 @@ class GenerateMetadataReport:
                 cover_sources=cover_sources,
                 audio=_audio_with_runtime_observations(facts, tuple(observations)),
                 companion=companion,
+                library_languages=self._library.languages,
             )
         except Exception as error:
             _release_repository(repository, error)

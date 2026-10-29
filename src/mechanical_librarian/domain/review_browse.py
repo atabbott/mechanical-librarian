@@ -70,6 +70,7 @@ _REPORT = closed_document(
     "field_results",
     "file",
     "identifier_evidence",
+    "library_languages",
     "local",
     "providers",
     "report_id",

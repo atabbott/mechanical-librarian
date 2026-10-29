@@ -110,7 +110,9 @@ markup only once decoded, or that would decode again, is kept as stored. A
 description also records `restorable`: whether writing its text back would
 store it as it is stored now. Text whose only defect is C1 control characters is refused by the
 validator with its own reason, but the report and UI still show that field only
-as `malformed` (#1251). The report is `metadata-report-v62`. For the title
+as `malformed` (#1251). The report is `metadata-report-v63`. An audiobook
+report also records `library_languages`, the languages its library declared
+when it was prepared (#1315); an ebook report records none. For the title
 specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
