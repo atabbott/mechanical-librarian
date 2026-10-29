@@ -8026,6 +8026,21 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
             browser.close()
 
 
+# The focused control and how much of it the floating saved notice covers.
+_UNDER_SAVED_NOTICE = """() => {
+  const notice = document.querySelector('.settings-saved');
+  const focused = document.activeElement;
+  if (!notice || !focused || notice.contains(focused)) return null;
+  const a = notice.getBoundingClientRect();
+  const b = focused.getBoundingClientRect();
+  const x = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+  const y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+  if (x <= 0.5 || y <= 0.5) return null;
+  const name = focused.getAttribute('aria-label') || focused.textContent.trim().slice(0, 40);
+  return `${name} by ${Math.round(y)}px of ${Math.round(b.height)}px`;
+}"""
+
+
 def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -8459,6 +8474,29 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 # The notice floats; its arrival moves no heading.
                 assert abs(page.evaluate(heading_top) - before_save) <= 1
+                # Tabbing on after the save never leaves focus under the
+                # floating notice, at either text size (WCAG 2.4.11). Text is
+                # resized before the window, as a zoom does both at once.
+                hidden = []
+                for size, width, height in (
+                    ("", 390, 844),
+                    ("", 1440, 900),
+                    ("200%", 390, 844),
+                    ("200%", 1100, 700),
+                ):
+                    page.evaluate(f"document.documentElement.style.fontSize = '{size}'")
+                    page.set_viewport_size({"width": width, "height": height})
+                    page.evaluate("scrollTo(0, 0); document.activeElement?.blur()")
+                    for _ in range(120):
+                        page.keyboard.press("Tab")
+                        if page.evaluate("document.activeElement === document.body"):
+                            break
+                        under = page.evaluate(_UNDER_SAVED_NOTICE)
+                        if under:
+                            hidden.append(f"{size or '100%'} at {width}px: {under}")
+                assert hidden == [], "\n".join(hidden)
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 320, "height": 800})
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[
                     "document"
                 ]

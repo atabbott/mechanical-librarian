@@ -755,6 +755,10 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-change-review del { color:var(--soft); }
 .settings-change-review ins { color:var(--ink); font-weight:700; text-decoration:none; }
 html { scroll-padding-bottom:calc(var(--finish-tray-height,0px) + 1rem); }
+/* While the saved notice floats, focus scrolls clear of it too: its height and its 1rem offset, with room
+   below the page's last control to scroll that far. */
+html:has(.settings-saved) { scroll-padding-bottom:calc(var(--finish-tray-height,0px) + var(--settings-saved-height,0px) + 2rem); }
+main:has(.settings-saved) { padding-bottom:calc(clamp(1rem,3vw,2.6rem) + var(--settings-saved-height,0px) + 1rem); }
 html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; }
 @media (max-width:1024px) {
   .settings-editor { grid-template-columns:minmax(11rem,13rem) minmax(0,1fr); }
