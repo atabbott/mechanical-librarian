@@ -46,6 +46,7 @@ import type {
   LibrarySearch,
   MediaKind,
   LibraryView,
+  LibraryCoverView,
   LibraryWorkView,
   PreparationView,
   ProviderOutcomeView,
@@ -53,6 +54,7 @@ import type {
   TargetDestination,
   WorkSummaryState,
 } from '../api/http'
+import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import {
@@ -181,13 +183,45 @@ const reviewerUnavailableDetail = (reason: string | null) =>
     : reason === 'profile contract requires process_limit=32'
       ? 'The reviewer profile must set process_limit to 32. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
       : null
+// The first letter of each of the first two words that have one, so a
+// bracket or an ampersand never stands for a word (#1290).
 const initials = (title: string) =>
   title
     .split(/\s+/u)
-    .filter(Boolean)
+    .map((word) => /\p{L}/u.exec(word)?.[0])
+    .filter((letter): letter is string => letter !== undefined)
     .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase())
+    .map((letter) => letter.toUpperCase())
     .join('') || 'ML'
+// A work's mark: the cover the library holds when its report retained one,
+// contained whole and never setting the row's height, else its spine of
+// initials. A cover that fails to load falls back to the spine (#1290).
+function BookMark({ title, cover }: { title: string; cover: LibraryCoverView | undefined }) {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const shown = cover !== undefined && failedUrl !== cover.url
+  return (
+    <span
+      className={shown ? 'library-book-mark has-cover' : 'library-book-mark'}
+      aria-hidden="true"
+    >
+      {shown ? (
+        <img
+          src={cover.url}
+          alt=""
+          width={cover.width}
+          height={cover.height}
+          loading="lazy"
+          decoding="async"
+          onError={() => {
+            setFailedUrl(cover.url)
+          }}
+        />
+      ) : (
+        initials(title)
+      )}
+    </span>
+  )
+}
 type PreparationPresentation = NonNullable<PreparationView['presentation']>
 // The run's works as they stand now, in the masthead's words (#1366). The
 // latched passage is first-finish history and is labelled Prepared instead.
@@ -612,6 +646,18 @@ const fieldState = (field: ReviewField) =>
         : optionalChoice(field)
           ? 'Optional choice'
           : 'No eligible change'
+// A field tab says where its field stands in words, never a glyph: an
+// undecided optional field and a decided one both drew a check (#1290).
+const fieldStatus = (field: ReviewField) =>
+  actionable(field)
+    ? (['needs', 'Needs you'] as const)
+    : field.humanDecision || authoredOwnerRecorded(field) || field.manualHold
+      ? (['decided', 'Decided'] as const)
+      : field.classification === 'automatic_recorded' || field.automaticDecision
+        ? (['automatic', 'Automatic'] as const)
+        : optionalChoice(field)
+          ? (['optional', 'Optional'] as const)
+          : (['unchanged', 'No change'] as const)
 // Why a field reads as it does when the server gives no reason of its own.
 const humanReasons = {
   accept: 'You chose a proposed value for this field.',
@@ -905,9 +951,13 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
                 {(claim.kind === 'duration' && claim.state === 'valid'
                   ? formatRunningTime(claim.value)
                   : null) ?? claim.value}
+                {/* An oversized value is retained as its beginning only, so it
+                    says so rather than reading as the whole (#1290). */}
+                {claim.state === 'oversized' ? '…' : null}
                 <small>
                   {claimBasisLabels[claim.basis]}
                   {claim.state === 'valid' ? '' : ` · ${fieldStateLabels[claim.state]}`}
+                  {claim.state === 'oversized' ? ' · Only the beginning is shown' : null}
                 </small>
               </dd>
             </div>
@@ -953,9 +1003,7 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
   return (
     <>
       <header className="selected-work-header" tabIndex={-1} data-route-focus="true">
-        <span className="library-book-mark" aria-hidden="true">
-          {initials(work.title)}
-        </span>
+        <BookMark title={work.title} cover={work.cover} />
         <div>
           <h2>{work.title}</h2>
           <p>
@@ -1053,7 +1101,11 @@ function ChoiceEvidencePanel({
   )
 }
 
+// Only keyboard focus reveals a card. Focus from a pointer arrives on
+// mousedown, so scrolling then moved the card from under the press and lost
+// the tap at compact widths (#1290).
 const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
+  if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) return
   const choice = event.currentTarget
   const track = choice.closest<HTMLElement>('.library-cover-layout, .library-cover-pinned')
   if (!track) return
@@ -1186,6 +1238,7 @@ function MetadataChoice({
   label,
   longDescription,
   onChoose,
+  radio,
   recording,
   selected,
   toggle,
@@ -1200,6 +1253,7 @@ function MetadataChoice({
   label: string
   longDescription: boolean
   onChoose: () => void
+  radio: ReturnType<typeof choiceRadios>[number]['radio']
   recording: boolean
   selected: boolean
   toggle: () => void
@@ -1226,13 +1280,14 @@ function MetadataChoice({
         type="button"
         className="value-choice choice-select"
         aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} ${longDescription ? 'description' : `value: ${value}`}`}
-        aria-pressed={selected}
+        {...radio}
         disabled={disabled}
         onClick={onChoose}
       >
         <small>
           {label}
           {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
+          {selected ? <b className="choice-chosen">Your choice</b> : null}
         </small>
         <strong>
           {longDescription
@@ -1901,6 +1956,20 @@ function RecordedOutcome({
   )
 }
 
+// What a tap will do, said before the tap and in the present tense of this
+// work's actual write state. The same words after the fact are what the
+// completion summary says, so the promise made here is the one kept there
+// (#639). A cover tap makes the same promise as any other field (#1290).
+function WriteStateLine({ active }: { active: boolean }) {
+  return (
+    <p className={`cm-write-state is-${active ? 'on' : 'off'}`}>
+      {active
+        ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
+        : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
+    </p>
+  )
+}
+
 function LibraryCoverChoices(props: {
   reviewCaseId: string
   mediaKind: string
@@ -1913,6 +1982,7 @@ function LibraryCoverChoices(props: {
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
+  writesActive: boolean
 }) {
   return (
     <LibraryCoverChoicesContent
@@ -2079,6 +2149,7 @@ function LibraryCoverChoicesContent({
   progress,
   revealEvidence,
   choose,
+  writesActive,
 }: {
   reviewCaseId: string
   mediaKind: string
@@ -2091,6 +2162,7 @@ function LibraryCoverChoicesContent({
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
+  writesActive: boolean
 }) {
   const { http } = useReviewContext()
   const access = useQuery({
@@ -2113,23 +2185,6 @@ function LibraryCoverChoicesContent({
     ].includes(currentReviewer.state)
   const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
-  const [confirmation, setConfirmation] = useState<CoverCandidateView | null>(null)
-  const confirmationDialog = useRef<HTMLDialogElement>(null)
-  const confirmationTrigger = useRef<HTMLButtonElement | null>(null)
-  const [submittedConfirmation, setSubmittedConfirmation] = useState(false)
-  const closeConfirmation = () => {
-    confirmationDialog.current?.close()
-    setConfirmation(null)
-    setSubmittedConfirmation(false)
-    confirmationTrigger.current?.focus()
-  }
-  useEffect(() => {
-    if (confirmation) confirmationDialog.current?.showModal()
-  }, [confirmation])
-  useEffect(() => {
-    if (submittedConfirmation && progress?.phase === 'confirmed')
-      confirmationDialog.current?.close()
-  }, [progress?.phase, submittedConfirmation])
   const keeps = field.decisionActions.includes('keep_current')
   const accepts = field.decisionActions.includes('accept')
   if (consideration?.current !== true)
@@ -2190,18 +2245,61 @@ function LibraryCoverChoicesContent({
             ? policyReasons.map(coverNoteLabel).join(', ')
             : 'Not among the covers your policy accepts'
           : coverStateLabels[candidate.state]
-  const card = (candidate: (typeof candidates)[number], index: number) => {
-    const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
-    const source = cover.imageSource(consideration.id, candidate.reference)
-    const outcome = candidate.incumbent ? 'keep_current' : 'accept'
+  const cardState = (candidate: (typeof candidates)[number]) => {
+    const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
       ? null
       : { kind: 'cover', value: candidate.artifactId }
     const selected =
       choiceSelected(field, progress, outcome, value) ||
       field.currentCoverSelectionArtifactId === candidate.artifactId
-    const eligibleCandidate = candidate.incumbent || candidate.manualEligible
     const actionableCandidate = candidate.incumbent ? keeps : accepts && candidate.manualEligible
+    return {
+      outcome,
+      value,
+      selected,
+      actionableCandidate,
+      disabled:
+        disabled ||
+        consideration.providerFetching ||
+        !actionableCandidate ||
+        cover.imageFailed(candidate.reference),
+    }
+  }
+  const unavailableCurrent = consideration.incumbent.state === 'unavailable' && !incumbent
+  const keepSelected = choiceSelected(field, progress, 'keep_current')
+  // The cards in reading order, one radio group whose Tab stop and positions
+  // follow the direct choices' rules (#1290).
+  const coverRadios = new Map(
+    choiceRadios(
+      [
+        ...(unavailableCurrent ? [null] : []),
+        ...(expanded && incumbent ? [incumbent, ...alternatives] : candidates),
+      ],
+      (candidate) => {
+        if (candidate === null) return { checked: keepSelected, disabled: disabled || !keeps }
+        const state = cardState(candidate)
+        return {
+          checked: state.actionableCandidate && state.selected,
+          disabled: state.disabled,
+        }
+      },
+    ).map(({ radio, ...candidate }) => [
+      'reference' in candidate ? candidate.reference : 'current-unavailable',
+      radio,
+    ]),
+  )
+  const card = (candidate: (typeof candidates)[number], index: number) => {
+    const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
+    const source = cover.imageSource(consideration.id, candidate.reference)
+    const {
+      outcome,
+      value,
+      selected,
+      actionableCandidate,
+      disabled: cardDisabled,
+    } = cardState(candidate)
+    const eligibleCandidate = candidate.incumbent || candidate.manualEligible
     const recommended = candidate.reference === recommendedReference
     const context = candidate.incumbent
       ? currentContext
@@ -2220,22 +2318,13 @@ function LibraryCoverChoicesContent({
         <button
           type="button"
           aria-label={`Choose ${label}`}
-          aria-pressed={actionableCandidate ? selected : false}
+          {...coverRadios.get(candidate.reference)}
           className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
-          disabled={
-            disabled ||
-            consideration.providerFetching ||
-            !actionableCandidate ||
-            cover.imageFailed(candidate.reference)
-          }
-          onClick={(event) => {
-            if (!actionableCandidate || selected) return
-            if (candidate.incumbent) choose(outcome, value)
-            else {
-              confirmationTrigger.current = event.currentTarget
-              setSubmittedConfirmation(false)
-              setConfirmation(candidate)
-            }
+          disabled={cardDisabled}
+          // One tap records, as on every other field; a card that says Match
+          // not confirmed is itself the explicit choice (#1290).
+          onClick={() => {
+            if (actionableCandidate && !selected) choose(outcome, value)
           }}
         >
           <span className="library-cover-image">
@@ -2247,6 +2336,8 @@ function LibraryCoverChoicesContent({
               <img
                 src={source}
                 alt={label}
+                loading="lazy"
+                decoding="async"
                 onError={() => cover.markImageFailed(candidate.reference)}
               />
             )}
@@ -2255,6 +2346,9 @@ function LibraryCoverChoicesContent({
             <small>
               {label}
               {recommended ? ' · Recommended' : ''}
+              {selected && actionableCandidate ? (
+                <b className="choice-chosen">Your choice</b>
+              ) : null}
             </small>
             <strong>
               {candidate.matchState === 'same_edition'
@@ -2263,10 +2357,13 @@ function LibraryCoverChoicesContent({
                   ? 'Same book'
                   : 'Match not confirmed'}
             </strong>
-            <em>
-              {context?.rationale ??
-                `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(', ')}`}
-            </em>
+            <span className="cover-dimensions">
+              {`${String(candidate.width)} × ${String(candidate.height)} px`}
+            </span>
+            <span className="cover-sources">
+              {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
+            </span>
+            {context?.rationale ? <em>{context.rationale}</em> : null}
             <span className="choice-recommendation">
               {!eligibleCandidate || candidate.matchState === 'match_not_confirmed'
                 ? excludedReason(candidate)
@@ -2312,68 +2409,19 @@ function LibraryCoverChoicesContent({
   const reviewerDetail = consideration.reviewerFailureCode
     ? reviewerFailureCopy[consideration.reviewerFailureCode]
     : reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
+  // A merged duplicate is the same image as a card shown, not an unavailable
+  // candidate, so it is counted apart (#1290).
+  const merged = consideration.omissions.filter(
+    (omission) => omission.reason === 'duplicate_preview',
+  ).length
+  const unavailable = consideration.omissions.filter(
+    (omission) => omission.reason !== 'duplicate_preview',
+  )
   return (
     <section
       className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
       aria-label="Choose a cover"
     >
-      <dialog
-        ref={confirmationDialog}
-        className="cover-confirmation"
-        aria-labelledby="cover-confirmation-title"
-        onCancel={(event) => {
-          event.preventDefault()
-          if (progress?.phase !== 'recording') closeConfirmation()
-        }}
-      >
-        {confirmation ? (
-          <>
-            <h2 id="cover-confirmation-title">
-              {field.currentCoverSelectionId ? 'Confirm replacement cover' : 'Confirm this cover'}
-            </h2>
-            <img
-              src={cover.imageSource(consideration.id, confirmation.reference)}
-              alt="Cover selected for confirmation"
-            />
-            <p>
-              {confirmation.matchState === 'match_not_confirmed'
-                ? 'Match not confirmed. Automated evidence has not confirmed that this cover belongs to this book. Confirm only if you recognise it as the cover you want.'
-                : 'Record this retained cover as your choice.'}
-            </p>
-            <p>
-              Your choice takes precedence over automation. Recording it does not mean it has been
-              applied; consent and application safeguards still apply.
-            </p>
-            {submittedConfirmation &&
-            progress?.phase !== 'recording' &&
-            progress?.phase !== 'confirmed' ? (
-              <p role="alert">
-                Confirmation was not completed. Close this dialog and reload the current comparison
-                before trying again.
-              </p>
-            ) : null}
-            <div className="cover-confirmation-actions">
-              <button
-                type="button"
-                disabled={progress?.phase === 'recording'}
-                onClick={closeConfirmation}
-              >
-                {submittedConfirmation ? 'Close' : 'Cancel'}
-              </button>
-              <button
-                type="button"
-                disabled={disabled || submittedConfirmation}
-                onClick={() => {
-                  setSubmittedConfirmation(true)
-                  choose('accept', { kind: 'cover', value: confirmation.artifactId })
-                }}
-              >
-                {progress?.phase === 'recording' ? 'Recording…' : 'Confirm cover choice'}
-              </button>
-            </div>
-          </>
-        ) : null}
-      </dialog>
       <header>
         <strong>
           {recommendedReference !== null
@@ -2405,7 +2453,7 @@ function LibraryCoverChoicesContent({
         <p className="reviewer-unavailable-detail">
           Owner choice takes precedence over automation.{' '}
           {field.editable
-            ? 'You can confirm a replacement before application begins.'
+            ? 'You can choose a replacement before application begins.'
             : 'This cover choice is not currently available for revision.'}
         </p>
       ) : field.automaticDecision ? (
@@ -2413,9 +2461,10 @@ function LibraryCoverChoicesContent({
           Automatically selected. Only a strictly better confirmed cover can update this choice.
         </p>
       ) : null}
+      <WriteStateLine active={writesActive} />
       <p className="cover-track-hint">
-        Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
-        them.
+        Every cover is shown whole in one row. Scroll the row, or move between covers with the arrow
+        keys, to compare them.
       </p>
       {reviewerUnavailable && canRetryReviewer ? (
         <Button
@@ -2436,7 +2485,12 @@ function LibraryCoverChoicesContent({
         </p>
       ) : null}
       {expanded && incumbent ? (
-        <div className="library-cover-pinned">
+        <div
+          className="library-cover-pinned"
+          role="radiogroup"
+          aria-label={decisionQuestion('cover')}
+          onKeyDown={moveChoiceFocus}
+        >
           <aside>
             <strong>Current reference</strong>
             {card(incumbent, candidates.indexOf(incumbent))}
@@ -2452,14 +2506,19 @@ function LibraryCoverChoicesContent({
           </div>
         </div>
       ) : (
-        <div className="library-cover-layout">
-          {consideration.incumbent.state === 'unavailable' && !incumbent ? (
+        <div
+          className="library-cover-layout"
+          role="radiogroup"
+          aria-label={decisionQuestion('cover')}
+          onKeyDown={moveChoiceFocus}
+        >
+          {unavailableCurrent ? (
             <article className="cover-choice" onFocusCapture={revealFocusedCoverChoice}>
               <button
                 type="button"
                 aria-label="Keep current cover"
-                aria-pressed={choiceSelected(field, progress, 'keep_current')}
-                className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
+                {...coverRadios.get('current-unavailable')}
+                className={`library-cover-card is-current${keepSelected ? ' is-selected' : ''}`}
                 disabled={disabled || !keeps}
                 onClick={() => {
                   if (keeps) choose('keep_current')
@@ -2473,7 +2532,10 @@ function LibraryCoverChoicesContent({
                   Image unavailable
                 </span>
                 <span>
-                  <small>Current cover</small>
+                  <small>
+                    Current cover
+                    {keepSelected ? <b className="choice-chosen">Your choice</b> : null}
+                  </small>
                   <strong>Unavailable</strong>
                   <em>
                     {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
@@ -2515,13 +2577,19 @@ function LibraryCoverChoicesContent({
           {candidates.map(card)}
         </div>
       )}
-      {consideration.omissions.length ? (
+      {merged ? (
+        <p className="cover-merged">
+          {String(merged)} duplicate image{merged === 1 ? '' : 's'} merged. Each card names every
+          source that offered it.
+        </p>
+      ) : null}
+      {unavailable.length ? (
         <details className="library-cover-excluded">
           <summary>
-            {String(consideration.omissions.length)} unavailable candidate
-            {consideration.omissions.length === 1 ? '' : 's'} <small>Reasons retained</small>
+            {String(unavailable.length)} unavailable candidate
+            {unavailable.length === 1 ? '' : 's'} <small>Reasons retained</small>
           </summary>
-          {consideration.omissions.map((omission, index) => (
+          {unavailable.map((omission, index) => (
             <p key={String(index)}>
               {typeof omission.reason === 'string'
                 ? coverNoteLabel(omission.reason)
@@ -3517,8 +3585,7 @@ export default function LibraryPage({
   useEffect(() => {
     if (!staleCoverCaseId) return
     const frame = requestAnimationFrame(() => {
-      if (document.activeElement === document.body && !document.querySelector('dialog[open]'))
-        staleCoverRecoveryButton.current?.focus()
+      if (document.activeElement === document.body) staleCoverRecoveryButton.current?.focus()
     })
     return () => cancelAnimationFrame(frame)
   }, [staleCoverCaseId, staleCoverIdentityAvailable])
@@ -3654,9 +3721,10 @@ export default function LibraryPage({
     centreFieldRail(rail, active)
     if (!advanceFocus.current) return
     advanceFocus.current = false
-    const action = document.querySelector<HTMLButtonElement>(
-      '.decision-canvas button:not(:disabled)',
-    )
+    // The next field's choices take focus at their one Tab stop (#1290).
+    const action =
+      document.querySelector<HTMLButtonElement>('.decision-canvas [role="radio"][tabindex="0"]') ??
+      document.querySelector<HTMLButtonElement>('.decision-canvas button:not(:disabled)')
     action?.focus({ preventScroll: true })
     if (!action) return
     const bounds = action.getBoundingClientRect()
@@ -4150,6 +4218,137 @@ export default function LibraryPage({
           ? 'One tap records and opens the next field'
           : ''
   const writesActive = detail.data?.writesConsented === true
+  // The direct choices in reading order, so the radio group's one Tab stop and
+  // each position come from a single list (#1290).
+  type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
+  const currentChoice: DirectChoice | null = selected?.decisionActions.includes('keep_current')
+    ? {
+        context: choiceContext(selected, null),
+        current: true,
+        disabled: false,
+        expanded: expandedChoices.has(`${selected.destination}:current`),
+        label: 'Current value',
+        longDescription: isLongDescription(selected.destination, selected.currentValue),
+        onChoose: () => choose(selected, 'keep_current'),
+        recording:
+          commandSelected(
+            selectedProgress?.command ?? null,
+            selected.destination,
+            'keep_current',
+          ) && selectedProgress?.phase === 'recording',
+        selected: choiceSelected(selected, selectedProgress, 'keep_current'),
+        toggle: () => toggleChoiceEvidence(`${selected.destination}:current`),
+        value: valueText(selected.destination, selected.currentValue),
+      }
+    : null
+  const proposedChoices: (DirectChoice & { id: string })[] =
+    selected && selected.decisionActions.includes('accept') && !selected.preservationOnly
+      ? selected.proposedValues.map((value, index) => {
+          const context = choiceContext(
+            selected,
+            selected.choiceContexts.filter((item) => item.selection === 'proposed')[index]
+              ?.alternativeId ?? null,
+          )
+          const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
+          return {
+            id: key,
+            context,
+            current: false,
+            disabled: false,
+            expanded: expandedChoices.has(key),
+            label: `Alternative ${String(index + 1)}`,
+            longDescription: isLongDescription(selected.destination, displayValue(value.value)),
+            onChoose: () => choose(selected, 'accept', value),
+            recording:
+              commandSelected(
+                selectedProgress?.command ?? null,
+                selected.destination,
+                'accept',
+                value,
+              ) && selectedProgress?.phase === 'recording',
+            selected: choiceSelected(selected, selectedProgress, 'accept', value),
+            toggle: () => toggleChoiceEvidence(key),
+            value: valueText(selected.destination, displayValue(value.value)),
+          }
+        })
+      : []
+  const retainedAdviceChoice: (DirectChoice & { id: string })[] =
+    selectedAdvice?.selected_advice &&
+    selectedAdvice.selected_advice.candidate.candidate_id !== selectedAdvice.candidate?.candidate_id
+      ? [
+          {
+            id: 'advice:retained',
+            advice: selectedAdvice,
+            retainedAdvice: true,
+            context: undefined,
+            current: false,
+            disabled: true,
+            expanded: false,
+            label: 'Advised · Authored content · Recorded choice',
+            longDescription: isLongDescription(
+              'description',
+              selectedAdvice.selected_advice.candidate.output.description,
+            ),
+            onChoose: () => undefined,
+            recording: false,
+            selected: Boolean(
+              selectedAdvice.selected_advice.current || selectedAdvice.application_outcome,
+            ),
+            toggle: () => undefined,
+            value: selectedAdvice.selected_advice.candidate.output.description,
+          },
+        ]
+      : []
+  const adviceCandidate = selectedAdvice?.candidate
+  const adviceChoice: (DirectChoice & { id: string })[] =
+    selected && selectedAdvice && adviceCandidate
+      ? [
+          {
+            id: 'advice:candidate',
+            advice: selectedAdvice,
+            retainedAdvice: selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
+            context: undefined,
+            current: false,
+            disabled:
+              !selected.editable ||
+              !selectedAdvice.current ||
+              controller.recording ||
+              selectedAdvice.state === 'requested' ||
+              selectedAdvice.state === 'running',
+            expanded: false,
+            label: 'Advised · Authored content',
+            longDescription: isLongDescription('description', adviceCandidate.output.description),
+            onChoose: () => {
+              if (!selectedAdvice.current || !selected.editable) return
+              choose(
+                selected,
+                'accept',
+                { kind: 'text', value: adviceCandidate.output.description },
+                { candidateId: adviceCandidate.candidate_id, binding: selectedAdvice.binding },
+              )
+            },
+            recording:
+              selectedProgress?.command.authoredDescription?.candidateId ===
+                adviceCandidate.candidate_id && selectedProgress.phase === 'recording',
+            selected:
+              selectedProgress && selectedProgress.phase !== 'failed'
+                ? selectedProgress.command.authoredDescription?.candidateId ===
+                  adviceCandidate.candidate_id
+                : Boolean(
+                    (selectedAdvice.selected_advice?.current === true ||
+                      selectedAdvice.application_outcome) &&
+                    selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
+                  ),
+            toggle: () => undefined,
+            value: adviceCandidate.output.description,
+          },
+        ]
+      : []
+  const newChoices = [...proposedChoices, ...retainedAdviceChoice, ...adviceChoice]
+  const directChoices = choiceRadios(
+    [...(currentChoice ? [{ ...currentChoice, id: 'current' }] : []), ...newChoices],
+    (choice) => ({ checked: choice.selected, disabled: choice.disabled }),
+  )
 
   return (
     <div className="library-page variant-m-workspace">
@@ -4364,9 +4563,7 @@ export default function LibraryPage({
                 const preparationId = preparation ? `preparation-${work.id}` : undefined
                 const row = (
                   <>
-                    <span className="library-book-mark" aria-hidden="true">
-                      {initials(work.title)}
-                    </span>
+                    <BookMark title={work.title} cover={work.cover} />
                     <span className="library-work-copy">
                       <strong className="library-work-title">{work.title}</strong>
                       <span className="library-work-author">{authorLine(work)}</span>
@@ -4602,9 +4799,12 @@ export default function LibraryPage({
                   ? { 'data-route-focus': 'true' }
                   : {})}
               >
-                <span className="library-book-mark" aria-hidden="true">
-                  {initials(displayedIdentity.title)}
-                </span>
+                <BookMark
+                  title={displayedIdentity.title}
+                  cover={
+                    currentWorks.find((work) => work.reviewCaseId === selectedReviewCaseId)?.cover
+                  }
+                />
                 <div>
                   <h2>{displayedIdentity.title}</h2>
                   <p>
@@ -4696,25 +4896,16 @@ export default function LibraryPage({
                         selectCase(selectedReviewCaseId, field.destination)
                       }}
                     >
-                      <strong>{destinationLabel(field.destination)}</strong>
-                      <span
-                        aria-label={
-                          actionable(field)
-                            ? 'Needs review'
-                            : field.humanDecision || authoredOwnerRecorded(field)
-                              ? 'Decision recorded'
-                              : field.classification === 'automatic_recorded'
-                                ? 'Handled automatically; inspect or override'
-                                : fieldState(field)
-                        }
-                      >
-                        {actionable(field) ? '•' : '✓'}
+                      <strong>{destinationLabel(field.destination)}</strong>{' '}
+                      <span className={`field-status is-${fieldStatus(field)[0]}`}>
+                        {fieldStatus(field)[1]}
                       </span>
                     </button>
                   ))}
                   {omittedFields.length ? (
                     <button
                       type="button"
+                      className="field-more"
                       onClick={() => {
                         setRevealFocusDestination(omittedFields[0]?.destination ?? null)
                         setShownEmptyFields((current) => ({
@@ -4723,7 +4914,7 @@ export default function LibraryPage({
                         }))
                       }}
                     >
-                      {`Show ${String(omittedFields.length)} additional field${omittedFields.length === 1 ? '' : 's'}`}
+                      {`Show ${String(omittedFields.length)} more field${omittedFields.length === 1 ? '' : 's'}`}
                     </button>
                   ) : null}
                 </nav>
@@ -4884,13 +5075,15 @@ export default function LibraryPage({
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
                         revealEvidence={toggleChoiceEvidence}
+                        writesActive={writesActive}
                       />
                     ) : (
                       <section
                         className="direct-choice protected-choice"
+                        // The radio group inside is named by the question.
                         aria-label={
                           selectedActionable
-                            ? decisionQuestion(selected.destination)
+                            ? undefined
                             : selectedOptional
                               ? `${destinationLabel(selected.destination)} choices`
                               : `${destinationLabel(selected.destination)} recorded choices`
@@ -4917,45 +5110,18 @@ export default function LibraryPage({
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}
-                        {/*
-                          What a tap will do, said before the tap and in the
-                          present tense of this work's actual write state. The
-                          same words after the fact are what the completion
-                          summary says, so the promise made here is the one kept
-                          there (#639).
-                        */}
-                        <p className={`cm-write-state is-${writesActive ? 'on' : 'off'}`}>
-                          {writesActive
-                            ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
-                            : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
-                        </p>
+                        <WriteStateLine active={writesActive} />
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
+                          role="radiogroup"
+                          aria-label={decisionQuestion(selected.destination)}
+                          onKeyDown={moveChoiceFocus}
                         >
-                          {selected.decisionActions.includes('keep_current') ? (
-                            <MetadataChoice
-                              context={choiceContext(selected, null)}
-                              current
-                              disabled={false}
-                              expanded={expandedChoices.has(`${selected.destination}:current`)}
-                              label="Current value"
-                              longDescription={isLongDescription(
-                                selected.destination,
-                                selected.currentValue,
-                              )}
-                              onChoose={() => choose(selected, 'keep_current')}
-                              recording={
-                                commandSelected(
-                                  selectedProgress?.command ?? null,
-                                  selected.destination,
-                                  'keep_current',
-                                ) && selectedProgress?.phase === 'recording'
-                              }
-                              selected={choiceSelected(selected, selectedProgress, 'keep_current')}
-                              toggle={() => toggleChoiceEvidence(`${selected.destination}:current`)}
-                              value={valueText(selected.destination, selected.currentValue)}
-                            />
-                          ) : null}
+                          {directChoices
+                            .filter((choice) => choice.current)
+                            .map(({ id, ...choice }) => (
+                              <MetadataChoice key={id} {...choice} />
+                            ))}
                           {(selected.decisionActions.includes('accept') &&
                             !selected.preservationOnly) ||
                           selectedAdvice?.candidate ||
@@ -4972,142 +5138,11 @@ export default function LibraryPage({
                                   {teachingLine}
                                 </small>
                               </header>
-                              {(selected.decisionActions.includes('accept') &&
-                              !selected.preservationOnly
-                                ? selected.proposedValues
-                                : []
-                              ).map((value, index) => {
-                                const context = choiceContext(
-                                  selected,
-                                  selected.choiceContexts.filter(
-                                    (item) => item.selection === 'proposed',
-                                  )[index]?.alternativeId ?? null,
-                                )
-                                const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
-                                return (
-                                  <MetadataChoice
-                                    context={context}
-                                    current={false}
-                                    disabled={false}
-                                    expanded={expandedChoices.has(key)}
-                                    label={`Alternative ${String(index + 1)}`}
-                                    longDescription={isLongDescription(
-                                      selected.destination,
-                                      displayValue(value.value),
-                                    )}
-                                    onChoose={() => choose(selected, 'accept', value)}
-                                    recording={
-                                      commandSelected(
-                                        selectedProgress?.command ?? null,
-                                        selected.destination,
-                                        'accept',
-                                        value,
-                                      ) && selectedProgress?.phase === 'recording'
-                                    }
-                                    selected={choiceSelected(
-                                      selected,
-                                      selectedProgress,
-                                      'accept',
-                                      value,
-                                    )}
-                                    toggle={() => toggleChoiceEvidence(key)}
-                                    value={valueText(
-                                      selected.destination,
-                                      displayValue(value.value),
-                                    )}
-                                    key={key}
-                                  />
-                                )
-                              })}
-                              {selectedAdvice?.selected_advice &&
-                              selectedAdvice.selected_advice.candidate.candidate_id !==
-                                selectedAdvice.candidate?.candidate_id ? (
-                                <MetadataChoice
-                                  advice={selectedAdvice}
-                                  retainedAdvice
-                                  context={undefined}
-                                  current={false}
-                                  disabled
-                                  expanded={false}
-                                  label="Advised · Authored content · Recorded choice"
-                                  longDescription={isLongDescription(
-                                    'description',
-                                    selectedAdvice.selected_advice.candidate.output.description,
-                                  )}
-                                  onChoose={() => undefined}
-                                  recording={false}
-                                  selected={Boolean(
-                                    selectedAdvice.selected_advice.current ||
-                                    selectedAdvice.application_outcome,
-                                  )}
-                                  toggle={() => undefined}
-                                  value={
-                                    selectedAdvice.selected_advice.candidate.output.description
-                                  }
-                                />
-                              ) : null}
-                              {selectedAdvice?.candidate ? (
-                                <MetadataChoice
-                                  advice={selectedAdvice}
-                                  retainedAdvice={
-                                    selectedAdvice.selection?.candidate_id ===
-                                    selectedAdvice.candidate.candidate_id
-                                  }
-                                  context={undefined}
-                                  current={false}
-                                  disabled={
-                                    !selected.editable ||
-                                    !selectedAdvice.current ||
-                                    controller.recording ||
-                                    selectedAdvice.state === 'requested' ||
-                                    selectedAdvice.state === 'running'
-                                  }
-                                  expanded={false}
-                                  label="Advised · Authored content"
-                                  longDescription={isLongDescription(
-                                    'description',
-                                    selectedAdvice.candidate.output.description,
-                                  )}
-                                  onChoose={() => {
-                                    if (
-                                      !selectedAdvice.current ||
-                                      !selectedAdvice.candidate ||
-                                      !selected.editable
-                                    )
-                                      return
-                                    choose(
-                                      selected,
-                                      'accept',
-                                      {
-                                        kind: 'text',
-                                        value: selectedAdvice.candidate.output.description,
-                                      },
-                                      {
-                                        candidateId: selectedAdvice.candidate.candidate_id,
-                                        binding: selectedAdvice.binding,
-                                      },
-                                    )
-                                  }}
-                                  recording={
-                                    selectedProgress?.command.authoredDescription?.candidateId ===
-                                      selectedAdvice.candidate.candidate_id &&
-                                    selectedProgress.phase === 'recording'
-                                  }
-                                  selected={
-                                    selectedProgress && selectedProgress.phase !== 'failed'
-                                      ? selectedProgress.command.authoredDescription
-                                          ?.candidateId === selectedAdvice.candidate.candidate_id
-                                      : Boolean(
-                                          (selectedAdvice.selected_advice?.current === true ||
-                                            selectedAdvice.application_outcome) &&
-                                          selectedAdvice.selection?.candidate_id ===
-                                            selectedAdvice.candidate.candidate_id,
-                                        )
-                                  }
-                                  toggle={() => undefined}
-                                  value={selectedAdvice.candidate.output.description}
-                                />
-                              ) : null}
+                              {directChoices
+                                .filter((choice) => !choice.current)
+                                .map(({ id, ...choice }) => (
+                                  <MetadataChoice key={id} {...choice} />
+                                ))}
                             </div>
                           ) : null}
                         </div>

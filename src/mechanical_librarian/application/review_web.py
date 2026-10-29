@@ -1930,6 +1930,47 @@ class BrowseReviewLibrary:
             raise ReviewWebError("unavailable")
         return _report_detail(report, recorded)
 
+    def library_cover(
+        self, connection: str, library: str, item: str, preview: str
+    ) -> str:
+        """Name the library cover preview a work's current report retains.
+
+        A preview is served only by the digest the item's current report binds
+        to its ABS cover, so the route reads nothing the row could not name: a
+        digest from another work, an older report or a provider is missing.
+        """
+        if (
+            any(
+                type(value) is not str or not 1 <= len(value) <= 512
+                for value in (connection, library, item)
+            )
+            or type(preview) is not str
+            or _PREVIEW_DIGEST.fullmatch(preview) is None
+        ):
+            raise ReviewWebError("missing")
+        try:
+            document = self._repository.read_current_report_document(
+                connection, library, item
+            )
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+        if document is None:
+            raise ReviewWebError("missing")
+        report = _report_facts(document)
+        target = report.target
+        if (target.connection, target.library, target.item) != (
+            connection,
+            library,
+            item,
+        ):
+            raise ReviewWebError("unavailable")
+        if report.cover is None or report.cover.preview_digest != preview:
+            raise ReviewWebError("missing")
+        return preview
+
+
+_PREVIEW_DIGEST = re.compile(r"[0-9a-f]{64}")
+
 
 def _report_detail_url(target: TargetFacts) -> str:
     """Address one item's recorded evidence where a case identity does not exist.
@@ -3254,6 +3295,8 @@ def _library_item(
                     "authors": authors,
                     "attention_count": 0,
                     "attention_state": "no_attention_needed",
+                    # A work that stopped before a report has no retained cover.
+                    "cover": None,
                     "detail_url": None,
                     "detail_kind": None,
                     "dispositions": ["terminal_failure"],
@@ -3420,6 +3463,26 @@ def _library_item(
     value = {
         "authors": _report_authors(report.target),
         "attention_count": current_attention_count,
+        # The cover the library holds, retained by this report, so the row can
+        # show the book it stands for; `library_cover` serves only this preview
+        # (#1290). The row names no connection, so the server states the
+        # address, as it does `detail_url`.
+        "cover": None
+        if report.cover is None
+        else {
+            "height": report.cover.height,
+            "preview_sha256": report.cover.preview_digest,
+            "url": "/api/v1/library/cover?"
+            + urlencode(
+                {
+                    "connection": report.target.connection,
+                    "library": report.target.library,
+                    "item": report.target.item,
+                    "preview": report.cover.preview_digest,
+                }
+            ),
+            "width": report.cover.width,
+        },
         "attention_state": (
             "needs_attention"
             if current_attention_count

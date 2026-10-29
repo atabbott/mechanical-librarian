@@ -84,7 +84,7 @@ describe('Application shell', () => {
     expect(await screen.findByRole('link', { name: 'Policy' })).toBeVisible()
     expect(await screen.findByText('Loading works…')).toBeVisible()
     expect(
-      await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+      await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
     expect(http.getPreparation).toHaveBeenCalled()
     expect(http.getAttention).toHaveBeenCalled()

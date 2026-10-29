@@ -246,6 +246,7 @@ class AudioSiloMetadataProvider:
                         observation.candidates,
                         observation.accessed_at,
                         recording_lookup_candidates=observation.recording_lookup_candidates,
+                        refused_products=observation.refused_products,
                     )
                 )
         return provider_observation(
@@ -438,6 +439,8 @@ def _lane_lookup(
         audio=plan.audio,
         work_title=plan.work_title,
         work_authors=plan.work_authors,
+        recording_corroboration=plan.recording_corroboration,
+        corroborated_rule=plan.corroborated_rule,
         requested_asin=lane.canonical_asin,
     )
 

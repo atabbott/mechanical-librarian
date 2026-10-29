@@ -120,6 +120,7 @@ describe('Activity route', () => {
     expect(screen.getByText('codex · synthetic-model')).toBeVisible()
     expect(screen.getByText(/Preparation grants no write authority/)).toBeVisible()
     expect(screen.queryByRole('button', { name: /Choose advised|Retry description/ })).toBeNull()
+    expect(screen.queryByRole('radio', { name: /Choose advised/ })).toBeNull()
   })
 
   it('polls idle Activity while mounted and tears the poll down after navigation', async () => {

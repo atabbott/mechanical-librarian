@@ -110,7 +110,7 @@ markup only once decoded, or that would decode again, is kept as stored. A
 description also records `restorable`: whether writing its text back would
 store it as it is stored now. Text whose only defect is C1 control characters is refused by the
 validator with its own reason, but the report and UI still show that field only
-as `malformed` (#1251). The report is `metadata-report-v59`. For the title
+as `malformed` (#1251). The report is `metadata-report-v61`. For the title
 specifically, a
 private-path, credential-shaped, or equivalently unsafe string rejects the
 target response with a redacted error before a report is created. A safe
@@ -202,15 +202,41 @@ contacted while the report is built, and its observations are retained beside
 the local evidence; Google Books, Inventaire and iTunes Search never are
 (#1247, #1254). Discovery runs in two phases within that one preparation. The first
 is the item's own plan: one product lane per ASIN its tags, sidecars, or path
-carry, or a title-and-author search when it carries none. The second feeds the
-per-ASIN providers the ASINs no local surface named — those the runtime
-corroboration gate promoted from the first phase's candidates, then the one
-Audiobookshelf asserts on the item — and is dispatched only to providers whose
-first-phase observation answered no lane at all. Their first-phase observation
-is replaced rather than merged, so every provider still states exactly one
-observation per report. Across all three origins an item runs at most four ASIN
-lanes, in the order local, promoted, asserted, and there is no second promotion
-round. An item that already carries its own ASIN feeds nothing. Hardcover and
+carry, or a title-and-author search when it carries none. An item with no ASIN
+of its own whose current report for the same track set admitted one edition
+carries that ASIN as a `prior_admission` claim (#1316,
+[ADR-0088](../architecture/decisions/0088-carried-recording-admission.md)), and
+the Audible catalog looks it up directly in the first phase, before its search,
+so a budget or deadline can only starve the search. The second feeds the
+per-ASIN providers the ASINs no local surface named — the carried one first,
+then those the runtime corroboration gate promoted from the first phase's
+search candidates, then the one Audiobookshelf asserts on the item — and is
+dispatched only to providers whose first-phase observation answered no lane at
+all. Their first-phase observation is replaced rather than merged, so every
+provider still states exactly one observation per report. Across every origin
+an item runs at most four ASIN lanes, in the order local, carried, promoted,
+asserted, and there is no second promotion round. A carried lookup is judged as
+an asserted one, except that its product may also admit, under the tight band,
+against the title the alternative discovery lane asks (#1255). That is the
+first discovery title that survives the target's own title, authors and series
+names. A product whose narrators share nobody with the recording's own credits
+is refused on it, and keeps only its identifier, so its runtime cannot
+admit the recording. A carried edition is kept while any audiobook authority
+verifies it. A lookup answers only when it returns products or no match; any
+other ending, recoverable or not, is a failure and refutes nothing. The edition
+is carried again while any carried lookup failed, or while none answered,
+because a disabled provider is not asked. It is dropped only once a carried
+lookup answered, none verified it and none failed. A verified carried edition is the ASIN proposed, and a
+tight search product with another ASIN and a shared or unknown cast is
+withheld. The owner's value always stands. A product naming the item's current
+ASIN is never withheld. When the report admitted that ASIN as a separate
+product, the other edition is no longer carried, whatever the casts. If the
+two casts also overlap, the carried products are withheld in that report too.
+A provider that resolves one recording through two regional ASINs keeps that
+recording once, because copies that differ only in marketplace are not an
+identity conflict. One recording's sibling ASINs offer one value: the item's
+current ASIN when it is one of them, otherwise the one that was looked up, or
+the verified carried ASIN when both it and a sibling were looked up. An item that already carries its own ASIN feeds nothing. Hardcover and
 Open Library have no ASIN lookup, so a plan of ASIN lanes alone, local or fed,
 sends them no request and they record `insufficient_input` with no lane, not a
 failure (#1306). A lane's origin
@@ -223,7 +249,7 @@ assertion obtains evidence and never settles identity, under
 [ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md). In
 the field results the asserted ASIN reads as `valid` on the `target_metadata`
 source, which continues to read `unsupported` for every field that surface does
-not carry. Only the Audible catalog's cover is acquired by default: it is the
+not carry; a carried ASIN reads the same way on the `prior_admission` source. Only the Audible catalog's cover is acquired by default: it is the
 one dispatched authority that states a cover asset of its own, and it goes
 through the same bounded cover pipeline an ebook's use, behind its own
 `cover_enabled` switch. iTunes Search also states one but is not dispatched for
@@ -274,6 +300,30 @@ grant nothing themselves. A fed ASIN the item did not name admits only when the
 answer passes exact work-identity admission and the tight band, so never without
 a title and authors; an answer naming another work keeps only its ASIN and
 leaves no proposal. Every other lane serializes `[]`.
+
+That ASIN-only stub is still what the candidate list keeps, but each audiobook
+provider now also records `refused_products` (#1307): for every stub on an
+ASIN lane, the product the provider actually returned, with its claims, no
+bindings or runtime-short mark, and no evidence but the publication-date text
+comparison finalization derives. Its comparison links are finalized and
+replayed exactly as a candidate's. Validation requires each one to
+match a stub with the same identity, work identity and ASIN claim references,
+and to state more than that stub. A refused product grants nothing: it is the
+record the cold-start report and later analysis read. The carried lane
+(#1316, ADR-0088) is the one ASIN lane that may admit a refused product, and
+only through the corroborated rule above. Every other provider serializes
+`[]`.
+
+Provider runtimes from Audible, Audnexus and AudioSilo are whole minutes, so
+the tight band reads a provider runtime of `m` minutes as the interval
+`[60m, 60m + 59]` seconds (#1307, ADR-0064): the distance is zero inside that
+interval and otherwise measured to its nearer end. The band stays 90 seconds,
+and the loose band is unchanged. Set admission and corroboration read the
+exact band first and the floor only where it found nothing, so no recording
+admission the exact band made changes; the bounded hints and the ASIN feed
+take exactly tight hints before floor-only ones. Narrator plausibility and
+the runtime veto read the floor directly, so a product they judged by the
+exact band can be judged differently, as intended.
 
 Every lane of an audiobook report also records `dispatch` (#1258): an
 `outcome` of `admitted`, `empty`, `refused`, `overflow`, `unavailable`,
@@ -583,6 +633,7 @@ of its constituent rows alone:
 | `band_parenthesized_series_name` | parenthesized series name, as the rung's only decoration | local title | tight band only |
 | `band_order_inverted_series_prefix` | order-inverted series prefix, as the rung's only decoration | local title | tight band only |
 | `band_initials_fold` | dotted initials folded to spaced letters | local or provider authors | tight band only |
+| `band_corroborated_title_relation` | corroborated title relation, recorded alone | local title | tight band, plus narrator or series agreement |
 
 An admitted production records its applications in the persisted report beside
 the base dispatch lineage:
@@ -625,6 +676,35 @@ runs without the band first, so a set admitted before keeps its candidates and
 lineage. Report validation and the proposal set replay it from the report's
 own claims on the asserted lane only.
 
+Two set rules follow on the same asserted Audible lane (#1307, ADR-0067). When
+several products admit and exactly one is inside the tight band while every
+other one is outside the loose band, the band-first rule keeps the tight one,
+unless it carries a recording-variant conflict or its narrators contradict the
+target's; the kept product then replays alone through the path that admitted
+it. When no product admits, the corroborated rule (`band_corroborated_title_relation`)
+admits one product only if its runtime is inside the tight band, its title is
+related to the lane title, its narrator or its series number agrees with the
+target (series names must be equal once normalized), and nothing contradicts
+it on narrator, author, series number or language. Where either title, the
+product's read with its subtitle, runs on past the other with a word that is
+not decoration, the series number must agree. A title is related when, after accents, case, articles, apostrophes
+and punctuation are folded, it equals the lane title, its title and subtitle
+joined equal it, one contains the other as a contiguous run of words, or the
+two share at least half of their combined words; the guard is mandatory,
+because without it every rule admits same-author, same-narrator series
+neighbours. When several products qualify, each must state a narrator and no
+two may disagree, or none is admitted, and the closest runtime then the lowest
+identity wins. The
+lineage records the rung the page was asked on plus the single
+`corroborated_title_relation` application, and replay recomputes the rule from
+the report's own claims. Audible applies the rule only after its whole asserted
+ladder ended `no_match`, every alternative lane the plan carries was asked and
+ended `no_match`, and no ASIN lane admitted, so an exact admission on any lane
+comes first; validation refuses a rule admission beside any other outcome. A
+retry that does not cover every planned alternative lane runs without the
+rule. A rule admission's `dispatch` counts every rung the walk sent; a
+band-first admission is recorded as its exact path stops.
+
 The filename-prefix query grammar requires the complete prefix token sequence
 to equal the complete first ordered author. It permits no inversion, initial
 expansion, reordering, partial author, alternate author, or fuzzy match. The
@@ -651,6 +731,13 @@ ends the walk with that rung's own result. Ebook lanes record no ladder.
 An audiobook ladder (#1255) also applies two query-only families to its
 normalized rung, `leading_sequence_token` and `right_hand_segment`, after
 `order_inverted_series_prefix`; ebook ladders never do.
+Audible's asserted audiobook lane adds one last rung,
+`leading_number_stripped` (#1307): a title that begins with one to three digits
+and a space, with no separator, such as `12 Example Title`, is also asked
+without the number when the rest contains a letter. The rung is query-only, so
+a product it finds admits only through exact admission against the asserted
+title or through the corroborated rule. It counts against the same per-lane
+dispatch bound, and no other lane or authority asks it.
 
 An audiobook's audio section records `discovery_titles`: at most two, the
 folder leaf (`path_leaf`) before a single-file item's title tag

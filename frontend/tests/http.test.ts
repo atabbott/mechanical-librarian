@@ -2963,6 +2963,63 @@ describe('ReviewApiClient', () => {
     expect(() => mapLibrary({ ...page, schema_version: 'review-library-v3' })).not.toThrow()
   })
 
+  it('maps a library work cover and refuses a malformed one', () => {
+    const preview = 'a'.repeat(64)
+    const cover = {
+      height: 452,
+      preview_sha256: preview,
+      url: `/api/v1/library/cover?connection=primary&library=books&item=item%2F1&preview=${preview}`,
+      width: 302,
+    }
+    const page = (value: unknown) => ({
+      items: [
+        {
+          review_case_id: null,
+          title: 'A Book',
+          authors: [],
+          library: 'Books',
+          media_kind: 'epub',
+          item: 'item/1',
+          attention_count: 0,
+          attention_state: 'no_attention_needed',
+          detail_url: '/api/v1/library/report?item=item%2F1',
+          detail_kind: 'report',
+          dispositions: [],
+          work_id: 'library_work_1',
+          preparation: null,
+          preparation_outcomes: [],
+          summary: null,
+          ...(value === undefined ? {} : { cover: value }),
+        },
+      ],
+      counts: { needs_attention: 0, all: 1, no_attention_needed: 1, not_matched: 0 },
+      lens: 'all',
+      page: 1,
+      schema_version: 'review-library-v3',
+    })
+    expect(mapLibrary(page(cover)).works[0]?.cover).toEqual({
+      previewSha256: preview,
+      width: 302,
+      height: 452,
+      url: cover.url,
+    })
+    // The member is optional: a server that names no cover, or says none,
+    // leaves the work its spine mark.
+    expect(mapLibrary(page(undefined)).works[0]).not.toHaveProperty('cover')
+    expect(mapLibrary(page(null)).works[0]).not.toHaveProperty('cover')
+    for (const malformed of [
+      'cover',
+      { ...cover, preview_sha256: 'A'.repeat(64) },
+      { ...cover, width: 0 },
+      { ...cover, height: 1.5 },
+      // The address must be the cover route, naming this preview.
+      { ...cover, url: `/api/v1/review-cases/x/images/${preview}` },
+      { ...cover, url: `https://elsewhere.test/api/v1/library/cover?preview=${preview}` },
+      { ...cover, url: `/api/v1/library/cover?preview=${'b'.repeat(64)}` },
+    ])
+      expect(() => mapLibrary(page(malformed)), JSON.stringify(malformed)).toThrow(ApiError)
+  })
+
   it('reads the Not matched lens, its count and a closed reason state (#1407)', () => {
     const work = (state: string) => ({
       review_case_id: null,

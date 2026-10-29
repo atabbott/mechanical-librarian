@@ -431,7 +431,9 @@ def test_a_tight_band_product_admission_did_not_keep_becomes_a_hint() -> None:
             "y-short-edge", f"{36_000 - RUNTIME_BAND_TIGHT_SECONDS}.000", "B000000001"
         ),
         _hinted("x-loose", f"{36_000 + 120}.000", "B000000002"),
-        _hinted("w-loose-short", f"{36_000 - 120}.000", "B000000004"),
+        # A minute is a floor (#1307): 120 s short still reaches the band,
+        # 180 s short does not.
+        _hinted("w-loose-short", f"{36_000 - 180}.000", "B000000004"),
     )
 
     hints = recording_lookup_hints(products, (), local, _RUNG)

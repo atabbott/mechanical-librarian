@@ -222,6 +222,20 @@ longer exists, and its AudioSilo lookup misses as `http_non_success`, so a v58
 document cannot be read as current. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Issue #1316 also takes the clean-rebuild branch. `metadata-report-v60` admits
+the `prior_admission` claim basis and its field-result source, so every v60
+report states a field result a v59 report cannot, and the proposal policy moves
+to `fixed-conservative-v37` (ADR-0088). Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1307 also takes the clean-rebuild branch. `metadata-report-v61` keeps
+each product an audiobook ASIN lane refused with its own claims
+(`refused_products`) and admits the `band_corroborated_title_relation`
+production and the `leading_number_stripped` rung, so a v60 report cannot state
+what a v61 report records, and the proposal policy moves to
+`fixed-conservative-v38` (ADR-0067). Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
 Issue #1396 also takes the clean-rebuild branch. Under ADR-0087 qualification
 authority binds only the permitted operations, so the F19a, F20 and F46 digests
 rotate once and the historical decoding tables are deleted: an automatic

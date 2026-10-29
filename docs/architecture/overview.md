@@ -190,7 +190,9 @@ ProposalSet evaluation. Admission is granted only by the reviewed
 inside the tight runtime band on an audiobook plan's asserted lane, by the
 band-corroborated `band_parenthesized_series_name`,
 `band_order_inverted_series_prefix` and `band_initials_fold` productions
-(#1260). Latin recovery records every changed
+(#1260), and, on Audible's asserted lane once its whole ladder admitted
+nothing, by `band_corroborated_title_relation` when a related title's narrator
+or series position also agrees (#1307). Latin recovery records every changed
 local or provider title/author field and author ordinal; every other individual
 table row stays query-only.
 Candidate-aware domain finalization deterministically reclassifies publication

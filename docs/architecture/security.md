@@ -2302,9 +2302,11 @@ Activity write consent. No prompt, tool, model or provider authority changes.
 
 ## Owner-confirmed retained covers (#1078)
 
-An authenticated CSRF-protected explicit confirmation can choose an intact,
-current non-incumbent retained cover despite unconfirmed identity or lower visual
-quality. Positive contradiction, including unknown identity with retained creator
+An authenticated CSRF-protected explicit choice can choose an intact, current
+non-incumbent retained cover despite unconfirmed identity or lower visual
+quality. Since #1290 that choice is the owner's one tap on the card, which says
+"Match not confirmed" before it is tapped; the dialog that asked again is gone,
+and the command's `cover_confirmation` binding is unchanged. Positive contradiction, including unknown identity with retained creator
 disagreement, remains refused. The owner authority preserves the observed identity
 and exact artifact, preview, consideration and target bindings; it does not alter
 automatic election, ranking, qualification permissions or reviewer authority.
@@ -2318,6 +2320,19 @@ guarded planning/claim. Recovery storage and artifacts remain outside SQLite's
 atomic boundary. Drift removes effect eligibility without rewriting history;
 consent, backup, final target comparison, supported API upload and read-back remain
 mandatory. No provider, reviewer or Settings calls occur inside this transaction.
+
+## Library cover reads (#1290)
+
+`GET /api/v1/library/cover?connection&library&item&preview` is a read-only,
+session-gated route that serves one retained preview: the one the item's
+current report binds to its ABS cover source. The report is read through the
+bounded browse reader, which verifies its content address and reads every cover
+source under the canonical rule; a digest from an EPUB, a provider, an older
+report or another item is not found. The bytes come from the same retained
+preview reader as cover comparisons and are verified against the digest before
+they are served as `image/png`, privately cacheable as immutable because the
+URL names them by digest, under the application's content security policy and
+`nosniff`. No image is parsed or decoded, and no new parser is added.
 
 
 ## Stable cover reviewer posture (#1124)

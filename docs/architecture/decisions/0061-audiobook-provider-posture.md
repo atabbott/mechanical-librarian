@@ -209,3 +209,11 @@ from Inventaire) and no description or genre alternative, resolved none of the
 unavailable on 80 of 238 items. Excluding all three also removes the
 second audiobook cover authority; [ADR-0064](0064-audiobook-provider-evidence-vocabularies.md)
 records that consequence.
+
+## Carried admission (#1316)
+
+[ADR-0088](0088-carried-recording-admission.md) adds one ASIN origin: the
+edition an earlier preparation of the same track set admitted, recorded as a
+`prior_admission` claim. Like a target assertion it only obtains evidence: it
+is never one of the item's identifier surfaces, never settles identity, and is
+never offered as a local value.

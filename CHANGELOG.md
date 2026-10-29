@@ -9,6 +9,32 @@
   nothing, loading reads as one quiet line, Library stays current on reviews
   and Attention, and each Activity Details names its row's time (#1291).
 
+- Review choices are one radio group: arrows move between them, Space or Enter
+  records. Field tabs say their status in words. A cover records in one tap,
+  states its pixel size and every source, and a duplicate image is one choice.
+  Works show the cover the library holds, read only by the digest their report
+  retains, and initials use letters (#1290).
+
+- **Clean rebuild required.** An audiobook whose Audible edition agrees on
+  runtime but whose title differs in shape (a joined subtitle, a bare leading
+  number, a series-position title) can now be matched when its narrator or
+  series number also agrees and nothing contradicts it. A bare "NN Title"
+  folder name is also searched without its number, a lone typographic
+  apostrophe between letters reads as a straight one, provider whole-minute
+  runtimes count as floors when compared with the 90 s band, and products a
+  lookup refused are kept with their details. The cold-start report's "no
+  comparable runtime" class is now "tight product refused by title" where that
+  is what happened (#1307).
+
+- Setup now lists iTunes with the book and ebook providers and suggests it only
+  for libraries with ebooks. No audiobook is sent to iTunes, so it was never
+  of use to an audiobook library (#1458).
+
+- **Clean rebuild required.** Once an audiobook edition has been matched, the
+  next preparation of the same tracks looks it up directly before searching,
+  so a search that no longer lists it cannot lose it to a sibling edition. One
+  recording's regional ASINs now offer one ASIN choice (#1316).
+
 - Text and field edges meet WCAG AA contrast in both themes, no text is below
   12px, and every disclosure and authority control is a 44px target. Focus no
   longer falls to the page after a command, failed retry or read failure;

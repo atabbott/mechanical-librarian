@@ -503,3 +503,46 @@ lineage on an alternative lane, on an item with no single local runtime or
 with its candidate outside the tight band does not replay and is refused as an
 inconsistent lineage. The report advances to `metadata-report-v57`. **Clean
 rebuild required** under ADR-0013.
+
+## Carried admission (#1316)
+
+[ADR-0088](0088-carried-recording-admission.md) reuses the tight band and the
+fed-ASIN admission above, with no new constant, for the carried lookup of an
+earlier admission, and adds one gate on that lane alone: a product whose
+narrator cast is disjoint from the recording's own credits is refused, while an
+unknown cast on either side passes.
+
+## Whole-minute provider floors (#1307)
+
+The owner approved on 2026-10-22 reading a provider's whole-minute runtime as
+a floor when it is compared with the tight band. Audible, Audnexus and
+AudioSilo state runtime in whole minutes, each carried as that many minutes
+times 60 seconds, and on #1294's snapshot they sit a median 40 seconds below
+the exact chapter runtime. A provider runtime of `m` minutes now stands for the
+interval `[60m, 60m + 59]` seconds: the distance to the item's runtime is zero
+inside it and otherwise measured to its nearer end, so a recording 100 seconds
+longer than the stated minutes is 41 seconds away. A runtime that is not a
+whole number of minutes keeps the exact distance.
+
+This changes what the band measures, not its width. `RUNTIME_BAND_TIGHT_SECONDS`
+stays 90 and the loose band stays 600, read exactly as before. The floor
+applies wherever a provider runtime meets the tight band: the lane band, the
+recording-lookup hints, the band-aware set admission, the recording runtime
+veto and stated-runtime corroboration. Every place that chooses reads the
+exact band first and the floor only where that found nothing: set admission
+admits with the exact reading before it tries the floor, and corroboration
+picks a product tight exactly before one tight only as a floor, so no
+recording admission the exact band made changes. The bounded hints and the
+ASIN feed take exactly tight hints before floor-only ones. Narrator
+plausibility and the recording runtime veto read the floor directly, so a
+product they judged under the exact band may be judged differently; that is
+intended, and the veto only ever vetoes less. `DURATION_AGREEMENT_BAND_SECONDS`
+for claim links is unchanged.
+
+The band was not reopened. Once sibling-edition re-selections were removed,
+#1294 left 1 of 154 genuine 90 to 120 second cases. On the #1307 replay the
+floor reading adds 6 admissions among the stored reports and 4 among the
+probe items, all within the floor-read band and none with a narrator
+disagreement. All 125 stored admissions and every control are unchanged. It
+ships with ADR-0067's #1307 amendment in `metadata-report-v61`. **Clean
+rebuild required** under ADR-0013.

@@ -39,6 +39,9 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ReviewWebConfiguration,
 )
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationError,
+)
 from mechanical_librarian.application.operations import (
     OperationalStatus,
     support_preparation_incidents,
@@ -53,6 +56,13 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.preparation_presentation import (
@@ -71,11 +81,14 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalResult,
     ProposalSet,
     ProposalValue,
+    evaluate_report,
 )
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
 from mechanical_librarian.interfaces.web.app import owner_password_binding
+from tests.support.proposal_evidence import _report as _proposal_report
 from tests.support.review_web_doubles import (
     FakeActivityApplication,
     FakeReviewRepository,
@@ -91,6 +104,105 @@ from tests.unit.review_app_fixture import (
 @pytest.fixture
 def web() -> Iterator[ReviewWebContext[FakeReviewRepository]]:
     yield from review_web_context(FakeReviewRepository)
+
+
+def test_library_cover_serves_only_the_preview_its_current_report_binds(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The works list shows a cover by a digest only its current report binds.
+
+    The route is a read of retained bytes, so it is held to the row: signed-out
+    reads are refused before any preview is read, and a digest the report does
+    not bind to the library's own cover -- an EPUB's, a guess, another item's --
+    is not found rather than served (#1290).
+    """
+
+    def source(kind: CoverSourceKind) -> CoverSource:
+        return CoverSource(
+            cover_source_id(kind, "item-1"),
+            kind,
+            CoverSourceState.RETRIEVED,
+            CoverArtifact.create(
+                b"original-" + kind.value.encode(),
+                b"preview-" + kind.value.encode(),
+                "image/png",
+                302,
+                452,
+            ),
+        )
+
+    library, epub = source(CoverSourceKind.ABS), source(CoverSourceKind.EPUB)
+    assert library.artifact is not None and epub.artifact is not None
+    report = _proposal_report(covers=(library, epub))
+    case = ReviewCase.create(evaluate_report(report), report)
+    previews = {
+        library.artifact.preview_digest: b"\x89PNG\r\n\x1a\nlibrary",
+        epub.artifact.preview_digest: b"\x89PNG\r\n\x1a\nepub",
+    }
+    covers = Mock()
+    covers.retained_preview.side_effect = previews.__getitem__
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            FakeReviewRepository(case, report),
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+            ),
+            clock=lambda: web.now,
+            cover_considerations=covers,
+        ),
+        base_url="https://review.test",
+    )
+
+    def path(preview: str, item: str = "item-1") -> str:
+        return (
+            "/api/v1/library/cover?connection=primary&library=ebooks"
+            f"&item={item}&preview={preview}"
+        )
+
+    signed_out = web.client.get(path(library.artifact.preview_digest))
+    assert 401 == signed_out.status_code
+    assert "no-store, private" == signed_out.headers["cache-control"]
+    covers.retained_preview.assert_not_called()
+
+    web.login()
+    row = web.client.get("/api/v1/library?lens=all").json()["items"][0]
+    assert row["cover"] == {
+        "height": 452,
+        "preview_sha256": library.artifact.preview_digest,
+        "url": path(library.artifact.preview_digest),
+        "width": 302,
+    }
+    served = web.client.get(row["cover"]["url"])
+    assert 200 == served.status_code
+    assert previews[library.artifact.preview_digest] == served.content
+    assert "image/png" == served.headers["content-type"]
+    assert "private, max-age=31536000, immutable" == served.headers["cache-control"]
+    # Every response carries the application's policy, which grants nothing
+    # by default.
+    assert served.headers["content-security-policy"].startswith("default-src 'none';")
+    assert "nosniff" == served.headers["x-content-type-options"]
+    covers.retained_preview.assert_called_once_with(library.artifact.preview_digest)
+
+    for refused in (
+        path(epub.artifact.preview_digest),
+        path("0" * 64),
+        path("not-a-digest"),
+        path(library.artifact.preview_digest, item="item-2"),
+    ):
+        response = web.client.get(refused)
+        assert 404 == response.status_code, refused
+        assert "not_found" == response.json()["error"]["code"]
+        assert "no-store, private" == response.headers["cache-control"]
+    covers.retained_preview.assert_called_once()
+
+    covers.retained_preview.side_effect = CoverConsiderationError("unavailable")
+    unavailable = web.client.get(path(library.artifact.preview_digest))
+    assert 503 == unavailable.status_code
+    assert "unavailable" == unavailable.json()["error"]["code"]
 
 
 def test_only_liveness_and_login_are_anonymous(
@@ -1842,6 +1954,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("post", "/api/v1/activity/{connection}/{library}/revoke"),
         ("get", "/api/v1/attention"),
         ("get", "/api/v1/library"),
+        ("get", "/api/v1/library/cover"),
         ("get", "/api/v1/library/report"),
         ("get", "/api/v1/operations/status"),
         ("get", "/api/v1/operations/support/preview"),

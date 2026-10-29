@@ -1571,15 +1571,19 @@ class CoverConsiderationService:
         )
         if candidate is None:
             raise CoverConsiderationError("not_found")
+        return self.retained_preview(str(candidate["preview_sha256"]))
+
+    def retained_preview(self, preview_sha256: str) -> bytes:
+        """Read one retained preview by the digest its caller already bound."""
         try:
-            payload = self._read_preview_digest(str(candidate["preview_sha256"]))
+            payload = self._read_preview_digest(preview_sha256)
         except Exception as error:
             # An injected artifact reader over the cover store, with no declared
             # error type. A preview that could not be read is unavailable
             # whatever stopped it, and the digest is still verified below, so
             # breadth here never lets an unverified payload through.
             raise CoverConsiderationError("unavailable") from error
-        if hashlib.sha256(payload).hexdigest() != candidate["preview_sha256"]:
+        if hashlib.sha256(payload).hexdigest() != preview_sha256:
             raise CoverConsiderationError("unavailable")
         return payload
 
