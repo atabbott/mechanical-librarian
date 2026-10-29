@@ -4885,6 +4885,19 @@ _CUT_CONTROLS = """() => [...document.querySelectorAll(
   })"""
 
 
+# How many rows the pager's pages and page jump take.
+_PAGER_ROWS = """() => {
+  const boxes = [...document.querySelector('.cm-activity-pagination-nav').children]
+    .filter((node) => node.getClientRects().length)
+    .map((node) => node.getBoundingClientRect())
+    .sort((a, b) => a.top - b.top);
+  let rows = 0;
+  let bottom = -Infinity;
+  for (const box of boxes) if (box.top >= bottom) { rows += 1; bottom = box.bottom; }
+  return rows;
+}"""
+
+
 def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
     """At ordinary text and with root font-size 200%, every Activity row -- a
     check's members open -- keeps its promises and whole labels, with no cell
@@ -4907,10 +4920,13 @@ def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
             )
             page.locator("article.is-checks").get_by_role("button").click()
             expect(page.locator(".cm-activity-checks > li").first).to_be_visible()
-            for width in (1440, 1100, 884, 761, 760, 390, 375, 320):
+            for width in (1440, 1100, 884, 761, 760, 430, 390, 375, 320):
                 page.set_viewport_size({"width": width, "height": 900})
                 page.evaluate(_TWO_FRAMES)
                 where = f"{text} text at {width}px"
+                if text == "100%" and 430 <= width <= 760:
+                    # The pages and the page jump wrap only when one row cannot hold them.
+                    assert page.evaluate(_PAGER_ROWS) == 1, where
                 # Cards follow the ledger's own width, not the window's.
                 cards = page.evaluate(
                     "() => getComputedStyle(document.querySelector('.cm-activity-columns'))"

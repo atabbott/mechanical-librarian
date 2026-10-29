@@ -1082,10 +1082,15 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   /* The search field and the date range follow the ledger, never their own content's width. */
   .cm-activity-search, .cm-activity-range { min-width:0; max-width:100%; grid-template-columns:minmax(0,1fr); }
   .cm-activity-search input { min-width:0; width:100%; }
-  /* The page jump takes a row of its own above the four pages, which share the rows below. */
+  /* The pages and the page jump share one row while it holds them, and wrap only when it cannot. */
   .cm-activity-pagination-nav { display:flex; flex-wrap:wrap; min-width:0; }
   .cm-activity-pagination-nav button { flex:1 0 auto; padding-inline:.45rem; }
-  .cm-activity-pagination-nav > .cm-activity-page-jump { flex:1 0 100%; order:-1; min-width:0; min-height:44px; flex-wrap:wrap; justify-content:center; white-space:normal; }
+  .cm-activity-pagination-nav > .cm-activity-page-jump { min-width:0; min-height:44px; flex-wrap:wrap; justify-content:center; white-space:normal; }
+}
+/* Narrower than the five fit on one row, at either text size, the page jump takes a row of its own above the
+   four pages, which share the rows below, so a page is never left alone on a row. */
+@container (max-width:23.75rem) {
+  .cm-activity-pagination-nav > .cm-activity-page-jump { flex:1 0 100%; order:-1; }
 }
 @container (max-width:47.5rem) {
   .cm-activity-columns { display:none; }
