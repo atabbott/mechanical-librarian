@@ -135,6 +135,23 @@ AUDIOBOOK_MARKETPLACES = (
     "it",
     "es",
 )
+# The language bases each marketplace's catalogue is in; Canada's carries
+# English and French. Read as a library's search order (#1315) and as the
+# language a regional product's text is in (#1317).
+AUDIOBOOK_MARKETPLACE_LANGUAGES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "us": ("en",),
+        "uk": ("en",),
+        "de": ("de",),
+        "fr": ("fr",),
+        "au": ("en",),
+        "in": ("en",),
+        "ca": ("en", "fr"),
+        "jp": ("ja",),
+        "it": ("it",),
+        "es": ("es",),
+    }
+)
 # The four authorities that observe a recording rather than a printed edition.
 # Only these state a running time, a narrator, or a marketplace, so only these
 # reach the corroboration gate that widens a work admission to an edition one.
@@ -7423,6 +7440,7 @@ __all__ = [
     "provider_candidate_identity_title_claims",
     "recording_corroboration",
     "AUDIOBOOK_MARKETPLACES",
+    "AUDIOBOOK_MARKETPLACE_LANGUAGES",
     "DURATION_AGREEMENT_BAND_SECONDS",
     "MAX_AUDIO_SIDECARS",
     "MAX_AUDIO_TRACKS",

@@ -17,20 +17,27 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
     qualified_policy_bases,
 )
+from mechanical_librarian.domain.field_outcomes import language_equivalence_class
 from mechanical_librarian.domain.field_value_comparison import (
     DESCRIPTION_VISIBLE_CUTOFFS,
     SYNOPSIS_MARKUP_TAG,
     audiobook_format_only_genres,
     canonical_text,
+    cut_off_synopsis,
+    description_extends,
+    marketing_copy,
     mostly_quoted_praise,
     plain_audiobook_synopsis,
     promotional_announcement,
     recognized_synopsis_placeholder,
+    synopsis_header,
+    synopsis_missing,
     values_match,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
+    AUDIOBOOK_MARKETPLACE_LANGUAGES,
     MAX_TAGS,
     ClaimKind,
     ClaimScope,
@@ -111,6 +118,8 @@ class _AutomaticWorkEvidence:
     references: dict[str, tuple[str, ...]]
     audiobook: bool = False
     sources: tuple[ProviderCandidate, ...] = ()
+    # Some alternative lost every source to the language gate (#1317).
+    language_withheld: bool = False
 
 
 def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
@@ -153,7 +162,7 @@ def _automatic_work_evidence(
         if admitted:
             alternatives.append(alternative)
             references[alternative.alternative_id] = admitted
-    return _AutomaticWorkEvidence(
+    evidence = _AutomaticWorkEvidence(
         tuple(alternatives),
         references,
         report.audio is not None,
@@ -164,6 +173,9 @@ def _automatic_work_evidence(
             if provider_candidate_represents_target_work(report, provider, candidate)
         ),
     )
+    if result.destination is TargetDestination.DESCRIPTION:
+        return _language_gated(report, evidence, retained_claims, taxonomy=False)
+    return evidence
 
 
 def _automatic_genre_evidence(
@@ -191,7 +203,109 @@ def _automatic_genre_evidence(
         if admitted:
             alternatives.append(alternative)
             references[alternative.alternative_id] = admitted
-    return _AutomaticWorkEvidence(tuple(alternatives), references)
+    return _language_gated(
+        report,
+        _AutomaticWorkEvidence(tuple(alternatives), references),
+        retained_claims,
+        taxonomy=True,
+    )
+
+
+def _language_gated(
+    report: MetadataReport,
+    evidence: _AutomaticWorkEvidence,
+    retained_claims: dict[str, _RetainedClaim],
+    *,
+    taxonomy: bool,
+) -> _AutomaticWorkEvidence:
+    """Withhold an audiobook's genre or synopsis sources in another language.
+
+    The item's language is known from its own language claims or, with none,
+    from its library's one declared language (#1315); with neither, nothing is
+    gated. Its citations leave automatic election, an alternative left with
+    none is withheld, and it stays choosable (#1317).
+
+    A store files every edition under its own language's genre labels, so a
+    genre source differs when it states another language or resolved in a
+    marketplace whose catalogue is in none of the item's. A synopsis is the
+    edition's own text: a stated language decides, and the marketplace only
+    when the source states none.
+    """
+    known = frozenset() if report.audio is None else _item_languages(report)
+    if not known:
+        return evidence
+
+    def differs(reference: str) -> bool:
+        held = retained_claims.get(reference)
+        return (
+            held is not None
+            and type(held.candidate) is ProviderCandidate
+            and _source_language_differs(held.candidate, known, taxonomy=taxonomy)
+        )
+
+    alternatives: list[ProposalAlternative] = []
+    references: dict[str, tuple[str, ...]] = {}
+    for alternative in evidence.alternatives:
+        kept = tuple(
+            reference
+            for reference in evidence.references[alternative.alternative_id]
+            if not differs(reference)
+        )
+        if kept:
+            alternatives.append(alternative)
+            references[alternative.alternative_id] = kept
+    return _AutomaticWorkEvidence(
+        tuple(alternatives),
+        references,
+        evidence.audiobook,
+        tuple(
+            source
+            for source in evidence.sources
+            if not _source_language_differs(source, known, taxonomy=taxonomy)
+        ),
+        len(alternatives) < len(evidence.alternatives),
+    )
+
+
+def _item_languages(report: MetadataReport) -> frozenset[tuple[str, str | None]]:
+    local = frozenset(
+        language
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.LANGUAGE
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+        and (language := language_equivalence_class(claim.canonical)) is not None
+    )
+    if local or len(report.library_languages) != 1:
+        return local
+    declared = language_equivalence_class(report.library_languages[0])
+    return frozenset() if declared is None else frozenset({declared})
+
+
+def _source_language_differs(
+    source: ProviderCandidate,
+    known: frozenset[tuple[str, str | None]],
+    *,
+    taxonomy: bool,
+) -> bool:
+    stated = {
+        language
+        for claim in source.claims
+        if claim.kind is ClaimKind.LANGUAGE
+        and claim.state is FieldState.VALID
+        and type(claim.value) is str
+        and (language := language_equivalence_class(claim.value)) is not None
+    }
+    if not stated <= known:
+        return True
+    return (taxonomy or not stated) and any(
+        evidence.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        and not any(
+            base in AUDIOBOOK_MARKETPLACE_LANGUAGES.get(evidence.value, ())
+            for base, _ in known
+        )
+        for evidence in source.evidence
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,7 +539,9 @@ def _project(
             target,
             current,
             (
-                "target_work_contradicted"
+                "candidate_language_differs"
+                if automatic_work.language_withheld
+                else "target_work_contradicted"
                 if field == "genres"
                 else "target_work_applicability_unproved"
             ),
@@ -433,25 +549,48 @@ def _project(
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
-        if proposal.media_kind == "audiobook" and target.state is TargetFieldState.VALUE:
-            if not plain_audiobook_synopsis(current) and not (
-                option == "replace_safe_plain_text" and _markup_only_synopsis(current)
+        if proposal.media_kind != "audiobook" or target.state is not TargetFieldState.VALUE:
+            return _description(
+                field, option, target, result, retained_claims, automatic_work
+            )
+        cut_off = cut_off_synopsis(current)
+        if (
+            not plain_audiobook_synopsis(current)
+            and not _markup_only_synopsis(current)
+            and not cut_off
+        ):
+            return _abstain(field, option, target, current, "target_state_unusable")
+        if automatic_work is not None:
+            refusal = _description_source_refusal(automatic_work, retained_claims)
+            if refusal is not None:
+                return _abstain(field, option, target, current, refusal)
+        # A placeholder incumbent is missing knowledge under either option
+        # (#1317).
+        if recognized_synopsis_placeholder(current):
+            return _description(
+                field, option, target, result, retained_claims, automatic_work
+            )
+        # A cut-off incumbent gives way only to the synopsis it opens (#1317).
+        if cut_off:
+            projection = _description(
+                field, option, target, result, retained_claims, automatic_work
+            )
+            if projection.outcome == "projected" and description_extends(
+                current, projection.desired_value
             ):
-                return _abstain(field, option, target, current, "target_state_unusable")
-            if automatic_work is not None:
-                refusal = _description_source_refusal(automatic_work, retained_claims)
-                if refusal is not None:
-                    return _abstain(field, option, target, current, refusal)
-            if option != "replace_safe_plain_text" or not recognized_synopsis_placeholder(current):
-                return _preserved(field, option, target, current)
-        return _description(
-            field,
-            option,
-            target,
-            result,
-            retained_claims,
-            automatic_work,
-        )
+                return projection
+            return _abstain(field, option, target, current, "target_state_unusable")
+        # "Replace safe plain text" drops a boilerplate header the same
+        # synopsis follows; comparison already reads past it (#1317).
+        if option == "replace_safe_plain_text" and synopsis_header(current):
+            projection = _description(
+                field, option, target, result, retained_claims, automatic_work
+            )
+            if projection.outcome == "projected" and values_match(
+                TargetDestination.DESCRIPTION, current, projection.desired_value
+            ):
+                return projection
+        return _preserved(field, option, target, current)
     if field == "explicit":
         if proposal.media_kind != "audiobook" or option != "adult_product":
             return _abstain(field, option, target, current, "explicit_unsupported")
@@ -730,7 +869,9 @@ def _descriptive_audiobook_subtitle(result: ProposalResult, report: MetadataRepo
     retained = _retained_claims(report)
     candidates = [candidate for candidate in result.alternatives
                   if candidate.value.kind is ProposalValueKind.TEXT
-                  and not promotional_announcement(candidate.value.value)
+                  # Marketing copy is never a subtitle (#1317); #1310's
+                  # series-restating guard belongs beside it.
+                  and not marketing_copy(candidate.value.value)
                   and any((held := retained.get(reference)) is not None
                           and type(held.claim) is ProviderClaim
                           and held.claim.kind is ClaimKind.SUBTITLE
@@ -1110,6 +1251,8 @@ def _description_source_refusal(
 ) -> str | None:
     """Preserve complete-source safety and conflicts before marker filtering."""
     if evidence.audiobook:
+        cut_off: list[str] = []
+        complete: list[str] = []
         for source in evidence.sources:
             for claim in source.claims:
                 if claim.kind is not ClaimKind.DESCRIPTION or claim.state is FieldState.ABSENT:
@@ -1119,8 +1262,19 @@ def _description_source_refusal(
                     claim, source,
                     audiobook_work=type(retained.provider) is ProviderObservation
                     and retained.provider.authority in {"audnexus", "audible_catalog"},
-                ) or (type(claim.value) is str and claim.value.rstrip().endswith(DESCRIPTION_VISIBLE_CUTOFFS)):
+                ):
                     return "description_quality_floor_not_met"
+                if type(claim.value) is str and claim.value.rstrip().endswith(DESCRIPTION_VISIBLE_CUTOFFS):
+                    cut_off.append(claim.value)
+                else:
+                    complete.append(cast(str, claim.value))
+        # A cut-off copy vetoes the field only while no other safe source
+        # holds the complete text it opens (#1317).
+        if any(
+            not any(description_extends(text, other) for other in complete)
+            for text in cut_off
+        ):
+            return "description_quality_floor_not_met"
     for source in evidence.sources:
         descriptions = {canonical_text(TargetDestination.DESCRIPTION, claim.value) for claim in source.claims if claim.kind is ClaimKind.DESCRIPTION and claim.state is FieldState.VALID and type(claim.value) is str}
         if len(descriptions) > 1:
@@ -1785,19 +1939,20 @@ def project_audiobook_automatic_decision_value(
         value = candidate_value["value"]
         if candidate_value["kind"] != "text" or not plain_audiobook_synopsis(value) or recognized_synopsis_placeholder(value) or mostly_quoted_praise(value):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
-        if current_value not in (None, "", value) and (
-            option != "replace_safe_plain_text"
-            or not (
-                plain_audiobook_synopsis(current_value)
-                or _markup_only_synopsis(current_value)
+        if current_value not in (None, "", value) and not (
+            synopsis_missing(current_value, value)
+            or (
+                option == "replace_safe_plain_text"
+                and plain_audiobook_synopsis(current_value)
+                and synopsis_header(current_value)
+                and values_match(TargetDestination.DESCRIPTION, current_value, value)
             )
-            or not recognized_synopsis_placeholder(current_value)
         ):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         projected = {"kind": "text", "value": value}
     elif field == "subtitle" and option == "replace_descriptive":
         value = candidate_value["value"]
-        if candidate_value["kind"] != "text" or type(value) is not str or promotional_announcement(value):
+        if candidate_value["kind"] != "text" or type(value) is not str or marketing_copy(value):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         if current_value not in (None, "", value) and not promotional_announcement(current_value):
             raise RichMetadataPreviewError("rich automatic projection is invalid")

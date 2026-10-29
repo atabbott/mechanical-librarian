@@ -120,6 +120,7 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "automatic_unqualified": "This policy option is not qualified for automatic handling.",
     "manifestation_verification_required": "The retained evidence does not verify the ISBN for this edition.",
     "description_quality_floor_not_met": "Retained source text does not meet the automatic synopsis rules.",
+    "candidate_language_differs": "The retained value comes from a source in another language than this item.",
     "candidate_credit_prefixed": 'The proposed value carries a credit label such as "Narrated by", so automatic handling never writes it.',
     "candidate_strips_marks": "The proposed value drops accents from a name you already have, so automatic handling never writes it.",
     "candidate_promotional_title": 'The proposed title carries an announcement such as "Now a Major Motion Picture", so automatic handling never writes it.',

@@ -1,5 +1,16 @@
 # Pre-release compatibility policy
 
+#1317 advances the proposal policy to `fixed-conservative-v40` and the shadow
+decision policy to `deterministic-shadow-decision-policy-v24`: a placeholder or
+cut-off audiobook synopsis counts as missing, so the default keep-and-fill
+option fills it (a cut-off one only with its own extension), a cut-off source no
+longer blocks a complete source that extends it, a leading header line such as
+"About the book" is ignored when synopses are compared, a marketing line is
+never an automatic subtitle, and genres or a synopsis from a source in another
+language than the item's are never elected automatically. **Clean rebuild
+required** for every predecessor application database; the report schema is
+unchanged. No migration, adoption, conversion, import or downgrade is supplied.
+
 #1315 and #1305 advance the report to `metadata-report-v62` and the proposal
 policy to `fixed-conservative-v39`: a library may declare its `languages`, an
 audiobook report records the list it was prepared under, an audiobook product
@@ -212,10 +223,10 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v62` plus `proposal-set-v8` under
-  `fixed-conservative-v39`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v40`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v23`,
+  `deterministic-shadow-decision-policy-v24`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v11`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;

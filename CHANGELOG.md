@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Clean rebuild required.** A placeholder or cut-off audiobook synopsis is
+  now filled under the default option (a cut-off one only by its own complete
+  text), and an "About the book" header line no longer counts as a
+  difference. Marketing lines are never chosen as subtitles, and genres or
+  synopses from a store in another language wait for your choice (#1317).
+
 - **Clean rebuild required.** A library can declare the languages it holds in
   its configuration file (`languages`, first preferred). Audible is then
   searched in those languages' stores first, and an audiobook that states no

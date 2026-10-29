@@ -1,5 +1,16 @@
 # Upgrades and compatibility
 
+#1317 advances the proposal policy to `fixed-conservative-v40` and the shadow
+decision policy to `deterministic-shadow-decision-policy-v24`: a placeholder or
+cut-off audiobook synopsis counts as missing, so the default keep-and-fill
+option fills it (a cut-off one only with its own extension), a cut-off source no
+longer blocks a complete source that extends it, a leading header line such as
+"About the book" is ignored when synopses are compared, a marketing line is
+never an automatic subtitle, and genres or a synopsis from a source in another
+language than the item's are never elected automatically. **Clean rebuild
+required** for every predecessor application database; the report schema is
+unchanged. No migration, adoption, conversion, import or downgrade is supplied.
+
 #1315 and #1305 advance the report to `metadata-report-v62` and the proposal
 policy to `fixed-conservative-v39`: a library may declare its `languages`, an
 audiobook report records the list it was prepared under, an audiobook product
@@ -193,8 +204,8 @@ decodable history without current authority; no adoption or migration is supplie
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v62`, `proposal-set-v8` under
-`fixed-conservative-v39`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
-and `deterministic-shadow-decision-policy-v23`. #1077 removes only the image
+`fixed-conservative-v40`, `shadow-review-packet-v9`, `shadow-outcome-set-v11`,
+and `deterministic-shadow-decision-policy-v24`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.
 No migration, adoption, conversion, import or downgrade is supplied. Historical

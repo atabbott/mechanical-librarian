@@ -172,6 +172,7 @@ _RICH_REFUSAL_REASONS = {
         {
             "no_candidate",
             "ambiguous_evidence",
+            "candidate_language_differs",
             "target_work_contradicted",
             "policy_option_unavailable",
             "target_projection_oversized",
@@ -191,6 +192,7 @@ _RICH_REFUSAL_REASONS = {
         {
             "no_candidate",
             "ambiguous_evidence",
+            "candidate_language_differs",
             "target_work_applicability_unproved",
             "description_quality_floor_not_met",
             "policy_option_unavailable",

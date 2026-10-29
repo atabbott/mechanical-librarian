@@ -13,7 +13,6 @@ from contextlib import AbstractContextManager, ExitStack, contextmanager, nullco
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
 import uvicorn
@@ -324,6 +323,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
+    AUDIOBOOK_MARKETPLACE_LANGUAGES,
     AudioDiscoveryTitle,
     AudioFacts,
     ClaimKind,
@@ -1934,20 +1934,6 @@ class _NonClosingRepository:
         return None
 
 
-# The marketplaces whose catalogue is in each language a library may declare
-# (#1315). A language with none here moves nothing.
-_LANGUAGE_MARKETPLACES = MappingProxyType(
-    {
-        "en": ("us", "uk", "au", "in", "ca"),
-        "de": ("de",),
-        "fr": ("fr", "ca"),
-        "it": ("it",),
-        "es": ("es",),
-        "ja": ("jp",),
-    }
-)
-
-
 def _audiobook_marketplaces(
     providers: Sequence[ProviderConnectionConfiguration],
     languages: tuple[str, ...] = (),
@@ -1980,8 +1966,9 @@ def _audiobook_marketplaces(
     for position, language in enumerate(languages):
         identity = language_identity(language)
         if identity is not None:
-            for code in _LANGUAGE_MARKETPLACES.get(identity.base, ()):
-                rank.setdefault(code, position)
+            for code, bases in AUDIOBOOK_MARKETPLACE_LANGUAGES.items():
+                if identity.base in bases:
+                    rank.setdefault(code, position)
     return tuple(sorted(stated, key=lambda code: rank.get(code, len(languages))))
 
 
