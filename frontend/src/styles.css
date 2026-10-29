@@ -685,6 +685,12 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-file-banner p { max-width:75ch; margin:.25rem 0 0; overflow-wrap:anywhere; }
 .settings-editor { display:grid; grid-template-columns:minmax(13rem,17rem) minmax(0,1fr); align-items:start; gap:1rem; margin-top:1rem; }
 .settings-compact-sections { display:none; }
+/* The section picker names its section whole: the value wraps rather than truncates, and with enlarged text on
+   a phone the trigger's insets tighten so a one-word section keeps its line. */
+.settings-compact-sections .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; }
+@container shell (max-width:15rem) {
+  .settings-compact-sections .cm-dropdown-trigger { gap:.35rem; padding-inline:.5rem; }
+}
 .settings-sidebar { display:grid; align-self:start; min-width:0; overflow:hidden; padding:.45rem; border:1px solid var(--line); border-radius:.75rem; background:var(--surface); }
 .settings-sidebar button { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:.6rem; width:100%; min-width:0; min-height:56px; padding:.55rem .6rem; border-color:transparent; text-align:left; background:transparent; }
 .settings-sidebar button:hover:not(:disabled) { background:color-mix(in srgb,var(--accent-soft) 42%,transparent); }

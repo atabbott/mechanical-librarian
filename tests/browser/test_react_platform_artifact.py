@@ -5096,6 +5096,21 @@ _ESCAPED_CONTROLS = """selector => [...document.querySelectorAll(selector)].flat
 })"""
 
 
+# The Settings section picker's value cut short, or its trigger under 44px tall.
+_CUT_SECTION_PICKER = """() => [...document.querySelectorAll(
+    '.settings-compact-sections .cm-dropdown-trigger > span')]
+  .filter((node) => node.getClientRects().length)
+  .flatMap((node) => {
+    const name = `section picker "${node.textContent.trim()}"`;
+    const height = node.parentElement.getBoundingClientRect().height;
+    return [
+      ...(node.scrollWidth > node.clientWidth + 1
+        ? [`${name} is cut by ${node.scrollWidth - node.clientWidth}px`] : []),
+      ...(height < 44 ? [`${name} is ${Math.round(height)}px tall`] : []),
+    ];
+  })"""
+
+
 def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> None:
     """With root font-size 200%, no Policy finish step or action and no
     Settings field, label or control runs past the window or is clipped by
@@ -5136,6 +5151,10 @@ def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> No
                 failures += [
                     f"{route} at {width}px: {failure}"
                     for failure in page.evaluate(_ESCAPED_CONTROLS, controls)
+                ]
+                failures += [
+                    f"{route} at {width}px: {failure}"
+                    for failure in page.evaluate(_CUT_SECTION_PICKER)
                 ]
         assert failures == [], "\n".join(failures)
 
