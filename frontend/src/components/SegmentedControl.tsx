@@ -1,5 +1,3 @@
-import type { CSSProperties } from 'react'
-
 import type { Segment } from '../fieldControls'
 
 // Pressed-button segments in one rounded track. The track owns its size,
@@ -20,7 +18,6 @@ export function SegmentedControl<Value extends string>(props: {
       id={props.id}
       aria-label={props.label}
       aria-describedby={props.describedBy}
-      style={{ '--segments': props.options.length } as CSSProperties}
     >
       {props.options.map((option) => (
         <button
