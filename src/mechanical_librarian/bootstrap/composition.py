@@ -1974,20 +1974,15 @@ def _audiobook_marketplaces(
         ),
         ("us",),
     )
-    preferred = tuple(
-        code
-        for language in languages
-        if (identity := language_identity(language)) is not None
-        for code in _LANGUAGE_MARKETPLACES.get(identity.base, ())
-    )
-    return tuple(
-        sorted(
-            stated,
-            key=lambda code: (
-                preferred.index(code) if code in preferred else len(preferred)
-            ),
-        )
-    )
+    # Each marketplace ranks by the first declared language whose catalogue
+    # it carries; the sort is stable, so ties keep the owner's order.
+    rank: dict[str, int] = {}
+    for position, language in enumerate(languages):
+        identity = language_identity(language)
+        if identity is not None:
+            for code in _LANGUAGE_MARKETPLACES.get(identity.base, ()):
+                rank.setdefault(code, position)
+    return tuple(sorted(stated, key=lambda code: rank.get(code, len(languages))))
 
 
 def run_metadata_report_loaded(
@@ -2393,6 +2388,137 @@ def admit_review_case_loaded(
         repository.close()
 
 
+@dataclass(frozen=True)
+class _ProviderPacers:
+    """One pacer per enabled adapter, shared by a pipeline's foreground and
+    retry lookups so both draw on the same rate budget."""
+
+    google_books: GoogleBooksPacer | None
+    open_library: OpenLibraryPacer | None
+    inventaire: InventairePacer | None
+    hardcover: HardcoverPacer | None
+    audible_catalog: AudibleCatalogPacer | None
+    audnexus: AudnexusPacer | None
+    audiosilo: AudioSiloPacer | None
+    itunes_search: ITunesSearchPacer | None
+
+    @classmethod
+    def for_providers(
+        cls, providers: Sequence[ProviderConnectionConfiguration]
+    ) -> _ProviderPacers:
+        enabled = {value.adapter for value in providers if value.enabled}
+        return cls(
+            GoogleBooksPacer() if "google_books" in enabled else None,
+            OpenLibraryPacer() if "open_library" in enabled else None,
+            InventairePacer() if "inventaire" in enabled else None,
+            HardcoverPacer() if "hardcover" in enabled else None,
+            AudibleCatalogPacer() if "audible_catalog" in enabled else None,
+            AudnexusPacer() if "audnexus" in enabled else None,
+            AudioSiloPacer() if "audiosilo" in enabled else None,
+            ITunesSearchPacer() if "itunes_search" in enabled else None,
+        )
+
+
+def _retry_provider(
+    value: ProviderConnectionConfiguration,
+    configuration: ApplicationConfiguration,
+    credentials: dict[str, str] | None,
+    marketplaces: tuple[str, ...],
+    pacers: _ProviderPacers,
+) -> MetadataProvider:
+    """Construct a provider retry's adapter from the configuration it was
+    resolved against, or refuse one that configuration no longer supports."""
+    if value.adapter == "google_books":
+        api_key = (
+            credentials.get("provider:" + value.name)
+            if credentials is not None
+            else (None if value.secret_file is None else read_secret(value.secret_file))
+        )
+        return GoogleBooksMetadataProvider(
+            value.name,
+            google_books_client(configuration.limits.timeout_seconds),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            api_key=api_key,
+            pacer=pacers.google_books,
+        )
+    if value.adapter == "hardcover" and (
+        value.secret_file is not None or credentials is not None
+    ):
+        return HardcoverMetadataProvider(
+            value.name,
+            (
+                hardcover_client(
+                    _required_secret_file(value.secret_file),
+                    configuration.limits.timeout_seconds,
+                )
+                if credentials is None
+                else hardcover_client_token(
+                    credentials["provider:" + value.name],
+                    configuration.limits.timeout_seconds,
+                )
+            ),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            pacer=pacers.hardcover,
+        )
+    if value.adapter == "open_library" and value.contact_email is not None:
+        return OpenLibraryMetadataProvider(
+            value.name,
+            open_library_client(
+                value.contact_email, configuration.limits.timeout_seconds
+            ),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            pacer=pacers.open_library,
+        )
+    if value.adapter == "inventaire":
+        return InventaireMetadataProvider(
+            value.name,
+            inventaire_client(configuration.limits.timeout_seconds),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            pacer=pacers.inventaire,
+        )
+    # The four audiobook adapters are keyless, so a retry constructs one
+    # from the same configuration the foreground did.
+    if value.adapter == "audible_catalog":
+        return AudibleCatalogMetadataProvider(
+            value.name,
+            audible_catalog_client(configuration.limits.timeout_seconds),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            marketplaces=marketplaces,
+            pacer=pacers.audible_catalog,
+        )
+    if value.adapter == "audnexus":
+        return AudnexusMetadataProvider(
+            value.name,
+            audnexus_client(configuration.limits.timeout_seconds),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            marketplaces=marketplaces,
+            pacer=pacers.audnexus,
+        )
+    if value.adapter == "audiosilo":
+        return AudioSiloMetadataProvider(
+            value.name,
+            audiosilo_client(configuration.limits.timeout_seconds),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            pacer=pacers.audiosilo,
+        )
+    if value.adapter == "itunes_search":
+        return ITunesSearchMetadataProvider(
+            value.name,
+            itunes_search_client(configuration.limits.timeout_seconds),
+            configuration.limits.provider_response_bytes,
+            configuration.limits.timeout_seconds,
+            pacer=pacers.itunes_search,
+        )
+    raise ProviderRetrySuccessorError("provider retry configuration changed")
+
+
 def create_review_pipeline(
     configuration: ApplicationConfiguration,
     database_path: Path,
@@ -2454,70 +2580,7 @@ def create_review_pipeline(
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
-    google_books_pacer = (
-        GoogleBooksPacer()
-        if any(
-            provider.enabled and provider.adapter == "google_books"
-            for provider in configuration.providers
-        )
-        else None
-    )
-    open_library_pacer = (
-        OpenLibraryPacer()
-        if any(
-            provider.enabled and provider.adapter == "open_library"
-            for provider in configuration.providers
-        )
-        else None
-    )
-    inventaire_pacer = (
-        InventairePacer()
-        if any(
-            provider.enabled and provider.adapter == "inventaire"
-            for provider in configuration.providers
-        )
-        else None
-    )
-    hardcover_pacer = (
-        HardcoverPacer()
-        if any(
-            provider.enabled and provider.adapter == "hardcover"
-            for provider in configuration.providers
-        )
-        else None
-    )
-    audible_catalog_pacer = (
-        AudibleCatalogPacer()
-        if any(
-            provider.enabled and provider.adapter == "audible_catalog"
-            for provider in configuration.providers
-        )
-        else None
-    )
-    audnexus_pacer = (
-        AudnexusPacer()
-        if any(
-            provider.enabled and provider.adapter == "audnexus"
-            for provider in configuration.providers
-        )
-        else None
-    )
-    audiosilo_pacer = (
-        AudioSiloPacer()
-        if any(
-            provider.enabled and provider.adapter == "audiosilo"
-            for provider in configuration.providers
-        )
-        else None
-    )
-    itunes_search_pacer = (
-        ITunesSearchPacer()
-        if any(
-            provider.enabled and provider.adapter == "itunes_search"
-            for provider in configuration.providers
-        )
-        else None
-    )
+    pacers = _ProviderPacers.for_providers(configuration.providers)
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
@@ -2574,114 +2637,24 @@ def create_review_pipeline(
         def factory(
             value: ProviderConnectionConfiguration = provider,
         ) -> MetadataProvider:
-            if value.adapter == "google_books":
-                api_key = (
-                    credentials.get("provider:" + value.name)
-                    if credentials is not None
-                    else (
-                        None
-                        if value.secret_file is None
-                        else read_secret(value.secret_file)
-                    )
-                )
-                return GoogleBooksMetadataProvider(
-                    value.name,
-                    google_books_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    api_key=api_key,
-                    pacer=google_books_pacer,
-                )
-            if value.adapter == "hardcover" and (
-                value.secret_file is not None or credentials is not None
-            ):
-                return HardcoverMetadataProvider(
-                    value.name,
-                    (
-                        hardcover_client(
-                            _required_secret_file(value.secret_file),
-                            configuration.limits.timeout_seconds,
-                        )
-                        if credentials is None
-                        else hardcover_client_token(
-                            credentials["provider:" + value.name],
-                            configuration.limits.timeout_seconds,
-                        )
-                    ),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=hardcover_pacer,
-                )
-            if value.adapter == "open_library" and value.contact_email is not None:
-                return OpenLibraryMetadataProvider(
-                    value.name,
-                    open_library_client(
-                        value.contact_email, configuration.limits.timeout_seconds
-                    ),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=open_library_pacer,
-                )
-            if value.adapter == "inventaire":
-                return InventaireMetadataProvider(
-                    value.name,
-                    inventaire_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=inventaire_pacer,
-                )
-            # The four audiobook adapters are keyless, so a retry constructs one
-            # from the same configuration the foreground did. The marketplace
-            # order is read from `configured` -- the provider set this retry was
-            # resolved against -- so a retry never walks an order the report it
-            # is succeeding did not.
-            if value.adapter == "audible_catalog":
-                return AudibleCatalogMetadataProvider(
-                    value.name,
-                    audible_catalog_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    marketplaces=_audiobook_marketplaces(
-                        configured, selected.languages
-                    ),
-                    pacer=audible_catalog_pacer,
-                )
-            if value.adapter == "audnexus":
-                return AudnexusMetadataProvider(
-                    value.name,
-                    audnexus_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    marketplaces=_audiobook_marketplaces(
-                        configured, selected.languages
-                    ),
-                    pacer=audnexus_pacer,
-                )
-            if value.adapter == "audiosilo":
-                return AudioSiloMetadataProvider(
-                    value.name,
-                    audiosilo_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=audiosilo_pacer,
-                )
-            if value.adapter == "itunes_search":
-                return ITunesSearchMetadataProvider(
-                    value.name,
-                    itunes_search_client(configuration.limits.timeout_seconds),
-                    configuration.limits.provider_response_bytes,
-                    configuration.limits.timeout_seconds,
-                    pacer=itunes_search_pacer,
-                )
-            raise ProviderRetrySuccessorError("provider retry configuration changed")
+            # The marketplace order is read from `configured` -- the provider
+            # set this retry was resolved against -- so a retry never walks an
+            # order the report it is succeeding did not.
+            return _retry_provider(
+                value,
+                configuration,
+                credentials,
+                _audiobook_marketplaces(configured, selected.languages),
+                pacers,
+            )
 
         return ConfiguredProviderRetry(
             ProviderBinding(name, True, factory, adapter),
             adapter,
             generation,
             google_burst_remaining=(
-                google_books_pacer.remaining_burst
-                if adapter == "google_books" and google_books_pacer is not None
+                pacers.google_books.remaining_burst
+                if adapter == "google_books" and pacers.google_books is not None
                 else None
             ),
         )
@@ -2790,14 +2763,14 @@ def create_review_pipeline(
             action.item_id or "",
             0,
             expected_file_identity=action.file_identity,
-            google_books_pacer=google_books_pacer,
-            open_library_pacer=open_library_pacer,
-            inventaire_pacer=inventaire_pacer,
-            hardcover_pacer=hardcover_pacer,
-            audible_catalog_pacer=audible_catalog_pacer,
-            audnexus_pacer=audnexus_pacer,
-            audiosilo_pacer=audiosilo_pacer,
-            itunes_search_pacer=itunes_search_pacer,
+            google_books_pacer=pacers.google_books,
+            open_library_pacer=pacers.open_library,
+            inventaire_pacer=pacers.inventaire,
+            hardcover_pacer=pacers.hardcover,
+            audible_catalog_pacer=pacers.audible_catalog,
+            audnexus_pacer=pacers.audnexus,
+            audiosilo_pacer=pacers.audiosilo,
+            itunes_search_pacer=pacers.itunes_search,
             review_action=action,
             recover_artifacts=False,
             repository_authority=database_authority,
@@ -2965,8 +2938,8 @@ def create_review_pipeline(
         admit_description=admit_description,
         recovery_observer=provider_recovery,
         google_burst_remaining=(
-            google_books_pacer.remaining_burst
-            if google_books_pacer is not None
+            pacers.google_books.remaining_burst
+            if pacers.google_books is not None
             else None
         ),
         drain_outbox=drain_outbox,

@@ -227,6 +227,17 @@ def test_the_order_never_adds_a_marketplace_the_owner_left_out() -> None:
     assert ("us",) == _audiobook_marketplaces((), ("de",))
 
 
+def test_marketplaces_in_one_language_keep_the_owners_order() -> None:
+    # The title search asks only the first marketplace, so declaring English
+    # must not move a UK owner's search to the US catalogue.
+    assert ("uk", "us", "de") == _audiobook_marketplaces(
+        (_audible(("de", "uk", "us")),), ("en",)
+    )
+    assert ("ca", "fr", "uk") == _audiobook_marketplaces(
+        (_audible(("uk", "ca", "fr")),), ("fr", "en")
+    )
+
+
 # -- the recording-language prior ---------------------------------------------
 
 
