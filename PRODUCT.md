@@ -47,8 +47,7 @@ This tolerance concerns bibliographic uncertainty. Credential, consent,
 currentness, backup, supported-write, verification, and recovery boundaries
 remain mandatory, as do owner-final decisions and explicit Ask me or Ignore
 policy. The [automation policy](docs/product/automation-policy.md) applies this
-standard to field-level decisions and distinguishes accepted direction from
-the currently qualified implementation.
+standard to field-level decisions.
 
 ## Positioning
 
@@ -63,15 +62,17 @@ authority.
 
 The product runs as one self-contained container beside an existing media
 library. Audiobookshelf is the first production adapter. The owner works through
-one private authenticated browser workspace with Library, Policy, and Activity
-as its permanent destinations. Attention is an in-context queue within Library,
-and review detail stays attached to the selected work.
+one private authenticated browser workspace whose destinations are Library
+(with Attention and work detail), Policy, Activity and Settings.
 
 New items remain available while curation proceeds asynchronously. Library
-keeps all current work discoverable and exposes only unresolved fields that can
-benefit from an owner decision; review detail records direct field choices;
-Policy governs deterministic decision behavior; and Activity holds consent,
-guarded work, history, and recovery.
+keeps all current work discoverable and is where the workspace takes field
+decisions: Attention is its queue of unresolved fields that can benefit from an
+owner decision, and work detail keeps each field choice, its evidence and its
+history attached to the selected work. Policy governs deterministic decision
+behavior; Activity holds consent, guarded work, history, and recovery; and
+Settings holds the whole configuration, from the service connection, libraries
+and metadata sources to the reviewer, background work, access and appearance.
 
 ## Capabilities and Constraints
 
@@ -81,8 +82,8 @@ guarded work, history, and recovery.
   and audiobook libraries. Recording-admitted audiobooks retain their qualified
   field behavior; supported book-level descriptions, genres, series and titles
   also permit owner review while the recording remains unresolved. That
-  work-only route grants no automatic, cover or other-field authority. Application metadata and cover
-  effects use supported service APIs only.
+  work-only route grants no automatic, cover or other-field authority.
+  Application metadata and cover effects use supported service APIs only.
 - Metadata work is field-local, target-shaped, persisted before execution, and
   idempotent. Automatic outcomes must be qualified, deterministic, and visible
   in history.
@@ -107,7 +108,7 @@ The product name is Mechanical Librarian.
 
 ## Evidence on Hand
 
-- `README.md` records the current 0.14.1 interface-fidelity checkpoint and the
+- `README.md` states the current status and the
   present runtime boundary.
 - `docs/product/scope.md` records first-release scope, planned extensions,
   explicit non-goals, the user promise, and the measures of success.

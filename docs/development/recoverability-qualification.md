@@ -1,55 +1,68 @@
 # Recoverability qualification
 
-`scripts/recoverability_evaluator.py` is a versioned, aggregate-only audit
-tool. Its supported view is exactly title, subtitle, creator, contributor,
-publisher, language, publication date, identifier, collection, and collection
-position; its exploratory view is exactly edition and rights. It classifies
-each supported value-bearing row into exactly one of
+`scripts/recoverability_evaluator.py` measures how much metadata evidence in an
+EPUB the product recovers into its reports. It measures evidence recovery, not
+metadata decision accuracy: accepted metadata may legitimately be absent from
+the EPUB. Output is aggregate counts only.
+
+```text
+uv run python scripts/recoverability_evaluator.py --input INPUT.json --output OUTPUT.json
+```
+
+Input is `recoverability-evaluator-v4`; output is
+`recoverability-aggregate-v4`. The public synthetic input is
+`tests/support/recoverability_mini_corpus.json`, exercised by
+`tests/unit/test_recoverability_evaluator.py`.
+
+## Fields and categories
+
+- **Supported fields:** title, subtitle, creator, contributor, publisher,
+  language, publication date, identifier, collection and collection position.
+- **Exploratory fields:** edition and rights. They are reported but never
+  enter supported denominators or regression gates.
+
+Each supported value-bearing row falls into exactly one category:
 `absent_in_source`, `inspection_failure`, `extracted_not_projected`,
-`normalization_mismatch`, `semantic_mismatch`, `matched_partial`, or
-`matched_complete`. These measure evidence recovery, not metadata decision
-accuracy: accepted metadata may legitimately be absent from the EPUB.
+`normalization_mismatch`, `semantic_mismatch`, `matched_partial` or
+`matched_complete`. Unknown, empty, not-applicable, accepted-unsupported and
+unexplained-failure rows are counted separately.
 
-The `synthetic-v1` profile has fixed synthetic field cardinalities. The
-`gold-50-v1` profile requires 405 supported and 94 exploratory population
-rows, of which 397 and 92 respectively were readable in the exact-current
-qualification. Each field's population and readable cardinality is fixed, so
-an input cannot silently move cells between an excluded state and the matrix.
-The ten non-readable population rows remain explicitly excluded rather than
-being represented as a successful or failed evidence observation.
+## Profiles
 
-Regression controls are derived from the matrices and bounded, value-free
-candidate evidence; they are not caller-supplied totals. The frozen comparator
-is kept separately from the current derived counts. Title, creator, language,
-and overall matching are row units. Candidate precision is a candidate-atom
-unit, and the explicit-negative rate is a separately bounded negative-evidence
-unit; neither denominator is inferred from the other.
+A profile fixes each field's population and readable cardinality, so an input
+cannot silently move rows between an excluded state and the matrix.
+`synthetic-v1` is the public synthetic profile. `gold-50-v1` is the private
+50-book profile.
 
-The public input is synthetic. Private gold labels, adjudication, reports, and
-lab paths remain ignored. The output contains only counts by field/category,
-separate unknown/empty/not-applicable/accepted-unsupported/unexplained-failure
-counts, and ISBN relation counts. Edition and rights are exploratory only and
-never enter supported regression denominators or gates.
+Regression metrics are derived from the matrices and bounded candidate
+evidence, never supplied by the caller. The frozen baseline is held separately
+from the current counts. Title, creator, language and overall matching count
+rows; candidate precision counts candidate atoms; the explicit-negative rate
+has its own bounded denominator.
 
-ISBN relations are accepted, associated, unrelated, invalid, or unresolved.
-Each observed identifier is bound to one sanitized target slot, and the target
-list includes targets without an observation. Accepted recall therefore uses
-the target-applicable denominator, while associated yield and the other rates
-use the observed-identifier denominator. The five relations each require one
-closed evidence tuple. In particular, an associated identifier requires the
-Hardcover provider-scoped `provider_work_identity` same-work association; it is
-not independent corroboration and does not turn a different identifier into a
-metadata match. Missing provider work identity remains unresolved.
+## ISBN relations
 
-Exploratory recoverable-evidence recall is the matched-complete plus
-matched-partial exploratory rows over rows with source evidence present; source
-absence and whole-item unavailability do not dilute this recall denominator.
-Recommendations are deterministic, count-only entries with a field, category,
-and bounded scope for nonzero projection, normalization, or semantic gaps.
+Each observed identifier binds to one sanitised target slot, and targets
+without an observation are listed too. Relations are `accepted`, `associated`,
+`unrelated`, `invalid` or `unresolved`, each needing one closed evidence
+tuple. `associated` requires a Hardcover `provider_work_identity` same-work
+association. It is not independent corroboration and does not make a
+different identifier a metadata match. Missing provider work identity is
+`unresolved`. Accepted recall uses targets as its denominator; the other rates
+use observed identifiers.
 
-The private 50-book run must use product reports from an exact, clean,
-non-editable installed wheel against the read-only loopback lab; the evaluator
-itself runs from the exact checked-out candidate. It writes only ignored,
-aggregate-only candidate output and a replay receipt.
-It may recommend a follow-up only for an aggregate-demonstrated recoverable
-category; it must not implement a product fix or freeze a new threshold.
+Exploratory recall is matched-complete plus matched-partial rows over rows
+with source evidence. Source absence and whole-item unavailability are not in
+the denominator. Recommendations are deterministic count-only entries naming a
+field, category and scope with a nonzero projection, normalisation or semantic
+gap.
+
+## Private run
+
+The private 50-book run uses reports from an exact, clean, non-editable
+installed wheel against a read-only loopback lab. The evaluator runs from the
+same checked-out source. It writes only ignored aggregate output and a replay
+receipt. Gold labels, adjudication, reports and lab paths stay private.
+
+A run may recommend a follow-up only for a category the aggregates show is
+recoverable. It must not implement a product fix or freeze a new threshold.

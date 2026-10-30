@@ -1,87 +1,98 @@
 # Configuration reference
 
-The installed `review-serve` runtime and the shared application composition
-accept one strict UTF-8 JSON document with schema version `config-v9`. The
-source-only contributor workbench may load the same schema only inside its
-disposable or explicitly approved test context. Unknown and duplicate fields
-are rejected. The generated schema is
-[`config-v9.schema.json`](config-v9.schema.json) and is regenerated with:
+Settings come from one of two places, never both:
+
+- **File mode.** When `/data/config.json` exists, it is the complete authority.
+  It is one strict UTF-8 JSON document with schema version `config-v9`,
+  described below.
+- **Store mode.** When that file is absent, settings live in
+  `/data/application.sqlite3` and the owner edits them on the Settings page.
+  The deployment supplies a small bootstrap document instead.
+
+The rules for choosing between them, first boot and secrets are in
+[ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md).
+How to deploy either mode is in [deployment](../operations/deployment.md).
+Which document versions are accepted, and when a clean rebuild is needed, is
+in [compatibility](compatibility.md).
+
+## Store mode
+
+`review-serve` needs the owner-only bootstrap document
+`/run/secrets/review-bootstrap.json` and one exact-current owner-settings
+document and owner verifier in `/data/application.sqlite3`. An empty `/data`
+volume starts guided setup instead, and an incomplete setup store bound to the
+same bootstrap resumes it. Any other missing, malformed, mixed or orphaned
+state stops startup without fallback, import, migration or repair.
+
+Creating the owner password needs the one-time setup claim token, which is
+runtime state, not configuration
+([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)).
+
+The bootstrap is a closed `review-bootstrap-v2` document
+([example](../examples/review-bootstrap.json)). It holds only:
+
+| Field | Rule |
+| --- | --- |
+| `schema_version` | `review-bootstrap-v2` |
+| `canonical_origin` | As [`review.canonical_origin`](#review) |
+| `tls_certificate_file`, `tls_private_key_file` | Optional pair, as in [`review`](#review) |
+| `trusted_proxy_ips` | Up to 16, as in [`review`](#review) |
+| `mounts` | Up to 32 read-only mount mappings, as in [`mounts`](#mounts) |
+| `cover_reviewer_profile_file` | Optional; defaults to the image profile, see [contained reviewer profile](#contained-reviewer-profile) |
+
+It holds no owner credential.
+
+Owners edit settings on `/settings` (`GET` and `PATCH /api/v1/settings`). A
+stale revision is refused. A secret can be set, replaced or cleared, never read
+back; reads show only an indicator such as `Configured · ····1a2b`. A saved
+change applies to the next operation. If the new runtime cannot be prepared,
+the saved revision and the running runtime both stay as they were.
+
+Ports, volumes, owner-password recovery, TLS, the canonical origin, trusted
+proxies and mounts are deployment settings. Settings does not change them;
+changing them needs a restart.
+
+## File mode
+
+While `/data/config.json` exists, every covered Settings write returns
+`409 settings_managed_by_file`, and the browser shows those settings
+read-only. The file alone supplies the TLS identity, canonical origin and
+trusted proxy IPs; no bootstrap is read. The file is read once at start:
+restart after an edit.
+
+The document:
+
+- must be a regular file of at most 262,144 bytes, read without following
+  symlinks;
+- rejects unknown fields, duplicate keys and the JSON constants `NaN` and
+  `Infinity`;
+- is described by the generated
+  [`config-v9.schema.json`](config-v9.schema.json).
+
+Regenerate the schema after changing the model:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
 ```
 
-The file remains the complete authority while `/data/config.json` exists.
-The accepted store-mode, first-boot, secret, authority, and apply rules are
-[ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md);
-this reference describes the file-managed `config-v9` contract. In that mode it
-also solely supplies the review TLS identity, canonical origin, and trusted
-proxy IPs; the store/setup bootstrap document is neither required nor read.
+Names (of connections, libraries, mounts and providers) match
+`^[a-z][a-z0-9_-]{0,63}$` and are unique within their list. List order carries
+no priority; lists are sorted by name when loaded.
 
-When `/data/config.json` is absent, `review-serve` instead requires one
-exact-current owner-settings document and owner verifier in
-`/data/application.sqlite3`, plus an owner-only
-`/run/secrets/review-bootstrap.json`. A truly empty `/data` volume enters the
-guided setup flow; an exact bootstrap-bound incomplete setup store resumes it.
-While setup is unclaimed, each start mints a one-time setup claim token, writes
-it to the owner-only `/data/private/setup-claim-token` and prints it once in the
-container log; creating the owner password requires it
-([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)).
-It is runtime state, not a configuration field, and the bootstrap carries none.
-Every other missing, malformed, mixed, or orphaned store/bootstrap state stops
-startup without fallback, import, migration, or repair. The bootstrap is a
-closed `review-bootstrap-v2` document containing only
-`canonical_origin`, optional paired TLS certificate and key paths, up to 16
-`trusted_proxy_ips`, up to 32 read-only mount mappings, and the optional
-contained-reviewer profile path. It contains no owner credential: the first
-visitor creates the owner password in the ordinary application. Ports,
-volume/bind mounts, owner-password
-recovery, and proxy/TLS deployment remain outside the Settings API.
+Secret and file paths are absolute (start with `/`) and at most 1,024
+characters. Relative paths are refused by both the schema and the loader.
 
-This build has no exception to ordinary exact-current startup. Its new owner
-and reviewer state requires a clean rebuild, and the previous offline adoption
-command is retired rather than retargeted.
-
-Authenticated owners use the lazy `/settings` route and revision-CAS
-`GET`/`PATCH /api/v1/settings` API. Reads are private and return only a short
-secret indicator such as `Configured · ····1a2b`; secret values may only be
-set, replaced, or explicitly cleared. A present configuration file makes every
-covered write return `409 settings_managed_by_file` naming only
-`/data/config.json`; neither the API nor UI consults or exposes store values in
-that mode. All store-managed fields apply to the next admitted operation through
-one revision-CAS runtime-generation activation. Candidate preparation failure
-leaves the saved revision and active runtime unchanged. The private
-`pending_restart` member remains compatibility-shaped but is invariant-empty
-after activation; deploy-managed TLS, origin, proxy, mount, and listener values
-still require an operator restart.
-
-Settings shows a Cover evidence switch for the two audiobook-set providers
-that state a cover asset of their own, `audible_catalog` and `itunes_search`.
-Audible's switch makes its art an audiobook cover source. No audiobook is
-dispatched to iTunes (#1254, #1247), so its switch supplies no audiobook cover:
-on an ebook it lets the artwork of a matching iTunes audiobook listing be
-offered as a cover alternative. The control is unreachable while the provider is
-disabled and is forced off when the owner disables one. Both the settings
-contract and the configuration boundary refuse the pair outright, so
-`cover_enabled` can never be true for a provider that is off. `audnexus` and
-`audiosilo` restate Audible's art and carry no switch, and Hardcover, Open
-Library and Inventaire keep exactly the controls they had. Guided setup still
-records `cover_enabled: false` for Audible and iTunes, so their covers start off
-and become evidence only when the owner turns them on.
-Setup, Settings and the review surfaces state one canonical name per provider,
-from one table every one of them reads. The instance `name` remains the owner's
-own identifier and never becomes a display label, so field ids,
-`provider_connections` entries and adapter keys are unaffected by what is shown.
-
-`provider_recovery_generation` is a required positive operator generation for
-provider recovery. After correcting a provider credential, authorization, or
-configuration condition, press Retry now on Library or Settings, which raises
-it by exactly one; Settings shows no number to edit. When this file manages
-settings, increment it here and restart. It is the only recovery wake
-mechanism: the service does not watch configuration files, derive hashes, or
-accept environment overrides.
+There are no provider defaults, inheritance, weights, priorities, configurable
+fallback rules, environment overrides or other configuration sources.
+Discovery lanes and proposal evaluation are fixed, not configurable. Proposal
+creation reads only the selected connection, library and mount, never provider
+settings.
 
 ## Example
+
+A minimal valid file is [`synthetic-config.json`](../examples/synthetic-config.json).
+The fuller example below also enables the ebook providers and the `review`
+section:
 
 ```json
 {
@@ -148,428 +159,408 @@ accept environment overrides.
     "canonical_origin": "https://review.example.invalid",
     "owner_password_hash_file": "/run/secrets/review-owner.argon2",
     "tls_certificate_file": "/run/secrets/review-tls.crt",
-    "tls_private_key_file": "/run/secrets/review-tls.key",
-    "session_lifetime_seconds": 2592000,
-    "library_polling_interval_seconds": 900,
-    "graceful_shutdown_seconds": 30,
-    "diagnostic_timings_enabled": false,
-    "cover_reviewer_profile_file": null,
-    "cover_avoid_promotional_text": false,
-    "cover_avoid_tie_in_branding": false,
-    "cover_prefer_minimal_composition": false,
-    "description_remove_marketing": true,
-    "description_remove_sales_boasts": true,
-    "description_remove_praise": true,
-    "description_automatic_application": false,
-    "trusted_proxy_ips": []
+    "tls_private_key_file": "/run/secrets/review-tls.key"
   }
 }
 ```
 
-Names are bounded lowercase identifiers. Connection, library, mount, and
-provider names are unique. Each library refers to exactly one target connection
-and lists its provider connections explicitly; duplicate references are
-invalid. List order has no priority meaning and is canonicalized by name.
+## Top-level fields
 
-## Library languages
+| Field | Required | Rule |
+| --- | --- | --- |
+| `schema_version` | Yes | Exactly `config-v9` |
+| `provider_recovery_generation` | Yes | Integer, at least 1 |
+| `connections` | Yes | 1–32 Audiobookshelf connections |
+| `libraries` | Yes | 1–128 libraries |
+| `mounts` | Yes | 0–32 read-only mounts |
+| `providers` | Yes | 0–32 metadata providers |
+| `limits` | No | Resource limits; every field has a default |
+| `review` | No | Required by `review-serve`; ignored by report-only commands |
 
-A library may declare the languages it holds as an ordered `languages` list,
-the first one preferred, for example `"languages": ["de", "en"]`. It is
-optional and defaults to an empty list, which declares nothing. Each entry is
-a lowercase ISO 639 language tag with an optional script and region, such as
-`en`, `deu` or `zh-Hant`; at most eight are accepted, no two may name the same
-language and script, and `und`, `mul`, `mis` and `zxx` are refused, since none
-of them is a language a library holds. There is no environment variable for
-it, and this build reads it only from the configuration file: Settings neither
-shows nor edits it, and a store-managed library declares nothing (#1466).
+### Provider recovery generation
 
-Matching reads the list as a prior and never writes it into an item; an
-item's language still comes only from its own evidence. Today only audiobook
-matching reads it ([ADR-0064](../architecture/decisions/0064-audiobook-provider-evidence-vocabularies.md)):
+`provider_recovery_generation` is the only way to wake provider recovery.
+After fixing a provider credential, authorisation or configuration problem:
 
-- the Audible marketplaces an audiobook is searched and looked up in are
-  reordered so the configured ones in the first language come first, then
-  those in the second; none is added or removed, and English keeps the
-  default order;
-- a recording that states no language of its own is held to the list: an
-  edition in another language is not matched as its recording. With one
-  language that is exactly a language claim; with several, any of them is
-  accepted. A language the recording states itself always wins.
+- in store mode, press **Retry now** on Library or Settings, which raises the
+  generation by exactly one (Settings shows no number to edit);
+- in file mode, raise it by one in the file and restart.
+
+The service does not watch files, derive hashes or accept environment
+overrides for it. See [provider recovery](../operations/provider-recovery.md).
+
+## connections
+
+Each entry is one Audiobookshelf server.
+
+| Field | Rule |
+| --- | --- |
+| `name` | Name |
+| `adapter` | Exactly `audiobookshelf` |
+| `endpoint` | 1–2,048 characters, with an explicit `http://` or `https://` scheme |
+| `secret_file` | Absolute path to the API token |
+
+`endpoint` may be a service name or LAN address. HTTPS always verifies the
+certificate and host name. The token is sent only to the configured origin
+and supported routes. Redirects and ambient proxies are disabled. Provider and
+reviewer traffic keep their own HTTPS requirement.
+
+## mounts
+
+Each entry maps a path Audiobookshelf reports to the path the container sees.
+
+| Field | Rule |
+| --- | --- |
+| `name` | Name |
+| `container_path` | Absolute path inside this container |
+| `service_path` | Absolute path as Audiobookshelf reports it |
+| `read_only` | Exactly `true` |
+
+## libraries
+
+| Field | Required | Rule |
+| --- | --- | --- |
+| `name` | Yes | Name |
+| `connection` | Yes | Name of one entry in `connections` |
+| `library_id` | Yes | Audiobookshelf library ID, 1–128 characters |
+| `mount` | Yes | Name of one entry in `mounts`, or `null` |
+| `provider_connections` | Yes | Up to 32 provider names, no duplicates |
+| `languages` | No | Up to 8 language tags; default `[]` |
+| `policy_override` | No | Sparse policy changes; default `null` |
+
+A library lists its providers explicitly. Adding or enabling a provider does
+nothing until a library references it. Several libraries may reference the
+same provider.
+
+### Mounts and media
+
+An ebook needs the library to name a read-only mount.
+
+An audiobook is prepared only when its library names a mount too, and only
+with 1 to 512 audio files; an item with more is listed for attention. Reading
+audio evidence needs `ffprobe`, which the shipped image includes. The full
+admission rules are in [metadata report](../operations/metadata-report.md).
+
+### languages
+
+An ordered list of the languages the library holds, the first preferred, for
+example `["de", "en"]`. Each entry is a lowercase ISO 639 tag with an optional
+script and region, such as `en`, `deu` or `zh-Hant`. No two entries may name the
+same language and script. `und`, `mul`, `mis` and `zxx` are refused.
+
+It is read only from the configuration file; a store-managed library
+declares no languages. It is a matching prior, never written into an item, and
+only audiobook matching reads it
+([ADR-0064](../architecture/decisions/0064-audiobook-provider-evidence-vocabularies.md)):
+
+- Audible marketplaces are reordered by language, first language first. None
+  is added or removed. English keeps the default order.
+- A recording that states no language must be in one of the listed
+  languages: an edition in any other language is not matched as its
+  recording. A language the recording states itself always wins.
 
 Changing the list prepares the library's items again.
 
-## Sparse policy overrides
+### policy_override
 
-The built-in metadata policy needs no configuration. A library may instead
-declare a read-only, sparse `policy_override` with only the named `options` and
-`destinations` it differs on. Both maps use the closed policy catalogue; unknown
-or removed fields fail configuration loading rather than silently becoming Ask
-me or Ignore. The application never rewrites this configuration. `automatic`
-is accepted only for the closed qualified category/option matrix and produces
-decision-only authority after the owner explicitly confirms an exact Preview;
-all other automatic intent is rejected. `explicit` defaults to `unsupported`.
-The rich-field choices are exact:
+The built-in metadata policy needs no configuration. A library may declare a
+sparse, read-only override with only the `options` and `destinations` it
+changes, each a map keyed by policy category.
 
-- `subtitle`: `fill_empty` (default), `corroborated_split`, or `replace_descriptive`;
-- `series`: `primary_narrative` (default), `source_order`, `all_qualified`,
-  `add_qualified`, or `replace_qualified`;
-- `genres`: `fill_empty` (default), `add`, or `replace`;
-- `tags`: `off` (default), `fill_empty`, `add`, or `replace`;
-- `description_fill`: `safe_plain_text` (default), `google_visible_text`, or
-  `replace_safe_plain_text`;
-- `isbn_form`: `preserve_exact` (default) or `prefer_isbn13`;
-- `asin`: `preserve_exact` (default) or `ebook_manifestation`;
-- `explicit`: `unsupported` (default) or `adult_product`.
+| Category | Options (default first) |
+| --- | --- |
+| `title_layout` | `title_and_subtitle`, `preserve` |
+| `date_precision` | `year`, `full_date` |
+| `language_rendering` | `display_name`, `preserve` |
+| `contributor_names` | `canonical`, `preserve` |
+| `publisher_preference` | `publisher`, `imprint` |
+| `subtitle` | `fill_empty`, `corroborated_split`, `replace_descriptive` |
+| `series` | `primary_narrative`, `source_order`, `all_qualified`, `add_qualified`, `replace_qualified` |
+| `genres` | `fill_empty`, `add`, `replace` |
+| `tags` | `off`, `fill_empty`, `add`, `replace` |
+| `description_fill` | `safe_plain_text`, `google_visible_text`, `replace_safe_plain_text` |
+| `isbn_form` | `preserve_exact`, `prefer_isbn13` |
+| `cover_order` | `fixed_source_order`, `replace_if_strictly_better` |
+| `asin` | `preserve_exact`, `ebook_manifestation` |
+| `explicit` | `unsupported`, `adult_product` |
 
-List Add retains current target order and appends supported absent values.
-Audiobook tag fill/Add may combine compatible complete explicit tag lists,
-retaining every contributing source reference; it never converts genres into
-tags. Replacement retains its separate complete-list election. Series retains
-complete memberships and their sequence associations through the supported
-Audiobookshelf projection.
+A destination is one of `ask`, `ignore`, `automatic` or `unsupported`. The
+built-in destination of `explicit` is `unsupported`.
 
-Description normalization requires the retained Google Books visible-text
-transformation evidence. Audiobook synopsis uses a safely projected supplied
-summary, falling back to description only when summary is absent or empty.
-Malformed or unsafe supplied summary cannot trigger fallback.
+- An unknown category, option or destination fails loading.
+- `automatic` is accepted only for qualified category and option pairs, and
+  grants decision-only authority after the owner confirms an exact Preview.
+- Activation stores each library's resolved override with the new generation.
+  Later edits to the file need another activation.
 
-Valid ISBN-10 and ISBN-13 forms of one canonical family compare together while
-retaining each source representation and reference. Ebook manifestation and
-audiobook recording applicability remain separate. An option qualified for one
-media kind grants no authority to the other; the current qualification records
-name the actual allowed operations.
+What each option does, and which are qualified for Automatic, is in
+[automation policy](../product/automation-policy.md). Two contracts matter when
+choosing an option:
 
-Genre `fill_empty` remains Automatic in the built-in policy. Tags remain
-`off`/Ask, and automatic application remains separately disabled by default.
-Selecting audiobook `explicit:adult_product` permits a supported true-positive
-adult-product flag only; it never clears a value or certifies clean content.
-The added write destination lapses prior consent envelopes, requiring a new
-owner grant for the exact chosen subset before any field application.
+- `add` and `add_qualified` keep the current values in their order and append
+  supported values that are absent.
+- `corroborated_split` acts only when the current title is exactly an admitted
+  title and subtitle joined by `: `, ` — `, ` – ` or ` - `. It never splits on
+  other punctuation.
 
-Automatic series election treats provider-wide unsupported series output with no
-named membership as no evidence. A named incomplete or unpositioned membership,
-an unresolved alternative, or a failure in a query kind that contributed to the
-elected membership remains an inspectable abstention; the failure reason names
-that query kind. Closed leading-article and trailing `Series`/`Trilogy` display
-variants elect together, without fuzzy matching or a title-specific catalogue.
+To see the effect of a policy without changing anything:
 
-Corroborated subtitle splitting is atomic and accepts only an already admitted
-title/subtitle pair when the current title is their exact concatenation with
-one of `: `, ` — `, ` – `, or ` - `. It never performs a general punctuation
-or free-text split. For automatic audiobook application, both
-`title_layout:title_and_subtitle` and `subtitle:corroborated_split` must be Automatic with
-current decisions and owner consents. The pair uses one PATCH and verifies both
-values. Partial or uncertain results follow the existing reconciliation path;
-there is no blind retry or automatic rollback.
+```text
+mechanical-librarian policy-preview --config CONFIG --database DATABASE --profile PROFILE
+```
 
-Audiobook publication means the original work's first publication. Both date
-options preserve the source's year, month, or full-day precision; no day is
-invented. Recording releases and ebook manifestation dates remain distinct.
+It reads an existing database and prints the same preview as the API,
+changing nothing. Its output contains private metadata values; protect it like
+the database.
 
-`mechanical-librarian policy-preview --config CONFIG --database DATABASE
---profile PROFILE` reads an existing exact-current database and prints the same
-canonical preview returned by the API. It creates no database, draft,
-activation, decision, or target effect. Its output includes private current and
-desired metadata values and should be protected like the application database.
+## providers
 
-Activation resolves every configured library override against the exact
-immutable draft and persists that canonical resolved document with the new
-generation. Proposal evaluation replays it, so a later configuration edit
-cannot silently reinterpret an already active generation; another explicit
-activation establishes any new resolution.
+Every provider has a `name`, an `adapter`, an explicit `enabled`, a
+`cover_enabled`, a `secret_file` and, where allowed, a `contact_email`.
 
-An ebook library requires a named read-only mount. An audiobook library may
-give a named read-only mount too: with one, each of its items holding 1 to 512
-audio files — counted after the files the service itself excludes are dropped —
-is prepared as one local-evidence report, composed across those files, and
-enters provider discovery from there. An audiobook library that keeps
-`mount: null`, and any audiobook item carrying a file outside the supported
-containers, is rejected before parser/provider/publication activity exactly as
-before. A mounted item over 512 audio files is listed for attention instead, and
-is never prepared. Reading that local evidence requires the `ffprobe`
-binary the shipped image builds and carries; a deployment without it records no
-audiobook evidence.
+A disabled provider must set `cover_enabled` to `false` and both
+`secret_file` and `contact_email` to `null`.
 
-Every provider has explicit enablement and one of exactly eight built-in adapter
-values. Four read ebook metadata:
+### Ebook providers
 
-- `inventaire` is keyless and forbids both credential fields. It is preselected
-  during first-run setup, uses a fixed Inventaire host, and may retrieve covers.
-  It is not dispatched for audiobooks.
+| Adapter | `secret_file` when enabled | `contact_email` when enabled | `cover_enabled` |
+| --- | --- | --- | --- |
+| `inventaire` | `null` | `null` | Optional, default `true` |
+| `google_books` | `null` or absolute path to an API key | `null` | Must be `false` |
+| `hardcover` | Absolute path, required | `null` | Required |
+| `open_library` | `null` | Required email address, 3–254 characters | Required |
 
-- `google_books` forbids `contact_email` and cover retrieval. When enabled,
-  `secret_file` is optional: `null` uses credential-free access and an absolute
-  path supplies a Google Books API key through the controller only. It is not
-  dispatched for audiobooks.
-- `hardcover` forbids `contact_email`; when enabled it requires an absolute
-  private `secret_file`.
-- `open_library` always forbids a secret; when enabled it requires a bounded
-  operational `contact_email`.
+- `inventaire` is keyless and preselected in guided setup.
+- `google_books` with `secret_file: null` uses credential-free access.
+- A Hardcover secret file holds the bare token, without a `Bearer` scheme.
+- `contact_email` only identifies Open Library HTTP requests. It never
+  appears in reports, logs or stored artifacts, and changing it does not
+  supersede reports.
 
-Four read audiobook metadata, and every one of them is keyless under
-[ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md):
-`secret_file` and `contact_email` are always `null`, and no key exists for them
-even as an optional upgrade. What each one reaches on the network is stated in
-[the security and threat model](../architecture/security.md).
+### Audiobook-catalogue providers
 
-- `audible_catalog` is primary discovery and enrichment, and may retrieve
-  covers. When enabled it also carries `marketplaces`: the ordered, non-empty,
-  duplicate-free ASIN resolution set drawn from `us`, `uk`, `de`, `fr`, `au`,
-  `in`, `ca`, `jp`, `it`, and `es`, defaulting to all ten with `us` first. No
-  other adapter, and not the disabled form of this one, accepts the key.
-- `audnexus` is per-ASIN enrichment, including chapters.
-- `audiosilo` is community corroboration and degraded mode.
-- `itunes_search` corroborates only, and may retrieve covers. It is not
-  dispatched for audiobooks (#1254); where a library connects it, it still
-  searches ebook work lanes.
+All four are keyless
+([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)):
+`secret_file` and `contact_email` are always `null`, and no optional key
+exists. What each one contacts is in
+[security](../architecture/security.md).
 
-`cover_enabled` defaults to `true` on an enabled `inventaire`,
-`audible_catalog`, or `itunes_search`; `audnexus` and `audiosilo` restate
-Audible's cover and must leave it `false`.
+| Adapter | Role | `cover_enabled` |
+| --- | --- | --- |
+| `audible_catalog` | Primary discovery and enrichment | Optional, default `true` |
+| `audnexus` | Per-ASIN enrichment, including chapters | Must be `false` |
+| `audiosilo` | Community corroboration and degraded mode | Must be `false` |
+| `itunes_search` | Searches audiobook listings to corroborate ebooks; receives no audiobook requests | Optional, default `true` |
 
-A disabled provider must set both adapter-specific authority fields to `null`.
-Adding or enabling a provider does nothing until a library explicitly
-references it. An audiobook is dispatched only to the referenced providers in
-the audiobook dispatch set, `audible_catalog`, `audnexus`, `audiosilo`,
-`hardcover` and `open_library` ([ADR-0061](../architecture/decisions/0061-audiobook-provider-posture.md)
-clause 9, #1247): a library's references narrow that set and never widen it.
-An ebook is dispatched to every referenced provider. The same named provider connection may be referenced by several
-libraries. `contact_email` is used only to identify Open Library HTTP requests;
-it is excluded from reports, report IDs, manifests, fingerprints, logs, errors,
-and persisted application artifacts. Changing it does not supersede reports or
-invalidate an already frozen batch.
+An enabled `audible_catalog` also takes `marketplaces`: the ordered,
+non-empty, duplicate-free list of Audible marketplaces an ASIN is resolved
+in, drawn from `us`, `uk`, `de`, `fr`, `au`, `in`, `ca`, `jp`, `it` and `es`.
+It defaults to all ten in that order. No other adapter, and no disabled
+Audible provider, accepts it.
 
-Each library may reference several enabled metadata providers and more than one
-may set `cover_enabled: true`. The report admits no more than four provider
-cover sources per named connection and eight provider sources overall; excess
-descriptors produce explicit truncation evidence.
+### Dispatch
 
-Target, enabled-Hardcover, and keyed Google Books `secret_file` values are
-bounded absolute paths.
-Relative secret paths are rejected by both the generated schema and runtime
-configuration loader.
-An enabled Hardcover file contains the bare token value, without an
-authorization scheme. The controller adds the provider-required `Bearer`
-scheme only to an exact POST to the fixed Hardcover GraphQL URL.
+An ebook is sent to every enabled provider its library references.
 
-Optional `limits` fields are fixed bounded resource limits, not behavior or
-ranking policy:
+An audiobook is sent only to referenced providers in the audiobook set:
+`audible_catalog`, `audnexus`, `audiosilo`, `hardcover` and `open_library`.
+A library's references narrow that set and never widen it. Google Books,
+Inventaire and iTunes receive no audiobook requests.
 
-- `target_response_bytes` (1,024–4,194,304; default 1,048,576)
-- `provider_response_bytes` (1,024–262,144; default 65,536) — except that an
-  Audible audiobook search whose item states a composed runtime reads its one
-  25-result page under the fixed 262,144-byte maximum whatever value is set,
-  and Audible's aggregate is a fixed 1 MiB (#1256)
-- `source_archive_bytes` (1,024–268,435,456; default 268,435,456) — the EPUB
-  archive ceiling, and only that
-- `audio_source_bytes` (1,024–17,179,869,184; default 8,589,934,592) — the
-  audiobook ceiling, separate because an audiobook is read by header rather
-  than whole and is routinely larger than any EPUB. It bounds each audio file
-  of an item, checked on the opened length before any file is digested, which
-  bounds a multi-file item at that ceiling times its file count
-- `timeout_seconds` (1–60; default 30) — in a preparation, one provider's
-  requests stop at its 20-second share of the item's 60-second window (one
-  in-flight transport phase may overrun it slightly), so values above 20 bind
-  provider requests only in recovery. Audiobookshelf reads and writes still
-  use the full value (#1248)
+### Covers
 
-Optional `review` configuration is required by `review-serve` and ignored by
-report-only commands. The server also requires explicit `--catalogue` and
-`--artifacts` paths; neither is inferred from configuration or an environment
-variable. `canonical_origin` is one exact HTTP or HTTPS browser origin. The owner
-hash file is an absolute, owner-only regular no-follow file containing one
-Argon2id PHC string. `tls_certificate_file` and `tls_private_key_file` are an
-all-or-nothing pair of absolute, owner-controlled regular no-follow files; the
-private key must be owner-only and use an unencrypted PKCS#8, RSA, or EC PEM
-envelope. Encrypted and non-PEM key envelopes are rejected before SSL parsing,
-including encryption with an empty passphrase. There is no passphrase input or
-environment source. The server snapshots and validates one matching TLS
-identity before it opens the
-application database and retains only immutable anonymous snapshot descriptors
-for the server's lifetime in direct HTTPS mode. HTTP requires both TLS paths
-absent. HTTPS requires either both paths or at least one exact trusted proxy
-IP with both paths absent (a plaintext backend). The scheme is authoritative;
-there is no transport override or verification bypass.
-Session lifetime is 300–2,592,000 seconds (five minutes to 30 days). It defaults
-to 30 days and is a fixed absolute owner-session limit: authenticated activity
-does not extend it. The global
-`library_polling_interval_seconds` is 60–86,400 seconds and controls only when
-configured libraries reconcile; concurrency, provider pacing, and retry bounds
-remain maintainer-owned. Proxy forwarding is disabled unless the
-direct peer is one of at most 16 explicitly listed `trusted_proxy_ips`;
-forwarded Host or scheme headers from any other peer fail closed. A trusted
-proxy must also append the connecting client's address to one
-`X-Forwarded-For` line, or overwrite that header with it, because sign-in is
-throttled per client. A proxy that sends no `X-Forwarded-For` shares one
-throttled key among all its clients, and one that passes a client's own header
-through unchanged lets that client choose its throttle key (#1384). No password,
-private-key contents, raw session token, or CSRF token is stored in
-configuration or the application database.
+`cover_enabled` makes a provider a cover source. A report admits at most four
+provider cover sources per named connection and eight overall; extra sources
+are recorded as truncated.
 
-`graceful_shutdown_seconds` is 1–300 seconds. Shutdown closes claim admission
-before waiting up to this deadline for active review-preparation and guarded
-field-effect workers. An over-deadline worker remains tracked, causes a typed
-shutdown failure before the shared repository closes, and its last durable
-checkpoint is recovered on restart.
+Settings shows a **Cover evidence** switch only for `audible_catalog` (its art
+becomes an audiobook cover source) and `itunes_search` (a matching audiobook
+listing's art is offered as an ebook cover alternative). The switch is hidden
+and off while the provider is disabled. In a configuration file it defaults to
+on; guided setup saves `cover_enabled: false` for both, so in store mode their
+covers start off.
 
-`diagnostic_timings_enabled` is false by default. When explicitly enabled, the
-container retains at most 256 local stage-duration and wait-class records in
-its private data area. They contain no work values and are advisory diagnostics,
-not durable audit truth. Cover acquisition and the proposal stage are their own
-stages (#1258), and so is `persistence`: the currentness re-check (a target read
-and, for an audiobook, a re-digest of its tracks), the durable write and the
-read-back, recorded with wait class `none` although it contains that target
-I/O.
+The screens show one fixed display name per adapter, never the instance `name`.
 
-`cover_reviewer_profile_file` is deployment authority. Store-mode bootstrap
-uses the image-generated `/opt/mechanical-librarian/reviewer/profile.json` when
-this optional path is omitted; setup and normal runtime use the same default.
-An explicit path overrides it and never falls back when missing or invalid.
-File-mode configuration retains its explicit path behavior: absence leaves
-Codex unprovisioned, with model-free review and OpenRouter still available.
+## limits
 
-The profile must be an absolute owner-only regular no-follow canonical file.
-The supported image supplies it as UID 65532, mode 0400. Its model is
-`gpt-5.6-sol`, reasoning `medium`, timeout 180 seconds, output 65,536 bytes,
-file 1,048,576 bytes, memory 1 GiB and processes 32. It binds installed
-`/opt/mechanical-librarian/reviewer/bin/codex` and `bin/bwrap` artifacts whose
-architecture-specific digests are in `reviewer/metadata/SHA256SUMS` beneath
-that installation. Auth and jobs use `/data/reviewer/auth` and
-`/data/reviewer/jobs`. Browser settings cannot edit these values.
+Fixed resource limits, not behaviour or ranking policy.
 
-Boot passively admits the bounded profile and required model/resource contract,
-without executable, credential or network access. Explicit actions and passive
-advice-currentness reads re-admit current bytes. Missing, unreadable and
-contract-mismatched provisioning have distinct remedies, before host and
-credential readiness. Generic status reads reuse cached passive evidence.
-A deployment owner restores a missing image profile, corrects an unsafe
-explicit override, or replaces an outdated profile and restarts. The runtime
-never repairs or regenerates a profile. This image profile carries operational
-and synthetic evidence, not inherited historical full-profile qualification.
+| Field | Range | Default | Meaning |
+| --- | --- | --- | --- |
+| `target_response_bytes` | 1,024–4,194,304 | 1,048,576 | One Audiobookshelf response |
+| `provider_response_bytes` | 1,024–262,144 | 65,536 | One provider response |
+| `source_archive_bytes` | 1,024–268,435,456 | 268,435,456 | One EPUB archive |
+| `audio_source_bytes` | 1,024–17,179,869,184 | 8,589,934,592 | Each audio file of an item |
+| `timeout_seconds` | 1–60 | 30 | One request |
 
-Application state
-independently owns the exact task-to-engine/model
-mapping and credential presence. During ordinary review preparation, the one
-selected usable reviewer performs one bounded advisory comparison before the
-review package becomes visible. An
-absent, unready, unavailable, refusing, malformed, or failed reviewer records
-the same safe manual-comparison state instead; it never selects, downloads,
-queues, applies, or writes a cover. The three `cover_*` booleans form the
-closed deterministic advisory policy. They never grant decision or write
-authority, and changing them invalidates pending cover effects until the owner
-considers and selects under the current policy.
+- An Audible audiobook search with a known runtime reads its single
+  25-result page under a fixed 262,144-byte limit. Audible's aggregate limit
+  is a fixed 1 MiB.
+- `audio_source_bytes` applies to each file, so a multi-file item may total
+  this limit times its file count.
+- During preparation each provider gets a 20-second share of the item's
+  60-second window, so `timeout_seconds` above 20 binds provider requests
+  only in recovery. Audiobookshelf requests use the full value.
 
-When the fixed contained-reviewer resource contract changes, explicitly
-regenerate and requalify this private canonical profile through the provisioning
-procedure that created it, then replace the configured file and restart. The
-application never rewrites, migrates, or version-upgrades a profile. Codex
-credentials live only in its contained private auth store. OpenRouter keys are
-write-only application secrets and are never returned by setup, Settings,
-exports, diagnostics, or public documentation.
+## review
 
-There are no provider defaults, inheritance, overrides, weights, priorities,
-configurable fallback rules, environment substitutions, or undocumented
-configuration sources. The fixed complete title-plus-author discovery lane is
-part of the report contract rather than operator policy and runs alongside
-bounded ISBN-family lanes. Proposal creation uses
-only the selected target connection/library/mount and never reads provider
-authority; its fixed evaluation policy is not configurable.
+`review-serve` requires this section and explicit `--catalogue` and
+`--artifacts` paths. Neither path comes from configuration or the
+environment.
 
+| Field | Range | Default |
+| --- | --- | --- |
+| `canonical_origin` | 8–512 characters | Required |
+| `owner_password_hash_file` | Absolute path | Required |
+| `tls_certificate_file` | Absolute path or `null` | `null` |
+| `tls_private_key_file` | Absolute path or `null` | `null` |
+| `trusted_proxy_ips` | 0–16 IP addresses | `[]` |
+| `session_lifetime_seconds` | 300–2,592,000 | 2,592,000 (30 days) |
+| `library_polling_interval_seconds` | 60–86,400 | 900 |
+| `graceful_shutdown_seconds` | 1–300 | 30 |
+| `diagnostic_timings_enabled` | Boolean | `false` |
+| `cover_reviewer_profile_file` | Absolute path or `null` | `null` |
+| `cover_avoid_promotional_text` | Boolean | `false` |
+| `cover_avoid_tie_in_branding` | Boolean | `false` |
+| `cover_prefer_minimal_composition` | Boolean | `false` |
+| `description_remove_marketing` | Boolean | `true` |
+| `description_remove_sales_boasts` | Boolean | `true` |
+| `description_remove_praise` | Boolean | `true` |
+| `description_automatic_application` | Boolean | `false` |
 
-## Local transport
+No password, private-key contents, raw session token or CSRF token is stored
+in configuration or the application database.
 
-An Audiobookshelf `endpoint` explicitly selects `http://` or `https://`, including
-service names and LAN addresses. HTTPS always verifies the certificate and
-hostname. Credentials stay confined to the configured origin and supported
-routes; redirects and ambient proxies remain disabled. Provider and reviewer
-egress retain their separate HTTPS requirements.
+### Origin, TLS and proxies
 
-Browser mode is selected by the canonical origin and TLS identity:
+`canonical_origin` is one exact `http://` or `https://` browser origin. Its
+scheme is authoritative; there is no transport override.
 
 | Origin | TLS paths | Listener |
 | --- | --- | --- |
-| HTTP | Both absent | HTTP |
-| HTTPS | Both present | Direct TLS |
-| HTTPS | Both absent, exact trusted proxy IPs present | HTTP behind the configured TLS edge |
+| HTTP | Both `null` | HTTP |
+| HTTPS | Both set | Direct TLS |
+| HTTPS | Both `null`, at least one trusted proxy IP | HTTP behind the trusted TLS proxy |
 
-Proxy mode requires exactly one `X-Forwarded-Host` and one `X-Forwarded-Proto`
-header from the actual trusted peer. The pair must equal the canonical origin.
-Duplicate Host or forwarding fields, partial pairs, chains, `Forwarded`, and
-untrusted forwarding fail closed. Uvicorn does not interpret proxy headers.
-Sessions remain HttpOnly and SameSite Strict. Secure cookies and HSTS follow
-the canonical browser scheme, including setup and failure responses.
+- The TLS certificate and key are a pair of owner-controlled regular files,
+  opened without following symlinks and checked before the database opens.
+  The key must be owner-only and an unencrypted PKCS#8, RSA or EC PEM;
+  encrypted keys are refused.
+- `owner_password_hash_file` is an owner-only regular file, opened without
+  following symlinks, holding one Argon2id PHC string.
 
-`config-v9` and `review-bootstrap-v2` require explicit document replacement:
-clean rebuild required for these configuration documents. This transport change
-does not change database or `owner-settings-v3` schemas, adopt old documents,
-or rewrite fingerprints. See [deployment](../operations/deployment.md) for
-network exposure and browser trust.
+Forwarded headers are honoured only when the direct peer is one of
+`trusted_proxy_ips`. That peer must send exactly one `X-Forwarded-Host` and one
+`X-Forwarded-Proto`, and together they must equal the canonical origin.
+Duplicate or partial headers, chains, `Forwarded`, and forwarding headers
+from any other peer are refused. What the proxy must do with `X-Forwarded-For`
+for per-client sign-in throttling is in
+[deployment](../operations/deployment.md) and
+[security](../architecture/security.md).
 
+Session cookies are HttpOnly and SameSite Strict. The `Secure` flag and HSTS
+follow the canonical scheme, including on setup and error responses.
 
-## Description advice
+### Sessions, polling and shutdown
 
-`review.description_remove_marketing`, `description_remove_sales_boasts`, and
-`description_remove_praise` default to `true`. They remove marketing material,
-sales figures and bestseller boasts, and pull quotes and author praise,
-respectively. `review.description_automatic_application` defaults to `false`.
-These fields remain in `config-v9`; bootstrap remains `review-bootstrap-v2`.
-Store-managed equivalents live in `owner-settings-v4.description_advice` as
-`remove_marketing`, `remove_sales_boasts`, `remove_praise`, and
-`automatic_application`. Policy → Curation saves them separately from its
-metadata-policy draft. File-managed preferences are read-only in the browser.
+- `session_lifetime_seconds` is an absolute limit on an owner session.
+  Activity does not extend it.
+- `library_polling_interval_seconds` sets only how often configured libraries
+  are reconciled. Concurrency, provider pacing and retry bounds are not
+  configurable.
+- On shutdown the server stops admitting work, then waits up to
+  `graceful_shutdown_seconds` for review preparation and field-effect
+  workers. A worker still running at the deadline causes a typed shutdown
+  failure before the repository closes. Its last durable checkpoint is
+  recovered on restart.
 
-`reviewer-access-v3` retains independent optional cover and description mappings,
-sharing one OpenRouter secret. **Clean rebuild required**: prior reviewer JSON
-and the predecessor table definition, even empty, are rejected without adoption.
-Cover price observations are bound to the saved model. Refresh replaces them
-through revision comparison; failure retains the prior observation. Deselecting,
-clearing the key or skipping setup clears cover metadata without borrowing
-another model's prices. Description capability and prompt and completion price
-gates remain. A description model may have no request fee in the catalogue: it
-is saved as `null` and shown as Unavailable. A present invalid request fee is
-still refused. No clean rebuild is needed for this (#1400).
+### Diagnostic timings
 
-Setup and Settings separate observed prompt, completion, image and request
-rates from measured request estimates. Missing cover rates are unavailable,
-never zero or a capability failure. Settings states an example cost per 1,000
-books for cover review and description advice separately, or not measured for
-that model. A cover request is one work packet that may contain multiple
-images, and the cover example states the measured images per book. Dates and sample counts remain evidence data, outside the app
-copy. Contained Codex consumes plan allowance and has no monetary estimate.
-Setup keeps validation results visible before Continue and when reopened.
-The shipped measured-evidence set is empty. See the
-[owner measurement procedure](../development/reviewer-cost-measurement.md) for
-explicit, source-bound collection and its monitored budget boundary.
+When `diagnostic_timings_enabled` is `true`, the container keeps the newest
+256 stage-duration and wait-class records in its private data area. They hold
+no work values and are advisory, not an audit record. The stages are listed in
+[observability](../operations/observability.md#diagnostic-timings).
 
-A description request contains only canonical deduplicated provider-backed
-alternatives and the three cleanup choices, with pinned instruction/schema.
-It carries 1–256 alternatives, at most 16,384 characters each, within the
-contained request's 1 MiB limit. Oversize composition is rejected, not truncated.
-Owner choices, target-only text, titles, identifiers, paths and credentials
-are excluded. Output is exactly a bounded description and `ready` or
-`needs_review`. Every candidate is permanently `authored_content` and `advised`.
+### Contained reviewer profile
 
-Automatic OFF retains ordinary deterministic description fill authority.
-Automatic ON admits a current ready result that passes the description floor
-through existing policy and write requirements, including replacement of a
-populated field. The floor is the one qualified automatic description fill
-uses: valid plain text with no markup or visible cut-off, not a placeholder
-and not mostly quoted praise. A result below it is neither admitted nor
-written automatically; the owner can still choose it (#1400). Owner-final
-choices win; in-flight effects are not raced. Same text produces a no-change record,
-not a PATCH or Attention item. Explicit owner selection references an immutable
-candidate and expected binding; arbitrary replacement text is not a command.
-Existing description choices and keep-current provide guarded reversal.
+`cover_reviewer_profile_file` names the contained Codex reviewer profile. It
+is set by the deployment, never in the browser.
 
-Attempts persist before dispatch. Exact successful requests can reuse immutable
-text only with a fresh validated case binding. Failed or interrupted attempts
-never dispatch again silently; the owner can request bounded retry. New intent
-while preparation is paused remains pending until resume. Work accepted before
-pause retains the existing completion behavior.
+- Store mode and setup use the image profile
+  `/opt/mechanical-librarian/reviewer/profile.json` when no path is given.
+- In file mode, `null` leaves Codex unprovisioned. Model-free review and
+  OpenRouter remain available.
+- An explicit path is used as given and never falls back when missing or
+  invalid.
 
-**Clean rebuild required:** the application database adds description attempts,
-candidates, bindings, selections and pending intent. Ordinary startup accepts
-only absent or exact-current schema; it does not adopt old owner/reviewer state.
-This F39 database change is separate from the earlier transport-only change.
-The qualification bridge remains a derived-report operation and leaves every
-new description table empty; it is not canonical-state adoption.
+The profile must be an owner-only regular file in canonical form, opened
+without following symlinks. Its fixed contract is:
+
+| Setting | Value |
+| --- | --- |
+| Model | `gpt-5.6-sol` |
+| Reasoning | `medium` |
+| Timeout | 180 seconds |
+| Output | 65,536 bytes |
+| File | 1,048,576 bytes |
+| Memory | 1 GiB |
+| Processes | 32 |
+
+It binds the image's checksummed `bin/codex` and `bin/bwrap` in that directory.
+Codex credentials and jobs live in `/data/reviewer/auth` and
+`/data/reviewer/jobs`.
+
+Start-up checks the profile without running anything or using the network.
+A missing, unreadable or mismatched profile reports its remedy: restore the
+image profile, correct the path, or regenerate it, then restart. The
+application never repairs a profile.
+
+### Reviewer access
+
+Which reviewer serves each task is application state (`reviewer-access-v3`),
+not configuration. Cover review and description advice each have an optional
+OpenRouter model and share one write-only key that is never returned.
+
+A model is accepted only if it supports structured outputs, returns text and
+takes the task's input: images for cover review, text for description advice.
+A description model also needs prompt and completion prices. Pricing and the
+cost estimate are described in
+[ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md) and
+[reviewer cost measurement](../development/reviewer-cost-measurement.md).
+
+### Cover advice
+
+The three `cover_*` booleans are the advisory cover policy. During
+preparation the selected reviewer makes one bounded comparison before the case
+is shown; if none is ready or it fails, the case shows the manual comparison.
+Advice never selects or writes a cover. Changing these booleans invalidates
+pending cover effects until the owner chooses again.
+
+### Description advice
+
+`description_remove_marketing`, `description_remove_sales_boasts` and
+`description_remove_praise` remove marketing material, sales figures and
+bestseller boasts, and pull quotes and author praise. In store mode these and
+`automatic_application` live in `owner-settings-v4.description_advice` without
+the `description_` prefix, and Policy → Curation saves them separately from the
+policy draft.
+
+A request carries 1–256 provider-backed alternatives of at most 16,384
+characters each, within the 1 MiB request limit. A larger request is refused,
+not truncated. What is and is not sent is in
+[AI boundary](../architecture/ai-boundary.md). Every result is recorded as
+`authored_content` and `advised`.
+
+With `description_automatic_application` off, ordinary description fill
+still applies. With it on, a current `ready` result that passes the
+description floor is admitted through the normal policy and write rules, and
+may replace a populated description. The floor is valid plain text with no
+markup or visible cut-off, not a placeholder and not mostly quoted praise. The
+owner can still choose a result below it.
+
+- An owner's final choice wins, and in-flight effects are not raced.
+- Identical text records no change and sends no PATCH or Attention item.
+- Free replacement text is not accepted. Keep current reverses a choice.
+- A request made while preparation is paused waits until it resumes. Work
+  accepted before the pause completes normally.

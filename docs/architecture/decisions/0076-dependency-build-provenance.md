@@ -17,7 +17,7 @@ managed upgrades, including majors, after the strict five-job public gate.
 
 Use the frontend manifest as the exact Node/npm authority and install npm
 explicitly in build environments. Existing Renovate-managed upgrades may use
-the [platform auto-merge exception](../../development/exact-head-merging.md#renovate-platform-auto-merge-exception).
+the [platform auto-merge exception](../../development/slice-delivery.md#renovate-platform-auto-merge-exception).
 New dependencies, replacements and compatibility-policy changes remain manual.
 
 Create fixed one-hop [F46v9](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v9.json),
