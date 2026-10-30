@@ -17,8 +17,7 @@ Everything else is reference, read when the work reaches it and not before.
 any change touching credentials, network access, parsers, AI inputs, writes,
 backups, authentication, or upgrades.
 [Delivery and merging](docs/development/slice-delivery.md) governs how a change
-is delivered and merged; [the delivery-slice plan](docs/product/delivery-slices.md)
-is the ordered ledger of what is planned, not a rulebook.
+is delivered and merged; GitHub milestones hold what is planned.
 [Dependencies](docs/development/dependencies.md),
 [work management](docs/development/work-management.md), and
 [documentation standards](docs/development/documentation-standards.md) each own
@@ -205,8 +204,7 @@ ticket-level pull request. Do not create a slice tracker to rename one of those.
   [delivery and merging](docs/development/slice-delivery.md) owns the complete
   workflow, including selection and the `Unassigned backlog` boundary, which
   increment closes which ticket, recovery from a partly merged slice, and the
-  merge boundary. The ordered
-  [delivery-slice plan](docs/product/delivery-slices.md) is the planned ledger.
+  merge boundary. GitHub milestones hold the planned order.
 
 ## Documentation
 

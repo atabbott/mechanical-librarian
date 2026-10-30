@@ -40,7 +40,6 @@ How the pipeline prepares each work, stage by stage:
   [rich-metadata qualification](product/rich-metadata-qualification.md)
 - [Opening-ebook evidence](product/opening-ebook-evidence.md) and
   [opening-audio evidence](product/opening-audio-evidence.md)
-- [Delivery slices](product/delivery-slices.md): the ledger of slice outcomes
 - [Future reviewer backends](product/future-reviewer-backends.md)
 - [Design system](../DESIGN.md)
 
@@ -65,14 +64,13 @@ How the pipeline prepares each work, stage by stage:
 - [Delivery and merging](development/slice-delivery.md)
 - [Release engineering](development/release-engineering.md)
 - [Contributor workbench](development/contributor-workbench.md),
-  [foreground evidence batch](development/foreground-evidence-batch.md),
-  [provider evidence replay](development/provider-evidence-replay.md) and
+  [provider evidence replay](development/provider-evidence-replay.md),
+  [reviewer cost measurement](development/reviewer-cost-measurement.md) and
   [recoverability qualification](development/recoverability-qualification.md)
 
 ## Research
 
-- [Metadata-provider retry assessment](research/metadata-provider-retry-assessment.md)
-  and the [Google Books retry policy](research/google-books-retry-policy.md)
+- [Metadata-provider retry policy](research/metadata-provider-retry-assessment.md)
 - [Audiobook recording-source comparison](research/audiobook-recording-source-comparison.md)
 
 ## Project

@@ -25,8 +25,8 @@ What works today:
   Audiobookshelf, choose libraries and metadata providers.
 - Background preparation of every ebook and audiobook: local evidence from
   EPUB packages and audio files, plus catalogue evidence from Hardcover, Open
-  Library, Inventaire and Google Books for ebooks, and Audible, Audnexus,
-  iTunes and AudioSilo for audiobooks.
+  Library, Inventaire, Google Books and iTunes Search for ebooks, and Audible,
+  Audnexus, AudioSilo, Hardcover and Open Library for audiobooks.
 - One owner workspace with five views: Library, Attention (the fields that
   need a decision), work detail, Policy and Activity.
 - Automatic decisions for qualified field categories, with every outcome
@@ -45,11 +45,19 @@ lead to the 1.0.0 first public release.
 
 ## Running it
 
-Build the image and follow the [deployment guide](docs/operations/deployment.md).
-In short: prepare `review-bootstrap.json` from the
-[example](docs/examples/review-bootstrap.json), add your media folders as
-read-only mounts, run `docker compose up --build`, and open `http://localhost:8080`.
-The container prints a setup token that you need for first-run setup.
+The [deployment guide](docs/operations/deployment.md) has the details. In
+short, from a clone of this repository:
+
+```text
+cp docs/examples/review-bootstrap.json review-bootstrap.json
+sudo chown 65532:65532 review-bootstrap.json && sudo chmod 600 review-bootstrap.json
+# add your media folders as read-only mounts (see the deployment guide)
+docker compose up --build -d
+docker compose logs mechanical-librarian   # shows the setup claim token
+```
+
+Then open `http://localhost:8080` and enter the claim token to start first-run
+setup.
 
 Media mounts stay read-only, and the product never edits Audiobookshelf's
 database directly.

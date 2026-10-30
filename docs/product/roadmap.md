@@ -6,7 +6,7 @@ its units in order, and what it excludes. This page summarises them and is
 updated when a milestone opens, closes or is reordered.
 
 Before 1.0.0, each numbered milestone is an internal checkpoint. Completing one
-does not publish a release. [Work management](../development/work-management.md#checkpoint-versioning)
+does not publish a release. [Work management](../development/work-management.md#milestones-and-checkpoint-versioning)
 explains how checkpoints are numbered.
 
 ## Delivered
@@ -62,4 +62,4 @@ embedded-file metadata writes with their own backup gates, and further AI
 reviewer backends are directions, not commitments. See
 [scope](scope.md) and [future reviewer backends](future-reviewer-backends.md).
 Spoken opening-credit evidence from audiobooks is planned but unscheduled; see
-the [opening-audio evidence contract](opening-audio-evidence.md).
+[opening-audio evidence](opening-audio-evidence.md).

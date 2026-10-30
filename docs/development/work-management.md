@@ -1,6 +1,8 @@
 # Work Management
 
-GitHub issues, milestones and one account-owned GitHub Project track all work.
+GitHub issues and milestones track all work, and they are where to follow
+progress. The maintainer's private GitHub Project adds the planning fields
+below.
 Issues link to the product, architecture and reference documents that govern
 behaviour rather than copying them. Questions, support and loose ideas belong
 in Discussions; accepted, bounded work becomes an issue.
@@ -37,9 +39,7 @@ Numbers follow planned delivery order. An unstarted milestone is renumbered
 when it is reordered or when a feature joins a patch milestone; a started or
 closed one keeps its number. A theme with no scheduled position is an
 unnumbered milestone named by its outcome. `Release readiness` holds the
-cross-cutting work that gates 1.0.0. The history was renumbered once, on
-2026-10-22 (#1321); each renamed milestone's description records its former
-number, and older records keep the number they were written with.
+cross-cutting work that gates 1.0.0.
 
 ## Deferred and planned outcomes
 

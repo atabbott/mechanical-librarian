@@ -1,28 +1,24 @@
-# Provider evidence replay qualification
+# Provider evidence replay
 
-This procedure preserves expensive provider observations for one explicitly
-authorized private cohort without making an application database schema or a
-historical parser authoritative. It is maintainer qualification only. ADR-0013
-owns the compatibility boundary and the security model owns credentials,
-provider egress, hostile response bytes, private paths, and diagnostics.
+`scripts/qualify_provider_evidence_replay.py` captures real metadata-provider
+responses for a small private cohort once, then replays them offline through
+the current code. It is private maintainer qualification, never development or
+CI. The compatibility boundary is
+[ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md);
+credentials, egress and hostile responses are covered by the
+[security model](../architecture/security.md).
 
-## Boundary
+- **Capture** runs the currently configured provider adapters for the selected
+  reports and seals their raw HTTP exchanges, before parsing. It never reads
+  target credentials, target services, media, reviewers or decisions. Keys,
+  authorisation and contact identity are stripped.
+- **Replay** supplies placeholder credentials and has no network fallback.
+  Current adapters parse the sealed bytes, current report and proposal
+  derivation reruns, and current persistence writes reports, proposals and
+  admitted review cases into a fresh `current.sqlite3`. No earlier decision or
+  projection is copied.
 
-Capture starts from a clean exact source head, an exact-current owner-only
-application database, the current owner-only configuration, and an owner-only
-canonical selection document. It runs the current configured metadata provider
-adapters for those reports and seals their pre-parser HTTP exchanges. It never
-reads target credentials, target services, media, reviewers, or downstream
-decisions.
-
-Replay starts from a clean exact source head, the current configuration, and one
-sealed bundle plus its digest. It supplies placeholder provider credentials and
-has no network fallback. Current adapters decode and parse the sealed response
-bytes, current report and proposal derivation reruns, and current persistence
-publishes reports, proposals, and admitted review cases into an absent database.
-No historical decision or projection is copied.
-
-The command is intentionally source-bound:
+## Running it
 
 ```text
 uv run python scripts/qualify_provider_evidence_replay.py capture \
@@ -42,73 +38,56 @@ uv run python scripts/qualify_provider_evidence_replay.py replay \
   --output-directory ABSOLUTE_EMPTY_PRIVATE_REPLAY_DIRECTORY
 ```
 
-The checkout must have no tracked or untracked change at the named head. Ignored
-private qualification artifacts remain outside that source identity.
-
-Input leaves and output directories must belong to the current owner and grant
-no group or other access. A configuration's complete ancestor chain must contain
-no symlink or group/world-writable non-sticky directory, and the descriptor-bound
-document that passed those checks is the document parsed. Database inputs must
-also have no sidecars. Output directories must be empty. The command creates
-fixed names exclusively and never overwrites or deletes an incumbent. An
-interrupted or ambiguous run requires explicit private recovery before a new
-directory is used.
-
-## Selection and outputs
-
-The selection is strict canonical JSON, at most 100 unique current report IDs:
+The selection is canonical JSON with at most 100 unique current report IDs:
 
 ```json
 {"report_ids":["report_0000000000000000000000000000000000000000000000000000000000000000"],"schema":"provider-replay-selection-v1"}
 ```
 
-Capture creates `bundle.json` and `bundle.json.sha256`. Replay creates
-`current.sqlite3`, `result.json`, and `result.json.sha256`. The bundle and result
-are private evidence, not support artifacts: do not add them to the repository,
-logs, review input, or issue and pull-request attachments. Standard output is
-aggregate only. Failure output is a fixed value-free sentence.
+Preconditions:
 
-The operator retains a bundle only while its exact captured lanes remain useful.
-Deletion is a separate explicit recoverable private-maintenance action; this
-command has no deletion option. Preserve an independent retained source when a
-capture or replay is being investigated, and never treat the command's output as
-the sole retained copy of qualification state.
+- The checkout has no tracked or untracked change at the named head. Ignored
+  files do not count.
+- Inputs and output directories belong to the current owner with no group or
+  other access. No ancestor of the configuration is a symlink or a
+  group- or world-writable non-sticky directory.
+- The database is exact-current and has no sidecars.
+- Output directories are empty. Files are created exclusively and never
+  overwritten or deleted. After an interrupted or ambiguous run, recover
+  privately before using a new directory.
 
-## Invalidation and interpretation
+## Outputs
+
+Capture writes `bundle.json` and `bundle.json.sha256`. Replay writes
+`current.sqlite3`, `result.json` and `result.json.sha256`. These are private
+evidence: never add them to the repository, logs, review input, issues or pull
+requests. Standard output is aggregate only; a failure prints one fixed
+value-free sentence.
+
+Keep a bundle only while its captured responses are still useful. The command
+never deletes one; deleting it is a separate, deliberate private-maintenance
+step. Keep an independent copy of anything under
+investigation.
+
+## What replay checks
 
 The bundle binds the capture head, configuration and report schemas, provider
 name and adapter, canonical request, exact bounded response stream, capture
-time, private source seed, and live/current report and proposal digests. Replay
-also binds its source head and resulting database digest.
+time and the captured report and proposal digests. Replay also binds its own
+head and the resulting database digest.
 
-A removed or changed configured provider name/adapter, a newly enabled provider
-without captured evidence, or a changed canonical current request yields a
-provider-scoped `provider_contract_changed`, `provider_evidence_missing`, or
-`request_contract_changed` invalidation. Replay continues only with unaffected
-providers for that report.
-Malformed, oversized, noncanonical, tampered, unsafe, or endpoint-unconfined
-evidence fails the whole command. At the exact capture head, any otherwise
-unexplained report/proposal difference fails rather than being reclassified as
-expected drift.
+- A changed or removed provider adapter, a newly enabled provider with no
+  captured evidence, or a changed canonical request invalidates only that
+  provider for that report, as `provider_contract_changed`,
+  `provider_evidence_missing` or `request_contract_changed`. Replay continues
+  with the other providers.
+- Malformed, oversized, noncanonical, tampered, unsafe or off-endpoint
+  evidence fails the whole command.
+- At the capture head, any unexplained report or proposal difference fails.
 
-## Validation matrix
-
-| Evidence | Required interpretation |
-| --- | --- |
-| Public synthetic tests | The format, sanitizer, hostile-input bounds, current-adapter replay, selective invalidation, deterministic derivation, fresh persistence, and zero-network boundary work without private material. |
-| Private same-cohort capture/replay | The exact captured live/current reports and proposals reproduce offline at that head; current success and failure states are represented; credentials and contact are absent. |
-| Exact-installed qualification | Still required separately for the candidate artifact. Replay does not qualify packaging or the installed command surface. |
-| Complete-library scale, browser, and semantics | Still required separately over a complete representative database. Use #938 until later accepted evidence proves replay covers those responsibilities. |
-
-Issue #939's accepted proof used 12 works across ISBN-plus-work, ISBN-only, and
-work-only discovery and all three configured providers. It did not capture the
-roughly 2,000-work library. Therefore it narrows no #938 responsibility and
-makes no full-library replay claim.
-
-Capture and replay explicitly extract `ProviderResult.observation` after the
-production normalization boundary. Adapter attempts, incomplete causes, access
-time and descriptors are snapshots in that result, not post-call adapter
-properties. Qualification compares complete canonical outputs and descriptor
-facts; callback identity comparison preserves the existing function and owner
-without copying credential-bearing clients or pacer locks. Historical source
-measurements remain historical when the F20 source closure rotates.
+Replay does not qualify the installed artifact, full-library scale, the
+browser or semantics; those need their own qualification
+([testing strategy](testing-strategy.md)). The synthetic tests in
+`tests/unit/test_provider_evidence_replay_qualification.py` cover the format,
+sanitiser, hostile-input bounds, invalidation, deterministic derivation and the
+zero-network boundary without private material.

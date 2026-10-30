@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Verify the live documentation corpus is reachable, linked, and indexed.
+"""Verify the live documentation corpus is reachable, linked, indexed, and lean.
 
-Four checks, and deliberately only four. `docs/README.md` claims to list every
+Six checks. `docs/README.md` claims to list every
 live document, and `docs/architecture/decisions/README.md` claims to index
 every decision; both claims were true only for as long as somebody re-read the
 tree by hand. The 2026-08-15 audit found ten orphaned documents and four
@@ -13,7 +13,15 @@ missing index rows, so the claims are enforced here instead:
    every link is written in a form this checker can actually read;
 3. every ADR file has an index row, every index row names a file, and every
    row's declared number is the number of the file it links to;
-4. no two ADRs share a number.
+4. no two ADRs share a number;
+5. no heading in a living document carries an issue reference such as
+   `(#1070)`: a section named after the issue that added it is the start of a
+   ledger, and the corpus once grew dozens of them before anyone noticed;
+6. no living document exceeds `WORD_BUDGET` words. A document that needs more
+   is several documents, or is carrying history that git already keeps.
+
+ADRs are records of a decision and keep their original text, so checks 5 and
+6 do not apply to them; `CHANGELOG.md` is exempt from the word budget only.
 
 The corpus is `docs/**/*.md` plus the repository-root `*.md` files, which is
 exactly what `docs/README.md` says it lists. Files under `.github/` and
@@ -37,6 +45,8 @@ ADR_DIRECTORY = Path("docs") / "architecture" / "decisions"
 ADR_INDEX = ADR_DIRECTORY / "README.md"
 CORPUS_ROOT = Path("docs")
 CORPUS_ENTRY_POINT = CORPUS_ROOT / "README.md"
+CHANGELOG = Path("CHANGELOG.md")
+WORD_BUDGET = 6000
 
 # A decision file is `NNNN-slug.md`. The index and the template describe the
 # decisions rather than being decisions, so they are named out explicitly.
@@ -66,6 +76,8 @@ _REFERENCE_DEFINITION = re.compile(r"^ {0,3}\[([^\]]+)\]:\s*\S")
 _LINK_OPENING = re.compile(r"\]\(")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _INLINE_CODE = re.compile(r"`[^`]*`")
+_HEADING = re.compile(r"^ {0,3}#{1,6}\s+(.*)$")
+_ISSUE_REFERENCE = re.compile(r"(?<![\w&])#\d+\b")
 
 # Targets that name something outside the filesystem. A bare `#anchor` points
 # within its own document, and this checker deliberately does not verify
@@ -320,6 +332,44 @@ def duplicate_adr_numbers(root: Path) -> tuple[str, ...]:
     return tuple(findings)
 
 
+def _is_decision(document: Path) -> bool:
+    return document.parent == ADR_DIRECTORY and document.name not in _NOT_A_DECISION
+
+
+def issue_headings(root: Path) -> tuple[str, ...]:
+    """Headings that name an issue rather than a topic."""
+
+    findings: list[str] = []
+    for document in live_documents(root):
+        if _is_decision(document):
+            continue
+        text = _strip_code((root / document).read_text(encoding="utf-8"))
+        for line in text.splitlines():
+            heading = _HEADING.match(line)
+            if heading is not None and _ISSUE_REFERENCE.search(heading.group(1)):
+                findings.append(
+                    f"{document.as_posix()} has a heading naming an issue:"
+                    f" {line.strip()!r}; fold it into the topical section"
+                )
+    return tuple(findings)
+
+
+def oversized_documents(root: Path) -> tuple[str, ...]:
+    """Living documents longer than the budget."""
+
+    findings: list[str] = []
+    for document in live_documents(root):
+        if _is_decision(document) or document == CHANGELOG:
+            continue
+        words = len((root / document).read_text(encoding="utf-8").split())
+        if words > WORD_BUDGET:
+            findings.append(
+                f"{document.as_posix()} has {words} words, over the"
+                f" {WORD_BUDGET}-word budget; split it or cut what is no longer true"
+            )
+    return tuple(findings)
+
+
 def integrity_findings(root: Path) -> tuple[str, ...]:
     """Every finding, links first: an orphan is often a broken link upstream."""
 
@@ -328,6 +378,8 @@ def integrity_findings(root: Path) -> tuple[str, ...]:
         *orphaned_documents(root),
         *adr_index_findings(root),
         *duplicate_adr_numbers(root),
+        *issue_headings(root),
+        *oversized_documents(root),
     )
 
 

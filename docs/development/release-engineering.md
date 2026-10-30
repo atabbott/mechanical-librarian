@@ -3,7 +3,7 @@
 No release has been published. Milestones before 1.0.0 are internal
 checkpoints: completing one creates no tag, GitHub Release, supported version or
 published artifact. The maintainer decides which delivered checkpoint becomes
-1.0.0, the first public release; [work management](work-management.md#checkpoint-versioning)
+1.0.0, the first public release; [work management](work-management.md#milestones-and-checkpoint-versioning)
 covers numbering.
 
 Until then, [ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md)

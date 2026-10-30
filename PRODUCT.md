@@ -47,8 +47,7 @@ This tolerance concerns bibliographic uncertainty. Credential, consent,
 currentness, backup, supported-write, verification, and recovery boundaries
 remain mandatory, as do owner-final decisions and explicit Ask me or Ignore
 policy. The [automation policy](docs/product/automation-policy.md) applies this
-standard to field-level decisions and distinguishes accepted direction from
-the currently qualified implementation.
+standard to field-level decisions.
 
 ## Positioning
 

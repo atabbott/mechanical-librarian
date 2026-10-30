@@ -35,10 +35,22 @@ workbench/           # source-only contributor scenarios, never installed
 tests/               # unit, integration, architecture, installed, browser and slow tiers
 ```
 
+## Your first pull request
+
+You need Python 3.13 or 3.14 and [uv](https://docs.astral.sh/uv/); Node and npm
+only for frontend work. Run the formatting, lint, type and fast test commands
+below, open a pull request that closes an issue, and CI does the rest. The
+slice and tracker rules in the process documents govern maintainer delivery;
+for an outside contribution, a clear issue and a focused pull request are
+enough.
+
+Some issues quote a "retained snapshot": a private measurement run over the
+maintainer's own library. Issues and pull requests quote such runs only as
+aggregates, and the snapshots themselves never enter the repository.
+
 ## Backend setup
 
-Use Python 3.13 or 3.14 and [uv](https://docs.astral.sh/uv/). Do not install
-project tools globally.
+Do not install project tools globally.
 
 ```text
 uv lock --check
@@ -125,7 +137,7 @@ from it for a manual one, so the table can be checked against the workflow.
 | Python formatting | gate | `uv run ruff format --check src tests scripts` in `fast-source` |
 | Python lint | gate | `uv run ruff check src tests scripts` in `fast-source` |
 | Python typing | gate | `uv run mypy src tests scripts` in `fast-source` |
-| Documentation reachability, relative links and the ADR index | gate | `scripts/verify_documentation_integrity.py` in `fast-source` |
+| Documentation reachability, relative links, the ADR index, issue-free headings and the word budget | gate | `scripts/verify_documentation_integrity.py` in `fast-source` |
 | Every direct dependency carries an authority grant, and no grant outlives its dependency | gate | `scripts/verify_dependency_authority.py` in `fast-source` |
 | Frontend typing, lint, formatting and Vitest suite | gate | `npm run typecheck`, `npm run lint`, `npm test`; `npm run lint` is what fails on unformatted source |
 | Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `npm audit --audit-level=low` |

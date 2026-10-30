@@ -39,7 +39,14 @@ Larger slices use sequential increments. Each increment:
 - stays draft until it can carry that closing reference.
 
 A horizontal type, repository, migration or adapter primitive is not an
-increment on its own; keep it with the behaviour that proves it.
+increment on its own; keep it with the behaviour that proves it. A deliberately
+narrow adapter or interface is fine when it fully demonstrates the outcome and
+leaves room to extend. No slice defers its safety, recovery, observability,
+documentation, clean-schema or test obligations to a later slice.
+
+Slices follow the order of their GitHub milestones. A future outcome stays a
+short deferred issue with no slice ID until that same issue is promoted
+([work management](work-management.md#deferred-and-planned-outcomes)).
 
 `Deliver slice <ID>` (or `Deliver and merge slice <ID>`) authorises one bounded
 transaction for that assigned `Ready` tracker: plan increments, branch, open

@@ -57,8 +57,10 @@ A document that is no longer needed is deleted.
 
 `scripts/verify_documentation_integrity.py` runs in the `fast-source` gate job.
 It checks that every document under `docs/` is reachable from `docs/README.md`,
-that every relative link resolves, and that the ADR index and the ADR files
-match one to one with no shared numbers. Run it locally with:
+that every relative link resolves, that the ADR index and the ADR files match
+one to one with no shared numbers, that no heading outside an ADR names an
+issue (such as `(#1070)`), and that no living document other than the
+changelog exceeds 6,000 words. Run it locally with:
 
 ```text
 uv run python scripts/verify_documentation_integrity.py

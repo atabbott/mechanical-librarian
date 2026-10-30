@@ -1,32 +1,31 @@
 # Measuring reviewer request costs
 
-This owner-run, report-only tool supports the separately authorized collection
-in #1060. Software delivery does not authorize paid calls or use of a live
-library. Ordinary application reads never run it. The [bounded collection report](reviewer-collection-report.md) records accepted
-measurements and their limitations. Packaged evidence admits rows from separate
-complete runs, each carrying its own run provenance: the 50-description phase
-and the later 100-request Luna cover run. The MiMo cover continuation remains
-documentation-only.
+`scripts/measure_reviewer_cost.py` measures what reviewer requests cost over a
+fixed cohort of retained reports. It is an owner-run, report-only tool.
+Software delivery never authorises paid calls or use of a live library, and
+ordinary application reads never run it. Settings shows the published results
+([configuration](../reference/configuration.md)).
 
-Use an owner-private copy of an exact-current, closed report database and its
-retained cover artifact directory. Do not use an active database: the read-only
-reader rejects sidecars and changed authority. No media or target-service access
-is needed. Create a private `0600` cohort file with ordered, unique report IDs:
+## Inputs
 
-```json
-{"schema_version":"reviewer-cost-cohort-v1","report_ids":["report identity from the retained store"]}
-```
+- An owner-private copy of an exact-current, closed report database and its
+  retained cover artifact directory. Do not use an active database: the
+  read-only reader rejects sidecars and changed authority. No media or target
+  service is needed.
+- A private `0600` cohort file listing ordered, unique report IDs:
 
-Use the source checkout matching a successful exact-artifact qualification.
-Retain its wheel and environment with the qualifier's `--wheel-output` and
-`--environment` options, and retain its successful JSON receipt. The measurement
-tool does not build, install, qualify, repair, or upgrade anything. Invoke the
-script with that retained environment's Python, outside the source checkout.
-The wheel, installed payload, RECORD, origin and receipt must match the supplied
-full source SHA. Editable installations are refused.
+  ```json
+  {"schema_version":"reviewer-cost-cohort-v1","report_ids":["report identity from the retained store"]}
+  ```
 
-First produce a local inventory; this default mode makes no network request and
-starts no contained reviewer process:
+- The environment, wheel and JSON receipt from a successful exact-artifact
+  qualification of the source checkout (the qualifier's `--wheel-output` and
+  `--environment` options). The tool builds, installs and repairs nothing. Run
+  it with that environment's Python, outside the checkout. The wheel,
+  installed payload, RECORD, origin and receipt must match the full source
+  SHA; editable installs are refused.
+
+## Inventory (default, no network)
 
 ```sh
 "$INSTALLED_PYTHON" "$SOURCE/scripts/measure_reviewer_cost.py" \
@@ -35,27 +34,32 @@ starts no contained reviewer process:
   --description-model openai/gpt-6-luna > "$PRIVATE_INVENTORY"
 ```
 
-Description models default to none. Explicit description selections take the
-first 50 eligible reports in cohort order, or the positive
-`--description-count`; shortages remain shortages and never duplicate inputs.
-Cover and description eligibility are independent. One cover request is one
-work packet, potentially containing several images. The installed producer's
-candidate limit and omissions are retained without truncating its image tuple.
-The inventory binds each report, packet, image and description projection.
+The inventory binds each report, packet, image and description projection. It
+makes no network request and starts no contained reviewer.
 
-Optional `--preflight --key-file "$PRIVATE_OPENROUTER_KEY"` performs only the
-existing bounded capability/pricing GETs for the named models. It makes no chat
-request and starts no contained process. Description measurement requires valid
-prompt and completion token prices; an absent catalogue request fee remains
-unknown and does not block measurement. A present invalid request fee still
-refuses the model. Actual response charges alone determine measured spend; an
-unknown catalogue fee is never substituted with zero.
-Keep the bare key in an owner-only regular file, never on the command line. Preflight is an explicit external read;
-it is not a spending permission or an account-limit operation.
+- One cover request is one report's packet, which may hold several images. The
+  producer's candidate limit and omissions are kept; images are not truncated.
+- Description models default to none. A selected description model takes the
+  first 50 eligible reports in cohort order, or `--description-count`. A
+  shortage stays a shortage; inputs are never duplicated.
+- Cover and description eligibility are independent.
 
-Only after the owner approves the actual cohort, model/task choices, existing
-data-use posture and monitored spending envelope, repeat the same inventory
-arguments with:
+## Preflight (optional)
+
+`--preflight --key-file "$PRIVATE_OPENROUTER_KEY"` makes only the bounded
+capability and pricing GETs for the named models. It sends no chat request and
+grants no spending permission. Keep the bare key in an owner-only file, never
+on the command line.
+
+A description model needs valid prompt and completion prices. A missing
+catalogue request fee stays unknown and does not block measurement; an
+invalid one refuses the model. Measured spend comes only from actual response
+charges.
+
+## Paid run
+
+Only after the owner approves the cohort, model and task choices, data use and
+a monitored spending envelope, repeat the inventory arguments with:
 
 ```sh
 --execute --source-head "$FULL_SOURCE_SHA" \
@@ -66,45 +70,60 @@ arguments with:
 --budget-target-usd 1 --stop-threshold-usd 0.80 --output "$NEW_PRIVATE_RUN"
 ```
 
-The example amounts are placeholders for an approved envelope, not recommended
-spend. Target and threshold must be positive finite decimals, with threshold at
-most target. Dispatch is sequential and stops before the next request once
-known spend reaches the threshold. The last in-flight request can exceed both
-threshold and target. **This is not a hard cap.** No account limit is changed.
-Missing or ambiguous charge, timeout, interruption or undispatched input makes
-the run incomplete. No price arithmetic, history lookup or assumed zero replaces
-an unknown charge. The tool and OpenRouter path never retry.
+The amounts are placeholders. Target and threshold are positive decimals, with
+threshold at most target.
 
-For a bounded smoke that must stop on any failure, also pass
-`--stop-on-failure`. After retaining the failed attempt and any known charge,
-it stops before the next dispatch, including after a contained failure or a
-charged parse failure. The run remains incomplete even if the failed attempt
-was last, and emits no public aggregate. Its private manifest records the
-enabled option. Without the flag, known-charge parser failures retain the
-existing collection behavior and remain in the attempted-request denominator.
+- Dispatch is sequential. It stops before the next request once known spend
+  reaches the threshold. **This is not a hard cap**: the last in-flight request
+  can exceed threshold and target. No account limit is changed.
+- The tool never retries an OpenRouter request.
+- An OpenRouter attempt with an unknown or ambiguous charge stops dispatch at
+  once, with or without `--stop-on-failure`, and makes the run incomplete. A
+  timeout, interruption or undispatched input also makes it incomplete. An
+  unknown charge is never replaced with zero or an estimate.
+- `--stop-on-failure` stops before the next dispatch after any failure, after
+  retaining the attempt and any known charge. The run stays incomplete with no
+  public rows, even when the failure is on the last attempt; the manifest
+  records the option. Without it, other failures (a charged parse failure or a
+  contained failure) are recorded and the run continues.
+- For contained covers, pass `--codex-model` and `--contained-profile` instead
+  of an OpenRouter cover model. These use the signed-in plan allowance and
+  produce no monetary row. The supported profile keeps the reviewer's single
+  local-abort retry ([contributor workbench](contributor-workbench.md#cover-packet-scenarios)),
+  recorded in private `attempt_evidence`. A contained run grants no process,
+  credential, tool or model authority beyond the selected profile.
 
-For a contained cover run, select the exact `--codex-model` and
-`--contained-profile` instead of an OpenRouter cover model. Its supported tuple
-retains one existing bounded local-abort retry; private `attempt_evidence`
-discloses it. It consumes the signed-in plan allowance and emits no monetary row.
-This does not widen contained process, credential, tool or model authority.
+## Output
 
 The output directory is created exclusively with private permissions. Its
 immutable manifest binds provenance, frozen inputs, selections, data use and
-budget. Every attempt starts durably before dispatch and retains terminal parsed
-output, supported final response bytes when available, timing, generation ID,
-usage, known/unknown charge and prompt/schema/profile identities. Credentials,
-hidden reasoning and unrestricted streams are excluded. A start without a
-terminal record is interrupted and financially unknown. There is no resume;
-an explicitly approved retry is a new directory preserving the original.
+budget. Each attempt is recorded durably before dispatch and keeps parsed
+output, supported final response bytes, timing, generation ID, usage, charge
+and prompt, schema and profile identities. Credentials, hidden reasoning and
+unrestricted streams are excluded. A started attempt without a terminal record
+is interrupted and its cost unknown. There is no resume: an approved retry is
+a new directory.
 
-Only a completely dispatched run with every paid charge known may contain
-public aggregate rows. Completed means strict parse success; charged parser
-failures remain separate failures and remain in the attempted-request
-cost denominator. Per-1,000 cost is total known charges divided by attempted
-requests times 1,000, never images or successful outputs. Threshold stops and
-unknown or interrupted attempts retain private incomplete evidence only.
-Do not copy private capture files into the repository. The closed public model
-admits only aggregate model/task rows, each with its run provenance; public documentation
-and the packaged JSON must be byte-identical. Publishing measurements is a
-separate reviewed action, not a tool side effect.
+Only a complete run emits public aggregate rows: every input dispatched,
+every charge known, and not stopped by `--stop-on-failure`. Completed means
+a strict parse success. Charged parse failures are failures but stay in the
+denominator: per-1,000 cost is total known charges divided by attempted
+requests, times 1,000. Images and successful outputs are never the
+denominator.
+
+## Publishing results
+
+Publishing is a separate reviewed change, never a side effect of the tool.
+Never copy private capture files into the repository.
+
+- [`reviewer-cost-evidence-v2.json`](../reference/reviewer-cost-evidence-v2.json)
+  is the evidence Settings shows. It must be byte-identical to
+  `src/mechanical_librarian/resources/reviewer-cost-evidence-v2.json`. Each row
+  is one model and task from one complete run, with that run's source head,
+  cohort digest and observation time. Rows from different runs are never
+  merged. The `works` field counts input reports, not distinct works.
+- [`reviewer-cost-cover-continuation-v2.json`](../reference/reviewer-cost-cover-continuation-v2.json)
+  is a documentation-only row for a partial cover cohort. The application does
+  not load it.
+
+`tests/unit/test_reviewer_cost_evidence.py` checks both files.

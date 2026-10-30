@@ -42,8 +42,8 @@ dev = [
   # commands reproduce. Neither is a gate and neither is imported by the suite:
   # `scripts/run_test_tier.py` never loads them, and `--disable-plugin-autoload`
   # keeps them out of a tier run even though `coverage` ships a `.pth`. That
-  # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which only the
-  # documented coverage command does.
+  # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which no
+  # documented command does.
   "coverage==7.15.4",
   "hypothesis==6.165.10",
   # `starlette.testclient` prefers `httpx2` and warns on the
