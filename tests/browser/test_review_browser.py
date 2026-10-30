@@ -5554,7 +5554,7 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
                 expect(health).to_contain_text("Shorter than the edition")
                 expect(health).to_contain_text("12 h of local audio, 8 h shorter")
                 expect(health).to_contain_text("within 1 min 30 s")
-                expect(health).to_contain_text("Audible product B08G9PRS1K")
+                expect(health).to_contain_text("Audible product B0SYNE7P1K")
             browser.close()
         assert errors == []
 
@@ -5607,9 +5607,9 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                 _closing_context(context),
             ):
                 _login(page, origin)
-                page.goto(f"{origin}/library?lens=all&q=Project Hail Mary")
+                page.goto(f"{origin}/library?lens=all&q=Ember Tide Protocol")
                 row = page.get_by_role(
-                    "button", name=re.compile("^Project Hail Mary")
+                    "button", name=re.compile("^Ember Tide Protocol")
                 ).first
                 expect(row).to_be_visible()
                 # A recording is an ordinary review row, not a failure card,
@@ -5630,7 +5630,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                         "where overall runtime is unavailable."
                     )
                     basis.get_by_text("Recording source").click()
-                    expect(basis).to_contain_text("Audible product B08G9PRS1K")
+                    expect(basis).to_contain_text("Audible product B0SYNE7P1K")
                     source = basis.locator("summary")
                     desktop_bounds = source.bounding_box()
                     # Every disclosure is a full target, at every width (#1288).
@@ -5797,9 +5797,9 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 _closing_context(context),
             ):
                 _login(page, origin)
-                page.goto(f"{origin}/library?lens=all&q=Project Hail Mary")
+                page.goto(f"{origin}/library?lens=all&q=Ember Tide Protocol")
                 row = page.get_by_role(
-                    "button", name=re.compile("^Project Hail Mary")
+                    "button", name=re.compile("^Ember Tide Protocol")
                 ).first
                 expect(row).to_be_visible()
                 row.click()
@@ -5807,7 +5807,7 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 page.get_by_role("button", name=re.compile("^ASIN")).first.click()
                 choice = page.locator(".direct-choice").first
                 expect(choice).to_be_visible()
-                expect(choice).to_contain_text("B08G9PRS1K")
+                expect(choice).to_contain_text("B0SYNE7P1K")
                 expect(choice).to_contain_text(
                     "Selected from Audible and Audnexus to fill an empty ASIN field "
                     "under a qualified automatic policy; the runtime gate "
@@ -5828,7 +5828,7 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                 )
                 narrators = page.locator(".direct-choice").first
                 expect(narrators).to_be_visible()
-                expect(narrators).to_contain_text("Ray Porter")
+                expect(narrators).to_contain_text("Ilsa Brandt")
                 assert (
                     0 == page.get_by_text("under a qualified automatic policy").count()
                 )
@@ -12433,7 +12433,7 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
         lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
     )
     rows = (
-        "Project Hail Mary. Andy Weir. Found, but not this work",
+        "Ember Tide Protocol. Corin Halloway. Found, but not this work",
         "Work no-match. Author details unavailable. No provider matched",
         "Work rechecked. Author details unavailable. "
         "Providers unavailable; will be checked again",

@@ -1085,24 +1085,70 @@ def test_an_audio_set_with_any_unusable_track_surfaces_no_file(
     assert snapshot.files == ()
 
 
-def test_an_ebook_file_still_wins_over_an_audio_set() -> None:
+def _epub_record(name: str = "book.epub", inode: str = "inode-9") -> dict[str, object]:
+    return {
+        "ebookFormat": "epub",
+        "ino": inode,
+        "metadata": {"relPath": name, "path": f"/library/{name}", "size": 1},
+    }
+
+
+def test_included_audio_beside_an_epub_is_an_audiobook_with_a_companion() -> None:
+    """The recording is the item; its EPUB is kept only as evidence (#1319)."""
     snapshot = _audiobook_snapshot(
-        {
-            "ebookFile": {
-                "ebookFormat": "epub",
-                "ino": "inode-9",
-                "metadata": {
-                    "relPath": "book.epub",
-                    "path": "/library/book.epub",
-                    "size": 1,
-                },
-            },
-            "audioFiles": [_audio_file("book.m4b")],
-        }
+        {"ebookFile": _epub_record(), "audioFiles": [_audio_file("book.m4b")]}
+    )
+
+    assert snapshot.media_kind == "audiobook"
+    assert [value.format for value in snapshot.files] == ["m4b"]
+    assert snapshot.companion is not None
+    assert (snapshot.companion.format, snapshot.companion.relative_path) == (
+        "epub",
+        "book.epub",
+    )
+
+
+def test_an_ebook_beside_only_excluded_audio_stays_an_ebook() -> None:
+    excluded = {**_audio_file("book.m4b"), "exclude": True}
+    snapshot = _audiobook_snapshot(
+        {"ebookFile": _epub_record(), "audioFiles": [excluded]}
     )
 
     assert snapshot.media_kind == "ebook"
     assert [value.format for value in snapshot.files] == ["epub"]
+    assert snapshot.companion is None
+
+
+@pytest.mark.parametrize(
+    "ebooks",
+    (
+        pytest.param(
+            {
+                "ebookFiles": [
+                    _epub_record("one.epub", "inode-8"),
+                    _epub_record("two.epub", "inode-9"),
+                ]
+            },
+            id="two-ebooks",
+        ),
+        pytest.param(
+            {"ebookFile": {**_epub_record("book.pdf"), "ebookFormat": "pdf"}},
+            id="not-epub",
+        ),
+        pytest.param(
+            {"ebookFile": {"ebookFormat": "epub", "metadata": {}}},
+            id="unlocatable",
+        ),
+    ),
+)
+def test_an_unusable_ebook_beside_audio_is_no_evidence_and_no_gate(
+    ebooks: dict[str, object],
+) -> None:
+    snapshot = _audiobook_snapshot({**ebooks, "audioFiles": [_audio_file("book.m4b")]})
+
+    assert snapshot.media_kind == "audiobook"
+    assert [value.format for value in snapshot.files] == ["m4b"]
+    assert snapshot.companion is None
 
 
 def test_an_item_with_neither_ebook_nor_audio_files_stays_unsupported() -> None:

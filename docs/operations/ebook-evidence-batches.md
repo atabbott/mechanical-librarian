@@ -1,96 +1,98 @@
 # Foreground ebook evidence batches
 
-The source-only contributor workbench can preview and explicitly run one
-immutable foreground batch over a disposable current Audiobookshelf book
-catalogue. This is not an installed runtime or container capability. It
-serially reuses the complete metadata-and-cover report operation and remains
-report-only. See [Contributor workbench](../development/contributor-workbench.md).
+A batch runs the metadata-and-cover report operation over a frozen selection
+of catalogue entries, one item at a time, in the foreground. It is a
+contributor tool in the source-only
+[contributor workbench](../development/contributor-workbench.md), not an
+installed or container capability. It only produces reports. The manifest
+file rules are in the
+[contributor workbench](../development/contributor-workbench.md#foreground-evidence-batches).
 
-## Prepare the catalogue
+## Steps
 
-Use the typed catalogue-refresh scenario against an explicitly supplied test
-workspace, then inspect eligible entries before creating a batch.
+1. Refresh a disposable test catalogue with the `catalogue-refresh` scenario
+   and check its eligible entries ([catalogue](catalogue.md)).
+2. Run `batch-preview` to create a manifest.
+3. Run `batch-inspect` and read the exact manifest before granting run
+   authority.
+4. Run `batch-run` on that manifest.
 
-The catalogue operation is documented in
-[Current book catalogue](catalogue.md).
+## Manifest
 
-## Create and inspect a manifest
+Preview selects either every currently eligible EPUB or an explicit ordered
+list of connection, library, library ID and item ID. The two are mutually
+exclusive, and a preview accepts at most 10,000 entries.
 
-Preview either all currently eligible EPUBs or an explicit ordered tuple of
-connection, library, library ID, and item ID. A preview accepts at most 10,000
-entries. Explicit selection and all-eligible selection are mutually exclusive.
+If any selected library uses an enabled `open_library` provider, preview
+accepts only an explicit selection of at most five entries. Larger and
+all-eligible selections fail before the manifest, provider clients,
+credentials or network are touched.
 
-When any selected library references an enabled `open_library` provider,
-preview accepts only an explicit selection of at most five entries.
-All-eligible and larger explicit selections fail before manifest creation,
-provider-client construction, credential access, or egress. Existing larger and
-all-eligible batches remain available when Open Library is disabled.
+The manifest path must not exist. Preview atomically writes one immutable,
+canonical manifest document at the current manifest version
+([current versions](../reference/compatibility.md#current-versions)). It
+records:
 
-The manifest path must be absent. Preview atomically creates one immutable
-canonical `batch-manifest-v5` document. It records scoped identities, the
-catalogue generation and fingerprint, a secret-free configuration fingerprint,
-enabled provider names and adapter discriminators, and conservative call-count
-maxima. Each enabled Open Library adapter allows at most 49 metadata requests
-and four remote cover requests per selected item: up to 45 initial Search and
-detail requests plus four bounded retries. Hardcover permits at most 27
-metadata requests, Inventaire at most 27 metadata requests and four remote cover
-requests, and Google Books at most 54 metadata requests. The report gallery
-admits at most four cover sources per provider and eight overall. The maxima add
-the enabled adapters without a generic cost or scheduling framework.
-Each enabled Google Books adapter permits at most 54 metadata requests and
-no cover requests per selected item.
-The manifest contains no title, author,
-path, credential, operational contact email, report body, execution state, or
-history.
+- the scoped item identities;
+- the catalogue generation and fingerprint;
+- a secret-free configuration fingerprint;
+- enabled provider names and adapters;
+- maximum call counts.
 
-Inspect the exact document before granting run authority.
+It contains no title, author, path, credential, contact email, report body or
+execution state. Its ID is the lowercase 64-character content digest. Changing,
+replacing or corrupting the file invalidates it.
 
-The manifest ID is the lowercase 64-character content digest in that output.
-Changing, replacing, or corrupting the file invalidates it.
+The maxima allow 6 Audiobookshelf item reads and 4 Audiobookshelf cover reads
+per item, plus each enabled adapter's per-item limit:
 
-## Run the batch
+| Adapter | Metadata requests | Remote cover requests |
+| --- | --- | --- |
+| Open Library | 49 (45 initial, 4 retries) | 4 |
+| Hardcover | 27 | 20 |
+| Inventaire | 27 | 4 |
+| Google Books | 54 | 0 |
 
-The typed batch-run scenario runs the exact inspected manifest serially in the
-foreground and returns deterministic bounded evidence
-followed by one final summary. It reloads no configuration during the
-run, revalidates the current catalogue and exact item before each report, and
-binds every report to the file identity frozen in the manifest.
-Series evidence remains the isolated child's bounded explicit package or
-front/rear indicia projection; batch execution does not expand scan scope or
-make series ranking, proposal, decision, or write calls.
+The report gallery admits at most four cover sources per provider and eight in
+total.
 
-Item-local extraction, format, content, or inspection failures emit a typed
-outcome and continue. Configuration, credential, catalogue-generation,
-provider, target-service, or report-publication failures stop the remainder
-while preserving already published reports. Interruption propagates to the
-operator.
+## Running
 
-One Open Library pacer and one Hardcover pacer are shared by the whole serial
-foreground run. They keep their provider's metadata request starts at least one
-second apart; the Open Library pacer also governs its cover requests. Initial
-attempts and bounded retries traverse the same pacing and deadline gates.
+`batch-run` reloads no configuration during the run. Before each report it
+revalidates the current catalogue and the exact item, and binds the report to
+the file identity frozen in the manifest. It does not widen series scanning or
+make ranking, proposal, decision or write calls.
 
-Bounded aggregate-safe attempt diagnostics exist only in the provider process.
-There is no durable retry or attempt state, resume, background retry, queue,
-worker, lease, scheduler, parallel execution, or report adoption. Recovery is
-an operator-created fresh manifest and foreground run. Existing completed
-reports remain available through the normal exact-ID and current-scope reopen
-operations.
+- Item-local extraction, format, content or inspection failures record a typed
+  outcome, and the run continues.
+- Configuration, credential, catalogue generation, provider, target service or
+  report publication failures stop the rest of the run. Reports already
+  published stay.
+- An interruption stops the run.
+
+Each enabled provider has one pacer for the whole run, which keeps its
+metadata request starts at least one second apart. The Open Library pacer also
+paces cover requests. Retries go through the same pacing and
+deadlines.
+
+The run ends with deterministic bounded evidence and one summary. There is no
+durable retry state, resume, queue, worker, scheduler or parallelism. To
+recover, create a fresh manifest and run again. Completed reports stay
+available through the normal report reads.
 
 ## Authority and privacy
 
-Preview and inspect perform no metadata report work. Run has only the authority
-already granted to the frozen catalogue selection and the configured report
-operation: current target reads, selected read-only EPUB access, explicitly
-enabled provider observations, bounded cover acquisition, and local report and
-artifact publication.
+Preview and inspect do no report work. A run has only the authority of the
+frozen selection and the report operation: current target reads, read-only
+access to the selected EPUB, enabled provider lookups, bounded cover
+acquisition, and local report and artifact publication.
 
-The batch cannot create review cases, make decisions, apply changes, write
-target metadata, write media, or delete state. Errors and logs remain
-value-free or redacted. Manifest validation fails before credentials, egress,
-report publication, or target/media inspection.
+A batch cannot create review cases, make decisions, apply changes, write target
+metadata or media, or delete anything. Manifest validation fails before any
+credential, network access, report publication or target inspection. Errors and
+logs are value-free or redacted.
 
-The catalogue database, report database, artifact store, manifest, and
-configuration must each satisfy their exact current pre-release contracts.
-Earlier or intermediate schemas are rejected rather than migrated or
-interpreted.
+The catalogue, report database, artifact store, manifest and configuration
+must each match their current versions. Earlier schemas are refused, never
+migrated
+([clean-state rule](../reference/compatibility.md#the-clean-state-rule)).

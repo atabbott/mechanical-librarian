@@ -183,7 +183,7 @@ def test_recording_publication_stays_context_while_publisher_keeps_earned_author
                     ProviderQueryKind.ASIN,
                     base.local_claims,
                     work_title=base.target.current_title,
-                    work_authors=("Andy Weir",),
+                    work_authors=("Corin Halloway",),
                     audio=base.audio,
                 ),
             )
@@ -262,7 +262,7 @@ def test_numeric_recording_asin_survives_actual_packet_linkage_and_reopen():
                     ProviderQueryKind.ASIN,
                     base.local_claims,
                     work_title=base.target.current_title,
-                    work_authors=("Andy Weir",),
+                    work_authors=("Corin Halloway",),
                     audio=base.audio,
                 ),
             ),
@@ -336,7 +336,7 @@ def test_recording_support_is_recomputed_through_packet_reopen(duration, support
     "state, role, local_asin, supported",
     (
         (FieldState.MALFORMED, "narrator", None, False),
-        (FieldState.VALID, "translator", "B08G9PRS1K", False),
+        (FieldState.VALID, "translator", "B0SYNE7P1K", False),
         (FieldState.VALID, "translator", None, False),
         (FieldState.VALID, "narrator", None, True),
     ),
@@ -374,7 +374,7 @@ def test_incomplete_or_mixed_narrator_credits_cannot_gain_packet_authority(
                     ProviderQueryKind.ASIN,
                     base.local_claims,
                     work_title=base.target.current_title,
-                    work_authors=("Andy Weir",),
+                    work_authors=("Corin Halloway",),
                     audio=base.audio,
                 ),
             ),
@@ -603,7 +603,7 @@ def test_an_asserted_asin_inside_the_band_admits_the_recording() -> None:
 def test_the_items_own_asin_is_no_exemption_from_the_band() -> None:
     """An embedded identifier naming a different cut is what the band settles."""
     report = asserted_asin_report(
-        provider_duration="12000.000", local_asin="B08G9PRS1K"
+        provider_duration="12000.000", local_asin="B0SYNE7P1K"
     )
 
     assert admitted_audiobook_identity(report) is False
@@ -611,7 +611,7 @@ def test_the_items_own_asin_is_no_exemption_from_the_band() -> None:
 
 def test_the_items_own_asin_inside_the_band_admits_the_recording() -> None:
     report = asserted_asin_report(
-        provider_duration="58200.000", local_asin="B08G9PRS1K"
+        provider_duration="58200.000", local_asin="B0SYNE7P1K"
     )
 
     assert admitted_audiobook_identity(report) is True
@@ -735,7 +735,7 @@ def test_missing_provider_runtime_uses_complete_local_asin_chapters() -> None:
     assert recording_identity_basis(report) == {
         "basis": "chapter_runtime_and_structure",
         "provider": "catalogue",
-        "candidate": "audible-product-B08G9PRS1K",
+        "candidate": "audible-product-B0SYNE7P1K",
     }
     reopened = MetadataReport.from_json(report.to_json())
     assert recording_identity_basis(reopened) == recording_identity_basis(report)
@@ -936,7 +936,7 @@ def test_two_supporting_providers_use_one_deterministic_recording_source() -> No
         assert recording_identity_basis(report) == {
             "basis": "chapter_runtime_and_structure",
             "provider": "alpha",
-            "candidate": "audible-product-B08G9PRS1K",
+            "candidate": "audible-product-B0SYNE7P1K",
         }
 
 
@@ -971,7 +971,7 @@ def test_lookup_runtime_veto_precedes_source_selection(
 
     support = chapter_runtime_report(provider="middle")
     hints = recording_lookup_report(
-        provider=hint_provider, asins=("B08G9PRS1K", "B000000002"), duration=duration
+        provider=hint_provider, asins=("B0SYNE7P1K", "B000000002"), duration=duration
     )
     report = MetadataReport.create(
         target=support.target,
@@ -1278,7 +1278,7 @@ def _recording_date_report(
             ProviderQueryKind.ASIN,
             base.local_claims,
             work_title=base.target.current_title,
-            work_authors=("Andy Weir",),
+            work_authors=("Corin Halloway",),
             audio=base.audio,
         ),
     )

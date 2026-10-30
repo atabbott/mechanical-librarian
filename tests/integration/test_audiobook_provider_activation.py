@@ -78,7 +78,7 @@ from mechanical_librarian.domain.metadata_report import (
 _ITEM = "item-audio"
 _FILE_IDENTITY = f"{10:064x}"
 _CONTENT_DIGEST = f"{20:064x}"
-_ASIN = "B08G9PRS1K"
+_ASIN = "B0SYNE7P1K"
 _PRODUCER = "f" * 64
 # The container's own running time, and the whole minute a provider states for
 # the same recording. Forty-four seconds apart, which is inside the band.
@@ -88,18 +88,18 @@ _PROVIDER_DURATION = "58200.000"
 
 def _target_fields() -> tuple[TargetField, ...]:
     populated = TargetField(
-        TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",)
+        TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Corin Halloway",)
     )
     return tuple(
         populated if field.destination is TargetDestination.AUTHORS else field
-        for field in default_target_fields("Project Hail Mary")
+        for field in default_target_fields("Ember Tide Protocol")
     )
 
 
 def _snapshot() -> TargetSnapshot:
     return TargetSnapshot(
         "audiobook",
-        "Project Hail Mary",
+        "Ember Tide Protocol",
         (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
         fields=_target_fields(),
     )
@@ -174,9 +174,9 @@ def _enrichment_candidate(
     identity = "audnexus-book-" + _ASIN
     specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
         (ClaimKind.ASIN, _ASIN, ClaimScope.EDITION, None),
-        (ClaimKind.TITLE, "Project Hail Mary", ClaimScope.WORK, None),
-        (ClaimKind.CREATOR, "Andy Weir", ClaimScope.WORK, "author"),
-        (ClaimKind.CONTRIBUTOR, "Ray Porter", ClaimScope.WORK, "narrator"),
+        (ClaimKind.TITLE, "Ember Tide Protocol", ClaimScope.WORK, None),
+        (ClaimKind.CREATOR, "Corin Halloway", ClaimScope.WORK, "author"),
+        (ClaimKind.CONTRIBUTOR, "Ilsa Brandt", ClaimScope.WORK, "narrator"),
         (ClaimKind.DURATION, duration, ClaimScope.EDITION, None),
     )
     claims = tuple(
@@ -365,8 +365,8 @@ def _catalogue_entry() -> CatalogueEntry:
         "lib-1",
         _ITEM,
         1,
-        "Project Hail Mary",
-        ("Andy Weir",),
+        "Ember Tide Protocol",
+        ("Corin Halloway",),
         False,
         False,
         "singular-supported",
@@ -520,7 +520,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v62" == published.schema_version
+        assert "metadata-report-v63" == published.schema_version
         # Three authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -674,7 +674,7 @@ def test_candidates_outside_the_corroboration_band_admit_no_recording(
         assert 0 == dict(progress.stages)["failed"]
 
 
-_AUDIBLE_ART = "https://m.media-amazon.com/images/I/51POf8gOyLL._SL500_.jpg"
+_AUDIBLE_ART = "https://m.media-amazon.com/images/I/00SynthEmbr._SL500_.jpg"
 _ITUNES_ART = "https://is1-ssl.mzstatic.com/image/thumb/a/100x100bb.jpg"
 
 
@@ -1642,7 +1642,7 @@ def _alternative_flow(
         )
     replaced = {
         TargetDestination.AUTHORS: TargetField(
-            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",)
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Corin Halloway",)
         ),
         TargetDestination.SERIES: TargetField(
             TargetDestination.SERIES,
@@ -1861,7 +1861,7 @@ def test_an_ebook_plan_carries_no_alternative_and_no_audiobook_family() -> None:
         WorkTitleTransformationFamily.RIGHT_HAND_SEGMENT,
     } & {
         family
-        for query in work_query_ladder(title, ("Andy Weir",))
+        for query in work_query_ladder(title, ("Corin Halloway",))
         for family in query.transformations
     }
 
@@ -1880,8 +1880,8 @@ def _hint_flow(
     audnexus_minutes: Mapping[str, int] | None = None,
     alternative: str | None = None,
     target_asin: str | None = None,
-    title: str = "Project Hail Mary",
-    authors: tuple[str, ...] = ("Andy Weir",),
+    title: str = "Ember Tide Protocol",
+    authors: tuple[str, ...] = ("Corin Halloway",),
 ) -> tuple[MetadataReport, tuple[object, ...], list[str], dict[str, int]]:
     """Publish one runtime-bearing audiobook, asserting at most a target ASIN.
 
@@ -1941,7 +1941,7 @@ def _hint_flow(
         asin = request.url.path.split("/")[2]
         book = copy.deepcopy(payload("audnexus_book"))
         book["asin"] = asin
-        book["title"] = (audnexus_titles or {}).get(asin, "Project Hail Mary")
+        book["title"] = (audnexus_titles or {}).get(asin, "Ember Tide Protocol")
         if asin in (audnexus_minutes or {}):
             book["runtimeLengthMin"] = (audnexus_minutes or {})[asin]
         return httpx.Response(
@@ -2023,7 +2023,7 @@ def _audible_product(
     asin: str,
     title: str,
     minutes: int = 970,
-    authors: tuple[str, ...] = ("Andy Weir",),
+    authors: tuple[str, ...] = ("Corin Halloway",),
     series: tuple[tuple[str, str], ...] = (),
 ) -> dict[str, object]:
     return {
@@ -2163,7 +2163,7 @@ def test_a_hint_beside_an_admitted_product_leaves_its_outcome_unchanged(
         evaluate_report,
     )
 
-    admitted = _audible_product(_ASIN, "Project Hail Mary")
+    admitted = _audible_product(_ASIN, "Ember Tide Protocol")
     titles = {_HINT_ASIN: "Wrong Title"}
     report, work, requests, _rows = _hint_flow(
         tmp_path / "hinted",
@@ -2193,7 +2193,7 @@ def test_the_alternative_lanes_refused_tight_product_is_no_hint(
         tmp_path,
         lambda title: (
             []
-            if title == "Project Hail Mary"
+            if title == "Ember Tide Protocol"
             else [_audible_product(_HINT_ASIN, "Wrong")]
         ),
         alternative="The Real Title",
@@ -2581,7 +2581,7 @@ def _dispatch_flow(
                     _audible_product(f"B{index:09d}", f"Another Work {index}")
                     for index in range(1, 6)
                 ),
-                _audible_product("B000000099", "Project Hail Mary", 950),
+                _audible_product("B000000099", "Ember Tide Protocol", 950),
             ]
         return [_audible_product(f"B{index:09d}", "Other") for index in range(11, 18)]
 
@@ -2601,7 +2601,7 @@ def _dispatch_flow(
             return httpx.Response(404, json={})
         book = copy.deepcopy(payload("audnexus_book"))
         book["asin"] = asin
-        book["title"] = "Project Hail Mary"
+        book["title"] = "Ember Tide Protocol"
         return httpx.Response(
             200, headers={"content-type": "application/json"}, json=book
         )

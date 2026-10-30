@@ -606,7 +606,9 @@ def test_multiline_incumbent_description_persists_and_applies(
     metadata: dict[str, object] = {"title": "Current title", "description": current}
     media: dict[str, object] = {"metadata": metadata}
     if media_kind == "audiobook":
-        metadata.update(title="Project Hail Mary", authors=[{"name": "Andy Weir"}])
+        metadata.update(
+            title="Ember Tide Protocol", authors=[{"name": "Corin Halloway"}]
+        )
         media["audioFiles"] = [synthetic_audio_file("book.m4b")]
     else:
         media["ebookFile"] = {

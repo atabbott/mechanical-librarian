@@ -108,7 +108,7 @@ def _itunes_html_description_candidate(
     result = next(
         value
         for value in payload("itunes_search")["results"]
-        if value["collectionName"] == "Project Hail Mary"
+        if value["collectionName"] == "Ember Tide Protocol"
     )
     return _itunes_candidate(
         "itunes", result, local_claims, schema_rejections=lambda _count: None

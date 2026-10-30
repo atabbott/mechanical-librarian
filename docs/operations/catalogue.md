@@ -1,55 +1,85 @@
 # Current book catalogue
 
-The `RefreshCurrentCatalogue` application operation creates one bounded,
-read-only observation across configured Audiobookshelf book libraries. It is
-reached by authenticated review preparation in the supported runtime. The
-operation accepts only `config-v9`; it reads no provider credential
-and makes no target or media write.
+The catalogue is a bounded, read-only snapshot of the configured
+Audiobookshelf book libraries. Review preparation refreshes it before building
+[metadata reports](metadata-report.md), and every later stage checks its items
+against it.
 
-The catalogue stores no more than 10,000 entries. A current generation is
-published by one SQLite transaction after summary/detail `updatedAt` validation.
-The preceding generation remains readable until that switch. A second refresh
-against the same catalogue database returns busy; it does not wait or retry.
-Later service drift is outside the generation's bounded observation window.
+The `RefreshCurrentCatalogue` operation accepts only the current file-mode
+configuration, reads no provider credential and never writes to the target or
+media. Contributors can run it as the `catalogue-refresh` scenario, and read
+it with `catalogue-list` and `catalogue-get`, from the
+[contributor workbench](../development/contributor-workbench.md).
 
-The catalogue inspector emits deterministic JSON rows with `eligible`,
-`ineligible`, `ebook`, or `audio` facets and supports exact scoped lookup. List
-output never contains a path. Exact lookup can include the service-relative media path; operation
-errors remain value-free and logs must redact titles, authors, identities, paths,
-and credentials.
+## Generations
 
-Each entry retains a canonical fingerprint of the bounded Audiobookshelf values
-that can affect review evidence or currentness: stable item and library
-identity, reviewed metadata and cover identity, file identity, media presence,
-and media revision. Volatile playback, bookmark, and progress fields are
-excluded. When Audiobookshelf supplies a stable EPUB revision, generic item
-activity timestamps do not invalidate completed work. When that material
-revision is absent, or a cover has no independent revision, the item timestamp
-is retained as a conservative freshness fallback so changed bytes cannot reuse
-stale evidence.
+- The catalogue holds at most 10,000 entries.
+- A new generation is published in one SQLite transaction after the summary and
+  detail `updatedAt` values are validated. The previous generation stays
+  readable until then.
+- A second refresh against the same database returns busy. It does not wait or
+  retry.
+- Changes in Audiobookshelf after the observation window are not part of that
+  generation.
+- A configuration change makes the catalogue report `catalogue requires
+  refresh`; it never adapts a current generation silently.
 
-Catalogue discovery and current-item validation share one adapter-owned
-normalizer for the service-relative EPUB location and opaque file identity.
-Nested item directories, flat records, and path-only records therefore bind the
-same canonical inputs; disagreement or traversal remains ineligible or fails
-before any write gate. This adapter parsing remains API-only and does not grant
-media access or target-write authority.
+The database accepts only its exact current schema
+([current versions](../reference/compatibility.md#current-versions)). A
+different or tampered schema fails closed; create a clean database
+([clean-state rule](../reference/compatibility.md#the-clean-state-rule)).
 
-The database retains only the exact-current `catalogue-v2` schema. A different or
-tampered schema fails closed and requires an operator-created clean database.
-Configuration changes produce `catalogue requires refresh`; they never silently
-adapt a current generation.
+## Entries
 
-When normal review preparation observes a target TLS, authentication,
-authorization, or availability failure, it records a value-free condition for
-that configured connection and pauses only its queued work. Existing completed
-review packages remain visible. An authenticated owner uses **Check connection
-again** after correcting the condition. The probe uses the configured TLS client,
-requires a bounded JSON Audiobookshelf response, and exposes neither endpoint,
-credential, path, nor raw transport diagnostic. A restart turns an interrupted
-check back into the paused owner-actionable state; it never treats an abandoned
-check as recovery.
+Each entry keeps a canonical fingerprint of the Audiobookshelf values that can
+affect review evidence or currentness: item and library identity, reviewed
+metadata, cover identity, file identity, media presence and media revision.
+Playback, bookmark and progress fields are excluded.
 
-The current generation can be frozen into an explicit or all-eligible
-foreground evidence batch. See
-[Foreground ebook evidence batches](ebook-evidence-batches.md).
+When Audiobookshelf supplies a stable EPUB revision, item activity timestamps
+do not invalidate completed work. When it does not, or a cover has no
+independent revision, the item timestamp is kept as a conservative fallback so
+changed bytes never reuse stale evidence.
+
+An item is an audiobook when it holds audio files Audiobookshelf plays
+(`audioFiles` members not marked `exclude`); `has_audio` records exactly that.
+An empty or wholly excluded list is not audio.
+
+An item holding both audio and an ebook is a recording with a supplementary
+ebook, as Audiobookshelf shows it, and is prepared as the audiobook. A single
+EPUB beside it is read only as corroborating evidence in the report's
+`companion` section; any other ebook shape is ignored and never makes the
+recording unpreparable. The ebook files' identities and revisions are part of
+the fingerprint, so an edited EPUB re-prepares the item while playback does
+not.
+
+Discovery and current-item validation share one normalizer for the EPUB
+location and opaque file identity, so nested, flat and path-only records bind
+the same inputs. Disagreement or path traversal makes the item ineligible or
+fails before any write gate. This parsing grants no media access or write
+authority.
+
+## Privacy
+
+List output carries `eligible`, `ineligible`, `ebook` or `audio` facets and
+never a path. An exact lookup may include the service-relative media path.
+Errors are value-free, and logs redact titles, authors, identities, paths and
+credentials.
+
+## Connection failures
+
+When preparation meets a target TLS, authentication, authorization or
+availability failure, it records a value-free condition for that connection
+and pauses only that connection's queued work. Completed review packages stay
+visible.
+
+After fixing the cause, the owner selects **Check connection again**. The probe
+uses the configured TLS client, requires a bounded Audiobookshelf JSON
+response, and shows no endpoint, credential, path or raw transport error. A
+restart returns an interrupted check to the paused state; an abandoned check is
+never treated as recovery.
+
+## Batches
+
+A current generation can be frozen into a foreground evidence batch; see
+[ebook evidence batches](ebook-evidence-batches.md).

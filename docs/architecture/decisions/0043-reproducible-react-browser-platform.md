@@ -20,7 +20,7 @@ input.
 
 Use React 19, strict TypeScript 5, Vite 8, TanStack Router, and TanStack Query.
 TanStack Router was selected after the bounded comparison recorded in
-[router platform comparison](../../development/router-platform-comparison.md).
+[router platform comparison](https://github.com/atabbott/mechanical-librarian/blob/858789a80217ccfc69c279ad42efe25cf286a9f4/docs/development/router-platform-comparison.md).
 It provides the required route-owned typed search state and intent preloading
 without adopting a server framework or second runtime. Query is the sole
 server-state cache; React owns only ephemeral interface state.

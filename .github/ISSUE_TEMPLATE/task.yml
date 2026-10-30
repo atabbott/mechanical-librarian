@@ -1,9 +1,8 @@
-name: Implementation task
+name: Implementation task (maintainers)
 description: Define a bounded implementation, testing, operations, or documentation task.
 title: "task: "
 labels:
   - needs-triage
-type: Task
 body:
   - type: textarea
     id: outcome

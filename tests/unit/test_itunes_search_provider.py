@@ -1,4 +1,4 @@
-"""The iTunes Search adapter, proved against a captured audiobook search."""
+"""The iTunes Search adapter, proved against a capture-shaped audiobook search."""
 
 from __future__ import annotations
 
@@ -122,10 +122,10 @@ def test_a_work_search_states_a_title_and_an_author() -> None:
     assert "limit=6" in str(seen[0])
     candidate = observation.candidates[0]
     assert candidate.identity.startswith("itunes-collection-")
-    assert ("Project Hail Mary",) == tuple(
+    assert ("Ember Tide Protocol",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
-    assert ("Andy Weir",) == tuple(
+    assert ("Corin Halloway",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CREATOR)
     )
 
@@ -173,7 +173,7 @@ def test_latin_fold_reaches_itunes_only_on_the_final_bounded_search() -> None:
 def test_the_collection_identifier_is_the_candidate_identity() -> None:
     """The store's own identifier is what the retained candidate is named by.
 
-    The captured page holds three collections: the exact work, the same work
+    The fixture page holds three collections: the exact work, the same work
     under an edition qualifier the store puts in the title, and a third-party
     summary by another artist.  Work qualification admits the exact one, and
     the identity it survives under is the store's own collection identifier.
@@ -184,8 +184,8 @@ def test_the_collection_identifier_is_the_candidate_identity() -> None:
     exact = next(
         result
         for result in results
-        if result["collectionName"] == "Project Hail Mary"
-        and result["artistName"] == "Andy Weir"
+        if result["collectionName"] == "Ember Tide Protocol"
+        and result["artistName"] == "Corin Halloway"
     )
 
     assert 3 == len(results)
@@ -273,7 +273,7 @@ def test_the_stores_html_description_becomes_visible_plain_text() -> None:
         candidate
         for candidate in _provider(handle).observe(work_plan()).observation.candidates
         if any(
-            claim.kind is ClaimKind.TITLE and claim.value == "Project Hail Mary"
+            claim.kind is ClaimKind.TITLE and claim.value == "Ember Tide Protocol"
             for claim in candidate.claims
         )
     )
@@ -477,7 +477,7 @@ def test_a_search_states_one_related_edition_cover_for_each_retained_result() ->
 
 
 def _repeated_collection_page(*, drift: bool) -> dict[str, Any]:
-    """Restate one captured result, optionally with a claim that disagrees."""
+    """Restate one fixture result, optionally with a claim that disagrees."""
     document = copy.deepcopy(payload("itunes_search"))
     repeated = copy.deepcopy(document["results"][1])
     if drift:
@@ -738,12 +738,12 @@ def test_itunes_narrowing_flag_does_not_change_wire_term() -> None:
 
 # The #1245 ladder: on an audiobook plan a rung whose results work-identity
 # admission refuses no longer ends the walk.
-_SUBTITLED = "Project Hail Mary: A Novel"
+_SUBTITLED = "Ember Tide Protocol: A Novel"
 
 
 def _audiobook_work_plan(title: str = _SUBTITLED) -> MetadataDiscoveryPlan:
     return audiobook_discovery_plan(
-        audio_target(title, ("Andy Weir",)),
+        audio_target(title, ("Corin Halloway",)),
         (target_title_claim(title),),
         audio=single_track_audio_facts(),
     )
@@ -754,7 +754,7 @@ def _page(*results: dict[str, Any]) -> dict[str, Any]:
 
 
 def _refused() -> dict[str, Any]:
-    """The captured third-party summary, which is not the work."""
+    """The fixture's third-party summary, which is not the work."""
     return copy.deepcopy(payload("itunes_search")["results"][2])
 
 
@@ -801,7 +801,7 @@ def test_a_refused_store_rung_continues_to_the_rung_that_admits() -> None:
 def test_a_store_ladder_refused_on_every_rung_records_each_dispatch() -> None:
     ladder = tuple(
         WorkDispatchLineage.from_query(query)
-        for query in work_query_ladder(_SUBTITLED, ("Andy Weir",))
+        for query in work_query_ladder(_SUBTITLED, ("Corin Halloway",))
     )
     seen, handle = _pages(*(_page(_refused()) for _ in ladder))
     result = observe_provider(
@@ -833,7 +833,7 @@ def test_an_ebook_plan_still_stops_at_the_first_store_rung_with_results() -> Non
 
 
 def _alternative_plan(*, collapsed: bool = False) -> MetadataDiscoveryPlan:
-    target = audio_target("Asserted Title", ("Andy Weir",))
+    target = audio_target("Asserted Title", ("Corin Halloway",))
     if collapsed:
         series = d.TargetField(
             TargetDestination.SERIES,
@@ -863,7 +863,7 @@ def test_the_store_never_sends_an_audiobook_alternative_title() -> None:
     seen, handle = _recorder(_store({"resultCount": 0, "results": []}))
     observation = _provider(handle).observe(plan).observation
 
-    assert ["Asserted Title Andy Weir"] == [url.params["term"] for url in seen]
+    assert ["Asserted Title Corin Halloway"] == [url.params["term"] for url in seen]
     assert [None] == [
         next(lane for lane in plan.lanes if lane.identity == value.identity).title_basis
         for value in observation.lanes

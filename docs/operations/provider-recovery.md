@@ -1,232 +1,157 @@
 # Provider recovery
 
-Terminal provider failures are recorded locally. A due scope is retried only by
-the existing review-preparation supervisor: it claims one exact-current canary,
-then authorizes durable fanout only after that canary succeeds. Each sibling is
-leased independently; shutdown drains between members and restart resumes
-unfinished fanout without repeating a completed canary.
-Each exact lease is renewed between the bounded target/provider operation and
-the proposal, admission, and projection stages. A manual invocation therefore
-cannot reclaim work merely because the composed path has passed the initial
-five-minute lease horizon.
-The application applies one closed recovery rule to both the initial report and
-every retry successor. Exact provider evidence distinguishes burst throttling
-from exhausted daily quota. Burst throttling waits only for the provider's
-bounded burst window; exhausted quota waits until the provider's documented
-daily reset. Missing, malformed, contradictory, or unknown rate-limit evidence
-stays the conservative generic rate-limited case and uses a strict bounded
-`Retry-After` or the 2, 4, 8, 16, then 24 hour ladder. Authentication,
-authorization, and configuration failures are dormant.
-A preparation gives each provider at most a 20-second share of the item's
-60-second window (#1248). A provider that uses up its share classifies
-`transient` exactly as before, while later providers are no longer recorded
-deadline-incomplete without ever sending a request. A retry successor still
-gives its single provider the whole 60 seconds.
+When a metadata provider lookup fails in a way that can clear by itself, such
+as a rate limit or a temporary outage, the failure is recorded and the lookup
+is retried automatically on the schedule below. Authentication, authorisation
+and configuration failures cannot clear by themselves: they stay dormant until
+you fix the cause and press **Retry now**. Recovery never writes to
+Audiobookshelf.
 
-Google Books recognizes only the closed API reason vocabulary: burst reasons
-start a shared 100-second admission hold in the composed process. Later Google
-lanes and works return rate-limited without starting HTTP, sleeping through the
-hold, or renewing its deadline. Initial ebook and terminal audiobook reports,
-and recovery successors, commit the remaining wait through existing recovery
-state (82 seconds when 18 seconds of the window have elapsed). A known expired
-window uses the existing one-second minimum; an unknown window does not inherit
-a hold. Already admitted requests may finish. Daily-limit reasons resume at the next Pacific
-midnight. Hardcover recognizes either its exact current `RateLimit` response
-grammar or its exact legacy remaining/reset pair. A depleted
-burst bucket waits at most 60 seconds; a depleted daily bucket resumes at the
-next UTC midnight. Header values themselves are never persisted. A deferred
-burst or daily-quota result consumes neither a recovery-health attempt nor the
-provider job's five-attempt execution allowance.
+The design is in
+[ADR-0053](../architecture/decisions/0053-dormant-provider-recovery.md) and
+[ADR-0054](../architecture/decisions/0054-scoped-provider-successors.md). The
+store is described in
+[SQLite topology](../architecture/sqlite-topology.md#provider-recovery-database).
 
-After correcting a dormant condition, press **Retry now** on Library or
-Settings. It raises the positive `provider_recovery_generation` by exactly one
-through the ordinary owner Settings write: the request carries the generation
-the owner saw, and a second press, another tab or a changed revision is refused
-with `provider_recovery_stale` or `settings_stale` and changes nothing. When
-`/data/config.json` manages settings, the command is refused with
-`settings_managed_by_file` and the notice says instead to increment
-`provider_recovery_generation` in the `config-v9` file and restart the
-container. A saved generation takes effect the way any saved setting does: the
-runtime is rebuilt, and the recovery cutover below runs only after the new
-settings revision has committed. A save that fails leaves recovery exactly as
-it was, so a restart still starts. A cutover that fails after the commit stops
-the service instead of running on the previous settings; restart the container
-and the next start delivers the committed generation. The cutover carries a
-recovered scope with no deferred lookups forward as recovered, never as dormant,
-so it is not counted as needing correction (#1367).
+## Retry schedule
 
-Startup first performs a read-only generation compatibility check;
-it rejects persisted generations newer than configuration before any outbox
-delivery or database mutation. It then drains committed package cutovers from
-the durable outbox. Each delivery atomically enrolls its exact member and
-health scope before its job can be claimed; an existing current health record
-is preserved. If the outbox is the first record of the scope, its fallback is
-the documented two-hour transient cooldown rather than immediate provider
-egress. A newly registered job whose ebook lane failed non-terminally also
-appends one scope event naming that typed outcome; it copies the scope's
-current health and changes none of it, and a recovered or dormant scope gets no
-such event (#1367). A failed row stays pending for a later retry while the
-bounded drain continues to younger deliverable rows, so startup remains
-available and does not discard recovery work. Authentication and authorization wake only
-when that delivered exact job proves the new configured generation; otherwise
-they remain dormant. Outbox delivery and job registration are idempotent, so a
-crash between cutover and enqueue is recovered on restart. No environment variable,
-file watcher or configuration hash wakes it, and Retry now is only that same
-generation increment. This
-recovery path rebuilds only retry-eligible provider lanes and publishes an immutable
-successor through the ordinary proposal, admission, shadow projection, and
-atomic review-package cutover. The predecessor package remains visible until
-that cutover. A no-match is a successful terminal result. A shared
-provider failure creates no successor and no sibling fanout; it waits under
-the same closed recovery rule as the initial report. Stale package,
-request, deadline, cancellation, and target/media checks close safely without
-replaying a sibling. For audiobooks, the existing isolated audio inspector rechecks the retained
-audio set before provider dispatch and publication, just as the EPUB inspector
-checks ebooks. Changed audio refuses recovery before contacting a provider.
-Recovery never writes target metadata.
-One stale member is retired without retiring current siblings. A restart after
-an exact successor package cutover resumes from its persisted lineage, so the
-completed canary is not sent to the provider again.
+The same rule applies to the first report and to every retry:
 
-An audiobook enrolls recovery and records provider failure evidence only for
-adapters in its dispatch set, the Audible catalog, Audnexus, AudioSilo,
-Hardcover and Open Library (#1247), even when a successor carried an older
-Google Books, Inventaire or iTunes Search observation forward, so those three
-get no request and no failure evidence from audiobooks. A job for one of them
-queued before the set closes as `stale` as soon as its source report is read:
-no current-report read, resolver, target read or factory call follows, only
-that job closes, and it records no failure evidence. A recovery row whose
-remaining members all close as stale can still end through the runner's
-existing success path.
+| Failure | Next attempt |
+| --- | --- |
+| Burst throttling, identified from the provider's own response | After the provider's burst window |
+| Daily quota exhausted | After the provider's daily reset |
+| Other rate limiting, or rate-limit evidence that is missing, malformed or unknown | After a valid `Retry-After` (1 second to 24 hours), otherwise 2, 4, 8, 16, then 24 hours |
+| Temporary failure | 2, 4, 8, 16, then 24 hours |
+| Authentication, authorisation or configuration | Dormant until **Retry now** |
 
-If inline delivery fails after a package cutover claimed the next preparation
-action, that successor is returned to the existing bounded preparation state
-machine with the typed `persistence` failure. If that settlement cannot commit,
-the exact running claim remains owned and preparation stops with an explicit
-service-restart instruction. Other active work finishes its safe checkpoint;
-no new claim is admitted. Ordinary restart retains the same three-attempt
-recovery limit and does not repeat committed report or package output.
+A scope shows as exhausted when its jobs have used all five execution
+attempts, or when the canary fails in a way that cannot be retried. Burst and
+daily-quota waits do not use up an attempt. A burst or quota wait can lengthen
+a scheduled retry but never bring it forward.
 
-Recovery state contains bounded connection, adapter, scope, generation, phase,
-attempt, and timing data plus the exact private work, source-report, lane, file,
-and package identifiers required for currentness and restart. It never stores
-credentials, provider payloads, raw retry headers, query values, or filesystem
-paths. Activity aggregates the private identifiers into scope or work counts;
-logs, API responses, and operator copy never expose them.
+Provider specifics:
 
-The trusted owner-only `private` directory is created and validated before the
-server opens recovery state. The shared local store serializes every recovery
-transaction and snapshot across supervisor and Activity threads, then closes
-after those workers drain.
+- **Google Books.** A burst response holds every Google lookup in the running
+  process for 100 seconds; later lookups record a rate limit for the remaining
+  wait instead of sending a request. A daily-limit response waits until the
+  next midnight Pacific time.
+- **Hardcover.** A depleted burst bucket waits at most 60 seconds; a depleted
+  daily bucket waits until the next midnight UTC.
+- **Pacing.** Google Books, Hardcover, Inventaire and Open Library each start
+  at most one request per second, shared by normal preparation and recovery.
+  The pacer and an uncommitted Google hold are in memory and are lost on
+  restart; a recorded wait survives restart.
 
-Terminal health observations are idempotent. In one generation, checking and
-dormant state take precedence; a dormant observation may replace waiting once,
-while repeated transient or rate-limited observations do not reschedule it.
-The authenticated Activity page shows waiting, checking, fanout, recovered,
-dormant configuration/authentication, and exhausted phases with scope counts
-or, during fanout, work counts and any next eligible timestamp. It has no retry
-control and never exposes connection identifiers,
-provider payloads, or credentials.
+Header values themselves are never stored.
 
-Google Books, Hardcover, Inventaire, and Open Library each use one shared one-second
-request-start pacer across foreground and recovery work inside a composed run.
-This serializes starts for one provider without holding a SQLite transaction or
-creating a separate request budget. Google alone arms its pacer from an exact
-burst response. The lock covers admission and hold updates, never the HTTP
-exchange. Restart loses an uncommitted process-local hold; committed recovery
-eligibility survives. This provides no restart-wide quota coordination (#1082).
+## Time limits
 
-The owner may run `mechanical-librarian provider-recovery` with the same
-configuration, database, catalogue, and artifact paths used by the server. It
-uses the same durable one-claim path as the supervisor; it neither bypasses
-leases nor retries a completed sibling.
+Each item has a 60-second provider window during preparation. Each provider
+gets at most 20 seconds of it; a provider that runs out of its share records a
+temporary failure. A recovery retry gives its single provider the whole 60
+seconds.
 
-A structural failure before report publication remains terminal `unknown` and
-enrolls no provider recovery job. After correcting its cause, use the supported
-Library scan/retry to prepare a new cycle. A scan after a terminal run starts
-a new preparation display; completed reports remain immutable. This deliberate
-reprepare differs from durable recovery of a published
-Inventaire unavailable, incomplete, or rate-limited lane. Missing ISBNs,
-malformed evidence, overflow and insufficient input do not gain automatic
-retries. HTTP attempts, shaped search dispatches and durable queued recovery
-attempts remain separate counts (#1006).
+## Retry now
 
-Recovery reads the same immutable provider result and operational evidence as
-initial generation. Its policy remains distinct: an ordinary construction or
-dispatch exception becomes `ProviderRetrySuccessorError` with the cause chained,
-and publishes no successor. Cancellation-compatible failures propagate with their
-partial snapshot. Retry delay comes only from the final canonical attempt:
-terminal or exhausted `http_429`, with an integral non-Boolean value from 1 to
-86,400 seconds. Initial-report unavailable-lane handling is not a recovery fallback.
+After fixing a dormant cause (a key, a permission, a setting), press
+**Retry now** on Library or Settings. It raises `provider_recovery_generation`
+by exactly one through an ordinary Settings save:
 
-An iTunes Search overflow is terminal for that observation. The adapter asks for
-six rows and admits at most five distinct candidates; it neither truncates an
-overflow nor repeats the same request as a supposed narrower query. Its narrowing
-flag does not change the wire term. The ordinary query ladder removes information
-and advances only after no-match, so it is not an overflow remedy (#1082).
-iTunes Search no longer runs for audiobooks (#1254), so this applies only to
-ebook work lanes where a library connects it.
+- The request carries the generation you saw. A second press, another tab or a
+  changed settings revision is refused with `provider_recovery_stale` or
+  `settings_stale` and changes nothing.
+- In file mode the command is refused with `settings_managed_by_file`. Raise
+  `provider_recovery_generation` by one in `config.json` and restart instead
+  ([configuration](../reference/configuration.md#provider-recovery-generation)).
+- If the save fails, nothing changes. If the save commits but applying it
+  fails, the service stops rather than run on old settings; restart it and the
+  new generation takes effect.
 
+Nothing else wakes dormant recovery: no environment variable, file watcher or
+configuration hash. A dormant authentication or authorisation scope wakes only
+when a job proves the new generation works.
 
-## Settlement diagnostics
+The preparation control in the workspace header offers **Scan now**, and
+**Retry** after a run with failures. Both start a new preparation cycle for a
+library. They do not change the recovery schedule.
 
-Recovery event history separates ordinary health transitions from one diagnostic
-per settled executing member (#1157). The delivery-time outcome event above is
-an ordinary health event without `job_attempt`. `outcome` is a closed failure
-or result; `job_attempt` is the charged attempt after settlement.
-`physical_requests` counts only the actual replacement observation's initial and retry dispatches, before
-retained lanes are merged. A shared scope failure records this cost once, not once
-per affected scope. Burst/quota deferral can therefore record physical requests
-while retaining a zero charged attempt. Existing pacing and retry allowances do
-not change.
+## What recovery does
 
-`request_count_status` distinguishes `observed` complete accounting, `partial`
-completed typed dispatch records, and `unknown` unavailable or invalid evidence.
-Observed zero means that returned observation dispatched nothing. Partial zero is
-a lower bound and does not prove no unrecorded request began. Unknown has no count.
-Counts are bounded at 54, the current maximum per observation, never clamped or
-inferred from exception text, elapsed time, predecessor evidence or job attempts.
-Malformed responses retain accounting without becoming successor reports. A
-construction or publication failure retains `terminal_failure` diagnostics while
-its existing retry classification remains authoritative. Success is reported to
-the runner only after the complete review package succeeds.
+A recovery worker runs inside the server. For each due scope (one connection,
+provider and scope) it:
 
-The job, health and diagnostic commit together in the existing recovery SQLite
-transaction; provider work remains outside it. Rejected leases and rolled-back
-commits append nothing. A crash after egress but before settlement can leave no
-diagnostic, so this is neither a complete request ledger nor a billing record.
-Older checking transitions cannot establish total request cost or prove checks
-were avoidable. Controlled clocks can distinguish due canaries, non-due idle,
-shared failures, interrupted fanout and eventual recovery; that does not establish
-an historical cost reduction.
+1. Claims one item as a canary and retries only the lanes that can be retried.
+2. If the canary succeeds, retries the scope's other items, each under its own
+   lease. Shutdown stops between items; restart resumes without repeating a
+   completed item.
+3. Publishes each result as a new immutable report through the normal proposal,
+   admission and review-package steps. The previous package stays visible
+   until the new one replaces it.
 
-Each recovery job transition also writes one value-free
-`provider_recovery_job` line to stderr after its store call commits (#1299).
+A failure shared by the whole scope creates no new report and does not retry
+the other items; the scope waits under the schedule above. A no-match is a
+successful result.
 
-| `transition` | Written after |
-|---|---|
-| `started` | a job is claimed |
-| `settled` | the canary authorizes fanout, or a member succeeds |
-| `failed` | a canary failure, an exhausted scope, interrupted fanout, or a member failure |
-| `stale` | a job is completed as stale |
-| `held` | a target hold is released |
+Before contacting a provider, the isolated EPUB or audio inspector rechecks the
+book's files. If they have changed, recovery for that item is refused. Stale
+packages, requests, deadlines and target changes close safely without
+retrying other items.
 
-A store call that raises writes nothing. Each line carries:
-- `outcome_class`: the recovery attempt outcome;
-- `job_attempt`, `physical_requests` and `dispatch_reason`;
-- `elapsed_ms` since the runner turn began.
+Startup refuses a recovery store whose generation is newer than the
+configuration, before changing anything. It then delivers queued enrolments; a
+scope seen for the first time waits the two-hour temporary-failure delay rather
+than calling the provider at once. A failed enrolment stays queued for a later
+start and does not block others.
 
-The replacement dispatch itself writes `phase: recovery` dispatch lines bounded
-by `recovery_window`. [Observability](observability.md) lists the fields.
+If the server cannot record a preparation's failure after a package switch,
+preparation stops and asks for a service restart; see
+[observability](observability.md#preparation-stopped). Restart keeps the
+three-attempt preparation limit and does not repeat committed work.
 
-Activity shows only current waiting/dormant failure reasons from the latest
-ordinary event matching the current health identity. A later transition clears
-an old reason. The existing next-eligible timestamp is eligibility, not a finish
-estimate. Completed Library work and detail remain available during provider waits;
-existing owner retry and provider configuration controls retain their meaning.
+You can also run one recovery claim by hand with
+`mechanical-librarian provider-recovery`, using the server's configuration,
+database, catalogue and artifact paths. It uses the same claims and leases as
+the worker.
 
-**Clean rebuild required:** predecessor recovery stores, including empty ones,
-are rejected without modification under ADR-0013. No adoption, migration or
-retained-run rewrite is provided. The report schema is unchanged. Diagnostics add
-no work/report/member identifiers, queries, headers, payloads, exception text,
-credentials or paths; existing scope, generation and sequence provide attribution.
+## Audiobooks
+
+Audiobook lookups use only Audible, Audnexus, AudioSilo, Hardcover and Open
+Library. Recovery and failure evidence for audiobooks cover only those
+providers. A queued audiobook job for any other provider closes as `stale`
+without a request.
+
+## What is not retried
+
+- A structural failure before a report is published is recorded as `unknown`
+  and is not retried. Fix the cause, then use **Scan now** or **Retry**.
+- Missing ISBNs, malformed evidence, too many candidates and insufficient input
+  are final for that report.
+- An iTunes Search lookup (ebook libraries only) that returns more than five
+  candidates is final; the adapter does not truncate or repeat the query.
+- A construction or dispatch error during a retry publishes nothing; only the
+  provider's final `http_429` response can set the retry delay.
+
+## What Activity shows
+
+Activity shows each scope's phase: waiting, checking, retrying items,
+recovered, dormant (configuration or authentication) or exhausted, with scope
+or item counts and the next eligible time. The next eligible time is when a
+retry may start, not an estimate of when it will finish. The reason shown is
+the latest failure for the current state; a later transition clears it.
+Completed books stay available in Library while providers wait. Activity has no
+retry control of its own.
+
+Recovery state holds only connection, provider, scope, generation, phase,
+attempt and timing data, plus the internal identifiers needed to resume. It
+never stores credentials, provider responses, retry headers, query values or
+file paths, and Activity, logs and API responses never show the internal
+identifiers.
+
+## Recovery history
+
+Each recovery event is recorded with the job and health change it describes.
+A settled item records `outcome`, `job_attempt`, `physical_requests` (at most
+54) and `request_count_status` (`observed`, `partial` or `unknown`). This
+history is neither a complete request log nor a billing record. The matching
+stderr lines are in [observability](observability.md#provider-logs).

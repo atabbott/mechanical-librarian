@@ -109,7 +109,7 @@ def test_publication_rejects_more_than_eight_provider_outcomes() -> None:
 def test_an_audiobook_cover_source_is_a_provider_row(kind: CoverSourceKind) -> None:
     """The two cover-bearing audiobook authorities enter the provider arithmetic."""
     source = CoverSource(
-        cover_source_id(kind, "product:B08G9PRS1K"),
+        cover_source_id(kind, "product:B0SYNE7P1K"),
         kind,
         CoverSourceState.RETRIEVED,
         CoverArtifact.create(
@@ -119,7 +119,7 @@ def test_an_audiobook_cover_source_is_a_provider_row(kind: CoverSourceKind) -> N
             "audiobooks",
             CoverDesignation.EXACT_EDITION,
             "unresolved",
-            "audible-product-B08G9PRS1K",
+            "audible-product-B0SYNE7P1K",
         ),
     )
     assert publication_ready((source,))

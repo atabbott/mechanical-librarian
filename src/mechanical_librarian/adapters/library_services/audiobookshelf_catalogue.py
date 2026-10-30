@@ -258,9 +258,21 @@ def _entry(
     plural = media.get("ebookFiles")
     audio_revisions: tuple[object, ...] = (None,)
     audio_indexes: tuple[object, ...] = (None,)
-    has_audio = type(media.get("audioFiles")) is list
-    if ebook is None and (plural is None or plural == []):
-        has_ebook = False
+    # Only the files the service itself plays make an item an audiobook: an
+    # ebook-only item still answers an empty `audioFiles` list, and that list
+    # is not audio (#1319).
+    audio_records = included_audio_records(media.get("audioFiles"))
+    has_audio = bool(audio_records)
+    has_ebook = not (ebook is None and (plural is None or plural == []))
+    # An item holding included audio *and* an ebook is the recording with a
+    # supplementary ebook beside it, which is how Audiobookshelf itself shows
+    # it. It is prepared as the audiobook, and the ebook is read only as
+    # corroborating evidence (#1319), so its revision is fingerprinted beside
+    # the tracks': an edited EPUB changes that evidence.
+    companion: object = None
+    if has_audio and has_ebook:
+        companion = _companion_fingerprint(ebook, plural, mount, detail)
+    if has_audio or not has_ebook:
         # An audiobook library reaches preparation only through a named
         # read-only mount, and as one item however many files that item holds,
         # which mirrors the singular-supported posture the ebook branch below
@@ -273,7 +285,6 @@ def _entry(
         # the fingerprint falls back to the item timestamp, which Audiobookshelf
         # also advances on playback -- so listening to an audiobook would
         # re-prepare it, re-hashing multiple gigabytes for files nobody wrote.
-        audio_records = included_audio_records(media.get("audioFiles"))
         audio_revisions = _audio_set_metadata(audio_records)
         audio_indexes = _audio_set_indexes(audio_records)
         audio_locations = (
@@ -307,7 +318,6 @@ def _entry(
             format_value = audio_locations[0].format
             mount_name = audio_mount.name
     elif type(ebook) is dict and plural is None:
-        has_ebook = True
         audio_revisions = (ebook.get("metadata"),)
         try:
             location = normalize_ebook_location(
@@ -331,7 +341,6 @@ def _entry(
     else:
         classification = "needs-attention"
         file_identity = service_path = format_value = mount_name = None
-        has_ebook = True
         audio_revisions = (None,)
     if invalid_title:
         # This is deliberately an item disposition, never a target-health
@@ -406,9 +415,14 @@ def _entry(
     # require that fallback -- but only where this build acquires them.  An
     # audiobook's art is recorded as presence and never acquired, so a cover
     # path does not make its fingerprint depend on a timestamp playback moves.
+    companion_revisions = (
+        () if companion is None else cast("dict[str, Any]", companion)["revisions"]
+    )
     item_revision_fallback = (
         detail["updatedAt"]
-        if not all(revisions) or (cover_revision_reference is not None and has_ebook)
+        if not all(revisions)
+        or not all(companion_revisions)
+        or (cover_revision_reference is not None and not has_audio and has_ebook)
         else None
     )
     source_fingerprint = hashlib.sha256(
@@ -427,6 +441,9 @@ def _entry(
                     "has_ebook": has_ebook,
                     "revision": media_revision,
                     "item_revision_fallback": item_revision_fallback,
+                    # Present only on a mixed item, so every audio-only and
+                    # ebook-only fingerprint keeps its exact earlier shape.
+                    **({} if companion is None else {"companion": companion}),
                 },
             }
         ).encode("utf-8")
@@ -449,6 +466,46 @@ def _entry(
         mount_name,
         source_fingerprint,
     )
+
+
+def _companion_fingerprint(
+    ebook: object,
+    plural: object,
+    mount: MediaMountConfiguration | None,
+    detail: dict[str, Any],
+) -> dict[str, object]:
+    """Fingerprint a mixed item's ebook files without admitting any of them.
+
+    The ebook is evidence beside the recording, never the preparable unit, so
+    a shape the ebook branch would attend to is fingerprinted rather than
+    refused: the recording stays preparable whatever the ebook looks like.
+    """
+    records = (
+        (ebook,)
+        if plural is None
+        else tuple(plural[:128])
+        if type(plural) is list
+        else (plural,)
+    )
+    identities: list[str | None] = []
+    for record in records:
+        try:
+            identities.append(
+                normalize_ebook_location(
+                    record,
+                    service_path=None if mount is None else mount.service_path,
+                    item=detail,
+                ).identity
+            )
+        except ValueError:
+            identities.append(None)
+    return {
+        "identities": identities,
+        "revisions": tuple(
+            _file_revision(record.get("metadata") if type(record) is dict else None)
+            for record in records
+        ),
+    }
 
 
 def included_audio_records(value: object) -> tuple[Any, ...] | None:

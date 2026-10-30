@@ -1,97 +1,45 @@
 ## Summary
 
-Describe the problem and the resulting behavior.
-
-## Linked work
+What problem this solves and how the behaviour changes.
 
 Closes #
 
 ## Tracking exemption
 
 <!--
-Leave this section blank for normal tracked work. A maintainer may apply the
-exact `tracking-exempt` label and replace this comment with a concise rationale
-only for eligible trivial cleanup described in the work-management policy.
+Leave blank for normal tracked work. A maintainer may apply the exact
+`tracking-exempt` label and replace this comment with a short rationale, only
+for spelling, formatting, broken-link or comment-only cleanup.
 -->
 
-## Delivery mode
+## Delivery
 
-- [ ] New-functionality slice increment
-- [ ] Focused ticket: defect, bug, security, documentation, tooling, dependency, maintenance, or standalone work
+- [ ] Functional slice increment (slice tracker: #)
+- [ ] Focused change: fix, security, documentation, tooling, dependency or maintenance
 
-Slice tracker, when applicable: #
-
-Increment and activation status, when applicable:
-
-Constituent tickets closed in full by this increment:
-
-- Closes #
-
-<!--
-A ready non-activation increment must fully satisfy and natively close at least
-one constituent ticket. The activation increment may use the slice tracker as
-its required closing reference. Otherwise keep this PR draft and re-slice the
-increment or refine its ticket plan before ready review.
--->
-
-Parent issue or work package:
-
-Governing specification or ADR:
-
-Branch: `slice/`, `fix/`, `feature/`, `docs/`, `chore/`, or another purpose-based name
-
-## Functional outcome
-
-For a slice increment, describe its independently safe vertical step and how it
-advances the frozen slice outcome. Identify the activation demonstration when
-this increment closes the tracker. For focused ticket work, describe the
-corrected or bounded outcome.
-
-Demonstration steps:
-
-```text
-
-```
-
-## Change
-
-Describe the implementation at the level a reviewer needs to evaluate it.
+For a slice increment, say which step of the slice outcome this delivers and
+how to demonstrate it. For a defect or bug, give the affected revision, a
+reproduction, the root cause and the regression evidence.
 
 ## Risk and recovery
 
-Describe security, privacy, compatibility, data, migration, deployment, and rollback impact. Write `None` only after considering each category.
-
-For a Defect or Bug, include the affected revision, pre-fix reproduction, root
-cause, regression evidence, and any workaround or recovery implications.
+Security, privacy, compatibility, data and rollback impact. Write `None` only
+after considering each.
 
 ## Verification
 
-- [ ] Formatting and static checks
-- [ ] Unit or property tests
-- [ ] Contract or integration tests
-- [ ] Failure, retry, and idempotency behavior
-- [ ] Security or hostile-input tests where relevant
-- [ ] Documentation and generated contracts
-- [ ] Container, migration, backup, or recovery checks where relevant
-
-List the exact commands and outcomes:
+The exact commands run and their outcomes:
 
 ```text
 
 ```
 
-## Review checklist
+## Checklist
 
-- [ ] The selected delivery mode is accurate; fixes and standalone work have not been relabelled as slices.
-- [ ] If this is a slice increment, it is independently safe and demonstrable; if it closes the tracker, it completes the documented outcome and exit criteria.
-- [ ] A ready slice increment has a supported native closing reference: at least one fully satisfied constituent for a non-activation increment, or the tracker for activation; otherwise this PR remains draft pending re-slicing or ticket refinement.
-- [ ] Every auto-closed ticket is satisfied in full; no partial acceptance is hidden in follow-up work.
-- [ ] The relevant demonstration or reproduction works from a clean checkout.
-- [ ] The change is narrowly scoped and contains no unrelated refactoring.
-- [ ] No credentials, private URLs, personal paths, copyrighted media, or production data are included.
-- [ ] New failure states are explicit, observable, and recoverable.
-- [ ] Persisted or public contracts document ADR-0013 clean-schema handling
-  before release; migrations and compatibility notes require a named
-  compatibility decision and post-release obligation.
-- [ ] Durable architectural decisions add or supersede an ADR.
-- [ ] User-visible behavior updates the changelog and documentation.
+- [ ] Every closed issue is satisfied in full.
+- [ ] Documentation this change made stale is updated in place, and the
+      changelog has an entry for any user-visible behaviour.
+- [ ] Persisted-state changes declare a clean rebuild or ship an adoption
+      (ADR-0013); durable decisions add or supersede an ADR.
+- [ ] No credentials, private URLs, personal paths, copyrighted media or
+      production data.
