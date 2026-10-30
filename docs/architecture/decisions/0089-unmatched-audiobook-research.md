@@ -91,8 +91,8 @@ database is refused before mutation and needs a clean rebuild.
 ### Neutral or deferred
 
 - An item whose Audible runtime is itself off from the file, such as #1451's
-  Moneyball, is not reached by searching again. #962 checks Hardcover editions
-  for those.
+  example item, is not reached by searching again. #962 checks Hardcover
+  editions for those.
 - Searching only the provider stage on the stored local facts would avoid
   re-reading audio. It is a larger change, deferred until the re-read proves
   costly.

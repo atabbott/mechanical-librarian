@@ -6,9 +6,16 @@ library. Security is a core product feature.
 
 ## Reporting a vulnerability
 
-Do not open a public issue for a suspected vulnerability. The private reporting
-channel will be added before repository publication. Until then, report issues
-directly to the project owner.
+Do not open a public issue, discussion, or pull request for a suspected
+vulnerability, and do not disclose it anywhere public before a fix is
+available.
+
+Report it privately through GitHub private vulnerability reporting: open the
+repository's **Security** tab and choose **Report a vulnerability**, or go
+directly to
+<https://github.com/atabbott/mechanical-librarian/security/advisories/new>.
+The report and its follow-up stay private until the maintainers publish an
+advisory.
 
 Include:
 

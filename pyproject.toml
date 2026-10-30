@@ -78,7 +78,6 @@ also_copy = [
   ".github",
   "AGENTS.md",
   "CHANGELOG.md",
-  "CODE_OF_CONDUCT.md",
   "CONTRIBUTING.md",
   "DESIGN.md",
   "Dockerfile",

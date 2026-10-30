@@ -15,6 +15,14 @@ Thumbs.db
 auth.json
 secrets/
 
+# Local agent and private development control directories. Ignoring them keeps
+# new local files out of the repository; it does not untrack files already
+# committed under them.
+.agents/
+.claude/
+.codex/
+.private/
+
 # Runtime state
 /data/
 /artifacts/

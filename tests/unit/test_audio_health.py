@@ -66,7 +66,7 @@ from tests.support.audiobook_reports import (
 _LOCAL_SECONDS = 58_244
 _LONG_PROVIDER_SECONDS = "72000.000"
 _CORROBORATING_PROVIDER_SECONDS = "58200.000"
-_LOCAL_ASIN = "B08G9PRS1K"
+_LOCAL_ASIN = "B0SYNE7P1K"
 # Every persisted observation kind that is about the files themselves. The one
 # kind left out cites a provider candidate instead, so it has no track to name
 # and is proved through the truncation cases.
@@ -217,8 +217,8 @@ def _demoted_search_lane(
         MetadataLookup(
             ProviderQueryKind.ASIN,
             claims,
-            work_title="Project Hail Mary",
-            work_authors=("Andy Weir",),
+            work_title="Ember Tide Protocol",
+            work_authors=("Corin Halloway",),
         ),
     )
 
@@ -298,7 +298,7 @@ def test_a_short_recording_reads_short_of_its_provider_runtime() -> None:
         "16 h 11 min of local audio, 3 h 49 min shorter than the matched edition"
     )
     assert stated.expected == "20 h stated by the matched edition"
-    assert stated.cited[-1] == "audible-product-B08G9PRS1K"
+    assert stated.cited[-1] == "audible-product-B0SYNE7P1K"
     assert stated.cited[:-1] and all(
         value.startswith("local_") for value in stated.cited[:-1]
     )
@@ -368,7 +368,7 @@ def test_a_diverged_chapter_vector_is_a_mismatch() -> None:
     stated = health[0]
     assert stated.cited == (
         AudioChapterComposition.SINGLE_FILE.value,
-        "audible-product-B08G9PRS1K",
+        "audible-product-B0SYNE7P1K",
     )
     # Two counts are not a discrepancy: what the owner is told is the first cut
     # the two recordings disagree on and how long it runs on each side.
@@ -733,14 +733,14 @@ def test_two_providers_answering_about_one_edition_state_it_once() -> None:
         candidate.identity
         for observation in report.providers
         for candidate in observation.candidates
-    } == {"audible-product-B08G9PRS1K"}
+    } == {"audible-product-B0SYNE7P1K"}
 
     health = derive_audio_health(report)
 
     assert [value.kind for value in health] == [
         AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER
     ]
-    assert health[0].cited[-1] == "audible-product-B08G9PRS1K"
+    assert health[0].cited[-1] == "audible-product-B0SYNE7P1K"
 
 
 def test_a_retained_running_time_decides_the_edition_a_record_also_names() -> None:
@@ -770,7 +770,7 @@ def test_a_retained_running_time_decides_the_edition_a_record_also_names() -> No
             observations=(
                 AudioObservation(
                     AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER,
-                    candidate="audible-product-B08G9PRS1K",
+                    candidate="audible-product-B0SYNE7P1K",
                 ),
             ),
         ),
@@ -781,7 +781,7 @@ def test_a_retained_running_time_decides_the_edition_a_record_also_names() -> No
         candidate.identity
         for observation in report.providers
         for candidate in observation.candidates
-    } == {"audible-product-B08G9PRS1K"}
+    } == {"audible-product-B0SYNE7P1K"}
 
     assert derive_audio_health(report) == ()
 

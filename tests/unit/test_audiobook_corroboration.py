@@ -258,7 +258,7 @@ def test_loose_band_narrowing_needs_one_local_runtime() -> None:
 
 
 def _titled(
-    identity: str, seconds: int, title: str = "Project Hail Mary"
+    identity: str, seconds: int, title: str = "Ember Tide Protocol"
 ) -> ProviderCandidate:
     """One product the asserted lane's exact admission accepts, at a runtime."""
     return audiobook_candidate(
@@ -267,7 +267,7 @@ def _titled(
 
 
 _NEAR_LOCAL = (_runtime_claim("36000.000"),)
-_NEAR_WORK = ("Project Hail Mary", ("Andy Weir",))
+_NEAR_WORK = ("Ember Tide Protocol", ("Corin Halloway",))
 
 
 @pytest.mark.parametrize(
@@ -317,13 +317,16 @@ def test_the_near_miss_counts_only_products_exact_admission_accepts() -> None:
     assert 2_000 == loose_band_near_miss(products, _NEAR_LOCAL, *_NEAR_WORK)
     assert (
         loose_band_near_miss(
-            products, _NEAR_LOCAL, "Project Hail Mary", ("Andy Weir", "Second Author")
+            products,
+            _NEAR_LOCAL,
+            "Ember Tide Protocol",
+            ("Corin Halloway", "Second Author"),
         )
         is None
     )
     assert (
         loose_band_near_miss(
-            products, _NEAR_LOCAL, "Project Hail Mary", ("Another Author",)
+            products, _NEAR_LOCAL, "Ember Tide Protocol", ("Another Author",)
         )
         is None
     )

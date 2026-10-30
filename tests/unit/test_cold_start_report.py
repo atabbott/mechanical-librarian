@@ -1250,7 +1250,7 @@ def test_the_audiobook_dispatch_census_counts_every_outcome_exactly() -> None:
         },
     } == blocks["audiobooks"]
     serialized = json.dumps(blocks["audiobooks"])
-    assert "Project Hail Mary" not in serialized and "B08G9PRS1K" not in serialized
+    assert "Ember Tide Protocol" not in serialized and "B0SYNE7P1K" not in serialized
 
 
 @pytest.mark.parametrize(

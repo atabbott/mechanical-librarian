@@ -1,10 +1,24 @@
-"""Captured audiobook-provider payloads and the plans that reach them.
+"""Capture-shaped audiobook-provider payloads and the plans that reach them.
 
-Every JSON document under `audiobook_provider_payloads/` is a live capture kept
-verbatim, so a parser proved against one is proved against what the provider
-actually sends.  The one exception is `audiosilo_unknown_path.html`, which is
-the head of the 35 KB single-page document AudioSilo answers an unknown API path
-with; nothing reads that body, so its head is the whole proof.
+Every document under `audiobook_provider_payloads/` is synthetic: it keeps the
+exact structure of a response the provider was observed to send -- its keys,
+nesting, value types, array lengths, the fields one product states and another
+omits, HTML summaries, regional and language variants, unicode and, for the
+iTunes store, its raw text layout (the blank lines around the document and an
+escaped solidus only where one closes an HTML tag) -- while every value in it
+is invented.  The titles, people, publishers, identifiers, URLs, summaries and
+reviews describe no real recording.  The structure is what a parser is proved
+against, so it is kept faithful; a live capture would also carry publishers'
+and critics' copyrighted prose, which a published repository cannot
+redistribute, so none is kept, and most documents are shorter than the
+responses they stand in for.  The first Audible search product is the
+exception: it is kept near its captured size, because response-size bounds are
+proved against copies of it.
+
+`audiosilo_unknown_path.html` stands in for the head of the single-page site
+document AudioSilo answers an unknown API path with; nothing reads that body,
+so a synthetic head of the same size is the whole proof.
+`open_library_original_date.json` was written synthetic from the start.
 """
 
 from __future__ import annotations
@@ -37,7 +51,7 @@ PAYLOADS = Path(__file__).parent / "audiobook_provider_payloads"
 
 
 def payload(name: str) -> dict[str, Any]:
-    """Return one captured JSON document, decoded."""
+    """Return one capture-shaped JSON document, decoded."""
     value = json.loads((PAYLOADS / f"{name}.json").read_text(encoding="utf-8"))
     assert type(value) is dict
     return value
@@ -52,8 +66,8 @@ def unknown_path_html() -> bytes:
 
 
 def audio_target(
-    title: str | None = "Project Hail Mary",
-    authors: tuple[str, ...] = ("Andy Weir",),
+    title: str | None = "Ember Tide Protocol",
+    authors: tuple[str, ...] = ("Corin Halloway",),
 ) -> TargetSnapshot:
     populated = (
         TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, authors)
@@ -68,9 +82,9 @@ def audio_target(
 
 
 def asserted_target(
-    asin: str = "B08G9PRS1K",
-    title: str | None = "Project Hail Mary",
-    authors: tuple[str, ...] = ("Andy Weir",),
+    asin: str = "B0SYNE7P1K",
+    title: str | None = "Ember Tide Protocol",
+    authors: tuple[str, ...] = ("Corin Halloway",),
 ) -> TargetSnapshot:
     """One target that asserts an ASIN beside its title and authors."""
     asserted = TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, asin)
@@ -85,7 +99,7 @@ def asserted_target(
     )
 
 
-def target_asin_claim(asin: str = "B08G9PRS1K") -> LocalClaim:
+def target_asin_claim(asin: str = "B0SYNE7P1K") -> LocalClaim:
     """The claim the audiobook path records for a target-asserted ASIN."""
     return LocalClaim.create(
         kind=ClaimKind.ASIN,
@@ -122,21 +136,21 @@ def audio_claim(
     )
 
 
-def local_claims(asin: str = "B08G9PRS1K") -> tuple[LocalClaim, ...]:
+def local_claims(asin: str = "B0SYNE7P1K") -> tuple[LocalClaim, ...]:
     """One audiobook's local evidence: an identifier, a title, and a runtime."""
     return (
         audio_claim(ClaimKind.ASIN, asin, 1),
-        audio_claim(ClaimKind.TITLE, "Project Hail Mary", 2),
-        audio_claim(ClaimKind.CONTRIBUTOR, "Ray Porter", 3, role="narrator"),
+        audio_claim(ClaimKind.TITLE, "Ember Tide Protocol", 2),
+        audio_claim(ClaimKind.CONTRIBUTOR, "Ilsa Brandt", 3, role="narrator"),
         audio_claim(ClaimKind.DURATION, "58244.201", 4),
     )
 
 
-def asin_plan(asin: str = "B08G9PRS1K") -> MetadataDiscoveryPlan:
+def asin_plan(asin: str = "B0SYNE7P1K") -> MetadataDiscoveryPlan:
     return audiobook_discovery_plan(audio_target(), local_claims(asin))
 
 
-def fed_asin_plan(asin: str = "B08G9PRS1K") -> MetadataDiscoveryPlan:
+def fed_asin_plan(asin: str = "B0SYNE7P1K") -> MetadataDiscoveryPlan:
     """The ASIN feed for one target asserting `asin` and carrying no local one."""
     target = asserted_target(asin)
     feed = audiobook_asin_feed_plan(
@@ -168,7 +182,7 @@ def with_asin_lane(plan: MetadataDiscoveryPlan) -> MetadataDiscoveryPlan:
     )
 
 
-def target_title_claim(title: str = "Project Hail Mary") -> LocalClaim:
+def target_title_claim(title: str = "Ember Tide Protocol") -> LocalClaim:
     return LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed=title,
@@ -184,8 +198,8 @@ def target_title_claim(title: str = "Project Hail Mary") -> LocalClaim:
 
 def work_plan(
     *extra_claims: LocalClaim,
-    title: str = "Project Hail Mary",
-    authors: tuple[str, ...] = ("Andy Weir",),
+    title: str = "Ember Tide Protocol",
+    authors: tuple[str, ...] = ("Corin Halloway",),
 ) -> MetadataDiscoveryPlan:
     """One plan whose only lane is the title-and-author fallback.
 

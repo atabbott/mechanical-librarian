@@ -70,11 +70,11 @@ def _audio_work_dispatch(title: str, authors: tuple[str, ...]) -> WorkDispatchLi
 def audio_target_fields() -> tuple[TargetField, ...]:
     """Target facts naming both the title and the author the replay reads."""
     populated = TargetField(
-        TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",)
+        TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Corin Halloway",)
     )
     return tuple(
         populated if field.destination is TargetDestination.AUTHORS else field
-        for field in default_target_fields("Project Hail Mary")
+        for field in default_target_fields("Ember Tide Protocol")
     )
 
 
@@ -83,9 +83,9 @@ def audio_local_claims(duration: str | None = "58244.201") -> tuple[LocalClaim, 
     values: list[LocalClaim] = [
         LocalClaim.create(
             kind=ClaimKind.TITLE,
-            observed="Project Hail Mary",
-            canonical="Project Hail Mary",
-            excerpt="Project Hail Mary",
+            observed="Ember Tide Protocol",
+            canonical="Ember Tide Protocol",
+            excerpt="Ember Tide Protocol",
             applicability="not_applicable",
             basis="embedded_tag",
             checksum="not_applicable",
@@ -113,21 +113,21 @@ def audio_local_claims(duration: str | None = "58244.201") -> tuple[LocalClaim, 
 def audiobook_candidate(
     local_claims: tuple[LocalClaim, ...],
     *,
-    identity: str = "audible-product-B08G9PRS1K",
-    asin: str = "B08G9PRS1K",
+    identity: str = "audible-product-B0SYNE7P1K",
+    asin: str = "B0SYNE7P1K",
     duration: str = "58200.000",
     provider: str = "catalogue",
     chapters: ProviderChapterStructure | None = None,
     series: tuple[str, str] | None = None,
-    title: str = "Project Hail Mary",
+    title: str = "Ember Tide Protocol",
 ) -> ProviderCandidate:
     """One candidate shaped exactly as the audiobook adapters build it."""
     specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
         (ClaimKind.TITLE, title, ClaimScope.WORK, None),
-        (ClaimKind.CREATOR, "Andy Weir", ClaimScope.WORK, "author"),
+        (ClaimKind.CREATOR, "Corin Halloway", ClaimScope.WORK, "author"),
         (ClaimKind.ASIN, asin, ClaimScope.EDITION, None),
         (ClaimKind.DURATION, duration, ClaimScope.EDITION, None),
-        (ClaimKind.CONTRIBUTOR, "Ray Porter", ClaimScope.WORK, "narrator"),
+        (ClaimKind.CONTRIBUTOR, "Ilsa Brandt", ClaimScope.WORK, "narrator"),
         *(
             ()
             if series is None
@@ -209,13 +209,15 @@ def qualified_audiobook(
             admitted,
             ProviderQueryKind.WORK,
             authority,
-            dispatch_lineage=_audio_work_dispatch("Project Hail Mary", ("Andy Weir",)),
+            dispatch_lineage=_audio_work_dispatch(
+                "Ember Tide Protocol", ("Corin Halloway",)
+            ),
         ),
         MetadataLookup(
             ProviderQueryKind.WORK,
             local_claims,
-            "Project Hail Mary",
-            ("Andy Weir",),
+            "Ember Tide Protocol",
+            ("Corin Halloway",),
         ),
     )
 
@@ -233,7 +235,9 @@ def manual_audiobook_observation(
         (candidate,),
         ProviderQueryKind.WORK,
         authority,
-        dispatch_lineage=_audio_work_dispatch("Project Hail Mary", ("Andy Weir",)),
+        dispatch_lineage=_audio_work_dispatch(
+            "Ember Tide Protocol", ("Corin Halloway",)
+        ),
     )
 
 
@@ -346,8 +350,8 @@ def asserted_asin_report(
                 MetadataLookup(
                     ProviderQueryKind.ASIN,
                     claims,
-                    work_title="Project Hail Mary",
-                    work_authors=("Andy Weir",),
+                    work_title="Ember Tide Protocol",
+                    work_authors=("Corin Halloway",),
                     audio=single_track_audio_facts("b" * 64),
                 ),
             ),
@@ -465,7 +469,7 @@ def chapter_runtime_report(
     provider_duration: str | None = None,
     duration_state: FieldState = FieldState.ABSENT,
     local_duration: str | None = "1748.000",
-    local_asin: str | None = "B08G9PRS1K",
+    local_asin: str | None = "B0SYNE7P1K",
     asin_basis: str = "embedded_tag",
     provider: str = "catalogue",
     authority: str = "audnexus",
@@ -636,7 +640,7 @@ def recording_lookup_hint_report(
     ladder = tuple(
         WorkDispatchLineage.from_query(query)
         for query in work_query_ladder(
-            "Project Hail Mary", ("Andy Weir",), audiobook=True
+            "Ember Tide Protocol", ("Corin Halloway",), audiobook=True
         )
     )
     diagnostics = work_ladder_diagnostics(

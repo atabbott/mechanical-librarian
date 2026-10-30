@@ -1,4 +1,4 @@
-"""The Audnexus adapter, proved against captured book and chapter payloads."""
+"""The Audnexus adapter, proved against capture-shaped book and chapter payloads."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ from tests.support.audiobook_reports import (
     synthetic_audiobook_isbn_reason_report as _isbn_source_report,
 )
 
-_ASIN = "B08G9PRS1K"
+_ASIN = "B0SYNE7P1K"
 _BOOK = f"{AUDNEXUS_BOOKS_URL}/{_ASIN}"
 _CHAPTERS = f"{_BOOK}/chapters"
 
@@ -126,7 +126,7 @@ def _evidence(candidate: Any, kind: ProviderEvidenceKind) -> tuple[Any, ...]:
     return tuple(value for value in candidate.evidence if value.kind is kind)
 
 
-def test_a_book_lookup_maps_the_captured_record_onto_report_claims() -> None:
+def test_a_book_lookup_maps_the_stated_record_onto_report_claims() -> None:
     seen, handle = _recorder()
     observation = _provider(handle).observe(asin_plan()).observation
 
@@ -135,18 +135,18 @@ def test_a_book_lookup_maps_the_captured_record_onto_report_claims() -> None:
     assert "audnexus" == observation.authority
     assert [_BOOK, _CHAPTERS] == [str(url) for url in seen]
     candidate = observation.candidates[0]
-    assert "audnexus-book-B08G9PRS1K" == candidate.identity
+    assert "audnexus-book-B0SYNE7P1K" == candidate.identity
     assert (_ASIN,) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.ASIN)
     )
-    assert ("Project Hail Mary",) == tuple(
+    assert ("Ember Tide Protocol",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
-    assert ("Andy Weir",) == tuple(
+    assert ("Corin Halloway",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CREATOR)
     )
     narrators = _claims(candidate, ClaimKind.CONTRIBUTOR)
-    assert ("Ray Porter",) == tuple(claim.value for claim in narrators)
+    assert ("Ilsa Brandt",) == tuple(claim.value for claim in narrators)
     assert {"narrator"} == {claim.role for claim in narrators}
     assert ("english",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.LANGUAGE)
@@ -244,8 +244,8 @@ def test_invalid_taxonomy_type_keeps_the_book_and_valid_siblings(
 def test_partial_cast_and_malformed_release_remain_explicit_invalid_claims() -> None:
     book = {
         "asin": _ASIN,
-        "title": "Project Hail Mary",
-        "authors": [{"name": "Andy Weir"}],
+        "title": "Ember Tide Protocol",
+        "authors": [{"name": "Corin Halloway"}],
         "narrators": [{"name": "Example Reader"}, {"name": 42}],
         "releaseDate": "2025-99-99",
     }
@@ -285,7 +285,7 @@ def test_the_chapter_document_becomes_one_bounded_whole_second_vector() -> None:
         tuple(chapter["lengthMs"] // 1000 for chapter in document["chapters"])
         == structure.chapters.durations_seconds
     )
-    assert (11, 5, 2203) == structure.chapters.durations_seconds[:3]
+    assert (12, 6, 1217) == structure.chapters.durations_seconds[:3]
 
 
 def test_a_stated_runtime_agrees_with_the_container_inside_the_band() -> None:
@@ -345,7 +345,7 @@ def test_a_missing_chapter_document_removes_evidence_rather_than_the_candidate()
 
 
 def test_a_chapter_vector_above_its_cap_is_truncated_and_says_so() -> None:
-    """Synthesised from the captured document: no real title has 1,025 chapters."""
+    """Synthesised from the fixture document: no real title has 1,025 chapters."""
     document = copy.deepcopy(payload("audnexus_chapters"))
     chapter = document["chapters"][0]
     document["chapters"] = [
@@ -425,7 +425,7 @@ def test_a_throttled_request_honours_retry_after_and_retries() -> None:
 
 @pytest.mark.parametrize(
     "asin",
-    (None, "", "B08G9PRS1", "B08G9PRS1K!", 8),
+    (None, "", "B0SYNE7P1", "B0SYNE7P1K!", 8),
     ids=("absent", "empty", "short", "punctuated", "numeric"),
 )
 def test_a_book_without_a_canonical_identity_fails_closed(asin: object) -> None:

@@ -2636,7 +2636,7 @@ def test_isbn_uses_persisted_guarded_effect_authority(
                     TargetField(
                         field.destination,
                         TargetFieldState.VALUE,
-                        "Project Hail Mary (Unabridged)",
+                        "Ember Tide Protocol (Unabridged)",
                     )
                     if field.destination is TargetDestination.TITLE
                     else field
@@ -2753,7 +2753,7 @@ def test_isbn_uses_persisted_guarded_effect_authority(
         (snapshot.connection, snapshot.library, snapshot.work_id, destination)
     }
     assert effects.target._values[next(iter(changed))] == (
-        "Project Hail Mary"
+        "Ember Tide Protocol"
         if audiobook_title
         else "9780306406157"
         if destination == "isbn"
@@ -2802,7 +2802,7 @@ def test_an_activated_audiobook_tranche_plans_through_the_same_guarded_path(
         occurred_at=1,
     )
     effects.authority.automatic_values[automatic.decision_id] = envelope(
-        "asin", "B08G9PRS1K"
+        "asin", "B0SYNE7P1K"
     )
     _authorize(effects, automatic, work_id="recording-1")
     result = effects.service.plan(
@@ -2812,7 +2812,7 @@ def test_an_activated_audiobook_tranche_plans_through_the_same_guarded_path(
         work_id="recording-1",
         destination="asin",
         pre_value=None,
-        desired_value=envelope("asin", "B08G9PRS1K"),
+        desired_value=envelope("asin", "B0SYNE7P1K"),
         target_fingerprint="e" * 64,
         target_version="version-1",
         dependency_digests=(DEPENDENCY,),
@@ -6242,8 +6242,8 @@ def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negat
             "title_layout",
             "preserve",
             "audiobook_title_replace",
-            "Project Hail Mary (Unabridged)",
-            "Project Hail Mary",
+            "Ember Tide Protocol (Unabridged)",
+            "Ember Tide Protocol",
         ),
         (
             "tags",

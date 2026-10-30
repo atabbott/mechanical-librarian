@@ -476,9 +476,15 @@ def test_audio_creator_roles_and_target_only_binding_close_exact_citations():
     packet = ShadowReviewPacket.create(
         ReviewCase.create(proposal, report), proposal, report
     )
+    # The candidate the local creators state, named by its value: candidates
+    # are not ordered by where their evidence came from.
     candidate = next(
-        item for item in packet.proposals if item["destination"] == "authors"
-    )["candidates"][0]
+        candidate
+        for candidate in next(
+            item for item in packet.proposals if item["destination"] == "authors"
+        )["candidates"]
+        if candidate["value"] == {"kind": "list", "value": ["Example Author"]}
+    )
     roles = candidate["decision_summary"]["creator_roles"]
     assert {item["reference"] for item in roles["included"]} == {creators[0].reference}
     assert {item["reference"] for item in roles["excluded"]} == {
@@ -632,7 +638,7 @@ def test_audio_provider_aliases_remain_one_correlation_beside_local_source():
 
     base = language_report(("English", "en"), audio=True)
     local = base.local_claims + (
-        audio_claim(ClaimKind.CREATOR, "Andy Weir", 10, role="author"),
+        audio_claim(ClaimKind.CREATOR, "Corin Halloway", 10, role="author"),
     )
     providers = tuple(
         qualified_audiobook(local, provider=name)

@@ -41,14 +41,14 @@ from tests.support.audiobook_reports import (
     audiobook_candidate,
 )
 
-_CANONICAL = ("B08G9PRS1K", "0743563123", "9780306406", "0000000000", "ZZZZZZZZZZ")
+_CANONICAL = ("B0SYNE7P1K", "0743563123", "9780306406", "0000000000", "ZZZZZZZZZZ")
 _REFUSED = (
-    "B08G9PRS1",
-    "B08G9PRS1KK",
-    "B08G9PRS1K!",
-    "B08G9PRS-1K",
-    "B08G9PRS 1",
-    "b08g9prs1k",
+    "B0SYNE7P1",
+    "B0SYNE7P1KK",
+    "B0SYNE7P1K!",
+    "B0SYNE7P-1K",
+    "B0SYNE7P 1",
+    "b0syne7p1k",
     "",
 )
 
@@ -87,9 +87,9 @@ def test_the_report_layer_still_refuses_a_noncanonical_identifier(value: str) ->
 
 def test_the_claim_factory_normalises_case_and_the_grammar_stays_shared() -> None:
     """`create` upper-cases before validating, so both spellings are one claim."""
-    assert "B08G9PRS1K" == _claim("b08g9prs1k").value
-    assert _claim("b08g9prs1k").reference == _claim("B08G9PRS1K").reference
-    for value in (*_CANONICAL, *_REFUSED, "  B08G9PRS1K  "):
+    assert "B0SYNE7P1K" == _claim("b0syne7p1k").value
+    assert _claim("b0syne7p1k").reference == _claim("B0SYNE7P1K").reference
+    for value in (*_CANONICAL, *_REFUSED, "  B0SYNE7P1K  "):
         report_admits = canonical_asin(value) == value
         try:
             ProviderClaim(
@@ -120,7 +120,7 @@ def test_the_proposal_path_asks_the_one_canonical_asin_question() -> None:
         ) == (canonical_asin(value) is not None)
 
 
-@pytest.mark.parametrize("value", ("0743563123", "B08G9PRS1K"))
+@pytest.mark.parametrize("value", ("0743563123", "B0SYNE7P1K"))
 def test_packet_linkage_accepts_canonical_asin_and_rejects_changed_facts(
     value: str,
 ) -> None:
@@ -156,7 +156,7 @@ def test_packet_linkage_accepts_canonical_asin_and_rejects_changed_facts(
                     base.local_claims,
                     audio=base.audio,
                     work_title=base.target.current_title,
-                    work_authors=("Andy Weir",),
+                    work_authors=("Corin Halloway",),
                     requested_asin=value,
                 ),
             ),
@@ -173,7 +173,7 @@ def test_packet_linkage_accepts_canonical_asin_and_rejects_changed_facts(
     )
     assert citation["fact"]["linkage"]["identifier_facts"][0]["value"] == value
     for invalid in (
-        "b08g9prs1k",
+        "b0syne7p1k",
         "074356312",
         "07435631233",
         "074356312!",

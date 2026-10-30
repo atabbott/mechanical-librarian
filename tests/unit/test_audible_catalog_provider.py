@@ -1,4 +1,4 @@
-"""The Audible catalog adapter, proved against captured catalog payloads."""
+"""The Audible catalog adapter, proved against capture-shaped catalog payloads."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
-_ASIN = "B08G9PRS1K"
+_ASIN = "B0SYNE7P1K"
 
 
 @pytest.mark.parametrize(
@@ -247,7 +247,7 @@ def _evidence(candidate: Any, kind: ProviderEvidenceKind) -> tuple[Any, ...]:
     return tuple(value for value in candidate.evidence if value.kind is kind)
 
 
-def test_a_lookup_maps_the_captured_product_onto_report_claims() -> None:
+def test_a_lookup_maps_the_stated_product_onto_report_claims() -> None:
     seen, handle = _recorder(default=_json(payload("audible_lookup")))
     observation = _provider(handle).observe(asin_plan()).observation
 
@@ -266,17 +266,17 @@ def test_a_lookup_maps_the_captured_product_onto_report_claims() -> None:
         )
     ] == seen
     candidate = observation.candidates[0]
-    assert "audible-product-B08G9PRS1K" == candidate.identity
+    assert "audible-product-B0SYNE7P1K" == candidate.identity
     assert (_ASIN,) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.ASIN)
     )
-    assert ("Project Hail Mary",) == tuple(
+    assert ("Ember Tide Protocol",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
-    assert ("Andy Weir",) == tuple(
+    assert ("Corin Halloway",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CREATOR)
     )
-    assert ("Ray Porter",) == tuple(
+    assert ("Ilsa Brandt",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CONTRIBUTOR)
     )
     assert all(
@@ -392,12 +392,12 @@ def test_a_search_lane_contacts_only_the_first_configured_marketplace() -> None:
     assert ProviderQueryKind.WORK is observation.query_kind
     assert {AUDIBLE_MARKETPLACE_HOSTS["uk"]} == {url.host for url in seen}
     assert {"6"} == {url.params["num_results"] for url in seen}
-    assert {"Project Hail Mary"} == {url.params["title"] for url in seen}
+    assert {"Ember Tide Protocol"} == {url.params["title"] for url in seen}
     # The admitted work retains informational ASIN/runtime hints without
     # marketplace authority or narrator applicability.
     candidate = observation.candidates[0]
     assert 1 == len(observation.candidates)
-    assert ("Project Hail Mary",) == tuple(
+    assert ("Ember Tide Protocol",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
     assert _claims(candidate, ClaimKind.ASIN)
@@ -467,7 +467,7 @@ def test_a_search_page_above_the_candidate_bound_is_refused_whole() -> None:
 
 @pytest.mark.parametrize(
     "asin",
-    (None, "", "B08G9PRS1", "B08G9PRS1KK", "B08G9PRS1K!", 8),
+    (None, "", "B0SYNE7P1", "B0SYNE7P1KK", "B0SYNE7P1K!", 8),
     ids=("absent", "empty", "short", "long", "punctuated", "numeric"),
 )
 def test_a_product_without_a_canonical_identity_fails_closed(asin: object) -> None:
@@ -509,20 +509,21 @@ def test_an_isbn_ten_shaped_asin_is_a_genuine_identifier() -> None:
 
 
 def test_a_series_statement_becomes_a_name_and_a_sequence() -> None:
-    """The captured product names no series, so this one is injected.
+    """The fixture product names no series, so this one is injected.
 
-    Every other field in the document stays exactly as Audible sent it; only
-    the `series` response group's own shape is added, because the reference
-    title is a standalone.
+    Every other field in the document stays exactly as the fixture states it;
+    only the `series` response group's own shape is added, because the
+    fixture's title, like the captured product it is shaped on, is a
+    standalone.
     """
     document = copy.deepcopy(payload("audible_lookup"))
     document["product"]["series"] = [
-        {"asin": "B0000000AA", "title": "The Hail Mary Cycle", "sequence": "1"}
+        {"asin": "B0000000AA", "title": "The Ember Tide Cycle", "sequence": "1"}
     ]
     _seen, handle = _recorder(default=_json(document))
     candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
-    assert ("The Hail Mary Cycle",) == tuple(
+    assert ("The Ember Tide Cycle",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.SERIES)
     )
     assert ("1",) == tuple(
@@ -667,13 +668,13 @@ def test_a_corroborated_search_lane_keeps_the_edition_it_established() -> None:
     assert ProviderStatus.CANDIDATES is observation.status
     assert ProviderQueryKind.WORK is observation.query_kind
     assert 1 == len(seen)
-    assert ("B08G9PRS1K",) == tuple(
+    assert ("B0SYNE7P1K",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.ASIN)
     )
     assert ("58200.000",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.DURATION)
     )
-    assert ("Ray Porter",) == tuple(
+    assert ("Ilsa Brandt",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CONTRIBUTOR)
     )
     assert ("us",) == tuple(
@@ -761,11 +762,11 @@ def test_the_widest_stated_product_image_is_the_one_asked_for() -> None:
 @pytest.mark.parametrize(
     "url",
     (
-        "https://images-na.ssl-images-amazon.com/images/I/51POf8gOyLL.jpg",
-        "https://m.media-amazon.com.example.invalid/images/I/51POf8gOyLL.jpg",
-        "http://m.media-amazon.com/images/I/51POf8gOyLL.jpg",
-        "https://m.media-amazon.com:8443/images/I/51POf8gOyLL.jpg",
-        "https://owner:secret@m.media-amazon.com/images/I/51POf8gOyLL.jpg",
+        "https://images-na.ssl-images-amazon.com/images/I/00SynthEmbr.jpg",
+        "https://m.media-amazon.com.example.invalid/images/I/00SynthEmbr.jpg",
+        "http://m.media-amazon.com/images/I/00SynthEmbr.jpg",
+        "https://m.media-amazon.com:8443/images/I/00SynthEmbr.jpg",
+        "https://owner:secret@m.media-amazon.com/images/I/00SynthEmbr.jpg",
     ),
 )
 def test_a_cover_url_outside_the_closed_host_set_is_refused_with_a_typed_state(
@@ -1178,7 +1179,7 @@ def test_actual_asin_producer_binds_supported_name_language_conflict(
     candidates = (*observation.candidates, *observation.recording_lookup_candidates)
     assert len(candidates) == 1
     candidate = candidates[0]
-    assert d.recording_variant_conflict(candidate, local, "Project Hail Mary") == (
+    assert d.recording_variant_conflict(candidate, local, "Ember Tide Protocol") == (
         "recording_language_conflict" if conflict else None
     )
     assert any(
@@ -1196,13 +1197,13 @@ def test_actual_asin_producer_binds_supported_name_language_conflict(
 
 # The #1245 ladder: on an audiobook plan a rung whose products work-identity
 # admission refuses no longer ends the walk.
-_SUBTITLED = "Project Hail Mary: A Novel"
+_SUBTITLED = "Ember Tide Protocol: A Novel"
 _FOLDED = "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes"
 _FOLDED_AUTHORS = ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",)
 
 
 def _audiobook_work_plan(
-    title: str = _SUBTITLED, authors: tuple[str, ...] = ("Andy Weir",)
+    title: str = _SUBTITLED, authors: tuple[str, ...] = ("Corin Halloway",)
 ) -> m.MetadataDiscoveryPlan:
     return m.audiobook_discovery_plan(
         audio_target(title, authors),
@@ -1212,7 +1213,7 @@ def _audiobook_work_plan(
 
 
 def _search_page(*indices: int) -> dict[str, Any]:
-    """A search page of captured products: 0 is the work, 1 another one."""
+    """A search page of fixture products: 0 is the work, 1 another one."""
     products = payload("audible_search")["products"]
     return {
         "total_results": len(indices),
@@ -1281,12 +1282,12 @@ def test_a_refused_rung_continues_to_the_rung_that_admits() -> None:
     result = _observed(handle, _audiobook_work_plan())
     observation = result.observation
 
-    assert ["Project Hail Mary: A Novel", "Project Hail Mary"] == [
+    assert ["Ember Tide Protocol: A Novel", "Ember Tide Protocol"] == [
         url.params["title"] for url in seen
     ]
     assert ProviderStatus.CANDIDATES is observation.status
     lane = observation.lanes[0]
-    assert lane.dispatch_lineage == _ladder(_SUBTITLED, ("Andy Weir",))[1]
+    assert lane.dispatch_lineage == _ladder(_SUBTITLED, ("Corin Halloway",))[1]
     assert lane.dispatch_lineage is not None
     assert lane.dispatch_lineage.rung is WorkDispatchRung.SUBTITLE_STRIPPED
     assert () == lane.exhausted_dispatch
@@ -1310,7 +1311,7 @@ def test_a_refused_rung_continues_to_the_rung_that_admits() -> None:
 
 @pytest.mark.parametrize(
     ("title", "authors"),
-    ((_SUBTITLED, ("Andy Weir",)), (_FOLDED, _FOLDED_AUTHORS)),
+    ((_SUBTITLED, ("Corin Halloway",)), (_FOLDED, _FOLDED_AUTHORS)),
 )
 def test_a_ladder_refused_on_every_rung_records_each_dispatch(
     title: str, authors: tuple[str, ...]
@@ -1341,7 +1342,7 @@ def test_empty_and_refused_rungs_are_counted_apart() -> None:
 
     assert 2 == len(seen)
     lane = observation.lanes[0]
-    assert _ladder(_SUBTITLED, ("Andy Weir",)) == lane.exhausted_dispatch
+    assert _ladder(_SUBTITLED, ("Corin Halloway",)) == lane.exhausted_dispatch
     assert d.work_ladder_diagnostics(1, 1) == lane.diagnostics
     assert (
         (FailureCategory.EMPTY_NO_MATCH, 1),
@@ -1445,7 +1446,7 @@ def test_an_ebook_plan_still_stops_at_the_first_rung_that_returned_products() ->
 
 _ASSERTED = "Asserted Title"
 _ALTERNATIVE = "The Real Title"
-_AUTHORS = ("Andy Weir",)
+_AUTHORS = ("Corin Halloway",)
 
 
 def _alternative_audio(title: str = _ALTERNATIVE) -> d.AudioFacts:
@@ -1864,7 +1865,7 @@ def test_a_page_the_parser_refuses_fails_whole_before_narrowing(
     assert () == observation.candidates
 
 
-def _captured_products(count: int) -> bytes:
+def _fixture_products(count: int) -> bytes:
     product = payload("audible_search")["products"][0]
     return json.dumps(
         {
@@ -1888,7 +1889,7 @@ def _body(
 
 
 def test_the_narrowed_page_reads_under_its_own_bound_whatever_is_configured() -> None:
-    body = _captured_products(19)
+    body = _fixture_products(19)
     assert 65_536 < len(body) < 262_144
 
     _seen, handle = _body(body)
@@ -1896,7 +1897,7 @@ def test_the_narrowed_page_reads_under_its_own_bound_whatever_is_configured() ->
     observation = m.observe_provider(
         "audible", "audible_catalog", narrowed, _narrowing_plan()
     ).observation
-    # Every captured product states 970 minutes, outside the band of 1,000.
+    # Every fixture product states 970 minutes, outside the band of 1,000.
     assert ProviderStatus.NO_MATCH is observation.status
     assert 1_048_576 - len(body) == narrowed._remaining_response_bytes
 
@@ -1911,7 +1912,7 @@ def test_the_narrowed_page_reads_under_its_own_bound_whatever_is_configured() ->
 
 
 def test_a_narrowed_body_over_its_bound_fails_bounded_rather_than_truncated() -> None:
-    body = _captured_products(41)
+    body = _fixture_products(41)
     assert len(body) > 262_144
     seen, handle = _body(body)
     provider = _provider(handle, maximum_bytes=262_144)
@@ -2303,7 +2304,7 @@ def _refused_page(title: str, minutes: int, local_minutes: int) -> dict[str, Any
         {
             "asin": f"B0{index:08d}",
             "title": f"Another Work {index}",
-            "authors": [{"name": "Andy Weir"}],
+            "authors": [{"name": "Corin Halloway"}],
             "runtime_length_min": local_minutes,
         }
         for index in range(1, 6)
@@ -2312,7 +2313,7 @@ def _refused_page(title: str, minutes: int, local_minutes: int) -> dict[str, Any
         {
             "asin": "B000000099",
             "title": title,
-            "authors": [{"name": "Andy Weir"}],
+            "authors": [{"name": "Corin Halloway"}],
             "runtime_length_min": minutes,
         }
     )
@@ -2324,7 +2325,7 @@ def test_the_near_miss_is_the_minimum_over_every_rung_walked(
 ) -> None:
     # 850 minutes locally: 875 is 1500 s long and 835 is 900 s short.
     plan = m.audiobook_discovery_plan(
-        audio_target(_SUBTITLED, ("Andy Weir",)),
+        audio_target(_SUBTITLED, ("Corin Halloway",)),
         (target_title_claim(_SUBTITLED), local_runtime_claim("51000.000")),
         audio=single_track_audio_facts(),
     )
@@ -2335,7 +2336,7 @@ def test_the_near_miss_is_the_minimum_over_every_rung_walked(
         _refused_page(_SUBTITLED, 835, 850),
     )
 
-    ladder = _ladder(_SUBTITLED, ("Andy Weir",))
+    ladder = _ladder(_SUBTITLED, ("Corin Halloway",))
     assert 2 == len(seen) == len(ladder)
     assert seen == bare_seen
     assert _stripped(observation) == _stripped(bare)

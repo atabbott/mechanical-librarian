@@ -1,4 +1,4 @@
-"""The AudioSilo adapter, proved against captured lookup, work and chapters."""
+"""The AudioSilo adapter, proved against capture-shaped lookup, work and chapters."""
 
 from __future__ import annotations
 
@@ -40,10 +40,10 @@ from tests.support.audiobook_providers import (
     work_plan,
 )
 
-_ASIN = "B08G9PRS1K"
+_ASIN = "B0SYNE7P1K"
 _LOOKUP = f"{AUDIOSILO_BASE_URL}/lookup"
-_WORK = f"{AUDIOSILO_BASE_URL}/works/project-hail-mary"
-_CHAPTERS = f"{_WORK}/recordings/ray-porter-2021/chapters"
+_WORK = f"{AUDIOSILO_BASE_URL}/works/ember-tide-protocol"
+_CHAPTERS = f"{_WORK}/recordings/ilsa-brandt-2021/chapters"
 
 
 def _json(value: object, status_code: int = 200, **headers: str) -> httpx.Response:
@@ -115,15 +115,17 @@ def test_a_lookup_joins_a_work_to_the_recording_it_named() -> None:
     assert "audiosilo" == observation.authority
     assert [f"{_LOOKUP}?asin={_ASIN}", _WORK, _CHAPTERS] == [str(url) for url in seen]
     candidate = observation.candidates[0]
-    assert "audiosilo-recording-project-hail-mary-ray-porter-2021" == candidate.identity
-    assert ("Project Hail Mary",) == tuple(
+    assert (
+        "audiosilo-recording-ember-tide-protocol-ilsa-brandt-2021" == candidate.identity
+    )
+    assert ("Ember Tide Protocol",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
-    assert ("Andy Weir",) == tuple(
+    assert ("Corin Halloway",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CREATOR)
     )
     narrators = _claims(candidate, ClaimKind.CONTRIBUTOR)
-    assert ("Ray Porter",) == tuple(claim.value for claim in narrators)
+    assert ("Ilsa Brandt",) == tuple(claim.value for claim in narrators)
     assert {"narrator"} == {claim.role for claim in narrators}
     assert ("en",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.LANGUAGE)
@@ -181,15 +183,15 @@ def test_a_stated_runtime_agrees_with_the_container_inside_the_band() -> None:
 
 def test_a_recording_without_chapters_is_never_asked_about_them() -> None:
     resolved = copy.deepcopy(payload("audiosilo_lookup"))
-    resolved["recording_id"] = "william-angiuli-2024"
+    resolved["recording_id"] = "matteo-sbarra-2024"
     seen, handle = _recorder(lookup=_json(resolved))
     candidate = (
-        _provider(handle).observe(asin_plan("B0CTZYCZW7")).observation.candidates[0]
+        _provider(handle).observe(asin_plan("B0SYNI7DE2")).observation.candidates[0]
     )
 
     assert 2 == len(seen)
     assert () == _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)
-    assert ("William Angiuli",) == tuple(
+    assert ("Matteo Sbarra",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.CONTRIBUTOR)
     )
 
@@ -231,11 +233,11 @@ def test_a_work_that_does_not_contain_the_named_recording_fails_closed() -> None
 @pytest.mark.parametrize(
     "resolved",
     (
-        {"work": {"id": "project-hail-mary"}},
-        {"recording_id": "ray-porter-2021"},
-        {"work": {"id": "../../etc"}, "recording_id": "ray-porter-2021"},
-        {"work": {"id": "project-hail-mary"}, "recording_id": "a/b"},
-        {"work": "project-hail-mary", "recording_id": "ray-porter-2021"},
+        {"work": {"id": "ember-tide-protocol"}},
+        {"recording_id": "ilsa-brandt-2021"},
+        {"work": {"id": "../../etc"}, "recording_id": "ilsa-brandt-2021"},
+        {"work": {"id": "ember-tide-protocol"}, "recording_id": "a/b"},
+        {"work": "ember-tide-protocol", "recording_id": "ilsa-brandt-2021"},
     ),
     ids=(
         "no_recording",
@@ -307,7 +309,7 @@ def test_a_missing_chapter_document_removes_evidence_rather_than_the_candidate()
     candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
     assert () == _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)
-    assert ("Project Hail Mary",) == tuple(
+    assert ("Ember Tide Protocol",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
 
@@ -405,7 +407,7 @@ def test_an_unknown_identifier_is_named_a_miss_rather_than_an_http_failure() -> 
 
 def test_an_over_bound_chapter_document_is_stated_and_spares_the_next_lane() -> None:
     """A dropped chapter body no longer zeroes the observation's byte budget."""
-    second = "B08G9RZBTT"
+    second = "B0SYNE7DE1"
     plan = audiobook_discovery_plan(
         audio_target(), (*local_claims(), audio_claim(ClaimKind.ASIN, second, 5))
     )
@@ -441,7 +443,7 @@ def test_an_over_bound_chapter_document_is_stated_and_spares_the_next_lane() -> 
 
     # The over-bound body comes first, and the other lane is still answered in
     # full, chapters included.
-    assert served[2].endswith("/other-work/recordings/ray-porter-2021/chapters")
+    assert served[2].endswith("/other-work/recordings/ilsa-brandt-2021/chapters")
     assert 6 == len(served)
     assert {ProviderStatus.CANDIDATES} == {
         lane.status for lane in result.observation.lanes

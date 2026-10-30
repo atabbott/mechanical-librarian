@@ -1821,9 +1821,9 @@ def test_an_audio_source_rebuilds_its_asin_plan_and_redispatches() -> None:
     """
     asin = LocalClaim.create(
         kind=ClaimKind.ASIN,
-        observed="B08G9PRS1K",
-        canonical="B08G9PRS1K",
-        excerpt="B08G9PRS1K",
+        observed="B0SYNE7P1K",
+        canonical="B0SYNE7P1K",
+        excerpt="B0SYNE7P1K",
         applicability="not_applicable",
         basis="embedded_tag",
         checksum="not_applicable",
@@ -1857,7 +1857,7 @@ def test_an_audio_source_rebuilds_its_asin_plan_and_redispatches() -> None:
             ProviderLaneResult(
                 lane,
                 ProviderStatus.CANDIDATES,
-                (ProviderCandidate("audnexus-book-B08G9PRS1K", "unresolved", ()),),
+                (ProviderCandidate("audnexus-book-B0SYNE7P1K", "unresolved", ()),),
             ),
         ),
         authority="audnexus",
@@ -1978,18 +1978,20 @@ def _fed_audio_source(
 ) -> tuple[TargetSnapshot, tuple[LocalClaim, ...], MetadataDiscoveryPlan]:
     """One audiobook with no local ASIN, optionally asserting one."""
     fields = tuple(
-        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Andy Weir",))
+        TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Corin Halloway",)
+        )
         if field.destination is TargetDestination.AUTHORS
         else (
             TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, "B0ASSERTED")
             if asserted and field.destination is TargetDestination.ASIN
             else field
         )
-        for field in default_target_fields("Project Hail Mary")
+        for field in default_target_fields("Ember Tide Protocol")
     )
     snapshot = TargetSnapshot(
         "audiobook",
-        "Project Hail Mary",
+        "Ember Tide Protocol",
         (TargetFile("b" * 64, "book.m4b", "m4b"),),
         fields=fields,
     )

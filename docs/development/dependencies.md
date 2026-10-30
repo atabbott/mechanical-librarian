@@ -325,6 +325,17 @@ into the review asset bundle and served same-origin; they receive no authority.
 Changing their version, subsets, source or checksum is an ordinary tracked
 change that updates this table and the licence header together.
 
+The browser tests also carry one test-only face,
+`tests/browser/fonts/DejaVuSans-Bold-subset.ttf`, SHA-256
+`d61157a5b9caa6c2f73aba7a5ff9d13ae4ca1b19d50a5a85745518f012a23e57`: DejaVu
+Sans Bold 2.37 reduced to the glyphs one wrapping test measures, so its lines
+break the same way whatever fonts the host has. Its subsetting command, source
+checksum and licence (the Bitstream Vera and Arev font licences DejaVu
+carries) are in `tests/browser/fonts/LICENSE` beside it. The container build
+context, the sdist and the wheel all exclude the top-level `tests/`, so it is
+never shipped; it is loaded into the disposable test page only and receives no
+authority.
+
 ## Frontend build graph
 
 Node and the explicitly installed manifest-pinned npm are required exactly and neither enters the runtime
