@@ -22,9 +22,8 @@ depends on it.
 - [CHANGELOG.md](../CHANGELOG.md)
 - [SECURITY.md](../SECURITY.md) — vulnerability reporting
 - [SUPPORT.md](../SUPPORT.md)
-- [GOVERNANCE.md](../GOVERNANCE.md) and
-  [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) — GitHub community-health files,
-  found by convention rather than by link
+- [GOVERNANCE.md](../GOVERNANCE.md) — a GitHub community-health file, found by
+  convention rather than by link
 
 ## Operations
 
