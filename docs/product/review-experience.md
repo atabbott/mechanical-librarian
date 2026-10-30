@@ -89,9 +89,9 @@ preparation starts, and a handover card appears once one work is ready.
 
 ## Workspace shell
 
-Library, Policy, Activity and Settings are the destinations. Every page opens
-in the saved theme, or the system theme until one is saved, on its first
-frame.
+The destinations are Library (with Attention and work detail), Policy, Activity
+and Settings. Every page opens in the saved theme, or the system theme until
+one is saved, on its first frame.
 
 Sign-in has Show password. It says whether the password was wrong or the device
 must wait five minutes after too many attempts. There is no reset in the app;

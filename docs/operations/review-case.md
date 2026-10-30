@@ -26,8 +26,10 @@ A ProposalSet is actionable when any result is `propose_change`,
 Failures are redacted to `invalid`, `incompatible`, `currentness` (including
 an unavailable currentness check) or `persistence`.
 
-A `review-case-v2` case binds the exact ProposalSet, report, target and file
-identity, and projects the exact `bibliographic-relationships-v1` document.
+A case binds the exact ProposalSet, report, target and file identity, and
+projects the exact bibliographic-relationships document. Exact schema
+versions are listed under
+[current versions](../reference/compatibility.md#current-versions).
 
 - Preserve selections are rechecked against the bound target field, so a
   changed value, or a change between missing, null and empty, changes case
@@ -99,9 +101,17 @@ decision, plan, write or deletion.
   library. Repeated requests coalesce.
 - **Concurrency.** Two fixed lanes let ready work pass a slow item. They
   serialize catalogue publication and share provider pacing.
+- **Reuse.** An unchanged work is reused; a changed source or producer
+  restarts at extraction; a partial work resumes at its first missing stage.
 - **Publication.** The report, ProposalSet, case (or no-case disposition) and
   projection publish together as one package, only after projection succeeds.
-  During a refresh the last package stays browseable.
+  During a refresh the last package stays browseable; failed or stale work
+  never replaces it.
+- **Restart.** Claims are persisted before work. A restart returns running
+  work to the queue, or marks it failed once its attempts are spent, and
+  invents no result.
+- **New libraries.** A library added in Settings joins scans once the new
+  runtime is published, and waits visibly while preparation is paused.
 - **Absences.** Missing or ineligible items retire current lineages only if
   the whole scan completes and a confirming discovery agrees. The catalogue
   baseline builds one library at a time, so an unavailable library does not
@@ -121,11 +131,8 @@ A target connection failure (TLS, authentication, authorization or
 availability) pauses only that connection's queued work; see
 [catalogue](catalogue.md#connection-failures).
 
-If preparation cannot commit its progress, the workspace shows **Preparation
-stopped** and keeps published books available. Restart the service to resume;
-refresh and Scan now cannot clear it
-([observability](observability.md),
-[ADR-0078](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md)).
+If preparation cannot commit its progress, it stops; see
+[Preparation stopped](observability.md#preparation-stopped).
 
 ## Serving the workspace
 
@@ -140,9 +147,10 @@ mechanical-librarian review-serve --config config.json \
 `review.canonical_origin` must be the exact browser origin, including a
 non-default port. Its scheme, with the TLS paths and trusted proxy list,
 selects HTTP, direct HTTPS or HTTPS behind a trusted proxy
-([configuration](../reference/configuration.md)). Transport, sign-in and request
-rules are in [security](../architecture/security.md). The application never
-issues or renews certificates; to rotate one, replace the files and restart.
+([configuration](../reference/configuration.md)). Transport, sign-in and
+request rules are in [security](../architecture/security.md). The application
+never issues or renews certificates; to rotate one, replace the files and
+restart.
 `/health/live` and `/health/ready` are the only anonymous data
 ([observability](observability.md)).
 

@@ -27,8 +27,8 @@ What works today:
   EPUB packages and audio files, plus catalogue evidence from Hardcover, Open
   Library, Inventaire, Google Books and iTunes Search for ebooks, and Audible,
   Audnexus, AudioSilo, Hardcover and Open Library for audiobooks.
-- One owner workspace with five views: Library, Attention (the fields that
-  need a decision), work detail, Policy and Activity.
+- One owner workspace: Library (with Attention and work detail), Policy,
+  Activity and Settings. Attention holds only the fields that need a decision.
 - Automatic decisions for qualified field categories, with every outcome
   recorded in history.
 - Guarded writes to Audiobookshelf. Each write needs library consent, backup

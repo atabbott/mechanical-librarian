@@ -29,7 +29,9 @@ all-eligible selections fail before the manifest, provider clients,
 credentials or network are touched.
 
 The manifest path must not exist. Preview atomically writes one immutable,
-canonical `batch-manifest-v5` document. It records:
+canonical manifest document at the current manifest version
+([current versions](../reference/compatibility.md#current-versions)). It
+records:
 
 - the scoped item identities;
 - the catalogue generation and fingerprint;
@@ -92,4 +94,5 @@ logs are value-free or redacted.
 
 The catalogue, report database, artifact store, manifest and configuration
 must each match their current versions. Earlier schemas are refused, never
-migrated ([compatibility](../reference/compatibility.md)).
+migrated
+([clean-state rule](../reference/compatibility.md#the-clean-state-rule)).

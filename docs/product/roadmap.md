@@ -5,9 +5,9 @@ are the authoritative plan. Each milestone's description states its outcome,
 its units in order, and what it excludes. This page summarises them and is
 updated when a milestone opens, closes or is reordered.
 
-Before 1.0.0, each numbered milestone is an internal checkpoint. Completing one
-does not publish a release. [Work management](../development/work-management.md#milestones-and-checkpoint-versioning)
-explains how checkpoints are numbered.
+Before 1.0.0, each numbered milestone is an internal checkpoint that publishes
+nothing; see
+[work management](../development/work-management.md#milestones-and-checkpoint-versioning).
 
 ## Delivered
 
@@ -18,8 +18,8 @@ Checkpoints 0.1.0 to 0.29.0 built the product up to its current state:
 - explainable field-level proposals, review cases and owner decisions;
 - qualified automatic decisions, and guarded, consented, read-back-verified
   writes to Audiobookshelf;
-- the authenticated owner workspace (Library, Attention, detail, Policy and
-  Activity), guided first run and in-browser settings;
+- the authenticated owner workspace, Library (with Attention and work detail),
+  Policy, Activity and Settings, and guided first run;
 - audiobook matching and decisions;
 - an optional AI cover reviewer and description advice.
 
@@ -52,8 +52,7 @@ The [changelog](../../CHANGELOG.md) lists each user-visible change.
 
 1.0.0 is the first published release. It needs a settled full-library
 measurement on a continuous report-only deployment and the cross-cutting gates
-in the Release readiness milestone. The maintainer chooses which delivered
-checkpoint becomes 1.0.0, and when.
+in the Release readiness milestone.
 
 ## Later
 

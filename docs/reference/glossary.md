@@ -2,9 +2,11 @@
 
 **Canonical report**
 The exact compact, key-sorted UTF-8 JSON document validated by the closed
-`metadata-report-v63` model. It carries the report's scope and evidence, the
-ordered local-field results, source capabilities, bounded claim occurrences
-and, when present, rear-spine provenance.
+model of the current [metadata report](../operations/metadata-report.md)
+schema ([current versions](compatibility.md#current-versions)). It carries
+the report's scope and evidence, the ordered local-field results, source
+capabilities, bounded claim occurrences and, when present, rear-spine
+provenance.
 
 **Current pointer**
 The mutable reference from one connection, library, item and file identity
@@ -15,8 +17,8 @@ report ID returns that named report.
 **Exact current schema**
 The only database shape the application accepts. Earlier schemas are refused
 before any change. Same-schema report replay works; there is no migration,
-import or compatibility parser. See [ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md)
-and [compatibility](compatibility.md).
+import or compatibility parser. See the
+[clean-state rule](compatibility.md#the-clean-state-rule).
 
 **Local claim**
 A source-attributed field fact about the item: EPUB package metadata or
@@ -64,8 +66,8 @@ production is valid:
 - `provider_associated_series_suffix`
 - `author_prefix_then_underscores`
 - `latin_combining_marks`
-- `band_parenthesized_series_name`, `band_order_inverted_series_prefix`,
-  `band_initials_fold` and `band_corroborated_title_relation`, which admit
-  only inside the runtime band of an audiobook's asserted work lane
+- the four `band_` productions, which admit only inside the tight runtime
+  band of an audiobook's asserted work lane
+  ([work search ladder](../operations/metadata-report.md#work-search-ladder))
 
 Every other transformation is query-only.

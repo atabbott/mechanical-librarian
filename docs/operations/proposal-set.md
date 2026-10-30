@@ -7,21 +7,23 @@ decides, plans or writes.
 
 The `CreateProposalSet` operation reopens the exact report, revalidates the
 current target, selected media, Audiobookshelf cover and every referenced
-private cover artifact, then evaluates the built-in `fixed-conservative-v39`
-policy. It never contacts a provider. Success is one canonical
-`proposal-set-v8` JSON document and a newline; failure is one value-free
-diagnostic. Contributors run it through the `proposal-create` and
-`proposal-inspect` [workbench](../development/contributor-workbench.md)
-scenarios. Field-by-field automation rules are in the
+private cover artifact, then evaluates the built-in fixed conservative
+proposal policy. It never contacts a provider or changes the report. Success
+is one canonical ProposalSet JSON document and a newline; failure is one
+value-free diagnostic. The exact ProposalSet schema and policy versions are
+listed under
+[current versions](../reference/compatibility.md#current-versions).
+Contributors run it through the `proposal-create` and `proposal-inspect`
+[workbench](../development/contributor-workbench.md) scenarios.
+Field-by-field automation rules are in the
 [automation policy](../product/automation-policy.md).
 
 ## Contents
 
 Every ProposalSet is bound to the exact report ID, derived target fingerprint,
 policy version and resolved policy identity. It holds exactly one ordered
-result for each of title, subtitle, authors, narrators, series, genres,
-publishedYear, publishedDate, publisher, description, isbn, asin, language,
-explicit, tags and cover.
+result for each target field the report projects
+([target metadata](metadata-report.md#target-metadata)).
 
 Each result has one outcome:
 
@@ -51,7 +53,7 @@ Provider access times stay in the referenced report.
 
 ### Bibliographic combinations
 
-A separate `bibliographic-relationships-v1` projection lists the allowed title,
+A separate bibliographic-relationships projection lists the allowed title,
 subtitle and series combinations. It never changes a result, alternative or
 source string.
 
@@ -217,5 +219,5 @@ changes are caught when admission checks freshness again.
 
 `proposal_sets` is append-only, with no current pointer, lifecycle or job
 state. Identical inputs give the same ID and bytes. Earlier policy versions
-and schemas are refused before any change; rebuild from a clean state
-([compatibility](../reference/compatibility.md)).
+and schemas are refused before any change
+([clean-state rule](../reference/compatibility.md#the-clean-state-rule)).

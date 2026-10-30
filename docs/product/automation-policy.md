@@ -77,14 +77,13 @@ recovery applies nothing by itself
 ### Policy preview
 
 A draft preview evaluates the active and draft policies on at most 20 current
-report/proposal pairs, read in one database snapshot. It does not re-read the
-remote service. Activation still checks that the active policy and generation
-have not changed since.
-
-Primary counts are works and fields whose outcome or routing the edit changed.
-Unchanged outcomes and projected library changes are shown separately. Title,
-authors, narrators, date, publisher, language and cover are labelled "not
-previewed". Preview and activation grant no write permission.
+report/proposal pairs, read in one database snapshot, without changing them or
+re-reading the remote service. Title, authors, narrators, date, publisher,
+language and cover are not previewed. Activation still checks that the active
+policy and generation have not changed since. Preview and activation grant no
+write permission. How the owner reads a preview is in the
+[review experience](review-experience.md#policy); activation is in
+[review cases](../operations/review-case.md#policy-activation).
 
 ## Qualification
 
@@ -92,10 +91,10 @@ An option becomes Automatic only through a current qualification record that
 names its exact operations ([qualification records](rich-metadata-qualification.md)).
 No record crosses media
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
-On a recording, Automatic is withdrawn from every destination the F46 record
-does not name, so an unqualified audiobook field is always the owner's choice,
-never an authority failure. A candidate stays available to the owner whether or
-not it is automatic.
+On a recording, Automatic is withdrawn from every destination the audiobook
+qualification record does not name, so an unqualified audiobook field is always
+the owner's choice, never an authority failure. A candidate stays available to
+the owner whether or not it is automatic.
 
 ### Options and defaults by media
 
@@ -165,9 +164,9 @@ edition-applicable.
 Agreement counts only between materially independent observations. Several
 adapters repeating one upstream record are one source, and package metadata and
 front matter from one file are one lineage. Equal normalized values collapse
-into one choice that keeps every source and contradiction. Identifiers are
-compared, after ISBN-10/ISBN-13 canonicalization, only within compatible
-namespaces. Resolving one field never decides a sibling field.
+into one choice. Identifiers are compared, after ISBN-10/ISBN-13
+canonicalization, only within compatible namespaces. Resolving one field never
+decides a sibling field.
 
 Ambiguity (generic or very short titles, initial-only author names, swapped
 fields, conflicting series orders, release-name debris) raises the evidence
@@ -210,10 +209,11 @@ is shown separately from the recorded reason.
 A useful provider title wins when evidence ties it to the same work and nothing
 material competes; one reliable provider can be enough
 ([ADR-0075](../architecture/decisions/0075-independent-evidence-led-titles.md)).
-An ISBN linked to the work is strong evidence; a checksum alone does not link
-it, and print and ebook ISBNs for one work do not block a work-level decision. File, package and service titles are observations whose disagreement alone
-cannot veto stronger evidence. Subtitle and series are decided in their own
-fields. Material competing works, authors or titles go to the owner.
+A checksum alone does not link an ISBN to the work; how titles are elected is
+in the [ProposalSet](../operations/proposal-set.md#titles). File, package and
+service titles are observations whose disagreement alone cannot veto stronger
+evidence. Subtitle and series are decided in their own fields. Material
+competing works, authors or titles go to the owner.
 
 Ebook automatic title replacement has three qualified operations:
 
@@ -253,10 +253,11 @@ placeholder cannot qualify an authors proposal on its own. Authorship
 conflicts, unmappable roles and ambiguous collective or pseudonym choices go to
 the owner.
 
-`contributor_names:canonical:provider_consensus_display` (F38) changes the
-display only when two independent providers agree on one exact display and the
-local equivalent is the sole dissent. Ordinary `contributor_names:canonical`
-gains nothing from it.
+`contributor_names:canonical:provider_consensus_display` changes the display
+only when two independent providers agree on one exact display and the local
+equivalent is the sole dissent. Its authority is the contributor-display
+qualification record alone; ordinary `contributor_names:canonical` gains
+nothing from it.
 
 On both media, a candidate that only drops or moves accents of the current
 members is preserved with the current spelling. Any other candidate that drops
@@ -274,13 +275,12 @@ narrators is never split.
 
 Ebook `subtitle:fill_empty` fills an empty subtitle only with a provider value
 corroborated by another source: the book's own packaged subtitle, or a colon
-segment stripped from another source's work title. A source never corroborates
-itself. Segment corroboration is withheld if any provider states a different
-subtitle or the decorated title is stated more widely than the plain one. For
-an empty subtitle, the provider labels `A Novel` and `Stories` are generic
-marketing and never become a proposal. When Subtitle is Automatic, the fill
-owns the subtitle destination unless an acting title-combination candidate
-already covers it.
+segment stripped from another source's work title under the
+[segment rule](../operations/proposal-set.md#subtitles). A source never
+corroborates itself. For an empty subtitle, the provider labels `A Novel` and
+`Stories` are generic marketing and never become a proposal. When Subtitle is
+Automatic, the fill owns the subtitle destination unless an acting
+title-combination candidate already covers it.
 
 Audiobook subtitles may fill an empty value or replace a recognized whole-field
 award, bestseller or adaptation announcement with descriptive text. On either
@@ -328,13 +328,13 @@ separately and real conflicts stay visible.
 
 ### Language
 
-Language names and codes are grouped before election on both media. `English`,
-`en` and `eng` support one alternative. `und` is evidence, never a choice. An
+Language names and codes are grouped before election on both media
+([evaluation rules](../operations/proposal-set.md#evaluation-rules)). An
 equivalent current value stays unchanged and creates no choice. When filling,
 Preserve prefers an observed code and Display name an observed English name.
 Neither generates a spelling; if the preferred form was not observed, the other
-observed form is used. Region and script are kept; base or script disagreements stay manual. No
-language is inferred.
+observed form is used. Region and script are kept; base or script
+disagreements stay manual. No language is inferred.
 
 ### Description
 
@@ -411,9 +411,8 @@ authorize. Automatic needs a confirmed candidate and no lookup for that report
 running or being checked; lookups waiting to retry do not hold it back.
 `replace_if_strictly_better` fills only a known-empty ebook cover. A strictly
 better later candidate may supersede an automatic choice; an owner choice ends
-automatic authority. The owner may confirm any intact retained alternative;
-identity contradictions stay excluded. A choice can be revised until its write
-begins.
+automatic authority. What the owner may choose is in the
+[review experience](review-experience.md#covers).
 
 An audiobook cover is replaced only when the known incumbent's shorter edge is
 below 300 pixels and an eligible portrait or square candidate is at least 500
@@ -457,8 +456,8 @@ complete work witness, the owner may choose description, genres, series, series
 position and a witnessed title cleanup. Automatic becomes Ask me and Ignore
 stays Ignore; no automatic authority follows
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
-A description or genre choice that only trims or extends the current value
-stays choosable without joining Attention.
+The owner's view is in the
+[review experience](review-experience.md#audiobooks).
 
 A refused current value, such as a credit-line narrator or an announcement
 title, is not kept automatically. The field says why and joins Attention only
@@ -475,7 +474,9 @@ Attention holds only work a person can improve:
 - a destructive action needing authorization.
 
 Operational failures appear in health and job views, not Attention. Automatic
-rejections and title cleanup are closed but searchable.
+rejections and title cleanup are closed but searchable. How fields are
+classified and queued is in
+[review cases](../operations/review-case.md#field-classification).
 
 ## Decision records
 

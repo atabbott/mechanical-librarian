@@ -1,11 +1,7 @@
 # Scope and Non-Goals
 
-One self-contained container beside an existing library; Audiobookshelf first;
-supported service APIs only, never a direct database edit; read-only media
-mounts; AI reviewers with no credential or write authority; no unattended
-destructive work. [PRODUCT.md](../../PRODUCT.md) is the single
-product-boundary statement and the authority for every clause above. This
-document adds what that boundary admits and refuses in the first release.
+[PRODUCT.md](../../PRODUCT.md) states the product boundary; this page records
+what the first release admits and refuses within it.
 
 ## Initial scope
 
@@ -51,7 +47,7 @@ document adds what that boundary admits and refuses in the first release.
 
 ## User promise
 
-Beyond the operating context PRODUCT.md states, first-release scope commits to:
+Beyond the operating context in PRODUCT.md, first-release scope commits to:
 
 - new items remain immediately available for consumption, with curation
   happening asynchronously after files stabilize;
@@ -77,13 +73,8 @@ Beyond the operating context PRODUCT.md states, first-release scope commits to:
 
 ## Compatibility posture
 
-Until the first production release,
-[ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md) applies
-repository-wide: every database, report, artifact, configuration and
-internal-document schema accepts only absent or exact-current state. Earlier
-state fails clearly and is never silently deleted; a clean rebuild may be
-required. Compatibility needs a named present user need, while current-schema
-restart, replay and crash safety remain in scope.
+Persisted state follows the pre-release clean-state rule in
+[compatibility](../reference/compatibility.md#the-clean-state-rule).
 
 Service adapters must detect and publish their capabilities. Unsupported fields
 remain unsupported rather than falling back to undocumented database or UI

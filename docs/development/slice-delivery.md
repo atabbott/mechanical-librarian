@@ -102,15 +102,22 @@ passing required checks; nobody has a bypass.
 
 ### Renovate platform auto-merge exception
 
-Pull requests authored by `renovate[bot]` for the managed version updates that
-`.github/renovate.json` enables may use GitHub-native auto-merge instead of the
-controller. The ruleset still requires a pull request, a head current with
+Pull requests authored by `renovate[bot]` whose update class requests
+auto-merge may use GitHub-native squash auto-merge instead of the controller.
+The default-branch ruleset still requires a pull request, a head current with
 `main`, and a passing check run for each of the eight gate jobs
 (`fast-source`, `fast-source-2`, `fast-source-3`, `fast-source-4`,
 `exact-installed`, `protected-browser`, `container-image` and
-`dependency-audit`). [Dependencies](dependencies.md) says which update classes
-qualify. The exception does not transfer through a title, label, branch name or
-human account.
+`dependency-audit`). Renovate has no bypass and cannot write to `main`. A
+failing update stays open for a manual fix; no gate is weakened to admit one.
+Updates that need Dependency Dashboard approval merge through the controller.
+
+The exception is bound to the author and does not transfer through a title,
+label, branch name or human account.
+[Dependencies](dependencies.md#automated-updates) says which update classes
+auto-merge, and
+[work management](work-management.md#pull-requests-and-tracking) covers the
+tracking exemption.
 
 ## Definition of done
 

@@ -4,43 +4,39 @@ A metadata report is the immutable, single-item record of what is known about
 one book before anyone proposes a change: the current Audiobookshelf metadata,
 the evidence read from the book's own files, and what each provider said.
 Review preparation builds one per item through the `GenerateMetadataReport`
-application operation. The report decides nothing. The fixed-policy
-[ProposalSet](proposal-set.md) operation evaluates an exact current report
-without changing or copying it, and makes no provider call.
-
-The report schema is `metadata-report-v63`.
+application operation. The report decides nothing; the
+[ProposalSet](proposal-set.md) evaluates it. The report schema version is
+listed under
+[current versions](../reference/compatibility.md#current-versions).
 
 ## Running and reopening a report
 
 There is no installed command or container entrypoint. Contributors run the
-operation only through the typed workbench against disposable state; see
-[Contributor workbench](../development/contributor-workbench.md). Its
-`ReportRequest` has four actions:
-
-- `observe` builds a report for a named connection, library and item.
-- `inspect` reopens one exact report by ID.
-- `inspect-current` reopens the current report for a known scope.
-- `cover` produces a report-bound cover preview.
+operation only through the `report-observe`, `report-inspect` and
+`cover-inspect` scenarios of the
+[contributor workbench](../development/contributor-workbench.md), against
+disposable state. Its `ReportRequest` actions are `observe` (build a report
+for a named connection, library and item), `inspect` (reopen one report by
+ID), `inspect-current` (reopen the current report for a known scope) and
+`cover` (a report-bound cover preview).
 
 The last three need no configuration, credentials, target access, provider or
-network. Success returns the exact persisted canonical JSON. Failure returns one
-fixed, bounded diagnostic that never contains paths, credentials, target
-values, provider bodies or EPUB text.
-
-Cover evidence is report-only: a source outcome and a private artifact
-reference. The cover preview is kept as a private digest-addressed workbench
-artifact. It contacts nothing and cannot retrieve originals.
+network. Success returns the exact persisted canonical JSON; failure returns
+one fixed, bounded diagnostic with no paths, credentials, target values,
+provider bodies or EPUB text. A report's cover evidence is a source outcome
+and a private artifact reference. The cover preview is a private
+digest-addressed artifact that contacts nothing and cannot fetch originals.
 
 ## Preconditions
 
 - The database is absent on first use, or holds the exact current schema.
-  Earlier schemas are refused before any write. There is no migration or
-  import: keep an old database offline if you need it, start a clean one and
+  Anything else is refused before any write; start a clean database and
   prepare again
-  ([ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md)).
+  ([clean-state rule](../reference/compatibility.md#the-clean-state-rule)).
 - On Linux, the database parent directory is owned by the process user with no
   group or other permissions, and there is no `-journal`, `-wal` or `-shm`
-  sidecar.
+  sidecar. How the database is bound to one file is in
+  [SQLite topology](../architecture/sqlite-topology.md#opening-and-file-binding).
 - The artifact-store directory already exists, owned by the process user with
   no group or other permissions. The operation does not create it.
 - Every absolute parent-path component is a real directory, not a symbolic
@@ -48,7 +44,9 @@ artifact. It contacts nothing and cannot retrieve originals.
   by sticky-directory ownership.
 - The container runs as a dedicated Unix identity with no untrusted processes
   under it. Privileged or hostile same-identity changes are out of scope.
-- The configuration is `config-v9` and names the connection and library.
+- The configuration is the current file-mode version
+  ([configuration and setup](../reference/compatibility.md#configuration-and-setup))
+  and names the connection and library.
 - The target secret and each enabled, referenced provider secret are
   owner-only regular files.
 - Ebook libraries map to a read-only media mount. An audiobook library is
@@ -61,13 +59,6 @@ Any other target fails before inspection, credential access, network traffic
 or publication. An item over 512 audio files is listed for attention, so the
 owner can see what to split, but is never prepared.
 
-On Linux the repository opens the database through a private verified
-hard-link alias while holding a parent-directory lock, and re-walks the
-no-follow path chain before publication writes and again before commit. The
-lock coordinates repository instances; permissions and the dedicated identity
-exclude other users. Non-Linux runs keep the no-follow and inode checks but do
-not claim this guarantee.
-
 ## What the report records
 
 ### Target metadata
@@ -75,22 +66,22 @@ not claim this guarantee.
 The item is read directly from Audiobookshelf; no inventory is kept. The
 projection holds title, subtitle, authors, narrators, series, genres,
 publishedYear, publishedDate, publisher, description, isbn, asin, language,
-explicit, tags and cover. Each keeps one state — `value`, `missing`, `null`,
-`empty`, `unloaded`, `malformed` or `oversized` — with list order intact, and
+explicit, tags and cover. Each keeps one state (`value`, `missing`, `null`,
+`empty`, `unloaded`, `malformed` or `oversized`) with list order intact, and
 all feed the target fingerprint and the final currentness check.
 
 - A safe value over its bound is `oversized`; unsafe, private-path,
-  credential-shaped or invalid input is `malformed`.
+  credential-shaped or invalid input is `malformed`. Text whose only defect is
+  C1 control characters is refused with its own reason but shown as
+  `malformed`.
 - An unsafe title rejects the whole response before a report exists. Any other
   unusable title keeps its state and the report continues.
-- Text whose only defect is C1 control characters is refused with its own
-  reason but shown as `malformed`.
 - A description is admitted as Audiobookshelf shows it. Markup is rendered,
   with paragraphs and lines joined by ` • `; plain text keeps its exact text,
   with character references decoded. Text that is markup only once decoded, or
   would decode again, is kept as stored. `restorable` records whether writing
   it back would store it unchanged.
-- Tags come from `media.tags` and fall back to metadata tags only when that
+- Tags come from `media.tags`, falling back to metadata tags only when that
   field is absent.
 - The selected file resolves to an opaque identity, so reordering the file
   list does not change the target.
@@ -99,32 +90,17 @@ all feed the target fingerprint and the final currentness check.
 
 ### Ebook evidence
 
-An isolated child receives only the read-only EPUB descriptor, the source
-fingerprint and fixed limits. It parses one digest-verified byte snapshot and
-returns bounded, source-attributed facts from package metadata, opening matter
-and a rear indicia pass over the last eight spine slots (at most four
-resources). What each pass admits — titles, subtitle, publisher, imprint,
-series, creators and roles, dates, ISBNs — is in
-[opening ebook evidence](../product/opening-ebook-evidence.md), which also
-states the full-work completeness limit.
+An isolated child parses one digest-verified snapshot of the read-only EPUB in
+three passes: package metadata, opening matter and rear indicia. What each pass
+admits, the role and ISBN rules, the shared limits and the full-work
+completeness limit are in
+[opening ebook evidence](../product/opening-ebook-evidence.md). A package
+creator with no stated role keeps no role. Front and rear values stay distinct
+claims with their excerpt and position, and conflicts stay in source order.
 
-- Author roles come only from whole attribution statements ("By", "Written
-  by", `Author:`). Neutral package creators keep no role. Production and tool
-  credits never become contributors.
-- Each ISBN keeps its exact substring, an excerpt, its checksum result and an
-  ebook, print, unknown or ambiguous classification. Print and invalid ISBNs
-  stay as evidence but are never sent as ebook inputs.
-- Front and rear values stay distinct claims with their excerpt and position.
-  Position adds no authority; conflicts stay in source order.
-
-Across all passes there are at most nine content opens, 9 MiB of expanded
-content, 786,432 projected characters, 150,000 nodes and 80 claims. Package and
-opening limits are terminal. A rear-pass limit keeps what was admitted and
-records the `rear_resource_limit` reason.
-
-Every report lists each supported local field in fixed order with one state:
-`valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped` or
-`inapplicable`, plus per-source states. These are summaries, not a ranking.
+Every report lists each supported local field in fixed order with one state
+(`valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped` or
+`inapplicable`) plus per-source states. These are summaries, not a ranking.
 
 ### Audiobook evidence
 
@@ -167,13 +143,13 @@ tracks keep both values; disagreeing ASINs each get a discovery lane.
 An audiobook holding one EPUB (a supplementary ebook) records it in
 `companion`: identity, digest, and the title, creator, ISBN and publisher the
 EPUB inspector read. These corroborate the work but are never the recording's
-own claims. An unreadable EPUB keeps only its identity. Changing the EPUB makes
-the report stale. Other reports have a null `companion`.
+own claims. An unreadable EPUB keeps only its identity, and changing the EPUB
+makes the report stale. Other reports have a null `companion`.
 
 ### Media health
 
-The evidence view states what is wrong with the media as typed observations,
-separate from claims. None names a field or can become a proposal.
+Media health is a set of typed observations, separate from claims. None names
+a field or can become a proposal.
 
 | Observation | Expectation it checks |
 | --- | --- |
@@ -194,11 +170,11 @@ separate from claims. None names a field or can become a proposal.
 The last four come from headers only; no sample is decoded
 ([ADR-0074](../architecture/decisions/0074-headers-only-media-health-facts.md)).
 ISO common encryption is invisible to the probe, so nothing is said about it.
-A chapter mismatch is stated only where identity was settled by chapters.
-A shortfall is stated once per edition, and not at all if another provider
-compared the same edition and found none. No observation refuses an item.
-Where the evidence needed is absent the section says nothing, so an empty
-section is not an all-clear.
+A chapter mismatch is stated only
+where identity was settled by chapters. A shortfall is stated once per
+edition, and not at all if another provider compared the same edition and
+found none. No observation refuses an item. Where the evidence needed is
+absent the section says nothing, so an empty section is not an all-clear.
 
 ## Provider discovery
 
@@ -212,9 +188,9 @@ source.
 ### Ebook lanes
 
 Each distinct checksum-valid ISBN family becomes one lane; ISBN-10 and ISBN-13
-forms share it. A target with one complete title and author set adds one work
-lane. More than eight ISBN families is `query_limit_exceeded` and sends
-nothing.
+forms share it, and print and invalid ISBNs are never sent as ebook inputs. A
+target with one complete title and author set adds one work lane. More than
+eight ISBN families is `query_limit_exceeded` and sends nothing.
 
 A work candidate is admitted only with one exact normalized title, the complete
 ordered authors, one provider work identity, and no translation, adaptation or
@@ -246,7 +222,7 @@ lookup and record `insufficient_input` for an ASIN-only plan.
 
 An ASIN from the item's own tags, sidecar or path is this recording's
 identifier, so its answers keep edition scope as returned. Every fed ASIN
-(carried, promoted, asserted or hint) obtains evidence and never settles
+(carried, promoted, asserted or hint) obtains evidence but never settles
 identity by itself: it admits only through the runtime gate below, and an
 answer naming another work keeps only its ASIN and leaves no proposal.
 
@@ -312,10 +288,9 @@ where the exact band found nothing.
 - Band productions admit only on an audiobook plan's asserted work lane, inside
   the tight band of a single runtime, with no language or format conflict. The
   band-first and corroborated rules below apply on Audible's asserted lane
-  only. A title
-  production needs the product's own series to state what the rung stripped. A
-  local title with a variant or format term (dramatised, abridged, unabridged,
-  full cast, radio and similar) never admits.
+  only. A title production needs the product's own series to state what the
+  rung stripped. A local title with a variant or format term (dramatised,
+  abridged, unabridged, full cast, radio and similar) never admits.
 - **Band-first:** if several products admit, one is in the tight band and the
   rest are outside the loose band, the tight one is kept unless it conflicts.
 - **Corroborated:** if nothing admits on any lane, one product may admit when
@@ -348,10 +323,11 @@ Report validation re-derives all of these from the report's own claims.
 
 ### Provider limits
 
-Each provider's lanes share one client and byte envelope. In a preparation each
-provider gets a 20-second share of the item's 60-second deadline, so one slow
-provider does not stop the others. Retries, ladder rungs and narrowing count
-inside each provider's ceilings.
+Each provider's lanes share one client and byte envelope, and retries, ladder
+rungs and narrowing count inside each provider's ceilings. The per-item
+deadline is in [time limits](provider-recovery.md#time-limits); request pacing
+and rate-limit holds are in
+[the retry schedule](provider-recovery.md#retry-schedule).
 
 | Provider | Limits |
 | --- | --- |
@@ -362,18 +338,13 @@ inside each provider's ceilings.
 | Open Library | 1 transport retry per request, 4 per observation; 49 attempts |
 | iTunes Search | ebook work lanes only; 5 rows; 6 distinct candidates overflow |
 
-Google Books, Hardcover, Inventaire and Open Library space request starts one
-second apart. A Google burst response holds later Google requests until its
-deadline; held work is rate-limited, not a miss. See
-[provider recovery](provider-recovery.md). The optional Google Books API key
-appears in no report, log or artifact.
-
 - **Hardcover.** An HTTP 200 with a GraphQL `errors` envelope is `unavailable`
   (`provider_declared_error`). `Genre` maps to genre; `Mood` and
   `ContentWarning` to tag. An unlabelled creator is never author evidence
   alone.
 - **Google Books.** The work relation is `unresolved`; none is invented.
-  Descriptions use the inert `google-books-html-visible-text-v1` projection.
+  Descriptions use the inert Google Books visible-text projection. The
+  optional API key appears in no report, log or artifact.
 - **Open Library.** A closed allowlist of rich evidence is kept; subjects stay
   neutral, not genres.
 - **AudioSilo.** A 404 is `empty_no_match`, not a failure.
@@ -383,7 +354,7 @@ record shape or identity fails the whole record. One provider restating a
 candidate differently is `malformed`. Diagnostics hold only category, stage,
 retryability and a saturating count — never values, bodies or credentials.
 Failed, throttled or deadline-stopped dispatches write value-free `provider_*`
-stderr lines; see [observability](observability.md).
+stderr lines ([observability](observability.md)).
 
 ### Dates, titles and creators
 
@@ -398,13 +369,12 @@ stderr lines; see [observability](observability.md).
 - A provider title or subtitle with a control or format character (such as
   U+200B) is a value-free `malformed` claim; over-long text is `oversized`.
   Safe Unicode is kept exactly and never stripped into agreement.
-- Creator agreement needs the complete ordered same-role set.
-- Fuzzy matching, token subsets, rank and repeated queries never create
-  agreement.
+- Creator agreement needs the complete ordered same-role set. Fuzzy matching,
+  token subsets, rank and repeated queries never create agreement.
 
 ### Covers
 
-The current Audiobookshelf cover is fetched first, within the same 60-second
+The current Audiobookshelf cover is fetched first, within the item's 60-second
 window. Besides it and one declared EPUB cover, cover-enabled providers add at
 most eight sources, four per provider. A provider cover is admitted only for a
 work or edition that provider observed; anything else is refused before
@@ -414,11 +384,8 @@ fetched, behind its own `cover_enabled` switch, and that cover stays evidence.
 
 ## After the report
 
-An ebook, or an audiobook whose report admitted a recording, becomes a review
-case
-([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md));
-decisions go through the guarded write path
-([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
+An ebook, or an audiobook whose report admitted a recording, goes on to a
+[ProposalSet](proposal-set.md) and a [review case](review-case.md).
 
 An audiobook with no admitted recording completes as `evidence_only`. It stays
 browsable, and its library row links to a read-only evidence view. This is not
@@ -433,10 +400,8 @@ mean no recording exists. Check the provider statuses and the title, author and
 ASIN. If runtime disagrees, check the edition, track grouping and completeness.
 Retry only when an input or provider condition has changed.
 
-If settlement cannot commit, **Preparation stopped** keeps the last durable
-progress and leaves Library books available. Restart the service to resume;
-refresh and Scan cannot clear it. See [observability](observability.md) and
-[ADR-0078](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md).
+If settlement cannot commit, preparation stops; see
+[Preparation stopped](observability.md#preparation-stopped).
 
 ## Replay and identity
 
@@ -445,10 +410,8 @@ provider's `accessed_at`, captured at its first real request (`null` if none
 was sent). Reopening returns the same bytes and contacts nothing. A new
 observation creates a new immutable report even when the facts are unchanged;
 only the current pointer moves. Replay rechecks every invariant above from the
-stored report.
-
-Conflicting package and full-work evidence is left for owner review. Reports
-from earlier schemas cannot be replayed; do not relabel or rewrite them.
+stored report. Reports from earlier schemas cannot be replayed; do not relabel
+or rewrite them.
 
 Policy preview replays exact-current reports without changing them; see
 [automation policy](../product/automation-policy.md#policy-preview).

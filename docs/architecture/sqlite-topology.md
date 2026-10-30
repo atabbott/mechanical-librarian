@@ -437,13 +437,14 @@ read-only. How recovery runs is in
 
 ## Catalogue database
 
-`/data/catalogue.sqlite3` holds the `catalogue-v2` schema: a schema marker,
-numbered generations with at most one current, and up to 10,000 entries per
-generation. A refresh takes the write lock with a zero busy timeout, so a
-second concurrent refresh returns busy instead of waiting. A new generation is
-published in one transaction, and the previous one stays readable until then.
-The catalogue is regenerable and need not be backed up. See
-[Current book catalogue](../operations/catalogue.md).
+`/data/catalogue.sqlite3` holds the catalogue schema
+([current versions](../reference/compatibility.md#current-versions)): a schema
+marker, numbered generations with at most one current, and up to 10,000
+entries per generation. A refresh takes the write lock with a zero busy
+timeout, so a second concurrent refresh returns busy instead of waiting. A new
+generation is published in one transaction, and the previous one stays
+readable until then. The catalogue is regenerable and need not be backed up.
+See [Current book catalogue](../operations/catalogue.md).
 
 ## Changing the topology
 

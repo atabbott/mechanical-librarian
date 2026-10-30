@@ -257,21 +257,23 @@ The Mend-hosted Renovate GitHub App proposes updates within
 - **Schedule.** New branches start in one weekly window (before 6am Monday,
   Europe/London). Branches behind `main` rebase and requalify any time.
 - **Release age.** Ordinary releases wait seven days. Node, Python and uv
-  images carry no release dates, so they are proposed at the first window. Vulnerability alerts skip the
-  schedule and take the lowest fixed version, but follow the same merge policy.
+  images carry no release dates, so they are proposed at the first window.
+  Vulnerability alerts skip the schedule and take the lowest fixed version,
+  but follow the same auto-merge policy.
 - **Limits.** At most five open branches and pull requests, and two new pull
   requests per hour. Renovate opens each pull request at once so the gate runs;
   opening it never authorises a merge.
 - **Groups.** Each of Node, Python, uv and npm has one group across all its
   declarations, and parity tests refuse a partial update.
 - **Auto-merge.** Every managed update class, including lockfile maintenance,
-  auto-merges by squash, except a new Node major, a new Python minor or major,
-  or a replacement. Those need Dependency Dashboard approval and merge by hand.
-- **Merging.** The default-branch ruleset requires a pull request current with
-  `main` and every gate check. Renovate has no bypass and cannot write to
-  `main`. A failing update stays open for a manual fix; gates are never
-  weakened to admit one. [Slice delivery](slice-delivery.md) covers the
-  `renovate[bot]` exemption from the closing-issue rule.
+  requests squash auto-merge, except a new Node major, a new Python minor or
+  major, or a replacement. Those need Dependency Dashboard approval and do not
+  auto-merge.
+
+[Delivery and merging](slice-delivery.md#renovate-platform-auto-merge-exception)
+says what an auto-merge must still pass, and
+[work management](work-management.md#pull-requests-and-tracking) says why
+Renovate pull requests carry no closing issue.
 
 New or replacement dependencies, compatibility-policy changes, the Python
 range, and the FFmpeg and contained-reviewer bundles are manual tracked work.
@@ -289,10 +291,11 @@ and vulnerability alerts, and may create branches, commits, issues and pull
 requests and request auto-merge. It gets no credential, production data or
 deployment or registry secret; all dependencies are public.
 
-Beyond the merge policy above:
+Beyond the update policy above:
 
-- only the uv, npm, Dockerfile and GitHub Actions managers are enabled, plus
-  one regex manager for the gate's OSV scanner image;
+- only the `pep621` (Python, with `uv.lock`), `npm`, `dockerfile` and
+  `github-actions` managers are enabled, plus one `custom.regex` manager for
+  the gate's OSV scanner image;
 - Renovate pull requests get no Actions secrets or deployment authority;
 - the gate scans `uv.lock` against OSV on every pull request and push to
   `main` (see the scanning boundary in

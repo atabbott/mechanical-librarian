@@ -70,11 +70,10 @@ for the next request, or keeps the old one if preparation fails.
 
 Background work runs as threads in the same process:
 
-- **Review preparation.** A supervisor runs two fixed lanes. It scans each
-  configured library on first start, then every
-  `review.library_polling_interval_seconds` (default 900) after a successful
-  scan, and on the owner's **Scan now** or **Retry**. The lanes also prepare
-  cover considerations and description advice, and drive provider recovery.
+- **Review preparation.** Two fixed lanes scan each configured library on a
+  schedule and on the owner's request, prepare each work's review package,
+  cover considerations and description advice, and drive provider recovery
+  ([preparation](../operations/review-case.md#preparation)).
 - **Guarded application.** One loop claims and executes guarded field effects
   and their cleanup obligations. A decision or preparation event wakes it at
   once; otherwise it checks every two seconds.
@@ -122,16 +121,17 @@ file binding, transactions, crash recovery and caches are in
 
 ### Browser workspace
 
-The five workspace routes (`/library`, `/attention`, `/policy`, `/activity`,
-`/settings`) share one React shell built from the exact OpenAPI document;
-`/login` is server-rendered. React owns presentation state, TanStack Router
-owns route and search state, and TanStack Query owns server reads. One HTTP
-module in `frontend/src/api/` maps transport types and handles CSRF renewal,
-build identity and expired sessions. A server-sent stream carries only
-invalidations (topic, optional case identity, sequence); the page then
-refetches over HTTP. FastAPI is the only server and the only authority. Node
-exists only in build stages; the image ships the built assets, not frontend
-source ([ADR-0043](decisions/0043-reproducible-react-browser-platform.md),
+The workspace destinations, Library (with Attention and work detail), Policy,
+Activity and Settings, share one React shell built from the exact OpenAPI
+document; `/login` is server-rendered. React owns presentation state,
+TanStack Router owns route and search state, and TanStack Query owns server
+reads. One HTTP module in `frontend/src/api/` maps transport types and
+handles CSRF renewal, build identity and expired sessions. A server-sent
+stream carries only invalidations (topic, optional case identity, sequence);
+the page then refetches over HTTP. FastAPI is the only server and the only
+authority. Node exists only in build stages; the image ships the built
+assets, not frontend source
+([ADR-0043](decisions/0043-reproducible-react-browser-platform.md),
 [ADR-0044](decisions/0044-activate-persistent-react-workspace.md)).
 
 ## Data flow

@@ -11,8 +11,9 @@ The evidence and decision records follow these rules:
 - **Closed vocabularies.** Every state, outcome, reason and kind is a fixed
   enumeration. An unknown value is refused, never mapped to a default.
 - **Content-addressed identity.** A report, ProposalSet, case or decision ID
-  is a digest of its canonical JSON (compact, key-sorted UTF-8). Replaying the same inputs gives the same
-  bytes and the same ID, so there is no separate idempotency mechanism.
+  is a digest of its canonical JSON (compact, key-sorted UTF-8). Replaying
+  the same inputs gives the same bytes and the same ID, so there is no
+  separate idempotency mechanism.
 - **Immutable records, small mutable state.** Reports, ProposalSets, cases and
   decisions never change. Mutable state is limited to current pointers,
   settings and policy, preparation progress, field-effect operations and
@@ -147,26 +148,22 @@ either, it completes as evidence only. See
 
 ## Review preparation
 
-Preparation is the only mutable workflow over these records. A scan covers one
-configured connection and library and has a closed state: `queued`,
-`discovering`, `processing`, `completed` or `completed_with_failures`, with
-checked, total, ready and blocked counts. Each eligible item becomes one work
-row that advances through extraction, provider, proposal, admission and
-projection stages, bound to its source revision, file identity and producer
-fingerprint.
+Preparation is the only mutable workflow over these records. A scan covers
+one configured connection and library. Its state is `queued`, `discovering`,
+`processing`, `completed` or `completed_with_failures`, and it reports
+checked, total, ready and blocked counts.
 
-- An unchanged work is reused; a changed source or producer restarts at
-  extraction; a partial work resumes at its first missing stage.
-- Claims are persisted before work. Restart returns running claims to
-  `queued` and invents no result.
-- Library and Attention read one current review package pointer per work. A
-  successor package replaces it atomically; failed or stale work never moves
-  it. A work that fails before any package exists is shown separately with
-  recovery guidance and has no case.
-- Missing or newly ineligible items are tombstoned or retired only after the
-  whole scan succeeds.
-- A library added in Settings joins scans once the new runtime is published,
-  and waits visibly while preparation is paused.
+Each eligible item becomes one work row, bound to its source revision, file
+identity and producer fingerprint. The row advances through the stages
+`extraction`, `provider`, `proposal`, `admission` and `projection` to
+`complete`. Its state is `queued`, `delayed`, `running`, `complete`, `failed`
+or `stale`, and a complete row's outcome is `case`, `no_case` or
+`evidence_only`. Library and Attention read one current review package
+pointer per work.
+
+When preparation runs, how it publishes packages and how it recovers after
+a failure or restart are in
+[preparation](../operations/review-case.md#preparation).
 
 Rationale: [ADR-0031](decisions/0031-persisted-review-preparation.md),
 [ADR-0078](decisions/0078-preparation-claim-and-crash-recovery.md).
@@ -178,11 +175,11 @@ Rationale: [ADR-0031](decisions/0031-persisted-review-preparation.md),
 A `HumanDecision` is one immutable owner fact for one case, proposal and
 destination. Its outcome is `accept` (a retained alternative), `keep_current`,
 `owner_entered` (typed text for title, subtitle or publisher, or an in-order
-genre subset), `withdraw` (the field is undecided again) or `reject`, which only a cover's
-"no action" records. Choosing an earlier value again is a new decision. The
-latest decision for a case and destination counts unless it is a withdrawal.
-Covers and descriptions have their own decision lineages and cannot be
-withdrawn this way
+genre subset), `withdraw` (the field is undecided again) or `reject`, which
+only a cover's "no action" records. Choosing an earlier value again is a new
+decision. The latest decision for a case and destination counts unless it is
+a withdrawal. Covers and descriptions have their own decision lineages and
+cannot be withdrawn this way
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
 ### Policy and automatic decisions
@@ -244,9 +241,9 @@ A `FieldEffectOperation` moves through a closed state machine:
 `verified`, `superseded` and `abandoned` are terminal. `stale` is terminal
 too, except that a plan staled by an unavailable connection becomes
 `superseded` if its authority or consent is withdrawn. Such a plan is planned
-again after a healthy probe, at most three times per decision. An operation makes at most three attempts.
-Each transition is recorded as an append-only event that Activity reads.
-The guards each claim rechecks are in
+again after a healthy probe, at most three times per decision. An operation
+makes at most three attempts. Each transition is recorded as an append-only
+event that Activity reads. The guards each claim rechecks are in
 [security](security.md#consent-and-guarded-effects); rationale is in
 [ADR-0037](decisions/0037-origin-neutral-guarded-field-effects.md) and
 [ADR-0071](decisions/0071-book-media-guarded-application.md).

@@ -12,11 +12,9 @@ Every live document is listed here or linked from a page listed here.
 - [Upgrades](operations/upgrades.md)
 - [Observability](operations/observability.md)
 - [Provider recovery](operations/provider-recovery.md)
-- [Cold-start report](operations/cold-start-report.md)
 
 How the pipeline prepares each work, stage by stage:
 [catalogue](operations/catalogue.md),
-[ebook evidence batches](operations/ebook-evidence-batches.md),
 [metadata report](operations/metadata-report.md),
 [ProposalSet](operations/proposal-set.md) and
 [review cases](operations/review-case.md).
@@ -29,7 +27,6 @@ How the pipeline prepares each work, stage by stage:
 - [Review HTTP API](reference/review-openapi-v1.json) (generated)
 - [Compatibility and clean-state rules](reference/compatibility.md)
 - [Glossary](reference/glossary.md)
-- [F38 contributor-display qualification manifest](reference/f38-contributor-display-qualification-manifest-v1.json)
 
 ## Product
 
@@ -37,7 +34,7 @@ How the pipeline prepares each work, stage by stage:
 - [Roadmap](product/roadmap.md)
 - [Review experience](product/review-experience.md)
 - [Automation policy](product/automation-policy.md) and
-  [rich-metadata qualification](product/rich-metadata-qualification.md)
+  [qualification records](product/rich-metadata-qualification.md)
 - [Opening-ebook evidence](product/opening-ebook-evidence.md) and
   [opening-audio evidence](product/opening-audio-evidence.md)
 - [Future reviewer backends](product/future-reviewer-backends.md)
@@ -64,6 +61,8 @@ How the pipeline prepares each work, stage by stage:
 - [Delivery and merging](development/slice-delivery.md)
 - [Release engineering](development/release-engineering.md)
 - [Contributor workbench](development/contributor-workbench.md),
+  [ebook evidence batches](operations/ebook-evidence-batches.md),
+  [cold-start report](operations/cold-start-report.md),
   [provider evidence replay](development/provider-evidence-replay.md),
   [reviewer cost measurement](development/reviewer-cost-measurement.md) and
   [recoverability qualification](development/recoverability-qualification.md)

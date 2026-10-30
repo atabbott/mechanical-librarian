@@ -67,13 +67,12 @@ as `gh pr checks --watch` or `gh run watch` as the model-facing wait.
 
 ## Product contract
 
-One self-contained container beside an existing library; Audiobookshelf first;
-supported service APIs only, never a direct database edit; read-only media
-mounts; AI reviewers with no credential or write authority; no unattended
-destructive work; and consent, backup readiness, plan validation, optimistic
-concurrency, read-back verification and durable audit records before any write.
-[PRODUCT.md](PRODUCT.md) is the single product-boundary statement and states
-each of those once.
+[PRODUCT.md](PRODUCT.md) is the single product-boundary statement. Never break
+these invariants: supported service APIs only, never a direct database edit;
+read-only media mounts; AI reviewers without credentials or write authority;
+no unattended destructive work; and no write without consent, backup readiness,
+plan validation, optimistic concurrency, read-back verification and a durable
+audit record.
 
 ## Architecture rules
 
@@ -140,24 +139,13 @@ Run the static architecture-boundary test whenever imports or packages move.
 
 ## Change requirements
 
-Ready pull requests normally require a supported closing reference to an open
-repository issue. Only spelling, formatting, broken-link, or comment-only
-cleanup with no material impact may use the maintainer-applied exact
-`tracking-exempt` label plus visible prose under one top-level
-`Tracking exemption` heading. Never use the exemption for executable behavior,
-dependencies or lockfiles, build/CI/workflow, release, configuration,
-migration, security, architecture, governance, product-contract, or
-delivery-plan changes.
-
-Renovate-authored dependency pull requests are the sole automation exception
-to that tracking rule. They require neither an issue nor the
-`tracking-exempt` label because `.github/renovate.json` is their maintainer-
-reviewed authority boundary. They remain subject to the documented dependency
-update policy and exact-head qualification. Only the managed version updates explicitly
-enabled there may use GitHub-native pull-request auto-merge after all required
-checks pass. Every other Renovate pull request requires the ordinary connector
-review and maintainer-owned merge controller; no other bot or human-authored
-pull request inherits this exception.
+Every ready pull request closes an open issue, except under the narrow
+exemption in
+[work management](docs/development/work-management.md#pull-requests-and-tracking).
+Pull requests authored by `renovate[bot]` need neither; they follow
+[dependencies](docs/development/dependencies.md) and the
+[Renovate auto-merge exception](docs/development/slice-delivery.md#renovate-platform-auto-merge-exception),
+which no other pull request inherits.
 
 Every change must include the smallest appropriate combination of:
 
@@ -186,25 +174,13 @@ beside the ones that are maintainer-manual.
 
 ## Functional slice delivery
 
-New product functionality is delivered as one functional slice per explicitly
-promoted, assigned `Ready` tracker: a vertical, observable outcome delivered as
-one pull request or as ordered independently safe increments, each started from
-current `main` and reviewed and qualified at its exact head. `Deliver slice
-<ID>`, and its synonym `Deliver and merge slice <ID>`, is standing authority for
-that bounded transaction and for nothing beyond it: no bypass, force push,
-administrative merge, weakened safety, release, or production-service use.
-
-Everything else -- fixes, audit corrections, security work, documentation,
-tooling, dependency-only changes, maintenance, and genuinely standalone tickets
--- uses a focused `fix/`, `docs/`, `chore/`, or `feature/` branch and one
-ticket-level pull request. Do not create a slice tracker to rename one of those.
-
-- The trusted merge controller, its validators, and its evidence remain
-  maintainer-owned and ignored under `.codex/**`;
-  [delivery and merging](docs/development/slice-delivery.md) owns the complete
-  workflow, including selection and the `Unassigned backlog` boundary, which
-  increment closes which ticket, recovery from a partly merged slice, and the
-  merge boundary. GitHub milestones hold the planned order.
+[Delivery and merging](docs/development/slice-delivery.md) owns the slice and
+focused-change workflows. `Deliver slice <ID>`, or
+`Deliver and merge slice <ID>`, authorises only the bounded transaction it
+describes there: never a bypass, force push, administrative merge, weakened
+safety, release or production-service use. The merge
+controller and its validators are maintainer-owned under the ignored
+`.codex/**`.
 
 ## Documentation
 

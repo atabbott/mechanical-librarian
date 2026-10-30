@@ -5,10 +5,10 @@ Audiobookshelf book libraries. Review preparation refreshes it before building
 [metadata reports](metadata-report.md), and every later stage checks its items
 against it.
 
-The `RefreshCurrentCatalogue` operation accepts only `config-v9`, reads no
-provider credential and never writes to the target or media. Contributors can
-run it as the `catalogue-refresh` scenario, and read it with `catalogue-list`
-and `catalogue-get`, from the
+The `RefreshCurrentCatalogue` operation accepts only the current file-mode
+configuration, reads no provider credential and never writes to the target or
+media. Contributors can run it as the `catalogue-refresh` scenario, and read
+it with `catalogue-list` and `catalogue-get`, from the
 [contributor workbench](../development/contributor-workbench.md).
 
 ## Generations
@@ -24,9 +24,10 @@ and `catalogue-get`, from the
 - A configuration change makes the catalogue report `catalogue requires
   refresh`; it never adapts a current generation silently.
 
-The database accepts only the current `catalogue-v2` schema. A different or
-tampered schema fails closed; create a clean database
-([compatibility](../reference/compatibility.md)).
+The database accepts only its exact current schema
+([current versions](../reference/compatibility.md#current-versions)). A
+different or tampered schema fails closed; create a clean database
+([clean-state rule](../reference/compatibility.md#the-clean-state-rule)).
 
 ## Entries
 

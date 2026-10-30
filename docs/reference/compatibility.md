@@ -1,27 +1,29 @@
 # Compatibility
 
-Mechanical Librarian is pre-release. Every database, report, configuration and
-internal document accepts only two states: absent, or its exact current
-version. Anything else is refused at startup before any change is made. This
-build has no migration, import, conversion, adoption or downgrade. When a build
-changes a persisted shape, the owner does a clean rebuild, and
+Mechanical Librarian is pre-release. This page lists what the current build
+supports and the exact versions it accepts. Support terms are in
+[SUPPORT.md](../../SUPPORT.md).
+
+## The clean-state rule
+
+Every database, report, configuration and internal document accepts only two
+states: absent, or its exact current version. This build has no migration,
+import, conversion, adoption or downgrade. When a build changes a persisted
+shape, the owner does a clean rebuild, and
 [Upgrades](../operations/upgrades.md) says how.
 [ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md) records
 the rationale, and lets a future schema change ship one exact-predecessor
-adoption instead; the changelog says when one does.
-
-This page lists what the current build supports and the exact versions it
-accepts. Support terms are in [SUPPORT.md](../../SUPPORT.md).
-
-## The clean-state rule
+adoption of reconstructible derived data instead. Startup never runs it; the
+owner runs it offline, and the changelog says when one ships.
 
 - **Absent or exact.** Each store opens only when it is absent or at its
   exact current schema. An absent store is created fresh; in store mode the
   application database is created only on an empty `/data` volume, by
-  first-run setup. An earlier or later schema, an extra object, altered SQL, an unknown vocabulary member or a failed integrity
-  check stops startup without touching the file. How open-time admission works
-  is in [Schema admission](../architecture/security.md#schema-admission); the
-  stores themselves are in [SQLite topology](../architecture/sqlite-topology.md).
+  first-run setup. An earlier or later schema, an extra object, altered SQL,
+  an unknown vocabulary member or a failed integrity check stops startup
+  without touching the file. How open-time admission works is in
+  [Schema admission](../architecture/security.md#schema-admission); the stores
+  themselves are in [SQLite topology](../architecture/sqlite-topology.md).
 - **Documents are checked too.** Guarded-write documents (operations, plans,
   consents, actions, cleanup and events) and their matching columns are
   validated canonically before the database opens. Other stored documents are
@@ -85,6 +87,8 @@ refused.
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
 | `review-case-v2` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
+| `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
+| `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v9` | The deterministic decision packet |
 | `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v23` |
 | `deterministic-shadow-decision-policy-v23` | The shadow decision policy |

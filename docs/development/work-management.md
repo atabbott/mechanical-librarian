@@ -1,11 +1,10 @@
 # Work Management
 
 GitHub issues and milestones track all work, and they are where to follow
-progress. The maintainer's private GitHub Project adds the planning fields
-below.
-Issues link to the product, architecture and reference documents that govern
-behaviour rather than copying them. Questions, support and loose ideas belong
-in Discussions; accepted, bounded work becomes an issue.
+progress. The maintainer's GitHub Project is a private planning board that
+adds the fields below. Issues link to the product, architecture and reference
+documents that govern behaviour rather than copying them. Questions, support
+and loose ideas belong in Discussions; accepted, bounded work becomes an issue.
 [Delivery and merging](slice-delivery.md) covers branches and pull requests.
 
 ## Work kinds
@@ -107,14 +106,21 @@ and bugs use `fix/<issue>-<slug>` and include the reproduction, root cause and
 regression evidence. Private security work uses a repository security advisory,
 not a public issue.
 
-Only spelling, formatting, broken-link or comment-only cleanup may skip the
-issue: a maintainer applies the exact `tracking-exempt` label and the pull
-request explains why under a `Tracking exemption` heading. Anything touching
-behaviour, dependencies, CI, configuration, security, architecture, governance,
-the product contract or the delivery plan needs an issue.
+Apart from Renovate updates, only spelling, formatting, broken-link or
+comment-only cleanup may skip the issue: a maintainer applies the exact
+`tracking-exempt` label and the pull request explains why under a
+`Tracking exemption` heading. Anything else touching behaviour, dependencies,
+CI, configuration, security, architecture, governance, the product contract or
+the delivery plan needs an issue.
 
-Renovate pull requests are authorised by `.github/renovate.json` instead and
-need neither; see [dependencies](dependencies.md).
+Pull requests authored by `renovate[bot]` need neither a closing issue nor
+the `tracking-exempt` label, because `.github/renovate.json` bounds what they
+may change. The exemption is bound to that author: a dependency change made by
+anyone else is tracked work.
+[Dependencies](dependencies.md#automated-updates) says which updates Renovate
+proposes, and
+[delivery and merging](slice-delivery.md#renovate-platform-auto-merge-exception)
+says how they merge.
 
 New issues and pull requests are added to the Project when created.
 Automation never changes priority, risk or release scope from AI-generated

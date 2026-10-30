@@ -78,7 +78,8 @@ or identity authority and do not change title election or the owner's
 choices.
 
 **Titles and roles.** A chapter heading never becomes a book title because it
-appears early. Author roles come only from whole attribution statements.
+appears early. Author roles come only from whole attribution statements, and
+a package creator with no stated role keeps no role.
 Supported MARC relators map to controlled roles, and multiple roles stay on
 their contributor. Book-producer (`bkp`) and other production, conversion,
 scanning, software, retailer and workflow credits become typed contextual

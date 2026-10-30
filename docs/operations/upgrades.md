@@ -1,10 +1,8 @@
 # Upgrades
 
-Mechanical Librarian is pre-release and never migrates state. Each store opens
-only when it is absent or exactly current; anything else stops startup without
-being changed. So an upgrade either starts normally, or tells you which store
-needs a clean rebuild. The rule and the current versions are in
-[Compatibility](../reference/compatibility.md).
+Mechanical Librarian is pre-release: an upgrade either starts normally or
+refuses a store that needs a clean rebuild, under the rule in
+[Compatibility](../reference/compatibility.md#the-clean-state-rule).
 
 [CHANGELOG.md](../../CHANGELOG.md) marks every change that needs one with
 **Clean rebuild required.** Read the entries between your build and the new
@@ -83,7 +81,7 @@ Some refusals affect one store only. Fix only that store.
 
 | Refused | What to do |
 | --- | --- |
-| Session database (`/data/private/review-sessions.sqlite`) | Stop the container, move the file aside, restart. Every browser signs in again; nothing else changes. |
+| Session database (`/data/private/review-sessions.sqlite`) | Follow [Session database refused](backups-and-recovery.md#session-database-refused). |
 | Incomplete first-run setup state | Start setup again on an empty `/data` volume. |
 | Configuration document | Replace it with the current version (`config-v9` or `review-bootstrap-v2`). No conversion is provided. |
 | Catalogue (`/data/catalogue.sqlite3`) or provider-recovery database (`/data/private/provider-recovery.sqlite`) | Stop the container, move the file aside, restart. A fresh store is created; the next refresh rebuilds the catalogue. Pending provider recovery jobs, retry backoff and their history are lost. |
@@ -117,7 +115,3 @@ upgrade-specific cases:
 `scripts/qualification_state_bridge.py` is a maintainer tool for private test
 state, not an upgrade path. It accepts only one exact retained test schema and
 targets a frozen, older contract.
-
-Post-release migration and restore is tracked in
-[#57](https://github.com/atabbott/mechanical-librarian/issues/57). Until then,
-the clean rebuild above is the only upgrade path when a store changes.

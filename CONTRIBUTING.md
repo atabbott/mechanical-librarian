@@ -70,6 +70,19 @@ right and the tool is wrong, inline and with a reason:
 result = handler()  # type: ignore[arg-type]  # reason: <why this is sound>
 ```
 
+The fast tier compares two committed references with the code and fails when
+either drifts. After a review API change, regenerate the OpenAPI document from
+the repository root, then rerun the frontend checks, whose API types come from
+it. After a configuration model change, regenerate the configuration schema:
+
+```text
+uv run python scripts/generate_review_openapi.py
+uv run python scripts/generate_configuration_schema.py
+```
+
+They rewrite `docs/reference/review-openapi-v1.json` and
+`docs/reference/config-v9.schema.json`; commit the result with the change.
+
 When the dependency graph changes, update `pyproject.toml` and `uv.lock`
 together, and add the dependency's grant to
 [dependencies](docs/development/dependencies.md). The
