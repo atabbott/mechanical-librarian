@@ -16,8 +16,7 @@ Everything else is reference, read when the work reaches it and not before.
 [Security and threat model](docs/architecture/security.md) is the authority for
 any change touching credentials, network access, parsers, AI inputs, writes,
 backups, authentication, or upgrades.
-[Functional slice delivery](docs/development/slice-delivery.md) and
-[exact-head merging](docs/development/exact-head-merging.md) govern how a change
+[Delivery and merging](docs/development/slice-delivery.md) governs how a change
 is delivered and merged; [the delivery-slice plan](docs/product/delivery-slices.md)
 is the ordered ledger of what is planned, not a rulebook.
 [Dependencies](docs/development/dependencies.md),
@@ -164,7 +163,7 @@ pull request inherits this exception.
 Every change must include the smallest appropriate combination of:
 
 - tests proving behavior and failure handling;
-- documentation updates;
+- documentation updates, as described under Documentation below;
 - for persisted-schema changes before the first production release, enforce
   ADR-0013: declare `clean rebuild required` or deliver one code-defined
   exact-predecessor adoption plan in the same issue and pull request. Ordinary
@@ -202,18 +201,31 @@ tooling, dependency-only changes, maintenance, and genuinely standalone tickets
 ticket-level pull request. Do not create a slice tracker to rename one of those.
 
 - The trusted merge controller, its validators, and its evidence remain
-  maintainer-owned and ignored under `.codex/**`; its gates, receipt
-  contracts, parser bounds, and the residual
-  `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED` risk it accepts are stated in
-  [exact-head merging](docs/development/exact-head-merging.md).
-- [Functional slice delivery](docs/development/slice-delivery.md) owns the
-  complete workflow: selection and the `Unassigned backlog` boundary, the
-  dependency a slice may introduce without a separate permission ticket, which
-  increment closes which ticket, partial-transaction recovery, and when a small
-  addition may leave the slice workflow after the initial build. The ordered
+  maintainer-owned and ignored under `.codex/**`;
+  [delivery and merging](docs/development/slice-delivery.md) owns the complete
+  workflow, including selection and the `Unassigned backlog` boundary, which
+  increment closes which ticket, recovery from a partly merged slice, and the
+  merge boundary. The ordered
   [delivery-slice plan](docs/product/delivery-slices.md) is the planned ledger.
-  Governance, urgent incident, and private security exceptions follow the narrow
-  rules in the delivery workflow and do not redefine normal product delivery.
+
+## Documentation
+
+Documentation describes the product as it is now, and keeping it current is
+part of every change, not a follow-up:
+
+- Update the documents your change makes stale in the same pull request: the
+  operations, reference or product page that describes the behaviour, the
+  changelog, and, when a milestone opens, closes or is reordered, the README
+  status and the roadmap.
+- Edit in place. State what is true now and delete what stopped being true;
+  git history, the changelog, issues and pull requests keep the record. Do not
+  add dated narrative, delivery history, or review history to a living
+  document.
+- Keep documents short and link to the authoritative page rather than
+  repeating it. A document nobody needs any more is deleted.
+
+[Documentation standards](docs/development/documentation-standards.md) has the
+details.
 
 ## Repository hygiene
 

@@ -352,4 +352,4 @@ provider, production-access, or write violations. The full aggregate selection,
 confusion, unknown-rate, hypothesis, latency, repeatability, recovery,
 agreement, and interpretation
 record is in
-[semantic cover corpus readiness](semantic-cover-corpus-readiness.md).
+[semantic cover corpus readiness](https://github.com/atabbott/mechanical-librarian/blob/858789a80217ccfc69c279ad42efe25cf286a9f4/docs/development/semantic-cover-corpus-readiness.md).

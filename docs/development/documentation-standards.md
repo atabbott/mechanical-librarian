@@ -1,157 +1,72 @@
 # Documentation Standards
 
-## Principle
+Documentation describes the product as it is now. Incorrect documentation is a
+bug.
 
-Documentation is versioned product behavior. Incorrect documentation is a bug.
+## Keep it current
 
-## Authoritative locations
+Every pull request updates the documentation its change makes stale, in the
+same pull request:
 
-- `README.md`: product identity, status, goals, and navigation.
-- `docs/product/`: outcomes, scope, and roadmap.
-- `docs/architecture/`: boundaries, models, and threat analysis.
-- `docs/architecture/decisions/`: durable decisions and consequences.
-- `docs/development/`: contribution, testing, quality, and release practices.
-- `docs/operations/`: deployment, backup, recovery, upgrade, and diagnosis.
-- `docs/reference/`: exact configuration, state, API, and vocabulary contracts.
-- `CHANGELOG.md`: user-visible changes, one outcome per top-level bullet in at
-  most six lines with its issue reference.
+- behaviour an owner or operator sees: the operations guide, reference page or
+  product contract that describes it, and the [changelog](../../CHANGELOG.md);
+- configuration, persisted state or API: the reference page, and the generated
+  schema where there is one;
+- a durable architectural decision: a new or superseding ADR;
+- a security boundary: the [threat model](../architecture/security.md);
+- a milestone opening, closing or being reordered: the README status and the
+  [roadmap](../product/roadmap.md).
 
-## Authority and lifecycle
+Update a document in place. Say what is true now, and delete what stopped
+being true; git history, the changelog, issues and pull requests already keep
+the record of how it got there. Do not add dated narrative, delivery history,
+issue arithmetic or review history to a living document.
 
-Current installed behavior is defined by the README current-status section and
-the operations, reference, and generated contracts it links. Delivery slices
-own milestone outcomes and historical exit boundaries; the roadmap summarizes
-them but does not override them. Accepted ADRs preserve their decision boundary,
-with later evolution recorded explicitly. Historical and future plans cannot
-grant current behavior.
+ADRs are the exception: an accepted ADR keeps its decision text, and a later
+change supersedes or amends it.
 
-## Writing rules
+## Where things live
 
-- Lead with the outcome or governing rule.
-- Use precise nouns from the domain vocabulary.
-- Distinguish current behavior, planned behavior, examples, and historical
-  context.
-- State defaults, prerequisites, side effects, and stop conditions.
-- Never include real credentials, domains, personal paths, library titles, or
-  production identifiers.
-- Commands must be safe to copy, declare placeholders, and avoid secrets on the
+- `README.md`: what the product is, its status, and where to go next.
+- `PRODUCT.md`: the product boundary.
+- `docs/product/`: scope, roadmap and product contracts.
+- `docs/operations/`: running, backing up, recovering and upgrading.
+- `docs/reference/`: exact configuration, API, state and vocabulary.
+- `docs/architecture/`: structure, security, privacy and decisions.
+- `docs/development/`: how the project is built, tested and delivered.
+- `CHANGELOG.md`: one bullet per user-visible outcome, at most six lines, with
+  its issue reference.
+
+Every live document is listed in, or reachable from, [the index](../README.md).
+A document that is no longer needed is deleted.
+
+## Writing
+
+- Lead with the answer or the rule. Keep documents short; link to the
+  authoritative page instead of repeating it.
+- Write for a reader without issue or chat context.
+- Say plainly what is current and what is planned.
+- State defaults, prerequisites, side effects and stop conditions.
+- Commands are safe to copy, mark placeholders, and keep secrets off the
   command line.
-- Link to the authoritative rule instead of duplicating it.
-- Use diagrams only where relationships are materially clearer than prose.
-- Add alternative text or textual explanation for diagrams.
+- Never include real credentials, domains, personal paths, library titles or
+  production identifiers.
+- Write every link inline, as `[text](path.md)`.
 
-For a substantial new document or rewrite, choose one primary shape before
-writing:
+## What CI checks
 
-- a tutorial helps a reader learn by completing a guided result;
-- a how-to gives an experienced reader steps to a goal;
-- reference states exact facts, options, limits, and errors for lookup; and
-- explanation develops understanding of one bounded question or decision.
-
-Split and link when combining those shapes would obscure the reader's task.
-Write instructions as direct commands, put applicable conditions before the
-action, and put the common case before exceptions. Use present-tense active
-sentences where the actor matters. Keep one instruction or thought in a
-sentence when combining them creates ambiguity. Repeat a noun instead of using
-an unclear pronoun, keep `only` or `not` beside the words they modify, and keep
-articles or connecting words that make a sentence parse only one way. Prefer
-plain words and real symbols; remove filler without making the prose cryptic.
-
-## Change rules
-
-- Behavior changes update documentation in the same pull request.
-- Persisted or API contract changes update reference docs. Before the first
-  production release, use ADR-0013 clean-schema handling and declare a clean
-  rebuild or same-change exact-predecessor derived-object adoption; migration
-  and compatibility notes require a named post-release obligation.
-- Architectural changes add or supersede an ADR.
-- Security boundary changes update the threat model.
-- Deployment changes update installation, upgrade, backup, and rollback docs.
-- Deprecated behavior includes replacement guidance and removal timing.
-
-## Verification
-
-Documentation is checked where a test binds a document to the thing it
-describes, and nowhere else. What merging proves today:
-
-- every live document under `docs/` is reachable from `docs/README.md`,
-  directly or transitively, so the list that claims to hold every live document
-  cannot silently stop holding one;
-- every relative link in a live document resolves to a path that exists, and
-  every link is written in a form the checker can read;
-- every file in `docs/architecture/decisions/` has a row in that directory's
-  index, every index row names a file that is there, and every row's declared
-  number is the number of the file it links to;
-- no two ADRs share a number;
-- every direct dependency `pyproject.toml` declares carries an authority grant
-  in `docs/development/dependencies.md`, and no grant outlives the dependency
-  it covers;
-- the generated `docs/reference/review-openapi-v1.json` matches the routes, and
-  `docs/reference/config-v9.schema.json` matches the configuration model;
-- `docs/examples/synthetic-config.json` is executable — the CLI tests load it;
-- `CONTRIBUTING.md`'s check table matches `.github/workflows/public-gate.yml`
-  row by row;
-- generating everything leaves the tree clean.
-
-The first four are `scripts/verify_documentation_integrity.py`, which the
-`fast-source` gate job runs and which reproduces from a clean checkout with one
-command:
+`scripts/verify_documentation_integrity.py` runs in the `fast-source` gate job.
+It checks that every document under `docs/` is reachable from `docs/README.md`,
+that every relative link resolves, and that the ADR index and the ADR files
+match one to one with no shared numbers. Run it locally with:
 
 ```text
 uv run python scripts/verify_documentation_integrity.py
 ```
 
-It reads the tree and nothing else — an `http`, `https` or `mailto` target is
-skipped rather than fetched, so the check never needs a network. Its own
-behaviour is proven against fixture corpora in
-`tests/unit/test_documentation_integrity.py`, which also runs it against this
-repository, so the fast tier fails on a corpus defect too. The ADR
-reconciliation is by filename in both directions and never by arithmetic over
-the numbers: a gap in the sequence is a decision that was never written, not a
-missing file.
-
-The fifth is `scripts/verify_dependency_authority.py`, a sibling in the same
-job and the same shape:
-
-```text
-uv run python scripts/verify_dependency_authority.py
-```
-
-It reads `pyproject.toml` and `docs/development/dependencies.md` and nothing
-else. It judges no grant's quality — that a grant exists is machine-checkable,
-that it is true is not — and it reads no lockfile, licence, or transitive
-package, because the document is explicitly about direct dependencies. Its own
-behaviour is proven in `tests/unit/test_dependency_authority.py`, which also
-runs it against this repository.
-
-Write every link target inline, as `[text](path.md)`, optionally with a title.
-Reference-style links — `[text][label]` with a `[label]: path.md` definition
-elsewhere — are reported as findings rather than resolved. Resolving them means
-telling a shortcut reference apart from ordinary bracketed prose, which is a
-Markdown parser rather than a link check, and no document here needs the form.
-Behind both rules sits a residue check: any `](` the checker's own pattern did
-not consume is reported as a link it cannot read. A link form that is silently
-ignored is reach the green result does not have, so no form is ignored.
-
-Still unenforced, and owned by no ticket yet: Markdown style, spell checking,
-duplicate headings, anchor targets inside a document, code-fence contents, ADR
-status metadata, and external links, which would need network access in CI and
-are a deliberate non-goal. For those, a rule stated in prose is enforced by
-review, and prose that is not bound to an artifact can go stale without
-anything failing — which is the argument for pointing at the artifact instead
-of restating it.
-
-Screenshots should be rare, sanitized, and accompanied by durable prose because
-interfaces change faster than contracts.
-
-## Documentation review checklist
-
-- Is the intended reader clear?
-- Does a substantial document have one clear primary shape?
-- Is the documented behavior implemented and tested?
-- Are failure and recovery paths included?
-- Are safety warnings proportionate and actionable?
-- Does the document reveal private information?
-- Is another document already authoritative?
-- Can any instruction or sentence be read in two materially different ways?
-- Will the document still be understandable without issue or chat context?
+The fast tier also checks that the generated OpenAPI and configuration schemas
+match the code, that `docs/examples/synthetic-config.json` loads, that every
+direct dependency has a grant in [dependencies](dependencies.md), and that the
+check table in [CONTRIBUTING.md](../../CONTRIBUTING.md#what-merging-proves)
+matches the gate workflow. Everything else, including whether prose is still
+true, is checked in review.

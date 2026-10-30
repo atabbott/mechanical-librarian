@@ -107,7 +107,7 @@ The product name is Mechanical Librarian.
 
 ## Evidence on Hand
 
-- `README.md` records the current 0.14.1 interface-fidelity checkpoint and the
+- `README.md` states the current status and the
   present runtime boundary.
 - `docs/product/scope.md` records first-release scope, planned extensions,
   explicit non-goals, the user promise, and the measures of success.

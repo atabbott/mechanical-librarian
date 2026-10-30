@@ -304,7 +304,7 @@ the order it runs in.
 
 All eight jobs, including `dependency-audit`, are required by the strict default-
 branch ruleset. Managed Renovate version updates use the bounded
-[platform auto-merge exception](exact-head-merging.md#renovate-platform-auto-merge-exception).
+[platform auto-merge exception](slice-delivery.md#renovate-platform-auto-merge-exception).
 Other public CI results are necessary but are not merge authority. The maintainer-owned
 exact-head controller and its tracking reconciliation remain authoritative, and
 neither is a GitHub workflow: `public-gate.yml` is the only workflow this

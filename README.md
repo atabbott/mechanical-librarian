@@ -1,121 +1,67 @@
 # Mechanical Librarian
 
-Mechanical Librarian is a self-hosted, evidence-first metadata curator for
-ebook and audiobook libraries. The project is pre-release; there is no
-published production image or supported release. Target writes remain disabled
-until an owner explicitly grants library-scoped consent and every guarded
-effect gate passes.
+Mechanical Librarian keeps the metadata and covers in a self-hosted ebook and
+audiobook library correct. It runs as one container beside
+[Audiobookshelf](https://www.audiobookshelf.org/). It reads the library and the
+book files, gathers evidence from public catalogues, decides each field from
+that evidence, and asks the owner only where a person's judgement is likely to
+help.
 
-## Current checkpoint
+It is evidence-first rather than AI-first. Every proposed value carries the
+evidence behind it. Routine decisions follow deterministic, qualified rules.
+Nothing is written to the library until the owner grants consent for that
+library, and every write goes through Audiobookshelf's own API and is read back
+to confirm it.
 
-The 0.22.0 configuration and first-run checkpoint runs one authenticated owner
-workspace. The owner presents the setup claim token the container prints and
-keeps under `/data/private`, creates the owner password, connects Audiobookshelf,
-selects book libraries and optional metadata providers, verifies read-only
-mounts, optionally configures one cover reviewer, and starts preparation
-without restarting the container. Optional description advice has its own engine
-selection and cleanup preferences; automatic application starts off and all
-authored text remains marked as advised. Settings is a
-primary workspace destination, and store-managed changes take effect as soon as
-they are saved; deploy-managed TLS, listener, proxy, and
-mount values remain outside browser authority. The workspace prepares exact-current
-reports, ProposalSets, and review cases in the background, presents Library,
-Attention, detail, Policy, and Activity through one packaged React shell, and
-records immutable human decisions. Qualified policy categories may produce
-deterministic decision-only automatic outcomes without model dispatch. Target
-effects require explicit consent, backup readiness, field-local exact-current
-plan validation, supported-service API writes, read-back verification, and
-durable audit/recovery state. Audiobookshelf has no target-side compare-and-swap:
-a same-field update can be lost between the final authoritative pre-read and the
-write request, so read-back reconciliation handles refusal, ambiguity, drift,
-or disagreement rather than promising generic optimistic concurrency. Media
-mounts remain read-only.
+## Status
 
-Contributor-only catalogue, batch, evidence, proposal, case, deterministic
-preview, and contained-reviewer scenarios remain available through the typed
-source workbench against disposable or explicitly approved private test state.
-They are not installed runtime commands and cannot bridge to production targets.
+**Pre-release.** There is no published image or supported release yet. You
+can build and run it from source, but each checkpoint may require a clean
+rebuild of its state (see the [changelog](CHANGELOG.md)).
 
-Ordinary startup supports only absent or exact-current pre-release state. Every
-earlier database, manifest, configuration schema, or retired command is
-rejected rather than interpreted and the application state needs a clean
-rebuild ([upgrades](docs/operations/upgrades.md)).
+What works today:
 
-The owner may continue without a reviewer or select exactly one engine for
-`cover_observation`: contained Codex device sign-in or an owner-supplied
-write-only OpenRouter key and exact model ID. Reviews remain advisory and never
-receive target credentials or write authority. OpenRouter sends bounded cover
-previews to its fixed API origin and the selected provider; owners should check
-current tier, capability, cost, and data-use terms. `openai/gpt-4o-mini` is the
-single paid recommendation qualified on the delivered real-cover corpus. The
-displayed free catalogue candidate remains capability-only and unqualified;
-owners may instead enter any valid provider-local model ID.
+- Guided first run in the browser: claim the install, connect
+  Audiobookshelf, choose libraries and metadata providers.
+- Background preparation of every ebook and audiobook: local evidence from
+  EPUB packages and audio files, plus catalogue evidence from Hardcover, Open
+  Library, Inventaire and Google Books for ebooks, and Audible, Audnexus,
+  iTunes and AudioSilo for audiobooks.
+- One owner workspace with five views: Library, Attention (the fields that
+  need a decision), work detail, Policy and Activity.
+- Automatic decisions for qualified field categories, with every outcome
+  recorded in history.
+- Guarded writes to Audiobookshelf. Each write needs library consent, backup
+  readiness, an exact-current plan, and read-back verification.
+- An optional AI cover reviewer (Codex or an OpenRouter model) and optional
+  description advice. Reviewers are advisory only and never receive library
+  credentials.
 
-The installed command surface contains the authenticated `review-serve`
-workspace, single-policy `policy-preview`, owner-directed `cover-review`, and
-read-only guarded-history `review-activity` commands. The generic contributor
-workbench remains excluded from the wheel and container; the installed cover
-flow uses only its bounded observer contract and deterministic policy.
-The authenticated Library, Attention, review-detail, Policy, and Activity URLs
-share one persistent packaged React workspace; FastAPI retains every session,
-currentness, policy, effect, persistence, and mutation decision, and `/login`
-remains server-rendered.
+What comes next is tracked as
+[GitHub milestones](https://github.com/atabbott/mechanical-librarian/milestones)
+and summarised in the [roadmap](docs/product/roadmap.md). The next
+checkpoints improve audiobook matching, cover choice and series handling, and
+lead to the 1.0.0 first public release.
 
-Library keeps every current work discoverable while Attention leads with fields
-that benefit from an owner decision. Review detail records the selected current
-or specific proposed value immediately, without generic outcome controls or a
-separate submit step. Policy is a semantic notebook, and Activity is the calm
-consent, guarded-work, history, and recovery ledger. The five surfaces share one
-responsive editorial language at desktop and compact widths in light and dark
-themes. See the [0.14.1 interface-fidelity reconciliation](docs/development/0-14-1-interface-fidelity.md)
-for the protected-reference boundary and cumulative qualification contract.
+## Running it
 
-See the [catalogue guide](docs/operations/catalogue.md),
-[foreground batch guide](docs/operations/ebook-evidence-batches.md),
-[metadata report guide](docs/operations/metadata-report.md),
-[ProposalSet guide](docs/operations/proposal-set.md), [review-case guide](docs/operations/review-case.md),
-[contributor workbench](docs/development/contributor-workbench.md), and
-[documentation index](docs/README.md).
+Build the image and follow the [deployment guide](docs/operations/deployment.md).
+In short: prepare `review-bootstrap.json` from the
+[example](docs/examples/review-bootstrap.json), add your media folders as
+read-only mounts, run `docker compose up --build`, and open `http://localhost:8080`.
+The container prints a setup token that you need for first-run setup.
 
-The active authenticated-browser source is maintained under `frontend/`. Its
-exact source checks require Node 24.21.0 and npm 11.19.0: run
-`npm ci --ignore-scripts`, then `npm run typecheck`, `npm run lint`, `npm test`,
-and `npm run build` from that directory. Each of those four commands
-regenerates the DTOs first, so `npm run generate` is needed only when you want
-the generated types on their own. `npm run lint` also checks Prettier
-formatting for `frontend/src`; `npm run format` rewrites it. Generated DTOs,
-compiled assets, source maps, `node_modules`, and Node itself do not belong in
-source or the runtime container.
+Media mounts stay read-only, and the product never edits Audiobookshelf's
+database directly.
 
-## Product direction
+## Documentation
 
-One self-contained container beside an existing library; Audiobookshelf first;
-supported service APIs only, never a direct database edit; read-only media
-mounts; AI reviewers with no credential or write authority; no unattended
-destructive work. [PRODUCT.md](PRODUCT.md) is the single product-boundary
-statement, and [scope](docs/product/scope.md) records what the first release
-admits and refuses.
+- [PRODUCT.md](PRODUCT.md): what the product is for and the boundaries it keeps.
+- [Documentation index](docs/README.md): operations, reference, architecture
+  and decisions.
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to build, test and propose changes.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability.
 
-Do not use real library databases, copyrighted book contents, personal
-domains, tokens, or unredacted reports in issues, tests, or pull requests.
+## Licence
 
-## Contributing and licence
-
-Development and review expectations are in [CONTRIBUTING.md](CONTRIBUTING.md).
-Mechanical Librarian is licensed under [AGPL-3.0-or-later](LICENSE).
-
-### Third-party components
-
-The repository also carries a few third-party works under their own licences:
-
-- **Inter** typeface, shipped in the review workspace: OFL-1.1, see
-  [LICENSES/Inter-OFL-1.1.txt](LICENSES/Inter-OFL-1.1.txt).
-- **Contained-reviewer seccomp profile**, a modified copy of the Moby Profiles
-  default seccomp profile loaded by the supported Compose file: Apache-2.0, see
-  [config/seccomp/](config/seccomp/README.md).
-- **DejaVu Sans Bold** subset, used only by browser tests and never shipped in
-  the package or container: Bitstream Vera and Arev font licences, see
-  [tests/browser/fonts/LICENSE](tests/browser/fonts/LICENSE).
-
-[Dependencies](docs/development/dependencies.md) records their provenance and
-checksums.
+[AGPL-3.0-or-later](LICENSE).

@@ -1,530 +1,121 @@
 # Work Management
 
-GitHub is the authoritative execution tracker for Mechanical Librarian. Product,
-architecture, operations, and reference documents remain authoritative for
-system behavior; issues link to those contracts rather than copying them.
+GitHub issues, milestones and one account-owned GitHub Project track all work.
+Issues link to the product, architecture and reference documents that govern
+behaviour rather than copying them. Questions, support and loose ideas belong
+in Discussions; accepted, bounded work becomes an issue.
+[Delivery and merging](slice-delivery.md) covers branches and pull requests.
 
-## Repository and project model
+## Work kinds
 
-- One repository owned by the initial maintainer's GitHub account contains
-  source, documentation, issues, pull requests, releases, and security
-  advisories.
-- One account-owned GitHub Project contains the implementation backlog and
-  roadmap.
-- The repository and Project remain private during initial development and are
-  made public only after the publication-readiness audit.
-- Discussions contain questions, support, and exploratory ideas. Accepted,
-  bounded work is converted into an issue.
-- Ownership may move to an organization later if contributor governance or
-  project scale justifies it. The transfer must preserve issue, Project,
-  release, security, package, and automation behavior and update this document
-  in the same change.
+The Project's `Work kind` field classifies every issue; do not use type labels.
 
-## Work hierarchy
+- **Epic**: an outcome spanning several independently deliverable issues.
+- **Feature**: a user-visible capability or behaviour change.
+- **Task**: bounded implementation, testing, operations or documentation work.
+- **Defect**: a pre-release failure to meet an accepted contract, closed
+  ticket or qualification gate, including audit findings.
+- **Bug**: behaviour that was delivered and working and now fails in a
+  supported build or workflow.
 
-Use six work kinds:
+Unassessed items are `Unclassified` and cannot become `Ready`. Changing
+between Defect and Bug needs a short comment saying why.
 
-- **Epic**: an outcome spanning multiple independently deliverable issues;
-- **Feature**: a user-visible capability or coherent behavior change;
-- **Task**: bounded implementation, testing, operations, or documentation work;
-- **Defect**: an internally discovered or pre-release nonconformance where the
-  implementation, tests, documentation, or delivered ticket fails an accepted
-  contract or acceptance criterion; and
-- **Bug**: behavior previously treated as delivered and working that fails in a
-  supported build or observable user/operator workflow.
+## Milestones and checkpoint versioning
 
-Use `Defect` for audit findings such as an incomplete closed ticket, a failed
-qualification gate, or a contract violation found before the affected behavior
-is released as supported. Use `Bug` for regressions and incorrect behavior
-reported against a delivered build. Discovery source does not determine the
-kind: a user may expose a pre-release defect, and an automated test may expose a
-released bug.
+Each milestone is one checkpoint titled `X.Y.Z — Outcome`, and its
+`Target release` option is exactly `X.Y.Z`. Before 1.0.0, completing a
+checkpoint does not publish a release; the maintainer separately decides which
+delivered checkpoint becomes 1.0.0, the first public release.
 
-The initial personal repository uses ordinary GitHub issues because native
-issue types are unavailable. The Project `Work kind` field is authoritative;
-issue forms express submission intent and triage assigns the field. Do not
-create duplicate type labels solely to simulate issue types. If the repository
-moves to an organization later, native issue types may be adopted through a
-reviewed migration while preserving the Defect/Bug distinction where it remains
-useful.
+Before 1.0.0, numbers are `0.MINOR.PATCH`. A milestone holding any Feature or
+Epic takes the next minor; one holding only Defect, Bug and Task work takes the
+next patch. A required clean rebuild does not raise the number; the changelog
+states it. After 1.0.0, semantic versioning applies.
 
-The WP0–WP9 packages in the
-[initial build plan](../product/initial-build-plan.md) remain capability
-ownership and historical architecture references. Their original issue parents
-and constituent forests are closed as superseded and are not current delivery
-tickets. Track current outcomes directly and use native issue dependencies for
-real blocking relationships; do not recreate the old decomposition or encode
-dependency order only in prose or checklists.
+Numbers follow planned delivery order. An unstarted milestone is renumbered
+when it is reordered or when a feature joins a patch milestone; a started or
+closed one keeps its number. A theme with no scheduled position is an
+unnumbered milestone named by its outcome. `Release readiness` holds the
+cross-cutting work that gates 1.0.0. The history was renumbered once, on
+2026-10-22 (#1321); each renamed milestone's description records its former
+number, and older records keep the number they were written with.
 
-The M0–M7 outcome milestones in the [roadmap](../product/roadmap.md) are a
-separate product progression. `WP` always means implementation work package;
-`M` always means product milestone.
+## Deferred and planned outcomes
 
-During pre-release development, numbered milestones before `1.0.0` are internal
-delivery checkpoints. They do not duplicate work
-packages, and completing one does not authorize or imply a tag, GitHub Release,
-supported version, or published release artifact. Milestone exit criteria remain
-authoritative independently of release publication.
-
-The first release publication requires an explicit maintainer decision selecting
-a checkpoint whose genuinely usable functionality provides value to the owner
-or another user, followed by every applicable release gate and
-release-publication gate. That release is `1.0.0`; this policy does not select
-which delivered checkpoint it ships or when. After the first published release,
-maintainers may explicitly designate later milestones as release trains;
-neither that first published release nor checkpoint completion converts later
-milestones automatically.
-
-### Checkpoint versioning
-
-A checkpoint's number states what it delivers. Before `1.0.0`, every number is
-`0.MINOR.PATCH`:
-
-- **Minor:** the milestone holds at least one issue whose `Work kind` is
-  `Feature` or `Epic`. MINOR increments and PATCH resets to 0.
-- **Patch:** the milestone holds only `Defect`, `Bug` and `Task` work. PATCH
-  increments on the latest minor.
-
-Before `1.0.0` a required clean rebuild does not raise the number by itself,
-because no install is supported; the changelog states the rebuild. `1.0.0` is
-the first public release. After it semantic versioning governs: MAJOR when an
-operator must act on a breaking configuration, API or persisted-state change or
-a required rebuild, MINOR for new capability, and PATCH for corrections.
-
-Each number is one milestone titled `X.Y.Z — Outcome`, and its `Target release`
-option is exactly `X.Y.Z`. Numbers follow planned delivery order. An unstarted
-milestone is renumbered when it is reordered or when a feature joins a patch
-milestone; a started or closed milestone keeps its number. A theme with no
-scheduled position is an unnumbered milestone named by its outcome and takes a
-number when it is scheduled. `Release readiness` is the unnumbered milestone for
-cross-cutting work that gates `1.0.0`.
-
-The history was renumbered once, in delivery order, on 2026-10-22 (#1321).
-Living documents use the current numbers. ADRs, changelog entries, dated plans
-and reconciliation records keep the number in force when they were written, and
-each renamed milestone's description records its former number. `0.1.0`
-through `0.10.0` are unchanged.
-
-| Former | Current | Former | Current |
-| --- | --- | --- | --- |
-| 0.10.1 | 0.11.0 | 0.17.0 | 0.22.0 |
-| 0.10.2 | 0.12.0 | 0.18.0 | 0.23.0 |
-| 0.11.0 | 0.13.0 | 0.19.0 | 0.24.0 |
-| 0.12.0 | 0.14.0 | 0.20.0 | 0.25.0 |
-| 0.13.0 | 0.15.0 | 0.21.0 | 0.26.0 |
-| 0.14.0 | 0.16.0 | 0.22.0 | 0.27.0 |
-| 0.14.1 | 0.17.0 | 0.22.1 | 0.27.1 |
-| 0.15.0 | 0.18.0 | 0.22.2 | 0.28.0 |
-| 0.15.1 | 0.19.0 | 0.22.3 | 0.29.0 |
-| 0.15.2 | 0.20.0 | 0.22.4 | 0.29.1 |
-| 0.15.3 | 0.20.1 | 0.22.5 | 0.30.0 |
-| 0.15.4 | 0.21.0 | 0.23.0 | Series and structure |
-| 0.16.0 | 0.21.1 | 1.0.0 | 1.0.0 — First public release |
-| 0.16.1 | 0.21.2 | first-release | Release readiness |
-| 0.16.2 | 0.21.3 | | |
-
-### Unpromoted outcomes and promotion
-
-A deferred outcome is a concise future product outcome retained without a
-delivery commitment. It has all of the following Project state:
-
-- `Work kind: Feature`;
-- `Status: Triaged`;
-- `Delivery slice: Unassigned backlog`; and
-- `Target release: Backlog`.
-
-It has no GitHub milestone and no functional-slice designation. It is neither a
-slice tracker nor a constituent ticket, and it cannot be selected or started.
-Its issue body needs only:
-
-- an observable user or operator outcome;
-- material included and excluded boundaries;
-- known dependencies or unresolved decisions; and
-- enough product context to distinguish it from duplicates.
-
-Do not pre-create implementation design, executable criteria, slice
-constituents, or delivery ceremony for speculative work. Record a material
-safety, privacy, or compatibility constraint when it already bounds the
-outcome, but defer implementation choices until scheduling.
+A deferred outcome is a future product outcome with no delivery commitment.
+Its Project state is `Work kind: Feature`, `Status: Triaged`,
+`Delivery slice: Unassigned backlog` and `Target release: Backlog`. It has no
+GitHub milestone and no functional-slice designation. Its issue body needs only
+an observable user or operator outcome, its material included and excluded
+boundaries, known dependencies or open decisions, and enough context to tell it
+apart from duplicates. Do not write implementation design or constituents for
+speculative work.
 
 A planned but unpromoted outcome reserves a named delivery checkpoint without
-yet becoming a slice. It has:
-
-- `Work kind: Feature`;
-- `Status: Triaged` or `Blocked`, matching its real dependency state;
-- `Delivery slice: Unassigned backlog`;
-- a named `Target release` other than `Backlog`;
-- the matching GitHub milestone; and
-- no functional-slice designation.
-
-It uses the same lightweight issue content as a deferred outcome and is neither
-a slice tracker nor a constituent ticket. Its checkpoint and milestone express
-planning intent only; it cannot be selected or started until explicit
-promotion assigns a slice designation and it satisfies the normal `Ready`
-contract.
+yet becoming a slice. It has `Work kind: Feature`, `Status: Triaged` or
+`Blocked`, `Delivery slice: Unassigned backlog`, a named `Target release` other
+than `Backlog`, and the matching GitHub milestone. It cannot be started.
 
 When an outcome is selected for delivery, explicitly promote the same issue
-into a slice tracker. Assign its stable functional-slice designation, matching
-`Delivery slice` value, target checkpoint and GitHub milestone; then add the
-executable demonstration, acceptance criteria, dependencies, governing
-contracts, proof obligations, and exact closure mapping required for `Ready`.
-Create constituents only for independently valuable supported increments that
-can satisfy and close their own complete criteria. If one activation pull
-request can deliver the outcome, the promoted tracker is the only issue and
-that pull request closes it directly. Promotion is complete only when the
-assigned tracker satisfies the normal `Ready` rules.
-
-### Functional slice trackers
-
-After explicit promotion, a functional slice tracker is the cross-work-package
-outcome and lifecycle unit for new product functionality during the initial
-application build. It is an ordinary issue with a stable slice ID, an
-executable outcome, a demonstration path, any exact constituent tickets it
-intends to close, and slice-level exit criteria. Capability and work-package
-classification remain useful architecture vocabulary, but promotion does not
-require or reopen a historical WP parent issue. A genuine current parent issue,
-when one exists, retains its own lifecycle.
-
-One slice tracker maps to one bounded delivery transaction containing one or
-more independently safe vertical increment pull requests. A new-functionality
-ticket has one primary delivery slice and may close in the first increment that
-satisfies its acceptance criteria in full. Split a ticket whose own criteria
-would otherwise be partially closed across increments before it becomes
-`Ready`. The activation increment closes the slice tracker only after the
-complete supported outcome is demonstrated.
-
-Fixes, audit corrections, security work, documentation, CI and developer
-tooling, dependency-only changes, maintenance, and independently reviewable
-standalone tickets are not slice trackers or slice constituents. They use
-focused branches and ticket-level pull requests. A focused correction may
-block a slice through a native dependency, but it remains independently
-reviewed and merged. A slice may introduce a dependency needed for its
-observable outcome without creating a separate permission ticket.
-
-See [functional slice delivery](slice-delivery.md) for the mandatory branch and
-review workflow and [delivery slices](../product/delivery-slices.md) for the
-ordered product outcomes.
+into a slice tracker: assign its slice ID, `Delivery slice` value, checkpoint
+and milestone, and add the demonstration, acceptance criteria, dependencies,
+governing contracts and closure mapping that `Ready` needs. Create constituents
+only for independently valuable supported increments that can close on their
+own; otherwise the tracker is the only issue.
 
 ## Project fields
 
-### Status
+- **Status:** `Inbox` (not yet assessed), `Triaged` (valid, needs scope or
+  scheduling), `Ready` (specified and unblocked), `In progress`, `In review`,
+  `Blocked` (waiting on a linked dependency or decision), `Done` (verified and
+  closed). Only `Ready` work is started normally.
+- **Priority:** `P0 Critical` (active security, data-loss or integrity
+  incident), `P1 High` (release blocker or major safety gap), `P2 Normal`,
+  `P3 Low`.
+- **Risk:** `Low`, `Medium`, `High` (credentials, parsers, AI inputs, public
+  API, production writes, backups, authentication, upgrades), `Critical`
+  (destructive behaviour, recovery authority, or possible broad silent
+  corruption). Risk sets review depth.
+- **Size:** `XS` to `XL`. Split an `XL` issue before it becomes `Ready`.
+- **Target release:** the checkpoint, or `Backlog`.
+- **Delivery slice:** the slice ID for new functionality, `Cross-slice parent`
+  for a current parent issue, `Unassigned backlog` for unpromoted outcomes, and
+  `Not applicable` for focused changes.
 
-- `Inbox`: newly created and not yet assessed;
-- `Triaged`: valid work that still needs scope or scheduling;
-- `Ready`: sufficiently specified and unblocked;
-- `In progress`: actively being implemented;
-- `In review`: implementation is awaiting review or verification;
-- `Blocked`: cannot progress because a linked dependency or decision is open;
-- `Done`: acceptance criteria are verified and the issue is closed.
+Labels carry only cross-cutting signals: `needs-triage`, `needs-design`,
+`needs-adr`, `good-first-issue`, `help-wanted`, `breaking-change`, `security`,
+and `area:*` ownership labels. Do not create status, priority, risk, size,
+milestone or type labels.
 
-Only `Ready` work may be started normally. Urgent security recovery may follow
-the private advisory process instead.
+## Ready issues
 
-### Priority
+An issue reaching `Ready` states a concrete outcome, its governing document or
+ADR, verifiable acceptance criteria, success and failure behaviour, required
+test layers, documentation and compatibility impact, dependencies, and privacy
+and security considerations proportionate to risk. A Defect or Bug also states
+the affected commit or build, the violated contract, a deterministic
+reproduction, expected and actual behaviour, impact, and the regression
+evidence that will prevent recurrence. A durable decision is recorded in an ADR
+before its implementation issue closes.
 
-- `P0 Critical`: active security, data-loss, or production-integrity incident;
-- `P1 High`: release blocker or major safety/correctness gap;
-- `P2 Normal`: planned product work;
-- `P3 Low`: worthwhile but deferrable improvement.
+## Pull requests and tracking
 
-Priority describes consequence and sequencing, not contributor importance.
-
-### Risk
-
-- `Low`: isolated documentation, presentation, or pure behavior;
-- `Medium`: bounded integration or persistence behavior with established gates;
-- `High`: credentials, parsers, AI inputs, public API, post-release migrations, production
-  writes, backups, authentication, or upgrades;
-- `Critical`: destructive behavior, recovery authority, update trust, or a
-  change capable of broad silent corruption.
-
-### Size
-
-Use `XS`, `S`, `M`, `L`, or `XL` as a relative planning signal. An `XL` issue
-must normally be decomposed before it becomes `Ready`.
-
-### Target release and work package
-
-During pre-release development, the existing `Target release` field groups work
-by its intended delivery checkpoint. Assigning that field does not commit the
-checkpoint to release publication. Work package maps work to WP0–WP9 for
-implementation reporting. A genuine current parent relationship, when present,
-remains authoritative; closed legacy WP parents do not. `Backlog` means that a
-deferred outcome has no selected delivery checkpoint. A planned but unpromoted
-outcome uses a named target release and the matching GitHub milestone while it
-awaits explicit slice promotion.
-
-### Work kind
-
-`Work kind` is the structured classification for `Epic`, `Feature`, `Task`,
-`Defect`, and `Bug`. New or legacy items that have not yet been assessed use
-`Unclassified`; an item cannot move to `Ready` until triage replaces that value.
-
-Work kind does not encode urgency or danger. Priority controls sequencing and
-Risk controls review depth. A low-impact bug can be `P3 Low`; a pre-release
-defect capable of silent corruption can be `P0 Critical` with `Critical` risk.
-
-Changing between `Defect` and `Bug` requires a brief issue comment explaining
-which delivery/support boundary changed or was misunderstood. Reclassification
-does not erase history, reproduction evidence, or linked review findings.
-
-### Delivery slice
-
-`Delivery slice` maps new-functionality work to the primary executable outcome
-and branch that will complete it. Values use the stable IDs in the
-delivery-slice plan plus:
-
-- `Cross-slice parent` for a genuine current parent issue; legacy WP parents
-  remain historical;
-- `Unassigned backlog` for deferred or planned functionality not yet assigned a
-  functional-slice designation; and
-- `Not applicable` for fixes, corrections, security work, documentation,
-  tooling, dependency-only changes, maintenance, and standalone tickets.
-
-`Unassigned backlog` identifies an unpromoted outcome, not a branch, tracker, or
-delivery authorization. `Target release` and milestone distinguish a deferred
-outcome from a planned but unpromoted checkpoint outcome. A new-functionality
-ticket cannot move to `Ready` without an assigned delivery-slice value.
-Non-slice work may move to `Ready` with `Not applicable`. Promoted slice tracker
-issues use their own assigned slice value.
-
-## Labels
-
-Labels describe cross-cutting properties that are unsuitable as structured
-fields:
-
-- workflow signals: `needs-triage`, `needs-design`, `needs-adr`;
-- contribution signals: `good-first-issue`, `help-wanted`;
-- change signals: `breaking-change`, `security`;
-- ownership areas: `area:domain`, `area:application`, `area:adapter`,
-  `area:infrastructure`, `area:api`, `area:web`, `area:operations`,
-  `area:documentation`, and `area:security`.
-
-Do not create status, priority, risk, size, milestone, or issue-type labels.
-
-## Required issue content
-
-Unpromoted outcomes use only the lightweight content defined above. They do not
-meet, and must not be treated as meeting, the following `Ready` contract.
-
-An issue reaching `Ready` must contain:
-
-- a concrete outcome;
-- governing document, ADR, invariant, threat, or parent link;
-- verifiable acceptance criteria;
-- relevant success and failure behavior;
-- required test layers;
-- documentation and compatibility impact;
-- dependencies and clean-schema or, after release, migration/rollback needs; and
-- privacy and security considerations proportionate to risk.
-
-A Defect or Bug additionally requires:
-
-- the affected commit, build, or release when known;
-- the violated contract or previously working behavior;
-- a minimal deterministic reproduction or qualification failure;
-- expected and actual behavior;
-- impact and safe workaround, if any; and
-- the regression test or other evidence required to prevent recurrence.
-
-An issue is not a substitute for an ADR. A durable decision is discussed in an
-issue and recorded in an ADR before the implementation issue closes.
-
-## Views
-
-Maintain these Project views:
-
-- **Triage**: `Inbox` and `Triaged`, filterable by work package and ownership
-  area;
-- **Deferred outcomes**: `Feature`, `Triaged`, `Delivery slice: Unassigned
-  backlog`, and `Target release: Backlog`, with no milestone;
-- **Planned unpromoted outcomes**: `Feature`, `Triaged` or `Blocked`, `Delivery
-  slice: Unassigned backlog`, a named non-Backlog target release, and its
-  matching milestone;
-- **Ready**: unblocked `Ready` work, sorted by priority and risk;
-- **Current**: `In progress`, `In review`, and `Blocked` as a board;
-- **Delivery slices**: new-functionality trackers and mapped tickets grouped by
-  `Delivery slice`, excluding `Not applicable` and `Unassigned backlog`, and
-  ordered by target release and slice ID;
-- **Roadmap**: Epics and Features by work package and target release;
-- **Quality and security**: High or Critical risk plus security-labelled work;
-- **Defects and bugs**: `Defect` and `Bug`, grouped by status and sorted by
-  priority, risk, and age;
-- **Recently completed**: recent `Done` work before automatic archival.
-
-## Automation
-
-Until a repository-scoped auto-add workflow is explicitly configured and
-verified, issue and pull-request creation must add the item to the Project in
-the same operation. Built-in workflows may set new items to `Inbox`, closed
-issues and merged pull requests to `Done`, and archive completed items only
-after their configured behavior has been tested against this Project.
-
-Additional automation may use GitHub Actions and the Projects API, but field
-changes must remain understandable and reversible. Automation never changes
-priority, risk, or release scope based only on issue text generated by AI.
-
-The instruction `Deliver slice <ID>` (or explicit `Deliver and merge slice
-<ID>`) supplies standing authority for that bounded Ready slice transaction.
-It may create, review, qualify, merge, and clean up sequential increment pull
-requests and reconcile their issues and Project items. It does not authorize
-bypasses, force pushes, administrative merges, production access, release
-publication, unrelated tracking changes, or closure of incomplete work. The
-trusted controller, validators, and evidence remain maintainer-owned and
-ignored under `.codex/**`. Its receipt-bound `CLIENT_ENFORCED_FREE_PLAN`
-validation mode identifier remains for evidence compatibility. GitHub Pro's
-active default-branch ruleset independently enforces pull requests and strict
-required checks, while its observations do not become client-side merge
-authority. The controller records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED` on
-every success; exact PR/head/check/review/connector, conditional merge, and
-post-merge verification remain mandatory.
-
-The instruction `Deliver the next slice` selects only the highest-priority
-unblocked `Ready` tracker with an assigned `Delivery slice` value. It ignores
-`Unassigned backlog` outcomes and does not authorize their promotion.
-
-## Pull requests
-
-During the initial application build, new product functionality follows one
-functional slice transaction per tracker. The transaction may use one ready
-pull request or sequential bounded vertical increment pull requests. The slice
-tracker moves to `In progress` when implementation starts and normally remains
-there as non-activation increments merge. Constituent tickets move through
-`In review` and close only when an increment satisfies their complete
-acceptance criteria. The tracker moves to `In review` for the activation
-increment after the complete supported demonstration and exit criteria pass.
-
-Ready slice increment pull requests use GitHub auto-closing references for
-every constituent ticket completed by that increment. Each ready
-non-activation increment must fully satisfy and natively close at least one
-constituent. The activation pull request may satisfy that required closing
-reference with the slice tracker and is the only increment that closes it. If
-an increment cannot meet that boundary, keep it draft and re-slice the
-increment or refine the ticket plan before ready review. The trusted delivery
-controller rejects placeholder, nonexistent, closed, or missing references. A
-horizontal ticket commit alone does not justify a separate ready pull request;
-each increment must be independently safe and vertically demonstrable.
-
-The maintainer-owned controller checks the live raw pull-request body against
-its bounded expected issue set. Its deliberately narrow line scan accepts
-standalone GitHub closing lines, while examples, quotations, fenced or indented
-code, inline code, comments, manual links, nonexistent issues, and closed issues
-do not satisfy it. At least one supported closing reference must resolve to an
-open issue in this repository. The
-case-insensitive keyword vocabulary is `close`, `closes`, `closed`, `fix`,
-`fixes`, `fixed`, `resolve`, `resolves`, and `resolved`. Every recognized closing
-reference in the expected set must remain open at preflight. Cross-repository
-and non-default-branch closing links do not satisfy this repository-local
-control. Draft/ready transitions, labels, and description edits do not trigger
-a remote validator. The controller reads the live body and issue state during
-its dry run and repeats that race-sensitive preflight immediately before the
-conditional merge, so any intervening edit invalidates the evidence.
-
-The narrow exception is trivial cleanup that consists only of spelling,
-formatting, broken-link, or comment-only corrections. Its native authorization
-is the exact maintainer-applied `tracking-exempt` label. Review
-policy also requires visible prose beneath the single top-level `Tracking
-exemption` heading in the pull-request description; that human-facing policy is
-not interpreted by the autonomous controller. The controller has no exemption
-path, so an exempt merge requires separate maintainer handling and diff review.
-
-The exception is unavailable when a change affects executable behavior,
-dependencies or lockfiles, builds, CI or workflows, releases, configuration,
-migrations, security, architecture, governance, the product contract, or the
-delivery plan. Those changes require an open repository issue and a supported
-closing reference. Issue #198 and pull request #196 are material tracked work,
-not examples eligible for the exemption.
-
-Renovate-authored dependency pull requests are separately authorized by the
-maintainer-reviewed `.github/renovate.json` policy and require neither a
-closing issue nor the `tracking-exempt` label. This exception applies only when
-GitHub identifies the pull-request author as `renovate[bot]`; it is not
-transferable through a title, label, branch name, commit author, or human
-account. Renovate pull requests follow the bounded update, qualification,
-review, merge-classification, and recovery rules in
-[dependencies](dependencies.md). Only its admitted managed version updates
-may use GitHub-native auto-merge after strict required checks; all other classes
-retain maintainer merge control. Human-authored dependency changes remain
-material tracked work.
-
-No pull-request-target workflow or workflow token evaluates this policy. The
-trusted controller remains local, candidate-independent, and outside the
-pull-request credential boundary.
-
-This keeps each issue lifecycle aligned with the merge that satisfies it while
-the slice tracker remains open until activation. It does not grant a workflow
-token authority to change priority, risk, or scope. The required branch naming,
-scope, demonstration, review, recovery, and exception rules are in
-[functional slice delivery](slice-delivery.md).
-
-Review findings, including C1 and C2 findings, and CI failures are remediated on
-the same increment branch and pull request. Any new head invalidates the
-affected evidence and repeats exact-head review and qualification. Create a new
-pull request only for a distinct vertical outcome or a separation required by
-security or privacy; a finding count alone never creates a new delivery unit.
-
-### Partially merged slice transactions
-
-Every merged increment is durable progress on `main`; do not revert it merely
-because a later increment is delayed. Keep the slice tracker `In progress`
-unless a concrete external dependency or maintainer decision requires
-`Blocked`. Record the last merged pull request and commit, remaining increments,
-invalidated evidence, and exact restart point on the tracker. Resume from
-current `main`, not from an obsolete branch stack. If the intended outcome must
-change, return the tracker to triage and re-slice openly; never mark a partial
-transaction `Done`.
-
-Fixes, corrections, security work, documentation, tooling, dependency-only
-updates, maintenance, and standalone tickets use one purpose-based branch and
-ticket-level ready pull request. Their issue moves through the same status and
-quality gates without creating a slice tracker. Dependencies required by an
-observable slice remain inside that slice's branch and pull request.
-
-Defects and bugs use `fix/<issue>-<short-slug>`. Their pull requests include the
-pre-fix reproduction, root cause, regression evidence, affected-version scope,
-and any recovery or compatibility impact. Closing a Defect or Bug without a
-regression test requires an explicit reason and alternative durable evidence.
-
-Emergency fixes may create the issue and pull request together. Private
-security work uses a repository security advisory and temporary private fork,
+Every ready pull request closes at least one open issue in this repository with
+a standalone GitHub closing line (`Closes #N`, or `fixes`/`resolves`). Defects
+and bugs use `fix/<issue>-<slug>` and include the reproduction, root cause and
+regression evidence. Private security work uses a repository security advisory,
 not a public issue.
 
-## Triage cadence
+Only spelling, formatting, broken-link or comment-only cleanup may skip the
+issue: a maintainer applies the exact `tracking-exempt` label and the pull
+request explains why under a `Tracking exemption` heading. Anything touching
+behaviour, dependencies, CI, configuration, security, architecture, governance,
+the product contract or the delivery plan needs an issue.
 
-During initial solo development:
+Renovate pull requests are authorised by `.github/renovate.json` instead and
+need neither; see [dependencies](dependencies.md).
 
-- process `Inbox` before selecting new work;
-- replace `Unclassified` with an assessed Work kind before moving work to
-  `Ready`;
-- keep at most one new-functionality slice actively in progress unless it is
-  independently blocked; focused non-slice work may proceed when it does not
-  obscure or destabilize the active slice;
-- review blocked work weekly;
-- update parent Epic status when sub-issue scope changes; and
-- publish a Project status update at each delivery checkpoint.
-
-Checkpoint status reporting records delivery progress and exit-criterion state;
-it is not release-publication activity. Tags, GitHub Releases, supported
-versions, and published release artifacts follow the separate maintainer
-decision and release engineering gates.
-
-The cadence may evolve with the contributor community, but status meanings and
-quality gates must not silently change.
-
-## Private-to-public transition
-
-Treat private development as pre-public, not confidential scratch space.
-Before publication, audit:
-
-- complete Git history, branches, tags, and release assets;
-- issues, pull requests, comments, attachments, and Projects;
-- Actions logs, artifacts, caches, variables, and secrets;
-- repository collaborators, account permissions, future organization transfer
-  settings, and contact details;
-- repository visibility, Project visibility, Discussions, and security
-  reporting settings;
-- licence, attribution, support, governance, and security contacts; and
-- fixtures, screenshots, diagnostics, paths, URLs, and identifiers.
-
-After publication, enable and enforce branch protection, private vulnerability
-reporting, public Discussions, and the supported release policy.
+New issues and pull requests are added to the Project when created.
+Automation never changes priority, risk or release scope from AI-generated
+issue text.
