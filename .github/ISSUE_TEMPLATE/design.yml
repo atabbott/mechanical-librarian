@@ -1,9 +1,8 @@
-name: Design proposal
+name: Design proposal (maintainers)
 description: Propose a durable architecture, security, API, or compatibility decision.
 title: "design: "
 labels:
   - needs-design
-type: Feature
 body:
   - type: markdown
     attributes:

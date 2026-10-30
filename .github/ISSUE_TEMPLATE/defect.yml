@@ -1,4 +1,4 @@
-name: Defect report
+name: Defect report (maintainers)
 description: Record a pre-release or internally discovered failure to meet an accepted contract or criterion.
 title: "defect: "
 labels:
