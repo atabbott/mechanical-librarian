@@ -2043,7 +2043,7 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
 
 
 def _current_audio_report(
-    cited_candidate: str = "audible-product-B08G9PRS1K",
+    cited_candidate: str = "audible-product-B0SYNE7P1K",
     discovery_titles: tuple[AudioDiscoveryTitle, ...] = (),
 ) -> MetadataReport:
     """One current audiobook report exercising retained audio provenance.
@@ -2082,8 +2082,8 @@ def _current_audio_report(
                 MetadataLookup(
                     ProviderQueryKind.ASIN,
                     claims,
-                    work_title="Project Hail Mary",
-                    work_authors=("Andy Weir",),
+                    work_title="Ember Tide Protocol",
+                    work_authors=("Corin Halloway",),
                 ),
             ),
         ),

@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def build_corpus(root: Path) -> None:
-    """Write the smallest corpus that satisfies all four checks.
+    """Write the smallest corpus that satisfies every check.
 
     Every test below starts from a tree that passes, so a finding it then
     asserts is caused by the one defect that test introduced and not by an
@@ -396,3 +396,57 @@ def test_an_index_row_naming_the_wrong_decision_number_is_reported(
         "docs/architecture/decisions/README.md row 0002 names 0003-third.md,"
         " which is ADR 0003",
     )
+
+
+def test_a_heading_naming_an_issue_is_reported(corpus: Path) -> None:
+    (corpus / "docs" / "operations.md").write_text(
+        "# Operations\n\n## Synopsis authority (#1070)\n", encoding="utf-8"
+    )
+
+    findings = checker.integrity_findings(corpus)
+
+    assert len(findings) == 1
+    assert "docs/operations.md has a heading naming an issue" in findings[0]
+
+
+def test_an_issue_reference_in_body_text_or_code_is_not_a_heading(
+    corpus: Path,
+) -> None:
+    (corpus / "docs" / "operations.md").write_text(
+        "# Operations\n\nFollow-up is #24.\n\n```text\n## not a heading (#1)\n```\n",
+        encoding="utf-8",
+    )
+
+    assert checker.integrity_findings(corpus) == ()
+
+
+def test_a_decision_keeps_its_original_headings_and_length(corpus: Path) -> None:
+    decision = corpus / "docs" / "architecture" / "decisions" / "0001-first.md"
+    words = "word " * (checker.WORD_BUDGET + 1)
+    decision.write_text(f"# First\n\n## Context (#12)\n\n{words}\n", encoding="utf-8")
+
+    assert checker.integrity_findings(corpus) == ()
+
+
+def test_a_document_over_the_word_budget_is_reported(corpus: Path) -> None:
+    words = "word " * checker.WORD_BUDGET
+    (corpus / "docs" / "operations.md").write_text(
+        f"# Operations\n\n{words}\n", encoding="utf-8"
+    )
+
+    findings = checker.integrity_findings(corpus)
+
+    assert len(findings) == 1
+    assert "over the 6000-word budget" in findings[0]
+
+
+def test_the_changelog_has_no_word_budget(corpus: Path) -> None:
+    words = "word " * (checker.WORD_BUDGET + 1)
+    (corpus / "CHANGELOG.md").write_text(f"# Changelog\n\n{words}\n", encoding="utf-8")
+    (corpus / "docs" / "README.md").write_text(
+        (corpus / "docs" / "README.md").read_text(encoding="utf-8")
+        + "- [Changelog](../CHANGELOG.md)\n",
+        encoding="utf-8",
+    )
+
+    assert checker.integrity_findings(corpus) == ()

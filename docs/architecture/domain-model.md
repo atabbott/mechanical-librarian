@@ -1,320 +1,259 @@
-# Current pre-release domain model
+# Domain model
 
-## Automatic no-change fact
+The domain layer (`src/mechanical_librarian/domain/`) holds the records the
+product reasons about and the pure rules over them. It performs no I/O. This
+page names each record, what it binds and what it may never do. Field-level
+rules live in the operations guides it links to; the order the records are
+produced in is in the [architecture overview](overview.md#data-flow).
 
-`FieldEffectNoChange` is a closed immutable fact for an automatic candidate
-whose canonical target value is already current. It binds the decision, case,
-report, target fingerprint/version, opaque target identity, timestamp, and a
-content-derived event identity. It contains neither values nor consent,
-capability, authority, or plan material and never authorizes a write.
+The evidence and decision records follow these rules:
 
-## Metadata evidence report
+- **Closed vocabularies.** Every state, outcome, reason and kind is a fixed
+  enumeration. An unknown value is refused, never mapped to a default.
+- **Content-addressed identity.** A report, ProposalSet, case or decision ID
+  is a digest of its canonical JSON (compact, key-sorted UTF-8). Replaying
+  the same inputs gives the same bytes and the same ID, so there is no
+  separate idempotency mechanism.
+- **Immutable records, small mutable state.** Reports, ProposalSets, cases and
+  decisions never change. Mutable state is limited to current pointers,
+  settings and policy, preparation progress, field-effect operations and
+  provider recovery.
+- **Exact current schema.** Each record has one schema version. Records from
+  an earlier development schema are refused, not interpreted
+  ([ADR-0013](decisions/0013-pre-release-clean-schema.md)).
+- **Evidence is not a decision, and a decision is not a write.** Only an owner
+  decision or a qualified automatic decision can lead to a write, and only
+  through a guarded field effect.
 
-`MetadataReport` is one closed typed observation of one explicitly selected
-EPUB. It contains:
+## Catalogue
 
-- target connection, library, item, and the exact ordered state of all 16
-  Audiobookshelf destinations, with one fingerprint binding them all;
-- selected file index, opaque file identity, EPUB format, and content digest;
-- stable source-attributed local field claims with bounded occurrence and, where
-  applicable, rear-spine provenance;
-- a local `candidate` or `no_candidate` status with bounded reasons;
-- independent provider observations with stable input references and zero or
-  more provider-identity-ordered candidates, each with an opaque provider-local
-  work identity distinct from its edition identity and an optional closed,
-  canonical, bounded tuple of provider-specific rich evidence whose occurrence
-  ordinals preserve source order before canonical sorting;
-- bounded ABS, EPUB, and provider cover outcomes with safe typed provenance,
-  artifact facts, and explicit truncation; and
-- one derived ISBN relationship for every local and provider ISBN claim.
+A `CatalogueGeneration` is one complete, bounded observation of every
+configured Audiobookshelf book library: at most 10,000 `CatalogueEntry`
+values, a monotonic generation number and a configuration fingerprint. Each
+entry has the connection, library and item identity, display title and
+authors, separate ebook and audio facets, and one classification: `none`,
+`singular-supported` (one EPUB, or one mounted audio file set) or
+`needs-attention`. Only a `singular-supported` entry carries an opaque file
+identity.
 
-The local field vocabulary is title/subtitle, creator/contributor and controlled
-role, contextual production credit, series/sequence, manifestation publication
-date, other typed date event, publisher/imprint, description, language, and
-contextual subject evidence; typed field states remain evidence, not decisions.
-Edition and rights are not local report-claim kinds: edition identity and
-applicability may contextualize supported evidence, while rights observations
-remain outside the report projection.
+A generation becomes current only when it is complete; the previous one stays
+readable until then. Eligibility is an observation. It grants no authority to
+read media or contact a provider. See [catalogue](../operations/catalogue.md).
 
-Local claims represent the closed field vocabulary. ISBN claims retain the
-observed substring, canonical checksum-valid identifier when available, at
-most 280 characters of directly supporting opening-matter context,
-ebook/print/unknown/ambiguous applicability, and an explicit nonnumeric label
-basis. Invalid, unlabeled, and conflicting-label identifiers remain distinct
-facts; an ISBN-10 is not represented as an observed ISBN-13. Other bounded
-local fields remain source-attributed evidence, never decisions, and preserve
-their admitted source/DOM order and rear-spine provenance where present.
-Source-explicit target-work subtitle, publisher, and imprint claims use the
-same closed kinds for front and rear indicia. Rear claims additionally retain
-their bounded resource identity, spine ordinal, tail slot, marker, and exact
-supporting excerpt. Publisher and imprint remain separate edition-scoped kinds.
-Series and sequence are separate adjacent work-scoped claims: their retained
-order is their correlation, so multiple explicit memberships remain distinct
-and no later layer selects or recombines them.
-Each complete nested or sibling label owns its exact occurrence span without a
-synthetic combined value, while unmatched split labels in the same ancestor
-remain assembled. Repeated or conflicting occurrences are retained without
-source-position authority or automatic resolution.
-An explicitly non-ISBN package scheme or URI owns its digit sequence, so a
-checksum-valid substring within it is not an ISBN fact.
-Local dates retain the exact lexical value and maximum stated `year`, `month`,
-`day`, or `timestamp` precision. The closed event vocabulary keeps selected-
-manifestation publication, work first publication, copyright, creation,
-modification, conversion, and unknown events distinct. Only an explicit
-selected-ebook/edition publication statement is a `publication_date`; the other
-events remain `date_event` evidence for later policy. Signed offsets are
-preserved and are never converted to UTC.
-Provider dates use the same closed event and precision vocabulary. A provider
-manifestation claim additionally retains its lexical and normalized values and
-explicit linkage confidence. Work-first, copyright, modification, and
-unresolved publication-text evidence remain distinct rich facts. Candidate
-edition/work identity and sibling identifier/format facts provide linkage
-context without converting provider assertions into truth.
-Package contributor roles are projected to controlled author, translator,
-illustrator, editor, foreword, designer, photographer, cartographer, adapter,
-or structured-explicit `other` codes. Multiple declared roles remain one
-canonical `+`-delimited role set on the same contributor occurrence. Production
-roles such as exact `bkp` are retained as `contextual_credit`, never as a
-bibliographic contributor or author.
-An explicit package primary-identifier designation is projected as ebook
-applicability only when its value is a valid ISBN. A parser-inferred primary and
-other package ISBNs remain independently provenanced and unlabelled.
+## Metadata report
 
-ISBN relationships use the closed vocabulary `accepted`, `associated`,
-`unrelated`, `invalid`, and `unresolved`. Their basis records explicit ebook
-applicability, same-family package/opening agreement, provider identifier
-agreement, provider-local work correlation, a different provider-local work,
-invalidity, or insufficient context. ISBN-10 and ISBN-13 claims may compare as
-one family without changing either retained observation. Repeated claims remain
-separate relationship entries. Acceptance is claim-local: print, ambiguous,
-conflicting, and inferred-primary occurrences do not inherit another
-same-family occurrence's acceptance. Unlabelled package/opening agreement is
-accepted only when every same-family occurrence is unlabelled and
-non-conflicting. The derived projection contains claim
-references and bounded provider identities, not another copy of observations
-or excerpts, and exact replay rejects a relationship that does not recompute
-from the report's claims and candidates.
+A `MetadataReport` is the immutable, neutral record of one item: one EPUB, or
+one audiobook's set of 1 to 512 `m4b`, `m4a` or `mp3` files. It decides
+nothing. Its contents are specified in
+[metadata report](../operations/metadata-report.md).
 
-Provider lane observations are `disabled`, `insufficient_input`, `candidates`,
-`no_match`, `authentication`, `authorization`, `rate_limited`, `incomplete` (registered work could not be dispatched within the bounded envelope), `unavailable`,
-`malformed`, `oversized`, `candidate_limit_exceeded`, or
-`query_limit_exceeded`. One provider aggregate owns the configured authority,
-canonical candidate set, same-provider convergence across its child lanes, and
-one optional canonical UTC access time captured at the first actual dispatch.
-Absence means the observation reached its typed outcome without provider
-access; aggregation, qualification, persistence, and replay cannot invent or
-refresh the value.
-Candidate claims record
-agreement, disagreement, incompatible, or not-comparable facts against stable
-local claim references. Google Books, Hardcover, Inventaire and Open Library candidates may
-also retain only the closed finite evidence kinds declared by
-`ProviderEvidenceKind`, never arbitrary upstream properties or raw payloads.
-Each evidence item retains its exact bounded value, work/edition scope,
-controlled contributor role where applicable, and pre-canonical
-`source_ordinal`; repeated equal occurrences remain distinct. Invalid optional
-values are excluded rather than represented as evidence. No outcome is a
-decision or winner.
-Provider-local work identity may associate alternate ebook or print ISBNs with
-an accepted identifier, but it cannot corroborate another provider or make an
-unresolved claim accepted.
+**Target.** The report holds all 16 Audiobookshelf destinations (title,
+subtitle, authors, narrators, series, genres, publishedYear, publishedDate,
+publisher, description, isbn, asin, language, explicit, tags, cover). Each
+has a value or one of `missing`, `null`, `empty`, `unloaded`, `malformed` or
+`oversized`. One target fingerprint binds them all, with the opaque file
+identity and content digest of the selected media.
 
-`ProviderQueryKind` records no request, one exact ISBN-family lane, one work
-lane, or a multi-lane discovery aggregate. Every distinct valid ISBN family
-has one opaque canonical lane retaining all triggering local references.
-One work lane is admitted from an exact title and complete ordered
-target-author list alongside any ISBN lanes. It retains work-scoped title,
-authors, series/sequence,
-description, typed taxonomy, first publication, and cover evidence; its
-application filter removes edition claims and fails closed for competing or
-translated/adapted/abridged works.
-An audiobook plan may add one alternative work lane, titled by the first
-surviving entry of `AudioFacts.discovery_titles` and identified by that title
-and its `title_basis`, or carry it alone when the asserted title collapses to a
-recorded series name (#1255). One domain function computes the planned work
-lane payloads for both the plan and report replay. The alternative lane keeps
-only a runtime-corroborated candidate that admits against its own title; it
-grants recording authority and nothing work-only. Discovery titles are query
-text, never a local claim, field result or proposal value.
+**Local claims.** Facts read from the item itself are source-attributed
+`LocalClaim` values of closed kinds (title, subtitle, creator, contributor,
+series and sequence, ISBN, ASIN, publication date, other date events,
+publisher, imprint, description, language, subject, genre, tag, duration and
+others). Each keeps its source, bounded excerpt or provenance, and an
+occurrence ordinal, so repeated and conflicting occurrences stay distinct and
+in source order. Position never adds authority.
 
-Provider covers use exact-edition, related-edition, work, default, or
-truncation designation. Provenance contains only the configured provider,
-opaque work/edition identities, and an allowlist of safe ISBN, language,
-country/publication-place, publisher, date, and format context. The report
-admits at most four source outcomes per provider and eight provider outcomes
-overall. Content-addressed artifact reuse does not discard distinct source
-provenance.
+- Dates keep their exact lexical value, stated precision (`year`, `month`,
+  `day` or `timestamp`) and event. Only an explicit statement about the
+  selected edition is a `publication_date`; copyright, first publication,
+  modification and other events stay `date_event` evidence.
+- Contributor roles come from a closed role vocabulary. Production credits
+  are `contextual_credit`, never a contributor.
+- Each ISBN keeps its observed substring, checksum result and ebook, print,
+  unknown or ambiguous applicability.
 
-Claim references and the report ID are derived from canonical content. Exact
-replay therefore preserves IDs and bytes without an idempotency subsystem.
-Every admitted EPUB occurrence, including identical values, retains source/DOM
-order through a bounded v2 occurrence ordinal in its claim identity.
-The replay guarantee applies within the exact current schema; the domain model
-does not interpret reports from prior or intermediate development schemas.
+What each media pass admits is in
+[opening ebook evidence](../product/opening-ebook-evidence.md) and
+[opening audio evidence](../product/opening-audio-evidence.md).
 
-## Explainable ProposalSet
+**Provider observations.** Each enabled provider contributes one aggregate
+observation built from its lanes (ISBN family, ASIN or work). A lane ends in
+one closed status: `disabled`, `insufficient_input`, `candidates`,
+`no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
+`incomplete`, `malformed`, `oversized`, `candidate_limit_exceeded` or
+`query_limit_exceeded`. Candidates keep a provider-local work identity
+separate from their edition identity. Their claims record `agreement`,
+`disagreement`, `incompatible` or `not_comparable` against local claims, with
+a named comparison method. Extra provider facts are limited to the closed
+`ProviderEvidenceKind` list. No candidate is a winner, and lanes of one
+provider that reach the same work count as one source, never as independent
+corroboration.
 
-`ProposalSet` is the deterministic, content-addressed evaluation of one exact
-`MetadataReport` under `fixed-conservative-v22`. It binds the report ID and
-derived target fingerprint and fixed policy version. Its ordered result tuple
-contains exactly one result for every
-`TargetDestination`.
+An audiobook's `discovery_titles` (folder name, title tag) are
+query text for one alternative work lane. They are never a local claim, a
+field result or a proposal value.
 
-Results use the closed outcome vocabulary `propose_change`,
-`acceptable_choice`, `unresolved_choice`, `keep`, `reject`, `defer`, or
-`ineligible`. A `propose_change` has one selected alternative;
-`acceptable_choice` retains multiple field-policy-acceptable publisher alternatives
-without selecting or declaring a conflict; an `unresolved_choice` retains
-bounded alternatives without a selection because a material contradiction
-remains; `defer`, `reject`, and `ineligible` have no alternative. `keep`
-normally has one preservation alternative and may retain multiple publisher
-alternatives only when current metadata has positive compatible evidence.
-Valid language aliases and regional variants first group by base plus exact
-optional script into one alternative; their original representations remain in
-the immutable report provenance. An alternative contains one bounded typed
-value, its work/edition/cover scope, target assessment, stable evidence
-references, hashed correlation identities, and a closed event/target precision
-for publication candidates. `reject` is reserved for future explicit policy
-rejection; the fixed evaluator never infers deletion or emits it. `keep`
-requires positive preservation evidence and never encodes a replacement. The
-ProposalSet references observations owned by the report rather than copying
-excerpts, provider payloads, cover provenance, URLs, paths, or bytes. Its ID
-is derived from its canonical document rather than serialized in it.
+Work identity is admitted only by the closed transformation table in
+`domain/work_identity.py`. Adapters render its query text but cannot define
+title equivalence. The admitting productions are listed in the
+[glossary](../reference/glossary.md).
 
-The versioned bibliographic relationship projection is separate from that
-result tuple. It enumerates complete compatible title/subtitle/series member
-tuples using existing alternative IDs or exact target-field fingerprints.
-Relationship identity participates in ProposalSet identity and propagates
-unchanged through review admission and deterministic packet replay.
+**ISBN relationships.** Every ISBN claim gets one derived relationship:
+`accepted`, `associated`, `recording_associated`, `unrelated`, `invalid` or
+`unresolved`, with a closed basis. Acceptance is per claim; replay recomputes
+each relationship and rejects one that does not match
+([rules](../product/opening-ebook-evidence.md)).
 
-## ReviewCase admission
+**Covers.** Cover outcomes come from the target, the media and cover-enabled
+providers. Each keeps a closed designation (exact edition, related edition,
+work, default or truncation), safe provenance and artifact facts. Identical
+bytes share one artifact without losing distinct provenance.
 
-An immutable undecided ReviewCase preserves all sixteen ProposalSet results for
-one exact current target lineage. `propose_change`, `acceptable_choice`, and
-`unresolved_choice` are actionable; the remaining results are context, not
-queue work. Cases do not record decisions or write authority.
+**Currentness.** A separate current pointer per target and file names the
+latest report. Moving it never changes an earlier report. Reopening by ID
+returns that exact report.
 
-The pure evaluator has no configuration, provider, network, persistence, or
-write authority. Its fixed rules preserve ordered complete people lists,
-atomic series name/sequence, canonical publication date with derived year
-context, accepted edition-identifier applicability, and cover-gallery completeness. Untyped
-contributor evidence cannot become a partial narrator list, and unresolved
-ISBN applicability defers. Year-only edition evidence remains a year rather
-than becoming a full date. Local work subtitles and exact-edition provider
-subtitles retain their source-appropriate scope. Publication candidates require
-local evidence plus two independent provider authority correlations at their
-selected precision; [ProposalSet operation](../operations/proposal-set.md#publication-candidate-sufficiency)
-states the current admission and precision rules. Populated
-subjective fields are not merged or replaced. Multiple values, weak
-correlation, duplicate connections to one provider authority, malformed/unloaded
-target state, role ambiguity, or incomplete
-cover evidence become unresolved choices, defer, or ineligible rather than
-being silently resolved.
-Publication alternatives preserve the manifestation event and represented
-precision. Two independent exact dates in one month can therefore support one
-month candidate without choosing either day; different months retain only
-their shared year.
-An exact controlled `Unknown` package-metadata creator sentinel remains a
-versioned local claim in the report but is not an author candidate. Other
-creator contexts and nonexact names remain ordinary evidence, and filtering a
-sentinel does not reorder the remaining complete author list.
-There is no score, provider priority, ranking, configurable policy, review, or
-decision concept.
+## ProposalSet
 
-## Owner decision
+A `ProposalSet` is the deterministic evaluation of one exact report under the
+fixed built-in policy version and the resolved owner policy. It holds exactly
+one result per destination, each with one outcome: `propose_change`,
+`acceptable_choice`, `unresolved_choice`, `keep`, `defer`, `reject` or
+`ineligible`. Alternatives carry a bounded value, scope, assessment, evidence
+references and hashed correlation groups; they never copy excerpts, provider
+payloads, URLs, paths or bytes. A separate projection lists the coherent
+title, subtitle and series combinations.
 
-`HumanDecision` (`human-decision-v3`) is one immutable owner fact for one case,
-proposal and destination. Its outcome is `accept` (a retained alternative),
-`keep_current`, historical `reject`, `owner_entered` (owner text for title,
-subtitle or publisher, or an in-order genre subset) or `withdraw` (no value;
-the field is undecided again). Going back to an earlier value is a new
-`owner_entered` row choosing it again. The latest row for a case and
-destination decides it unless it is a withdrawal. A decision is not write authority by itself; the guarded
-effect boundary plans, claims and verifies every write (ADR-0085).
+The evaluator has no configuration, provider, network, persistence or write
+authority. It has no score, ranking or provider priority, and it never infers
+a deletion. Ambiguity becomes `unresolved_choice`, `defer` or `ineligible`,
+never a silent pick. Outcomes and rules are in
+[ProposalSet](../operations/proposal-set.md).
 
-## Current book catalogue
+## Review case
 
-One `CatalogueGeneration` is a bounded current observation across every
-configured Audiobookshelf book library. It is identified by a monotonically
-increasing generation and a deterministic configuration fingerprint and
-contains at most 10,000 `CatalogueEntry` values.
+A `ReviewCase` is the immutable, undecided unit of owner review for one exact
+current target lineage. It binds the ProposalSet, report, target fingerprint
+and file identity, and keeps all 16 results. `propose_change`,
+`acceptable_choice` and `unresolved_choice` are actionable; the others are
+context. A case records no decision and no write authority.
 
-Each entry has the complete connection/library/library-ID/item identity,
-bounded title and author display values, independent ebook and audio facets,
-and one ebook classification: none, singular supported EPUB, or
-needs-attention. Only a singular supported EPUB may carry the opaque file
-identity and mapped read-only path projection required by metadata reporting.
-Catalogue eligibility is an observation, not authority to inspect media or
-contact a provider.
+Each lineage change is an append-only transition: `admitted`, `superseded`,
+`no_case`, `retired` or `tombstoned`. Admitting the same ProposalSet again is
+reported as `replayed` and records nothing new. A newer report makes an
+older case historical without rewriting it. An audiobook whose recording is
+not admitted gets at most a work-only case (series, title, description and
+genre choices, with no automatic authority); with no supported book evidence
+either, it completes as evidence only. See
+[review cases](../operations/review-case.md#audiobook-cases).
 
-Only a completely refreshed generation becomes current. The preceding current
-generation remains readable until the atomic local pointer switch. A generation
-is a bounded observation window rather than a perpetual Audiobookshelf
-snapshot.
+## Review preparation
 
-## Foreground evidence batch
+Preparation is the only mutable workflow over these records. A scan covers
+one configured connection and library. Its state is `queued`, `discovering`,
+`processing`, `completed` or `completed_with_failures`, and it reports
+checked, total, ready and blocked counts.
 
-One `batch-manifest-v5` document freezes an ordered set of exact catalogue
-entries. It binds the current catalogue generation and fingerprint, selected
-file identities, a secret-free report-configuration fingerprint, enabled
-provider names and adapter discriminators, and bounded call maxima. Its content
-digest is its identity.
+Each eligible item becomes one work row, bound to its source revision, file
+identity and producer fingerprint. The row advances through the stages
+`extraction`, `provider`, `proposal`, `admission` and `projection` to
+`complete`. Its state is `queued`, `delayed`, `running`, `complete`, `failed`
+or `stale`, and a complete row's outcome is `case`, `no_case` or
+`evidence_only`. Library and Attention read one current review package
+pointer per work.
 
-The manifest contains no user-facing metadata values, paths, credentials,
-report bodies, progress, attempt, or retry state. `ForegroundBatchRun`
-revalidates the current generation and exact entry before invoking the existing
-metadata report operation serially. Item outcomes plus one final summary are
-streamed to the operator; only the ordinary reports and cover artifacts are
-durable.
+When preparation runs, how it publishes packages and how it recovers after
+a failure or restart are in
+[preparation](../operations/review-case.md#preparation).
 
-If an enabled Open Library provider participates, the manifest may contain only
-an explicit selection of at most five entries. The shared runtime pacer spans
-the whole foreground run and provides request-start spacing without becoming
-durable batch state.
+Rationale: [ADR-0031](decisions/0031-persisted-review-preparation.md),
+[ADR-0078](decisions/0078-preparation-claim-and-crash-recovery.md).
 
-The batch model has no queue, job, worker, scheduler, lease, resume, automatic
-retry, parallelism, proposal, review, decision, or write concept. Manual
-recovery is a fresh manifest and foreground run.
+## Decisions
 
-## Progressive review preparation
+### Owner decisions
 
-A `review-preparation-v1` scan is bounded to one configured connection/library
-pair. It owns mutable operational state only: queued, discovering, processing,
-completed, or completed-with-failures; a checked/total/ready/blocked summary;
-and a coalesced-rescan marker. Each eligible catalogue entry produces one
-opaque work identity and independently advances through extraction,
-provider-completeness, proposal, admission, and read-only projection stages.
-Existing immutable reports,
-ProposalSets, ReviewCases, decisions, and audit transitions remain the semantic
-records.
+A `HumanDecision` is one immutable owner fact for one case, proposal and
+destination. Its outcome is `accept` (a retained alternative), `keep_current`,
+`owner_entered` (typed text for title, subtitle or publisher, or an in-order
+genre subset), `withdraw` (the field is undecided again) or `reject`, which
+only a cover's "no action" records. Choosing an earlier value again is a new
+decision. The latest decision for a case and destination counts unless it is
+a withdrawal. Covers and descriptions have their own decision lineages and
+cannot be withdrawn this way
+([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
-The public Library and Attention snapshots read one current review package
-pointer, not intermediate report or admission pointers. A first generation is
-therefore absent until its read-only projection succeeds; a refresh keeps its
-previous package visible until the successor package atomically replaces it.
-Failed, stale, and restarted work never changes that pointer.
-Non-success provider lanes remain bounded report evidence on the published
-package and are inspectable in Library without becoming Attention. A terminal
-work that has no coherent package is represented separately with safe recovery
-context and cannot create a review case.
+### Policy and automatic decisions
 
-Claims are persisted before work. Restart changes discovering and running
-claims back to queued without inventing a result. When changed configuration
-also resets work to extraction, the authoritative work row witnesses the exact
-presentation cycle and retained stage/outcome until ordinary progress catches
-up; marker and witness are committed and cleared together. Two fixed claimers have no
-library-wide stage barrier, while catalogue publication and each shared
-provider pacer serialize their own global state. A complete enumeration stages
-candidates for either the fixed
-`review-preparation-v1`/`tombstoned`/`absent` transition when an item vanished,
-or `review-preparation-v1`/`retired`/`ineligible` when it remains present but is
-no longer eligible. They are appended only after every work in that scan
-succeeds; partial, stale, or failed scans discard them. Either
-preparation-owned transition permits later exact-current readmission.
-One bounded work row binds the exact source revision, file identity, and
-producer fingerprint. An unchanged later scan reuses its complete state; a
-changed source or producer restarts at extraction, while a durable partial work
-resumes at its first missing stage. At most three discovery generations may
-converge one owner request before changed work remains blocked for another
-request. The model has no accumulated run history, automatic polling, provider
-retry policy, field decision, apply plan, target or media write, or destructive
-operation.
+A `MetadataPolicyProfile` states the owner's intent per field: an option and
+a destination (Automatic, Ask me or Ignore). It evaluates nothing and grants
+nothing by itself. Activating a draft is atomic and retires the current
+cohort, so older proposals become stale
+([ADR-0034](decisions/0034-atomic-policy-generation-cutover.md)).
+
+An `AutomaticDecision` is decision-only: it records a candidate for one
+field, bound to the qualification that allowed that exact option
+([ADR-0036](decisions/0036-qualified-decision-only-automatic-policy.md),
+[ADR-0087](decisions/0087-operation-bound-qualification-authority.md)). When
+the target already holds the chosen value, a `FieldEffectNoChange` fact
+records that instead; it carries no value or authority. In the Preview
+posture, deterministic shadow decisions and outcomes record what policy would
+do without deciding. Which options are qualified is in
+[automation policy](../product/automation-policy.md).
+
+### Cover considerations
+
+A cover consideration is an immutable, owner-facing record over one current
+case. It keeps the report-bound cover packet, the deterministic identity
+classification of each candidate, any advisory visual observation and the
+owner's outcome (keep, select or no action). A retry creates a superseding
+consideration. A `CoverAutomaticDecision` binds automatic cover authority to
+one exact consideration
+([ADR-0049](decisions/0049-owner-confirmed-cover-considerations.md),
+[ADR-0059](decisions/0059-deterministic-cover-election.md)).
+
+### Description advice
+
+A description advice attempt sends deduplicated provider descriptions to the
+selected reviewer and stores one authored candidate. An
+`AuthoredDescriptionDecision` (human or automatic) accepts a stored candidate
+by reference for guarded application. The model chooses nothing; see
+[AI trust boundary](ai-boundary.md).
+
+## Guarded field effects
+
+A `FieldEffectPlan` turns one decision into one destination write. It binds
+the target fingerprint, pre-value, desired value, target version, dependency
+digests, authority, the owner's library-scoped `EffectConsent`, a capability
+digest and an idempotency key. A title change may carry its subtitle as a
+companion so both go in one request.
+
+A `FieldEffectOperation` moves through a closed state machine:
+
+| From | To |
+| --- | --- |
+| `planned` | `claimed`, `superseded`, `stale`, `abandoned` |
+| `claimed` | `applying`, `reconciling`, `retryable`, `stale` |
+| `applying` | `verified`, `reconciling`, `retryable`, `stale` |
+| `reconciling` | `verified`, `retryable`, `stale` |
+| `retryable` | `claimed`; `verified` when a pre-read shows the value already landed; `superseded` when authority or consent is withdrawn; `stale`; `abandoned` |
+| `stale` | `superseded`, only for a plan staled by an unavailable connection |
+
+`verified`, `superseded` and `abandoned` are terminal. `stale` is terminal
+too, except that a plan staled by an unavailable connection becomes
+`superseded` if its authority or consent is withdrawn. Such a plan is planned
+again after a healthy probe, at most three times per decision. An operation
+makes at most three attempts. Each transition is recorded as an append-only
+event that Activity reads. The guards each claim rechecks are in
+[security](security.md#consent-and-guarded-effects); rationale is in
+[ADR-0037](decisions/0037-origin-neutral-guarded-field-effects.md) and
+[ADR-0071](decisions/0071-book-media-guarded-application.md).
+
+## Evidence batch
+
+A `batch-manifest-v5` document freezes an ordered selection of catalogue
+entries for the contributor workbench. It binds the catalogue generation, file
+identities, a secret-free report-configuration fingerprint, the enabled
+providers and call maxima, and its digest is its identity. A run revalidates
+each entry and builds reports one at a time. Only the reports and cover
+artifacts are durable; there is no progress, retry or resume state. See
+[ebook evidence batches](../operations/ebook-evidence-batches.md).

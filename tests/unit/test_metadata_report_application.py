@@ -3394,7 +3394,7 @@ def _dispatched_lane(
                 audiobook_candidate(
                     plan.local_claims,
                     provider="catalogue",
-                    identity="audible-product-B08G9PRS1K",
+                    identity="audible-product-B0SYNE7P1K",
                 ),
             )
             if admitted

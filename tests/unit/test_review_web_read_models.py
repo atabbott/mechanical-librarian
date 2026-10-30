@@ -2550,7 +2550,7 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
     web.repository.browse_without_cases.append(
         asserted_asin_report(
             provider_duration="72000.000",
-            local_asin="B08G9PRS1K",
+            local_asin="B0SYNE7P1K",
             library="ebooks",
             item="item-10",
         )
@@ -2575,7 +2575,7 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
         "16 h 11 min of local audio, 3 h 49 min shorter than the matched edition"
     )
     assert stated["expected"] == "20 h stated by the matched edition"
-    assert stated["cited"][-1] == "audible-product-B08G9PRS1K"
+    assert stated["cited"][-1] == "audible-product-B0SYNE7P1K"
     assert stated["tracks"] == []
 
 
@@ -2602,7 +2602,7 @@ def test_an_audiobook_case_states_its_media_health_beside_its_fields() -> None:
 
     stated = cast(list[dict[str, Any]], detail["media_health"])
     assert [value["kind"] for value in stated] == ["chapter_structure_mismatch"]
-    assert stated[0]["cited"] == ["single_file", "audible-product-B08G9PRS1K"]
+    assert stated[0]["cited"] == ["single_file", "audible-product-B0SYNE7P1K"]
     assert (
         stated[0]["bound"]
         == (AUDIO_HEALTH_BOUNDS[AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH])
@@ -3133,7 +3133,7 @@ def test_chapter_runtime_admission_is_attributed_in_case_and_report(
         assert basis == {
             "basis": "chapter_runtime_and_structure",
             "provider": "catalogue",
-            "candidate": "audible-product-B08G9PRS1K",
+            "candidate": "audible-product-B0SYNE7P1K",
         }
         observation = next(
             p for p in report.providers if p.provider == basis["provider"]
@@ -3487,7 +3487,7 @@ def test_linked_audiobook_identifier_evidence_is_not_duplicated(tmp_path):
             for item in inspector.run(case_id)["fields"]
             if item["destination"] == "asin"
         )
-        assert field["proposed_values"] == [{"kind": "text", "value": "B08G9PRS1K"}]
+        assert field["proposed_values"] == [{"kind": "text", "value": "B0SYNE7P1K"}]
         assert len(field["provenance"]) == 1
         items = [
             item
@@ -3496,7 +3496,7 @@ def test_linked_audiobook_identifier_evidence_is_not_duplicated(tmp_path):
         ]
         assert len(items) == 1
         assert items[0]["role"] == "external_corroboration"
-        assert items[0]["observation"] == "ASIN: B08G9PRS1K"
+        assert items[0]["observation"] == "ASIN: B0SYNE7P1K"
     finally:
         repository.close()
 
@@ -3574,7 +3574,7 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
     assert evidence["role"] == "external_observation"
     assert evidence["destinations"] == ["narrators"]
     assert evidence["observation"] == (
-        "Narrator: Ray Porter. Retained for review only; not an eligible choice. "
+        "Narrator: Ilsa Brandt. Retained for review only; not an eligible choice. "
         "Recording variant conflicts with this item."
         + (" Edition-level detail." if claim.scope is ClaimScope.EDITION else "")
     )
@@ -3658,7 +3658,7 @@ def test_choice_observation_never_repeats_its_label() -> None:
     assert observed("isbn:9780593135204") == "ISBN: 9780593135204"
     # Negative controls: a bare value, and a label that is not the kind.
     assert observed("9780593135204") == "ISBN: 9780593135204"
-    assert observed("ASIN: B08G9PRS1K") == "ISBN: ASIN: B08G9PRS1K"
+    assert observed("ASIN: B0SYNE7P1K") == "ISBN: ASIN: B0SYNE7P1K"
     # A value that is only the label keeps it rather than reading empty.
     assert observed("ISBN:") == "ISBN: ISBN:"
 

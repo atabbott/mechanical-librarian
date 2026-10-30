@@ -10059,8 +10059,8 @@ def test_supported_current_title_conflict_stays_manual_without_suspension(
     "current,operation",
     (
         (None, "fill"),
-        ("Project Hail Mary (Unabridged)", "replace"),
-        ("Project Hail Mary", "preserve"),
+        ("Ember Tide Protocol (Unabridged)", "replace"),
+        ("Ember Tide Protocol", "preserve"),
     ),
 )
 def test_scalar_audiobook_title_persists_without_suspension_and_reopens(
@@ -10130,7 +10130,7 @@ def test_scalar_audiobook_title_persists_without_suspension_and_reopens(
         if operation != "preserve":
             assert repository.field_effect_authority_source(decision)[
                 "decision_value"
-            ] == {"kind": "text", "value": "Project Hail Mary"}
+            ] == {"kind": "text", "value": "Ember Tide Protocol"}
 
 
 @pytest.mark.parametrize("name", ("rich", "isbn", "ebook-asin"))

@@ -285,11 +285,24 @@ def test_builds_the_shipped_container_from_the_exact_revision() -> None:
         workflow,
     )
     # Layers restore from the repository Actions cache; a stage re-runs only
-    # when its inputs change. Base-image freshness is governed by the digest
-    # pins on the Dockerfile's FROM lines, not by `--pull`.
-    assert "cache-from: type=gha" in workflow
-    assert "cache-to: type=gha,mode=max" in workflow
+    # when its inputs change, and only a push to `main` exports them back.
+    # Base-image freshness is governed by the digest pins on the Dockerfile's
+    # FROM lines, not by `--pull`.
+    build = [
+        body
+        for name, body in workflow_steps(workflow)
+        if name == "Build the shipped container image"
+    ]
+    assert len(build) == 1
+    assert "cache-from: type=gha\n" in build[0]
+    assert (
+        "cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}\n"
+    ) in build[0]
     assert "docker build --pull" not in workflow
+    # The build record is otherwise uploaded as a workflow artifact on every
+    # run, which a public repository would hand to anyone who asks for it.
+    assert "        env:\n" in build[0]
+    assert '          DOCKER_BUILD_RECORD_UPLOAD: "false"\n' in build[0]
     # The built image is never pushed or run by the gate. It is loaded and
     # its tag referenced exactly once more, by the extraction that hands the
     # image's pinned probe binary to the probe tier (#929) and its SQLite
@@ -394,6 +407,54 @@ def test_caches_the_pinned_chromium_payload_but_still_verifies_it() -> None:
     save = workflow.index("actions/cache/save@")
     verify = workflow.index("scripts/verify_playwright_browser.py")
     assert verify < save
+
+
+PUSH_ONLY = "github.event_name == 'push'"
+
+
+def test_only_a_push_to_main_writes_the_actions_caches() -> None:
+    """Pull requests restore the repository's caches but never write them.
+
+    A pull request from outside the repository cannot poison what `main`
+    restores, but each entry it writes is charged to the shared 10 GB budget
+    and can evict `main`'s. So every cache writer is gated on the event, step
+    by step, rather than trusted to be harmless: a writer added later without
+    the gate fails here by name.
+    """
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    steps = workflow_steps(workflow)
+
+    # setup-uv keeps restoring on every event and saves only on a push.
+    uv = [body for _, body in steps if "uses: astral-sh/setup-uv@" in body]
+    assert len(uv) == 7
+    for body in uv:
+        assert "enable-cache: true\n" in body
+        assert f"save-cache: ${{{{ {PUSH_ONLY} }}}}\n" in body
+
+    # setup-node has no restore-only mode: its post step saves whenever the
+    # restored key missed. A pull request therefore runs without the cache.
+    node = [body for _, body in steps if "uses: actions/setup-node@" in body]
+    assert len(node) == 7
+    for body in node:
+        assert f"cache: ${{{{ {PUSH_ONLY} && 'npm' || '' }}}}\n" in body
+    assert "cache: npm" not in workflow
+    # With `cache` empty, setup-node turns caching back on by itself when the
+    # workspace root has a `package.json` naming npm as its package manager,
+    # and that path would save on pull requests again.
+    assert not (ROOT / "package.json").exists()
+
+    # Every explicit cache save carries the event in its condition, and the
+    # combined restore-and-save action, which saves unconditionally, is absent.
+    saves = [body for _, body in steps if "uses: actions/cache/save@" in body]
+    assert len(saves) == 1
+    for body in saves:
+        assert f"if: {PUSH_ONLY} && " in body
+    assert "uses: actions/cache@" not in workflow
+
+    # Every Buildx cache export is empty outside a push.
+    exports = [line.strip() for line in workflow.splitlines() if "cache-to:" in line]
+    assert exports == [f"cache-to: ${{{{ {PUSH_ONLY} && 'type=gha,mode=max' || '' }}}}"]
 
 
 def test_the_browser_install_neither_stalls_silently_nor_skips_the_launch() -> None:

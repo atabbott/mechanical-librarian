@@ -2110,7 +2110,7 @@ def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None
     report = admitted_audiobook_report(
         audio_local_claims()
         + (
-            _audio_asin("B08G9PRS1K", "B08G9PRS1K", FieldState.VALID),
+            _audio_asin("B0SYNE7P1K", "B0SYNE7P1K", FieldState.VALID),
             _audio_asin("B0CW1KL-QD", None, FieldState.MALFORMED),
         )
     )
@@ -2121,7 +2121,7 @@ def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None
         if value.destination is TargetDestination.ASIN
     )
 
-    assert [value.value.value for value in asin.alternatives] == ["B08G9PRS1K"]
+    assert [value.value.value for value in asin.alternatives] == ["B0SYNE7P1K"]
 
 
 def test_recording_lookup_roundtrip_retains_only_complete_narrator_agreement() -> None:
@@ -2179,7 +2179,7 @@ def test_recording_lookup_roundtrip_retains_only_complete_narrator_agreement() -
             for claim in candidate.claims
             if claim.kind is ClaimKind.CONTRIBUTOR
         )
-        == ("Ray Porter",)
+        == ("Ilsa Brandt",)
         for candidate in plausible
     )
     member_references = [
@@ -2368,7 +2368,7 @@ def test_lookup_candidates_replay_individual_identity_and_bound_guards(
             kind=kind,
             value="Different Author"
             if variant == "wrong_author"
-            else "Project Hail Mary (Abridged)",
+            else "Ember Tide Protocol (Abridged)",
             state=source.state,
             scope=source.scope,
             applicability=source.applicability,
@@ -2540,10 +2540,10 @@ def _hinted_admission(
 
     plan = work_plan(*audio_local_claims())
     rung = WorkDispatchLineage.from_query(
-        work_query_ladder("Project Hail Mary", ("Andy Weir",), audiobook=True)[0]
+        work_query_ladder("Ember Tide Protocol", ("Corin Halloway",), audiobook=True)[0]
     )
     candidate = audiobook_candidate(
-        plan.local_claims, provider="audible", identity="audible-product-B08G9PRS1K"
+        plan.local_claims, provider="audible", identity="audible-product-B0SYNE7P1K"
     )
     return MetadataReport.create(
         target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
@@ -2603,9 +2603,9 @@ def _other_rung() -> dict[str, object]:
     from mechanical_librarian.domain.work_identity import work_query_ladder
 
     return WorkDispatchLineage.from_query(
-        work_query_ladder("Project Hail Mary: A Novel", ("Andy Weir",), audiobook=True)[
-            1
-        ]
+        work_query_ladder(
+            "Ember Tide Protocol: A Novel", ("Corin Halloway",), audiobook=True
+        )[1]
     ).to_data()
 
 
@@ -2630,7 +2630,7 @@ def _out_of_band(data: dict[str, object]) -> None:
 
 
 def _admitted_duplicate(data: dict[str, object]) -> None:
-    _hint_at(data)["asin"] = "B08G9PRS1K"
+    _hint_at(data)["asin"] = "B0SYNE7P1K"
 
 
 def _unladdered_rung(data: dict[str, object]) -> None:

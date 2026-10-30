@@ -148,7 +148,7 @@ describe('owner labels (#1286)', () => {
   })
 
   it('names a provider reference by its provider and leaves other text as it is', () => {
-    expect(candidateReference('audible-product-B08G9PRS1K')).toBe('Audible product B08G9PRS1K')
+    expect(candidateReference('audible-product-B0SYNE7P1K')).toBe('Audible product B0SYNE7P1K')
     expect(candidateReference('open-library-work-OL1W')).toBe('Open Library work OL1W')
     expect(candidateReference('recording-1')).toBe('recording-1')
     expect(candidateReference(`hardcover-work-${'x'.repeat(200)}`)).toHaveLength(158)

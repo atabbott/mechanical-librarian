@@ -1,17 +1,16 @@
 name: Bug report
-description: Report behavior that was delivered as working but now fails in a supported build or workflow.
+description: Report something that does not work as documented.
 title: "bug: "
 labels:
   - needs-triage
-type: Bug
 body:
   - type: markdown
     attributes:
       value: |
-        Use this form for a bug in behavior previously treated as delivered and
-        working. Use the defect form for a pre-release contract, acceptance, or
-        qualification failure. Do not include credentials, private URLs, book
-        contents, personal library exports, or unredacted logs.
+        Thanks for reporting a problem. Mechanical Librarian is pre-release, so
+        please say which commit or image you ran. Do not include credentials,
+        private URLs, book contents, personal library exports, or unredacted
+        logs.
 
   - type: textarea
     id: summary
@@ -24,9 +23,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: Mechanical Librarian version
-      description: Use a release version, commit, or image digest.
-      placeholder: 0.1.0 or sha256:...
+      label: Commit or image
+      description: The commit you built (`git rev-parse --short HEAD`) or the image digest.
+      placeholder: 71ff3a9c or sha256:...
     validations:
       required: true
 

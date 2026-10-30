@@ -79,10 +79,10 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
-_TITLE = "Project Hail Mary"
-_AUTHOR = "Andy Weir"
-_NARRATOR = "Ray Porter"
-_CARRIED = "B08G9PRS1K"
+_TITLE = "Ember Tide Protocol"
+_AUTHOR = "Corin Halloway"
+_NARRATOR = "Ilsa Brandt"
+_CARRIED = "B0SYNE7P1K"
 _SIBLING = "B0SIBLING1"
 _RUNTIME = "58244.201"
 _TIGHT = "58200.000"

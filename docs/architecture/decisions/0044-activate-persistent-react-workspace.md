@@ -95,4 +95,4 @@ Milestone 0.14.1 restored the five authenticated surfaces without changing this
 architecture or authority boundary. Its protected surface ownership and
 cumulative source, wheel, container, responsive, accessibility, and interaction
 qualification are recorded in the
-[0.14.1 interface-fidelity reconciliation](../../development/0-14-1-interface-fidelity.md).
+[0.14.1 interface-fidelity reconciliation](https://github.com/atabbott/mechanical-librarian/blob/858789a80217ccfc69c279ad42efe25cf286a9f4/docs/development/0-14-1-interface-fidelity.md).

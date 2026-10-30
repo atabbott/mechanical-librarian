@@ -1,345 +1,127 @@
-# Functional Slice Delivery
+# Delivery and Merging
 
-## Purpose
+How a change gets from an issue to `main`. [Work management](work-management.md)
+covers issues and Project fields; [CONTRIBUTING.md](../../CONTRIBUTING.md)
+covers the checks every pull request must pass.
 
-During the initial application build, new Mechanical Librarian functionality is
-implemented and reviewed as functional slices. A slice is the smallest new
-end-to-end product outcome that can be demonstrated through a supported
-executable surface while preserving the product's safety and recovery
-contracts. Work packages and implementation tickets still own capabilities;
-they do not define slice boundaries.
+## Two kinds of delivery
 
-This document is the authoritative branch and pull-request workflow. The
-[delivery-slice plan](../product/delivery-slices.md) defines the ordered product
-outcomes, and [work management](work-management.md) defines Project fields and
-issue state.
+**Functional slices** add new product functionality that crosses more than one
+layer. A slice is the smallest end-to-end outcome a user or operator can see
+through a supported surface (CLI, HTTP API, browser or container) without
+breaking a safety or recovery contract.
 
-This workflow begins only after a future outcome is explicitly promoted into
-an assigned slice tracker. A concise `Triaged` outcome in `Unassigned backlog`
-is not a slice tracker and cannot enter this workflow through selection.
+**Focused changes** are everything else: fixes, audit corrections, security
+work, documentation, tooling, CI, dependency updates, maintenance and
+standalone tickets. Each uses one branch (`fix/<issue>-<slug>`,
+`docs/<issue>-<slug>`, `chore/<issue>-<slug>` or `feature/<issue>-<slug>`) and
+one ticket-level pull request. Do not create a slice tracker for one of these.
 
-## Delivery classification
+A slice may add a framework, library or tool its outcome needs, inside the
+slice. A standalone dependency or tooling change is a focused change.
 
-Use a functional slice when the primary purpose is to add a new user- or
-operator-observable application capability and the outcome requires coherent
-work across more than one contract or layer.
+## Slices
 
-Do not use a slice when the primary outcome is:
+Every promoted slice has exactly one tracker issue. It states the outcome, the
+demonstration, the tickets it closes, its dependencies and governing
+contracts, its failure, restart and recovery behaviour, and its exit criteria.
+A promoted tracker may be the slice's only issue; one activation pull request
+then closes it directly.
 
-- a bug fix or audit correction;
-- security remediation or incident recovery;
-- documentation or governance;
-- CI, developer tooling, release chores, or dependency-only updates;
-- refactoring or maintenance with no new product capability; or
-- a genuinely standalone ticket that is already independently reviewable.
+Larger slices use sequential increments. Each increment:
 
-Those changes use a focused purpose branch such as `fix/<issue>-<slug>`,
-`docs/<issue>-<slug>`, `chore/<issue>-<slug>`, or
-`feature/<issue>-<slug>`, and one ticket-level pull request. They still meet all
-risk-proportionate quality and documentation gates. When a required gate fails
-on an active pull request, the smallest bounded root-cause correction may be
-made and requalified on that same pull request even when the exposed defect is
-distinct from its principal outcome, provided the correction preserves the
-governing safety contract. Use a separate pull request only when the correction
-is a genuinely different deliverable that requires separation, or when a
-security or privacy boundary requires it.
+- starts from current `main`;
+- is a complete, independently safe vertical step: anything not yet complete
+  stays unreachable, disabled or report-only;
+- fully satisfies and closes at least one ticket before it is marked ready (a
+  non-activation increment closes a constituent; only the final activation
+  increment closes the tracker);
+- stays draft until it can carry that closing reference.
 
-A slice may introduce a runtime or development framework, library, or tool
-needed to deliver or qualify its observable outcome. This includes scoped test,
-fixture-generation, code-generation, browser, build, analysis, and
-documentation dependencies. The dependency remains an implementation choice
-inside the slice rather than becoming a horizontal permission ticket. It must
-solve a current requirement, be classified and locked correctly, stay out of
-runtime artifacts when development-only, and meet the repository dependency
-policy. A standalone dependency addition, upgrade, removal, or repository-wide
-tooling change remains focused work.
+A horizontal type, repository, migration or adapter primitive is not an
+increment on its own; keep it with the behaviour that proves it. A deliberately
+narrow adapter or interface is fine when it fully demonstrates the outcome and
+leaves room to extend. No slice defers its safety, recovery, observability,
+documentation, clean-schema or test obligations to a later slice.
 
-## Unit of delivery
+Slices follow the order of their GitHub milestones. A future outcome stays a
+short deferred issue with no slice ID until that same issue is promoted
+([work management](work-management.md#deferred-and-planned-outcomes)).
 
-Every explicitly promoted new-functionality slice has exactly one slice tracker
-issue. The tracker is the outcome and lifecycle unit; a pull request is a
-bounded merge unit. The tracker states:
+`Deliver slice <ID>` (or `Deliver and merge slice <ID>`) authorises one bounded
+transaction for that assigned `Ready` tracker: plan increments, branch, open
+and update pull requests, get review, fix findings and CI, merge each qualified
+head, delete merged branches, and reconcile issues and Project fields. It never
+authorises a bypass, force push, administrative merge, weakened gate, release,
+production-service access or unrelated change. Without an ID, it selects the
+highest-priority unblocked assigned `Ready` tracker. Never select or implicitly
+promote an `Unassigned backlog` outcome.
 
-- the observable operator or contributor outcome;
-- the executable demonstration path;
-- the implementation tickets completed by the slice;
-- entry dependencies and governing contracts;
-- success, failure, restart, privacy, and recovery behavior; and
-- slice-level exit criteria and required test layers.
+The transaction ends `MERGED` (everything verified on `main`, tracking
+reconciled, branches removed) or `BLOCKED` (a concrete external prerequisite or
+maintainer decision, recorded on the tracker with what already merged). An open
+pull request or partly merged slice is neither. Merged increments are durable
+progress: do not revert them because a later one is delayed; resume from
+current `main`.
 
-A promoted tracker may be the slice's only issue. When one activation pull
-request delivers its complete outcome, no constituent ticket is required; that
-pull request closes the tracker directly.
+A ready slice pull request lets a reviewer answer: what can someone do after
+this that they could not before, how is it demonstrated, which tickets and
+contracts does it complete, what happens on invalid input, unavailable
+dependencies, duplicates, restarts and stale state, what authority exists and
+what is deliberately absent, and what evidence proves it.
 
-Implementation tickets contributing to new functionality retain their
-capability and work-package classification without requiring a current WP
-parent issue. The slice tracker is a cross-cutting execution record and never
-reopens a closed historical parent. A genuine current parent, when one exists,
-retains its own lifecycle. A contributing ticket belongs to one primary
-delivery slice. If its acceptance criteria span more than one slice, split the
-ticket before it reaches `Ready`; do not close part of a ticket in one slice and
-carry hidden remainder into another. Non-slice tickets use `Not applicable` in
-the Project `Delivery slice` field.
+After 1.0.0, maintainers review whether small features still need the slice
+workflow.
 
-A small slice may still use one branch and pull request. A larger slice uses
-sequential increments. Each increment is a complete, independently safe
-vertical change that crosses only the layers needed for one observable step.
-Before it becomes ready, each increment must fully satisfy and natively close
-at least one ticket. A non-activation increment closes at least one constituent
-whose acceptance criteria it fully satisfies. The final activation increment
-may satisfy the requirement by closing the slice tracker; it composes and
-demonstrates the whole supported outcome and alone closes that tracker. If no
-such closing reference is yet valid, keep the pull request draft and re-slice
-the increment or refine the ticket plan before ready review.
+## Findings and CI
 
-An increment must not expose an incomplete authority path, incompatible
-persisted state, unsupported public contract, or behavior that depends on a
-later pull request for safety. Pre-activation capability remains unreachable,
-explicitly disabled, or report-only under a documented contract. A horizontal
-type, repository, migration, or adapter primitive is not an increment merely
-because it can merge alone.
+CI failures and review findings are fixed on the same branch and pull request.
+Every new head repeats the affected review and qualification. Open a new pull
+request only for a genuinely separate outcome or a required security or privacy
+separation.
 
-## Autonomous delivery transaction
+## Merging
 
-The instruction `Deliver slice <ID>` authorizes one bounded autonomous delivery
-transaction for the selected assigned `Ready` tracker. `Deliver and merge slice
-<ID>` is an explicit synonym. A selection instruction never promotes a deferred
-outcome. Within the frozen outcome and exclusions, the transaction may:
+`.github/workflows/public-gate.yml` is the public gate. It runs on every
+pull-request head and on each push to `main`, checks out the exact head SHA
+with read-only permissions, and holds no credential or private corpus.
+[What merging proves](../../CONTRIBUTING.md#what-merging-proves) lists every
+check.
 
-- plan ordered vertical increments;
-- create purpose-based branches and draft or ready pull requests;
-- push commits, obtain required autonomous review evidence, remediate connector,
-  optional human-requested review, and CI findings, and repeat invalidated
-  exact-head evidence;
-- merge each exact reviewed and qualified head into `main` when every mutation
-  prerequisite is available;
-- delete merged delivery branches; and
-- reconcile constituent tickets, the slice tracker, and Project fields.
+The merge itself is decided outside the candidate. The maintainer-owned merge
+controller and its validators live in the separate development repository and
+are linked into the checkout under the ignored `.codex/**`; content in a pull
+request can never change what decides whether that pull request merges. Before
+merging, the controller binds the exact reviewed head, the live required
+checks, resolved review threads, the closing issue and the review evidence,
+repeats those checks immediately before a conditional squash merge on the
+expected head, and afterwards verifies that the merge commit has the qualified
+tree and is on `main`. Ambiguous outcomes become explicit recovery states, never
+success. The default-branch ruleset independently requires a pull request and
+passing required checks; nobody has a bypass.
 
-Standing authority never permits check or review bypasses, administrative or
-forced merges, force-pushing `main`, weakening a contract to pass a gate,
-closing partially satisfied work, release publication, production-service
-access, or unrelated changes.
+### Renovate platform auto-merge exception
 
-Trusted merge control, validators, and evidence are maintainer-owned and remain
-ignored under `.codex/**`, independently qualified from candidate content.
-The controller retains the receipt-bound `CLIENT_ENFORCED_FREE_PLAN` validation
-mode identifier for evidence compatibility. On GitHub Pro, the active ruleset
-independently enforces pull requests and strict required checks. Its responses
-remain observations rather than client-side merge authority. Autonomous local
-and connector review evidence remains mandatory and exact-head. Every
-successful receipt records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`,
-acknowledging that another qualified pull request or an administrator changing
-enforcement can move or race `main` and that the conditional merge locks only
-the pull-request head, not the base SHA.
-The live PR head must also name the exact bounded repository and delivery
-branch. Each mutating invocation internally persists a canonical dry-run
-receipt, repeats the full live preflight immediately before the conditional
-merge, and binds the final receipt to the same request, evidence, controller,
-controls, fresh dry-run digest, and trusted mutation-attempt time. Freshness is
-measured from dry-run to that mutation-adjacent instant, not terminal
-completion, so bounded post-merge verification and reconciliation may take
-longer than five minutes. That verification requires the merge commit to have
-the qualified base as its sole parent, to have the qualified head's exact tree,
-and to be contained by authoritative `main`; it does not trigger a second
-Actions qualification of the equivalent tree. A monotonic 300-second deadline
-starts before the internal receipt
-wall timestamp is assigned or persisted, so timestamping, persistence, and fsync
-time count. After the second preflight the mutation-attempt timestamp is captured;
-the deadline guard is then the only subsequent local operation before merge,
-and expiry performs no mutation. After merge, the complete native closing
-set must exactly equal the bounded expected set before issue reconciliation;
-drift enters typed recovery and cannot be reported as `MERGED`.
-Activation accepts at most 99 constituents plus its tracker; non-activation
-accepts at most 100 constituents, preserving completeness of the native closing
-query.
-Ambiguous merge responses persist bounded post-attempt connector and server
-evidence. Exact observed or unavailable statuses produce recovery-only
-`mutation_state_unknown` evidence, never `MERGED`. Carried observations must
-not predate the mutation attempt, and connector `FAIL` must prove actual drift.
-Timing-invalid connector evidence, including invalid elapsed type, range, or
-finiteness, is unavailable with no digest; protocol
-variance is accepted only as proof of ambiguous post-attempt connector failure.
-Arbitrarily large integers are bounded against the supported timestamp domain
-before conversion or subtraction in both normal and recovery validation, while
-the exact maximum remains valid. Raw signed JSON integer tokens longer than
-4,300 digits are rejected by the bounded parser and become typed unavailable
-recovery evidence with no digest.
-Authoritative GitHub responses, trusted evidence, and top-level run-record input
-share that bounded parser. Decode, integer-conversion, Unicode, and recursion
-failures become context-specific record errors without weakening evidence size,
-canonical-byte, or digest validation.
-A JSON-string-and-escape-aware lexical scan caps structural depth at 100 before
-decoding. REST and GraphQL subprocess output is captured as bytes so invalid
-UTF-8 becomes the correct typed record error and raw stderr is not disclosed.
-Every byte input is strictly decoded as UTF-8 once, with the resulting string
-used for both depth scanning and JSON decoding; UTF-16/32 auto-detection is
-forbidden.
-Branch cleanup byte-captures and canonical-strict-decodes both response streams.
-Malformed or alternate encodings, NULs, and BOMs are typed errors; only a
-strictly decoded HTTP 404 proves absence.
-The diagnostic must full-match the canonical single-line GitHub form with empty
-stdout and at most one terminal newline. Its message must satisfy
-`splitlines() == [message]` and contain no semantic line separators or other
-noncanonical whitespace, control, or format characters. Mixed, prefixed,
-multiline, repeated, or trailing diagnostics cannot qualify.
+Pull requests authored by `renovate[bot]` whose update class requests
+auto-merge may use GitHub-native squash auto-merge instead of the controller.
+The default-branch ruleset still requires a pull request, a head current with
+`main`, and a passing check run for each of the eight gate jobs
+(`fast-source`, `fast-source-2`, `fast-source-3`, `fast-source-4`,
+`exact-installed`, `protected-browser`, `container-image` and
+`dependency-audit`). Renovate has no bypass and cannot write to `main`. A
+failing update stays open for a manual fix; no gate is weakened to admit one.
+Updates that need Dependency Dashboard approval merge through the controller.
 
-The transaction has two terminal results:
+The exception is bound to the author and does not transfer through a title,
+label, branch name or human account.
+[Dependencies](dependencies.md#automated-updates) says which update classes
+auto-merge, and
+[work management](work-management.md#pull-requests-and-tracking) covers the
+tracking exemption.
 
-- `MERGED`: every increment and the activation outcome are verified on `main`,
-  all intended closing references took effect, Project state is reconciled,
-  and merged branches are removed; or
-- `BLOCKED`: a concrete external prerequisite or maintainer decision prevents
-  safe progress after in-scope recovery has been exhausted. The blocker and
-  exact state already merged to `main` are recorded on the slice tracker.
+## Definition of done
 
-An open pull request, review handoff, locally passing branch, or partially
-merged transaction is not a terminal result.
-
-## Branch workflow
-
-1. When `Deliver slice <ID>` names a tracker, select that tracker and require it
-   to have that assigned slice ID and be unblocked and `Ready`. Only an
-   instruction without an ID selects the highest-priority unblocked assigned
-   slice tracker in `Ready`. Never select or implicitly promote an
-   `Unassigned backlog` outcome.
-2. Confirm that every ticket the slice intends to close is sufficiently
-   specified and mapped to that slice in the Project.
-3. Record a one-increment plan or ordered vertical increments and move the
-   tracker to `In progress`.
-4. Create the first branch from current `main` as
-   `slice/<slice-id>-<increment>-<short-slug>`. A one-increment slice may omit
-   the increment segment.
-5. Implement and demonstrate the bounded vertical increment in focused commits.
-   A draft may expose progress or obtain remote CI, but must not claim
-   completion or carry premature closing references.
-6. Bring the branch onto current `main`, then freeze the head. Run the required
-   review and exact-head public and local qualification.
-7. Mark the pull request ready only when it fully completes a supported native
-   closing reference. A non-activation increment closes at least one completed
-   constituent; the activation increment may use the tracker and alone closes
-   it. Otherwise keep the pull request draft and re-slice the increment or
-   refine its ticket plan before ready review.
-8. Remediate CI failures and all C1, C2, or optional human-requested findings on
-   the same branch and pull request. Each changed head invalidates affected
-   evidence and repeats review and qualification. Finding count is not a reason
-   to create a new pull request.
-9. Create another pull request only for a distinct vertical outcome or a
-   security or privacy boundary that requires separation.
-10. Immediately before mutation, use the ignored trusted control to repeat all
-    race-sensitive PR, check, review, connector, base, head, and mergeability
-    gates, record server settings observationally, and require the expected
-    exact head. Follow that preflight immediately with the conditional squash
-    merge; do not insert local work into the race window.
-11. After a permitted merge, verify the merge result on fetched remote `main`,
-    delete the merged branch, and reconcile closed tickets and Project status.
-12. Refresh from `main` and repeat from step 4 for the next increment. Do not
-    maintain an obsolete unmerged stack.
-13. In the activation increment, run the complete slice demonstration and
-    aggregate qualification, close the tracker and remaining fully satisfied
-    tickets, then verify the `MERGED` terminal state.
-
-### Partial-transaction recovery
-
-Every verified increment already on `main` is durable progress; do not roll it
-back merely because a later increment is delayed or fails. Keep the tracker
-`In progress`, or move it to `Blocked` only for a concrete external dependency
-or maintainer decision. Record the last verified merge and commit, remaining
-increments, invalidated evidence, and exact restart point. Resume with a new
-branch from current `main`. If the outcome itself must change, return the
-tracker to triage and revise it visibly; never report a partial transaction as
-`MERGED` or `Done`.
-
-## Review boundary
-
-A ready new-functionality slice pull request must let a reviewer answer all of
-the following without reconstructing behavior from isolated commits:
-
-- What can a user, operator, or contributor do after this merge that they could
-  not do before?
-- How is that outcome demonstrated through the CLI, HTTP API, browser, or
-  supported container surface?
-- Which exact tickets and governing contracts are completed?
-- What happens for invalid input, unavailable dependencies, duplicate work,
-  restart, stale state, and bounded resource failure?
-- What production authority exists, and what authority remains deliberately
-  absent?
-- How are persisted data, clean-schema handling, compatibility, backup, and rollback
-  handled?
-- Which automated and manual evidence proves the exit criteria?
-
-A pull request that only adds a horizontal type, repository, adapter method, or
-workflow primitive is not a safe increment unless that primitive is itself a
-documented executable outcome. Keep it with the vertical behavior that proves
-its safety and usefulness.
-
-## Scope control
-
-- One slice tracker defines one outcome; one or more sequential `slice/`
-  branches and ready pull requests may deliver it.
-- Every ready increment closes at least one fully satisfied ticket. The tracker
-  may satisfy this requirement only for the activation increment; every other
-  increment closes at least one constituent.
-- An increment may close multiple tickets only when it satisfies each in full
-  through the same bounded demonstrated step.
-- Unrelated refactoring, opportunistic cleanup, and future-slice scaffolding are
-  excluded.
-- Split a slice only when the resulting trackers describe genuinely distinct
-  outcomes; split pull requests only at safe vertical or required security or
-  privacy boundaries.
-- Stacked slice branches require an explicit dependency and must remain
-  independently safe and reviewable; sequential merge-and-refresh is the
-  default.
-- Fixes, corrections, security work, governance, tooling, dependency-only
-  changes, maintenance, and standalone tickets remain focused PRs outside the
-  slice.
-- Urgent incident recovery and private security-advisory work follow their
-  dedicated focused workflow.
-
-## Relaxing the rule after the initial build
-
-The slice-first rule is intentionally strongest while the application lacks
-stable executable seams and every new capability tends to cross domain,
-application, persistence, adapter, and interface boundaries.
-
-At the 1.0.0 checkpoint's qualification boundary, maintainers review this rule.
-After stable
-contracts, test harnesses, adapters, repositories, and operator surfaces exist,
-a small new feature may use an ordinary `feature/<issue>-<slug>` branch and
-ticket-level PR when all of the following are true:
-
-- it is independently demonstrable within an established surface;
-- it does not introduce a new architectural boundary, authority path, migration
-  strategy, or cross-cutting lifecycle;
-- its failure and compatibility behavior fits existing contract suites; and
-- the focused PR remains easier to review than an artificial multi-ticket
-  slice.
-
-Larger, cross-cutting, high-risk, or independently valuable capabilities retain
-the slice workflow. The project should optimize for coherent review, not keep
-slices as permanent ceremony after their original benefit has diminished.
-
-## Definition of slice done
-
-A new-functionality slice is done only when:
-
-- its supported demonstration works from a clean checkout;
-- every linked ticket's acceptance criteria are satisfied in full;
-- success, negative, retry, restart, idempotency, and recovery behavior is
-  tested in proportion to risk;
-- architecture, security, privacy, compatibility, and resource bounds remain
-  intact;
-- persisted changes before the first production release declare a clean rebuild
-  or deliver their exact-predecessor derived-object adoption under ADR-0013;
-  ordinary startup remains absent-or-exact-current, and post-release changes
-  include migration and recovery evidence;
-- operator and contributor documentation describes the delivered behavior;
-- changelog and generated contracts are current;
-- the branch contains no unrelated or deferred work disguised as TODOs;
-- the activation pull request and accumulated increments are reviewable as one
-  coherent outcome; and
-- the complete outcome, merge results, tracking state, and cleanup are verified
-  in the `MERGED` terminal state.
-
-Merging a slice does not imply that every contributing work package is
-complete. It proves only the bounded cross-package outcome named by the slice.
+A slice or change is done when its demonstration works from a clean checkout,
+every closed ticket is satisfied in full, behaviour is tested in proportion to
+risk, documentation and the changelog describe what merged, and the merge,
+tracking and cleanup are verified.

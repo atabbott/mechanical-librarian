@@ -1,2495 +1,594 @@
 # Security and threat model
 
-Authorities: the ADRs for every trust-boundary decision,
-`docs/reference/review-openapi-v1.json` for the authenticated surface, the
-modules named in each section for the checks they perform, and
-`.github/workflows/public-gate.yml` with `osv-scanner.toml` for scanning. This
-document states the invariants those artifacts must keep.
+This is the authority for security review of any change to credentials,
+egress, parsers, AI inputs, writes, backups, authentication or upgrades. It
+states the invariants the code must keep; exact shapes live in the
+[OpenAPI contract](../reference/review-openapi-v1.json),
+[configuration reference](../reference/configuration.md) and
+[ADRs](decisions/README.md).
 
-Terminal preparation failure evidence is value-free. Its versioned `prep-`
-reference derives only from durable action identity, stage, attempts, and a
-normalized code; authenticated operations and re-redacted support evidence may
-carry that same bounded reference, never a path, report, provider payload,
-credential, root, item, or exception.
+The invariants, in short:
 
-Preparation's process-local recovery stop exposes only that same closed reference,
-stage, primary code and attempt, with optional `settlement_code: persistence`.
-`preparation_restart_required` has runtime scope; an uncommitted settlement never
-becomes invented durable failure evidence. No raw exception value is projected.
-A claim failing with plain `SQLITE_BUSY` once its transaction scope has ended and
-its connection holds no open transaction committed nothing, so its lane retries
-on the next ordinary wake instead of stopping. That check proves SQLite state;
-admission and connection-lock balance remain the transaction scope's own release
-contract. Extended busy codes, every other failure, a connection still in a
-transaction, and a blocked failure settlement of a claimed stage (#1217) still
-stop for recovery (#1216).
+- Media is read-only. The only writes are guarded metadata and cover updates
+  through Audiobookshelf's supported API, each with a pre-read and a read-back.
+- No report, proposal, model output or policy preview carries write authority.
+  Only an owner decision or a qualified automatic decision does, through the
+  guarded effect pipeline.
+- Secrets are write-only at the HTTP boundary and never appear in a report,
+  log, diagnostic, support bundle, URL, browser cache or model input.
+- Every external input (provider response, media file, sidecar, image, model
+  output, stored row) is hostile: bounded, strictly decoded and reduced to
+  closed typed facts before use. Failures are value-free.
+- Persisted state is accepted only in its exact current schema. Nothing is
+  migrated or repaired.
 
-Unknown preparation diagnostics use one directly testable privacy projection:
-validated ASCII exception module/class and package-owned module/function/line
-identities only. Messages, arguments, notes, locals, source text, filenames and
-raw traceback formatting never cross it. Explicit cause precedes unsuppressed
-context; cycles and truncated chains/frames are marked. Retained frames favor
-innermost locations across the scanned exception chain. The projection bounds
-chain entries, total inspected frames, retained application frames and encoded
-output including its newline before one best-effort stderr write. The fixed
-`level: warning` records severity without invoking logging handlers or their
-exception-formatting failure paths. Ordinary projection or sink failures are
-contained; process-control exceptions retain their existing propagation boundary.
-Both prospective correlation references use the currently owned claim; the
-terminal reference includes its persisted recovery count while the restart
-reference preserves the existing runtime-stop formula. Neither asserts a committed
-settlement. No diagnostic field is persisted or added to status/support (#1136).
+## Assets and actors
 
-Provider dispatch and recovery-job events cross the same stderr boundary by
-construction (#1299). A pure builder in the application layer reads only closed,
-value-free evidence the adapters already return. The writer is
-`emit_provider_events` in `application/failure_diagnostics.py`, the single
-module that owns this boundary.
+The assets are the owner's library metadata, the target, provider and
+reviewer credentials, the owner password and sessions, and the private
+evidence the product keeps (reports, cover previews, decisions, history).
 
-The writer keeps allow-listed keys only, and it writes `null` for any value
-outside its closed vocabulary or integer bound. Provider names are re-checked
-against the configuration name grammar. The item is a 16-hex-character SHA-256
-reference. Each line is at most 1024 bytes and written in one call.
+- Network visitor, untrusted: [unauthenticated reach](#unauthenticated-reach).
+- Signed-in owner, full product authority:
+  [requests and CSRF](#requests-and-csrf).
+- Audiobookshelf (the target) and metadata providers, hostile bytes:
+  [target](#target-audiobookshelf), [providers](#metadata-providers).
+- Mounted-media owner, hostile files and names:
+  [parsers](#parsers-and-hostile-input).
+- AI reviewer, untrusted output: [AI boundary](#ai-reviewer-boundary).
+- Local actor with volume access, can replace files:
+  [schema admission](#schema-admission).
+- Dependencies, untrusted: [scanning](#automated-scanning-boundary).
 
-Building or writing can never raise into dispatch or settlement. No title,
-author, query, URL, body, exception text, credential, path or item id can reach
-a line. The redaction test feeds each of these in and asserts none comes out.
-No handler, level, switch or global sink exists, and nothing is persisted or
-added to status or support.
+Anyone who can write the state volume can already replace the whole store;
+the product refuses corrupt or partial state but never repairs it. Typed
+in-process collaborators are trusted; interpreter-level sabotage is out of
+scope.
 
-The activity projector's lifecycle events (`activity_projector`: a closed
-`code`, `level` and at most an exception type name, otherwise `null`) cross the
-same boundary through `activity_projector_event` (#1231, #1304). Nothing
-configures `logging`; no event depends on it.
+## Authenticated web surface
 
-Ordinary Linux server-root recovery is explicitly opted in under the exclusive
-bound-parent lock. A supported private DELETE journal must pass streaming envelope
-checks and native rollback plus full current-schema admission on byte-verified
-owner-private copies before source rollback. Original database and journal
-identities and digests are rechecked before native SQLite touches the original
-retained alias. Unknown inventory, malformed state and I/O failure refuse; source
-replacement, manual journal deletion, generic repair and offline adoption remain
-outside authority. Closed interrupted-copy cleanup never recursively removes
-unknown objects. See [ADR-0078](decisions/0078-preparation-claim-and-crash-recovery.md).
+The review server is the only network entry point, with no generic write
+route and no target client. FastAPI keeps only request bounds,
+Host and Origin checks, session and CSRF dependencies and response
+translation; everything else is a named application operation behind the
+owner-operation gate
+([ADR-0030](decisions/0030-authenticated-review-web-boundary.md),
+[ADR-0042](decisions/0042-compose-authenticated-browser-operations.md)).
 
-## Authority
+### Unauthenticated reach
 
-Qualified automatic policy is decision-only. Its clean-schema built-in profile
-may append exact-current immutable dispositions only from the sealed aggregate
-F19a or F20 manifests, or from the separately sealed F38 manifest for
-`contributor_names:canonical:provider_consensus_display`. That F38 option
-requires the exact provider-consensus display candidate and retains local
-provenance; it cannot reconcile contributor identity. No automatic disposition
-can construct an apply plan or use a target, media, or provider-write client.
-Owner pause and durable category/global suspension fail closed to the
-authenticated human queue; an owner decision remains final, and recovery is an
-explicit CSRF-protected owner action. Private qualification cases, values, and
-paths are not stored in the repository or public API.
-An equal automatic candidate is a separate identifier-only terminal fact. Its
-atomic currentness comparison happens before, and does not read, authority,
-consent, capability, backup, target, or read-back controls.
+Without a session a client can reach only liveness and readiness words, the
+login form and its assets, the fixed login failure envelope and, while setup
+is unclaimed, the setup page and its nonce.
 
-Automatic cover admission requires an exact-current case, report,
-consideration, selected artifact, policy, and owner-final state. A known-empty
-target may admit the best confirmed candidate. A populated target must carry a
-confirmed incumbent and admits only a candidate with a strictly better complete
-rank; missing or inconsistent incumbent evidence abstains. Active acquisition,
-unconfirmed identity, stale bindings, and any prior owner cover decision refuse
-admission. An admitted cover decision remains decision-only and must still pass
-consent, backup, capability, target-currentness, supported-API apply, read-back,
-and audit gates.
+### First-owner setup
 
-The `RefreshCurrentCatalogue` application operation may make only bounded GET observations of configured ABS
-book libraries and publish a local current generation. Its bearer credential is
-attached only to the configured origin's library, library-items, and item-detail
-GET routes. It has no provider, metadata-write, media-write, report, apply,
-background, retry, or cleanup authority.
+Claiming an empty volume needs the deployment-held setup claim token, so a
+visitor who reaches the port first cannot take the workspace
+([ADR-0086](decisions/0086-deployment-held-setup-claim-token.md),
+[first-run setup](../operations/deployment.md#first-run-setup)).
 
-The `GenerateMetadataReport` application operation may read one configured target item, one selected read-only
-EPUB, owner-only credential files, at most nine fixed credential-bearing
-Hardcover metadata queries and 27 aggregate attempts, at most nine
-credential-free Open Library Search queries and 49 aggregate Open Library
-metadata attempts, at most nine Google Books Volumes queries and 54 aggregate
-attempts, and separately credential-free bounded cover
-request chains for admitted descriptors. These
-metadata maxima apply only when their provider and corresponding discovery
-lanes are enabled and admitted. Each ISBN family and each distinct work-query
-ladder rung consumes one fixed query; a plan that cannot fit every lane inside
-that limit is rejected before provider construction rather than partially
-dispatched. Candidate-limit narrowing and transport retries consume the
-separate aggregate-attempt allowance. It may append a neutral report and update
-its current pointer. It has
-no target-write, media-write, review, decision, apply, background, durable retry,
-deletion, repair, import, schema-migration, or backward-compatibility authority.
-An existing database must match the installed increment's exact current schema
-before any writable connection or mutation.
+- Each unclaimed start mints a `secrets.token_urlsafe(32)` token, revokes any
+  earlier one and stores only its domain-separated SHA-256 digest. The token
+  goes, without following links, to the owner-only
+  `/data/private/setup-claim-token` and once to standard output, bypassing
+  logging. It never reaches a response, log, exception or evidence.
+- A claim needs the exact Origin, the token and a nonce in a host-only cookie
+  and a header (at most 100 nonces for 600 seconds, 10 per client, in
+  memory).
+- A wrong token is `403 claim_token` before Argon2, with no state change or
+  throttle debt. A password under 12 code points or over 1,024 UTF-8 bytes is
+  `422 invalid_password`. Validation errors echo no input.
+- One transaction compares the token in constant time, claims ownership,
+  clears the digest and stores the Argon2id verifier; a concurrent loser gets
+  `409`. The token file is then removed. Later steps need a session, and
+  kickoff closes setup for good.
 
-There is no installed schema adoption command. #1245 retired #1232's offline
-`schema-adopt` command and its one plan, because its exact predecessor cannot
-reach the current report schema. Every earlier state is rejected before
-mutation and needs a clean rebuild.
+Startup admits only the exact seeded predecessor or valid current incomplete
+setup; any other non-empty, malformed or store-mode state fails closed.
+Connection setup stores endpoint and key only after one bounded
+`GET /api/libraries` under the [egress rules](#credentials-and-egress)
+succeeds, and failures echo no key or userinfo. Service folder paths are kept
+only to compare with mount mappings, and those checks never read media.
 
-The qualification-state bridge is a maintainer test-state boundary, not
-upgrade authority, and since #1396 a contributor script outside the installed
-package. It reads only one exact owner-only retained clone,
-rejects sidecars, path replacement, unknown schemas, malformed canonical
-evidence, changed target builds, and unverified backups, then publishes a
-fresh exact-current output through an owner-only temporary inode and atomic
-directory entry. Retained local status and complete cover records are validated
-against their claims before selective invalidation can discard dependent state.
-Backup and published-output inode identities remain frozen through the final
-read-back; close or directory-entry cleanup failures require explicit recovery.
-That read-back verifies exact report rows, cover references, current pointers,
-report-only packages, and remaining downstream state tables against the exact
-freshly seeded baseline. The source is never writable. Current derivation
-reconstructs reports;
-observations missing mandatory work-dispatch lineage, dependent covers,
-artifact-bearing references, and every downstream decision or projection are
-invalidated. The bridge accepts no artifact path and has no configuration,
-credential, network, provider, reviewer, media, target, import, repair,
-arbitrary-SQL, or startup authority.
+### Sign-in and sessions
 
-Provider-evidence replay is a separate maintainer qualification boundary. Its
-source-bound capture command reads an exact-current owner-only database and one
-canonical owner-selected report list, uses only the selected libraries' current
-configured metadata providers, and confines HTTPS requests to each adapter's
-fixed provider host with redirects disabled. It records the exact bounded
-pre-parser response stream and behavior-relevant headers, but replaces API-key
-query values, authorization values, and configured contact identity before any
-bundle write. A final secret/contact scan precedes exclusive owner-only sealed
-publication. Interruptions, unsafe parents or files, sidecars, incomplete
-unclassified streams, unexpected endpoints, output collisions, and bundle
-limits fail closed without overwrite or deletion.
+- The password is checked against an owner-only, no-follow Argon2id hash file
+  or the settings-store verifier.
+- A session is an opaque HttpOnly, SameSite=Strict cookie, Secure under
+  browser HTTPS, with a fixed absolute lifetime (five minutes to 30 days,
+  default 30) that activity never extends.
+- Sessions live in `private/review-sessions.sqlite`
+  ([ADR-0060](decisions/0060-dedicated-review-session-database.md)): an HMAC
+  lookup keyed by the exact verifier, CSRF digests, expiry, revocation and
+  throttle rows. Replacing the verifier invalidates every session. Logout
+  deletes the cookie only after revocation is durable.
 
-Replay reads one digest-bound canonical owner-only
-`provider-replay-bundle-v1`, supplies only placeholder credentials and contact,
-and injects a transport with no network fallback into the current provider
-adapters. The current configuration scopes providers and limits. A changed
-provider name, adapter, or canonical request invalidates only that provider row;
-unchanged rows run current decoding, parsing, report, proposal, and admission
-derivation into an absent exact-current database. Private results bind capture
-and replay heads, schemas, bundle and database digests, invalidations, and
-derived document digests. Standard output is aggregate and failures are
-value-free. Neither command has target, media, reviewer, provider-write,
-ordinary-startup, import, repair, migration, unattended-acquisition, or deletion
-authority. Captured coverage does not establish complete-library or product
-compatibility; #938 remains the complete retained qualification fallback.
+Sign-in allows five attempts per client in any five minutes, under a global
+ceiling of 100; a refusal is `429 throttled`. A granted session clears only
+its own client's attempts. The client key is an HMAC, never a stored address.
 
-Foreground batch manifests are private immutable operator artifacts. Preview and
-read bind bounded regular no-follow descriptors under a private parent, validate
-strict UTF-8 canonical JSON before authority, and bind execution to the
-content-addressed manifest ID. The frozen projection excludes credential values
-and paths while binding selected egress, providers, library, and limits. One
-loaded configuration and credential snapshot remains authoritative for the
-whole run, so later configuration or secret-file edits cannot rebind authority.
-Each serial item rechecks catalogue/source authority; catalogue, repository,
-provider, and service failures stop safely, while item-local evidence failures
-remain value-free deterministic stream records. Interrupts propagate without
-resume, retry, worker, or background state.
-
-Authenticated review preparation composes the same bounded catalogue and
-metadata-report reads, credential loading, provider egress, isolated parser,
-artifact publication, ProposalSet creation, and ReviewCase admission. The
-owner's CSRF-protected request is persisted before two fixed worker lanes may
-claim work. Duplicate requests coalesce and restart recovery returns a claim to
-the queue; report publication and its extraction checkpoint share one database
-transaction. A third crashed attempt becomes a bounded failed work rather than
-an invalid fourth claim. Operational rows contain only bounded identifiers, stage, state,
-counts, timestamps, and fixed failure codes. The same transaction maintains one
-owner-facing presentation run for explicitly accepted setup, manual-scan, and
-library-add triggers. Its authenticated private, no-store snapshot additionally
-contains at most five current book display names and eight recent completion
-names; those values never enter stream frames, logs, audit identifiers,
-diagnostics, support bundles, or reviewer input. Dismissal requires the exact
-current terminal run identity plus session, CSRF, Origin, and installed-build
-identity, and cannot hide blocked work.
-Settings additions persist their bounded presentation-only intent in the same
-writer transaction as the new revision and secrets. Worker admission follows
-only after publication and an all-or-nothing intent drain; startup validation
-rejects stale target/revision bindings, recovery markers, and noncanonical
-completion authority without reflecting corrupted values. A recovery marker is
-valid only with its exact-current authoritative work-cycle witness; this is a
-semantic consistency boundary, not cryptographic tamper evidence. Earlier
-pre-release schema state requires a clean rebuild and is never repaired.
-Target TLS, authentication, authorization, and unavailable observations
-are connection-scoped durable conditions with only a closed code, state, epoch,
-and affected-work count. Owner recovery is CSRF-bound and probes the configured
-TLS client with bounded JSON only; it never reflects endpoint or transport
-detail. A complete target enumeration stages absence candidates, but only a
-fully successful scan may tombstone an absent review lineage or retire a
-present lineage that is no longer eligible. Catalogue discovery and shared
-provider pacers serialize their mutation of global generation and pacing state
-across the two lanes. A stale catalogue baseline is rebuilt progressively per
-successfully observed library, isolating unavailable connections; later work
-validates its exact item and revision against the latest generation. A manual
-hold follows the work: admitting a successor case carries each destination's
-latest active hold with no pending return, under the same decision token, inside
-the admission transaction (#1285). The
-return-to-automatic control retains its durable manual hold until its requested
-scan is successfully complete. Release compares the hold's human-decision token,
-so a concurrent later manual decision remains held; failed or incomplete scans
-cannot make stale automatic authority schedulable. The accepted pending release
-is durable before the command succeeds and is recovered from the exact-current
-hold document after restart. Active discovery is marked for a successor scan,
-and bounded recovery pages rotate so incomplete older requests cannot starve a
-later completed release. Shutdown closes claim
-admission before the configured deadline applies to both review-preparation and
-guarded field-effect workers. A live over-deadline worker remains identified and
-causes typed shutdown failure before the shared repository closes.
-authenticated activity projection reads all library progress and pause state
-from one validated repository snapshot. Only one worker lane evaluates automatic
-scan admission, using that aggregate snapshot and a retained next deadline rather
-than repeated per-library integrity validation. The server performs the full
-schema-object, foreign-key, SQLite-integrity, and derived-field equivalence
-admission once for its locked database inode. Derived worker connections prove
-that same live filesystem authority and borrow its admission instead of
-rescanning the database. Store-managed runtime generations likewise borrow the
-binding held by a dedicated process-lifetime control repository; predecessor
-drain and close cannot revoke a successor, and final listener shutdown closes
-the runtime borrowers before that control owner. A Library or Attention
-repository request uses
-size-bounded closed envelopes and lineage facts instead of repeatedly evaluating
-the same provider, proposal, and decision documents. It also proves that each
-case still embeds the exact immutable ProposalSet accepted by admission. Rows are
-read through the bounded facts in `domain/review_browse.py`, which verify each
-document's content address and validate every rendered value under the canonical
-parser's rule for that field, so every rendered value is byte-identical to what
-the canonical writer validated at write time. Rows no longer re-check the
-internal-consistency rules the canonical writer enforces (format/audio section
-agreement, provider status/candidate agreement, inactive-provider inputs),
-non-canonical report and proposal text, or sub-documents they never render;
-those can diverge only through a canonical-writer defect or an out-of-band
-storage edit, and detail and every write path still parse canonically and
-refuse as before.
-Canonical documents remain immutable, and every insert still crosses the
-complete domain validator and projects its field facts in the same transaction.
-Library, Attention, search and their counts choose candidates from report and
-proposal browse facts (#1199): SQL over already-admitted documents, with no new input,
-folded through the deterministic `ml_casefold` (`str.casefold`, as the query is).
-A connection without that function cannot insert a report; what open validates
-is stated under [Schema admission](#schema-admission).
-#1202 changes what a request repeats, never what it refuses. A read validates a
-row's documents once and reuses them within that read, for those exact
-bytes. The path and credential scans skip a pattern only for text lacking a
-literal its every match contains, and ASCII text is scanned for forbidden
-codepoints with the forbidden class's ASCII members. That no other codepoint
-folds onto a guard literal, and that the ASCII class equals the full class on
-ASCII, are checked exhaustively over codepoints; the guarded scans are compared
-with verbatim unguarded copies on generated and boundary text.
-#1215 holds to the same rule for owner decisions. Each of a row's decisions,
-superseded revisions included, is validated in one projection of the row's
-case, built when the first decision has parsed, so every refusal keeps its step
-and order. The page projection reuses that projection only for a canonical case
-with the same content address, the SHA-256 of the same case bytes; otherwise it
-projects the case itself. Either way it validates every decision it renders.
-#1226 extends that reuse across requests, still only for the exact bytes
-(ADR-0083). A row's case, its case and report facts, and its decision scope are
-retained for the document strings they were validated from. The pair is keyed
-by both documents, because a report identity is not the address of its bytes.
-A refusal is never retained, so the same bytes refuse again with the same error
-and cause. A stored object is frozen, and each request receives its own detached
-copy, so no request can alter what another reads. Decisions are still validated
-on every request. The enforced bounds are 512 entries and 8 MiB of key
-document bytes, evicting least recently used first. Memory itself is not
-bounded directly: measured retention was 2.4 to 3.8 times the key bytes, about
-20 to 30 MiB when full, an estimate rather than a limit. It lives in the
-process, is never persisted, and holds only
-documents the single owner's own library already stored. There is no second
-tenant whose data could reach another, and nothing in it is a credential.
-#1237 applies the same rule to cover currentness. What a consideration's
-currentness document validates as (its connection, library, item and report
-names, whether it was prepared while the provider was fetching, and its replay
-reference) is retained for that exact document string in a second cache of the
-same kind, bounded at 16,384 entries and 8 MiB of key bytes and evicting least
-recently used first. Provider fetching, the browse observation and the bound
-replay reference are still read on every call, so a change to any of them is
-answered at once. A document that does not validate, or a call that fails, is
-never retained and still answers 0. Measured retention is about 1.1 KiB an entry,
-2.4 MiB at 2,300 works and about 17 MiB when full. The store activation
-owns it across Settings cutovers, as it owns the browse cache; it is never
-persisted and holds no credential.
-
-A claimed stage retains its already-validated repository connection, without an open
-transaction, until its separate durable transition; composed report, proposal,
-admission, and projection services borrow that validated connection without
-owning or closing it. Proposal
-and admission output publication shares the full-synchronous transaction that
-advances its stage and may claim the next globally fair action, so the next
-action is durable before execution and crash recovery can requeue it. External
-work still occurs outside SQLite write transactions. Provider disposition is a
-pure classification of the report already being published and shares that
-publication checkpoint; a retry is durably returned to extraction before it runs,
-while a successful checkpoint may atomically claim the next globally fair action.
-Staged absence and ineligibility transitions
-require one final confirmation discovery; failed rediscovery makes queued child
-work unclaimable. Final pipeline publication also requires the
-target to remain singular. External target, media, cover, and artifact
-currentness checks precede the short SQLite write transaction, which retains
-its local expected-pointer check; one slow external read cannot hold the writer
-lock against the other lane. A complete report retains each executed lane's
-bounded terminal status; only an admitted candidate from an eligible usable ISBN
-family, with no recovery-eligible identifier sibling, may suppress its planned
-discovery sibling. Every other identifier outcome dispatches that sibling, and
-technical failure remains typed and inspectable but
-cannot erase coherent sibling evidence or prevent proposal creation; only a
-failure before a complete report exists terminalizes the work. Public
-projection allowlists safe provider identity, lane kind, aggregate bounded
-request count, status, reason, and recovery text, never raw diagnostics,
-queries, headers, credentials, paths, or payloads. The path cannot decide a
-field, construct an apply plan, write a target or media file, or delete media.
-The supported review server may poll on
-the one bounded configured interval and hold pre-package terminal failure for
-an authenticated owner retry. Per-work retry eligibility, durable pause, and
-fair-claim state contain only bounded operational values; one work never opens
-a library-wide provider barrier.
-
-## External actors
-
-- A configured target or provider may return hostile bytes. Responses pass
-  through size bounds, strict decoding, and closed semantic projections before
-  reduction to typed facts. One provider cannot erase local or sibling-provider
-  evidence.
-- A mounted-media owner may provide a hostile EPUB or replace it during an
-  invocation. The descriptor-bound isolated child has no credentials, network,
-  persistence, matching, or decision authority. It hashes and parses one
-  bounded immutable byte snapshot, and the parent validates file content and
-  target identity again as the publication transaction's precondition. Explicit
-  non-ISBN schemes and URIs retain ownership of their digit sequences, so a
-  checksum-valid embedded substring cannot manufacture identifier evidence.
-  Series recovery is a closed full-match indicia vocabulary over already bounded
-  selected front/rear resources; it has no filename, prose, catalogue, ranking,
-  provider, decision, or write authority.
-- A mounted-media owner may provide a hostile audiobook, a hostile sidecar
-  document, or a hostile file or folder name. No media byte is parsed in
-  process: the parent runs `ffprobe` as its own isolated child over a passed
-  descriptor, with no network, no inherited `PATH`, an empty-but-minimal
-  environment, `cwd="/"`, its own session, and core, file-size, descriptor,
-  CPU, address-space, output, and wall-clock bounds. The resource bounds are
-  installed by a shim process that then becomes the probe, so nothing runs
-  between a fork and an exec; the parent still resolves the binary from a
-  closed list, so a missing probe is refused before anything is spawned. Its
-  bounded JSON document and each sidecar descriptor are then interpreted inside
-  the same descriptor-bound Python child the EPUB capability uses, whose
-  process cap stays at one. The interpretation itself is a closed recognition
-  grammar — never an XML or container parser — over already bounded text; a
-  sidecar that is over-long, unreadable, or not valid UTF-8 is dropped whole
-  rather than truncated or repaired into a fragment; an identifier whose shape
-  is wrong is retained and reported as malformed rather than silently believed;
-  and a sibling listing refuses at its entry bound — 1,024 entries — instead of
-  materializing an unbounded directory. Path evidence reads bare name
-  components only, never a joined path.
-  A description over the 512-character fact bound is validated whole, against
-  the tag width and the projection rule, before it is cut. Controls that
-  whitespace normalization folds (tab, line break, NEL, U+2028, U+2029) become
-  spaces first, as for every audio value; a credential, path, lone surrogate or
-  any other forbidden character placed past character 512 still refuses the
-  value rather than being cut off unseen. The kept first 512 code points carry
-  no canonical value and the `oversized` state, which only a description may
-  hold; the proposal set admits only valid claims with a canonical value, so
-  the cut text is never proposed, decided or written (#1250). A placeholder
-  language code (`und`, `mul`, `mis`, `zxx`, `xxx`) is no claim, refused by
-  the child's builder and again by the parent's fact validation, so a forged
-  child cannot supply one.
-  The same hostile folder leaf, and a single-file item's title tag, may become
-  an audiobook discovery title (#1255). One pure parent-side grammar reads each:
-  text over 255 characters, or carrying a separator, NUL, any C0 or C1
-  control, a format character, a surrogate, a bidirectional override or a
-  noncharacter, is refused whole rather than repaired. What survives is NFC- and
-  whitespace-normalized and stripped only of trailing bracket tags (at most four
-  bounded passes, each tag at most 80 characters), a trailing year, one
-  trailing credit of one to four capitalised tokens and a leading track number,
-  through anchored, bounded expressions without nested quantifiers; it must
-  still name a letter and pass the report's projection-text check. The result
-  is query text for one Audible lane and never a claim, field value or
-  proposal.
-  Embedded cover art is recorded as presence and never acquired, decoded, or
-  elected.
-  A multi-file item multiplies that per-file exposure, so the item carries its
-  own bounds on top of the per-file ones: at most 512 files — counted after the
-  service's own excluded records are dropped — each file's opened length under
-  the audio ceiling before anything is digested, which bounds the whole item at
-  that ceiling times its file count, and a 600-second reading wall enforced
-  through the same cancellation the per-file children honour. That wall also
-  bounds revalidation, which re-digests every track. Each file still gets its own child, holding no
-  descriptor for any other file, and the folder surface — the sidecars beside
-  the files and the folder name — is read once for the item and only when
-  every track shares one directory, so a file placed in a sibling directory
-  cannot lend its neighbours' documents to the item. Exceeding an item bound,
-  or composing more
-  claims than the report document admits, is one named terminal outcome; a
-  single unreadable or hostile file denies the whole item rather than yielding
-  the partial evidence set an attacker would be choosing.
-- A local actor may replace or corrupt configuration, secret, media, manifest,
-  or SQLite
-  files. No-follow descriptor binding, side-effect-free validation of existing
-  databases, owner-only secret permissions, exact schema validation, canonical
-  row decoding, envelope/document agreement, and fail-closed diagnostics bound
-  this risk. The current runtime does not repair tampered state.
-
-Ordinary typed in-process collaborators are trusted to honor their interfaces;
-arbitrary descriptor, subclass, traceback, or interpreter-control-flow
-sabotage is outside the supported threat model.
-
-## Authenticated review surface
-
-The policy notebook is the same owner-only review surface: state and immutable
-draft reads require the session, and validate, create, and preview also require
-the session CSRF token and canonical Origin/Host. Its bounded 16 KiB mutation
-body path accepts closed maps only and returns value-free structured failures.
-Every response, including its separately served policy script, is private,
-no-store, and covered by the same restrictive CSP. Creating, reading,
-validating, or previewing a draft cannot activate a policy, create a successor
-or queue item, record a decision, or write metadata.
-
-Rich-field impact preview reads at most 20 exact-current lineage pairs per
-library and re-evaluates each immutable report with the existing pure proposal
-compiler under the draft's resolved identity. The field compiler accepts only
-already admitted typed alternatives and exact retained evidence references;
-Google description transformation, accepted ISBN relation, and ebook ASIN
-applicability are checked without parsing, conversion, inference, provider
-access, or target access. An Automatic rich choice projects only when its exact
-field-option identity is in the pinned passing set; every other choice returns
-a closed unqualified abstention. The CLI uses the same application path against
-an existing database and creates no file or SQLite state.
-
-The F20 rich-metadata qualification candidate is aggregate-only. The runtime
-pins its public digest and closed per-option disposition before validation,
-decision construction, or presentation. The three `series` options, both
-`isbn_form` options, genre fill/add/replace, tag fill/add/replace, safe
-plaintext description, and locally corroborated subtitle fill have
-decision-only Automatic authority. The subtitle fill projects only a
-provider-backed edition value that a valid local packaged subtitle claim
-attests exactly; a local claim never corroborates itself, an uncorroborated or
-non-provider candidate abstains closed, and an acting title-combination
-witness retains the destination. Lists must remain one
-complete ordered work-bound source projection, and descriptions must remain
-exact safe work-bound text without rewriting or truncation;
-`not_qualified` and `insufficient_coverage` cannot be fallback authority,
-`tags:off` remains policy-only, and human-only `explicit:unsupported` cannot
-construct an effect. Each automatic decision binds the F19a, F20, or F38 digest
-that actually qualified its exact policy option; F38 binds only
-`contributor_names:canonical:provider_consensus_display`. Effect consent,
-target concurrency, backup, apply, and read-back gates remain unchanged.
-Previously persisted F20 decisions remain readable only when their historical
-digest and option identity match the exact earlier passing set; new decisions
-always bind the current candidate, and a historical digest grants no new option.
-For series, populated Automatic targets are preserved. Provider-wide unsupported
-output with no named membership is not negative evidence. A selected WORK-backed
-membership may lack a number; null remains null. Selected malformed or incomplete
-evidence, incomparable or conflicting alternatives, and failures from dispatches
-that contributed to the elected evidence abstain closed. Unrelated providers,
-candidates or query lanes cannot veto selected evidence. A uniquely dominating
-complete source bundle retains its exact values, order and provenance; no union
-or inferred number is constructed. Election collapses only closed leading-article and trailing
-`Series`/`Trilogy` display variants, never fuzzy names or title-specific rules.
-
-Activation is a separate authenticated CSRF-protected owner mutation with the
-same 16 KiB pre-parse request bound as policy drafts. It binds
-the expected active identity and exact immutable draft, revalidates qualified
-canonical per-library resolutions, and atomically retires the current cohort
-before changing generation. Old proposals and human submissions then fail
-stale. Retry and acknowledgement are owner-only mutations; neither can
-reacquire provider data, transfer a decision, authorize Automatic, construct an
-apply plan, or access target/media write capability.
-
-Direct HTTPS terminates TLS in `review-serve`. Its
-certificate and private-key paths are explicit schema fields, must be supplied
-together as bounded owner-controlled regular no-follow files with an owner-only
-unencrypted private key, and are opened and validated noninteractively as one
-matching identity before the application database or listener is opened. The
-key boundary admits only explicit unencrypted PKCS#8, RSA, or EC PEM envelopes,
-so encrypted keys—including empty-passphrase encryption—fail before SSL parsing.
-The immutable anonymous snapshot descriptors prevent path replacement or in-place
-mutation from changing the served identity after validation. The direct H11
-edge admits at most 100 connections, limits incomplete events to 16 KiB, and
-closes incomplete headers after 10 seconds. TLS 1.2 is confined to ECDHE AEAD
-ciphers while TLS 1.3 retains the runtime suites. No environment substitution,
-TLS-disable flag, ambient proxy-header handling, certificate
-issuance, or certificate renewal authority is present. Both the preflight and
-Uvicorn load use an explicit non-passphrase rejection value, so neither load
-can fall back to OpenSSL's interactive password channel.
-
-The #447 review server adds one private owner-facing HTTP entry point and no
-target-service client. An unauthenticated network client can reach only bounded
-liveness, the login form/assets, and the fixed login failure envelope. Review
-case, evidence, current-case history, and OpenAPI data require an unexpired
-opaque session. Its fixed absolute lifetime is configured from five minutes to
-30 days and defaults to 30 days; activity never extends it. The password is
-verified against either one owner-only regular no-follow Argon2id hash file or
-the exact owner verifier inside the settings store. The dedicated owner-only
-`private/review-sessions.sqlite` stores only a domain-separated HMAC-SHA-256
-session lookup keyed by that exact encoded verifier, SHA-256 CSRF digests,
-expiry/revocation facts, and bounded throttle rows. It has its own
-connection and lock, so session writes never borrow application-database write
-authority. Replacing the verifier therefore rejects earlier sessions before
-authorization. Expired session rows are removed during login, and logout
-records revocation.
-
-Sign-in attempts are throttled durably per client (#1384): five per client in
-any five minutes, under a global backstop of 100 across all clients, so one
-client identity cannot reach the ceiling alone and the Argon2 work
-unauthenticated callers can force stays near one verification every three
-seconds. A granted
-session clears only its own client's attempts, so another client's debt
-survives the owner's sign-in, and a refusal is `throttled` (429), distinct from
-an unavailable store. Each throttle row keeps the client only as a second
-HMAC-SHA-256, keyed by the same exact encoded verifier under its own
-`login-client` domain, never as an address; no address reaches a log,
-exception, API response or evidence. The client is resolved from the
-transport, never from a header the client chooses: an untrusted peer is its
-socket address and any `X-Forwarded-For` it sends is ignored; a peer listed in
+The client comes from the transport: an untrusted peer is its socket
+address, whatever its `X-Forwarded-For` says, and a peer in
 `trusted_proxy_ips` is the rightmost entry of its single `X-Forwarded-For`
-line, which must parse as an IP address. Either address then names its
-client: an IPv6 address is its /64 network, because one host on an ordinary
-IPv6 network holds a whole /64 and could otherwise mint enough identities to
-reach the global ceiling; an IPv4-mapped IPv6 address is its IPv4 address; and
-an IPv4 address is itself. The same identity bounds the setup claim nonces
-below. No peer, or a request from a trusted proxy that carries no
-`X-Forwarded-For`, several lines or an unparsable last entry, maps to one
-shared unresolved key that is throttled like any client and never borrows a
-resolved one. A trusted proxy must therefore append the address that connected
-to it to `X-Forwarded-For`, or overwrite the header with that address. Only a
-proxy that sends no `X-Forwarded-For` at all falls back to the shared key,
-where one client's failures throttle every client behind it. A proxy that
-passes a client's own `X-Forwarded-For` through unchanged lets each client
-choose its throttle key, so one client can spread its attempts over invented
-keys and reach the global ceiling.
+line (none, several or unparsable lines share one key). An IPv6 address
+counts as its /64. A trusted proxy that passes a client's header through,
+rather than appending or overwriting, lets that client choose its key.
 
-The bound holds per identity, not per attacker. Twenty identities reach the
-global ceiling: twenty IPv4 addresses, or twenty IPv6 /64 networks, which any
-holder of a /59 or larger prefix has, including any 6to4 (`2002::/16`) host,
-whose one IPv4 address yields a /48. Such an attacker can keep sign-in at the
-ceiling, and so refused for every client, for as long as it keeps all twenty
-busy. This residual risk is accepted: closing it would need an allow list or
-an owner lockout, both outside this boundary, and the Argon2 budget above still
-holds. The store admits only absence or
-its exact schema and integrity; incompatible or corrupt state, including the
-pre-#1384 throttle table without client keys, fails closed without repair.
-Its clean rebuild deletes only session authority and throttle history,
-requiring every browser to sign in again.
-Pre-0.23 sessions used an unbound digest, so upgrading to 0.23.0 rejects them
-once. This deliberate sign-in boundary avoids a legacy lookup fallback that
-could preserve authority after a verifier replacement.
+The bound holds per identity: twenty IPv4 addresses or IPv6 /64s can hold
+sign-in at the global ceiling for everyone, an accepted gap that only an
+allow list or owner lockout would close. Forced Argon2 work stays near one
+verification every three seconds.
 
-ADR-0058's empty-volume setup state adds no unauthenticated settings mutation.
-An unauthenticated visitor may fetch only a bounded synchronizer nonce: at most
-100 are outstanding for 600 seconds, and at most 10 per client under the same
-resolution rule, held only in process memory, so one client cannot exhaust the
-pool (#1384). A reload replaces the page's nonce cookie without spending the
-nonce it held, so a client at its share retires its own oldest nonce for the
-new one instead of being refused; only the full global pool refuses. A new owner password must be at least 12 characters, counted as
-code points rather than bytes, and at most 1,024 UTF-8 bytes; a shorter one is
-refused with the fixed `422 invalid_password` before Argon2 or any claim. The
-setup page states the same rule from the shared vocabulary beside the password
-field and refuses a short password there before sending it; because a refused
-claim spends its nonce, the page reads a fresh one before showing a server
-refusal. Sign in still accepts any established verifier. Creating the owner
-password requires the exact configured Origin plus the same nonce in a
-host-only cookie and request header, and, under ADR-0086, the deployment-held
-setup claim token. Every start that finds setup unclaimed mints that token with
-`secrets.token_urlsafe(32)`, commits only its domain-separated SHA-256 digest
-(which revokes any earlier token), then writes the token to the owner-only
-`/data/private/setup-claim-token` without following a link, and announces it
-once on standard output with a raw write that bypasses logging. Only someone
-who can read the container's output or its volume can therefore claim it; a
-network visitor who reaches the port first cannot. A bounded pre-check refuses a
-missing or wrong token with a fixed `403 claim_token` before Argon2, without
-state change, throttle debt or spending the token; the refused request's nonce
-is spent, so the page fetches a fresh one in place. One application-database
-transaction compares the token again in constant time, claims ownership,
-clears the digest and stores the Argon2id verifier, so concurrent first-owner
-attempts have one winner and the loser receives `409`; the token file is then
-removed, and a claimed start removes any that remains. A token replayed against
-a claimed store is refused as a claim token, never as stale. The token never
-reaches an API response, log, exception text, `repr` or evidence, and the setup
-application answers request validation with a fixed value-free `422` rather
-than echoing input. Ordinary session issuance follows that commit in the
-dedicated session database; failure returns unavailable while retaining the
-claim, and resubmitting the password retries ordinary login. Every later wizard
-read or mutation uses that ordinary session, with CSRF and Origin checks for
-mutations. Resume verifies the owner password against the store verifier.
-Startup admits only the exact seeded predecessor or
-valid current incomplete setup; older incompatible incomplete setup, including
-`setup-state-v3`, requires a clean rebuild and arbitrary nonempty, malformed, or
-store-mode state fails closed. First boot admits only the owner's regular `0600`
-claim token file beside the session database in `private/`. Kickoff commits authority, permanently closes setup routes, and swaps to
-the ordinary runtime on the same listener. An unauthenticated client therefore
-cannot stage settings, complete setup, or reach a generic write route.
+### Requests and CSRF
 
-Connection setup performs one supported, bounded `GET /api/libraries` with TLS
-verification on, ambient environment and redirects off, one connection, and
-the submitted API key attached only to the admitted Audiobookshelf origin.
-Endpoint and key enter the incomplete store in one SQLite transaction only
-after that read succeeds. Later library discovery passes the stored key
-directly from persistence to the same setup-only infrastructure consumer; no
-application or HTTP read returns it. Provider keys follow the same write-only
-delta boundary, while the optional Open Library contact email remains a local
-non-secret setting used only for Open Library requests.
+- Exact Host is enforced on every request, exact Origin on every unsafe one.
+  Forwarded Host or scheme is honoured only from a trusted proxy; Uvicorn's
+  own proxy handling is off.
+- Every unsafe request needs the session, the CSRF token and an
+  `x-ml-build-identity` header matching the installed build.
+- Serving an authenticated page rotates the CSRF digest. The raw token lives
+  only in that no-store HTML and page memory.
+- After a `403 csrf` the client renews the token and resends once, only a
+  side-effect-free or idempotency-keyed request. A `401` goes to sign-in.
+  A lost acknowledgement reloads authoritative state and never resubmits.
+- `x-ml-work-class: background` on a `GET` changes only local scheduling,
+  never authentication, CSRF or what a read returns. Mutations are always
+  foreground.
 
-When the supported response supplies service folder paths, setup retains only
-bounded non-secret path evidence for exact comparison with deployment-owned
-mount mappings. Each comparison performs one read-only root metadata check for
-directory type and reachability; it never scans, creates, writes, repairs, or
-reads media. HTTP exposes the service path and a matched, missing, ambiguous,
-or unavailable state, never the container path.
+The React workspace uses no browser storage, inline script, external origin,
+worker or source map. The loader verifies every asset's path, size, digest
+and build identity before serving an authenticated shell.
 
-Runtime replacement starts every fallible successor component while dormant.
-One cutover lock closes predecessor admission, commits authority, publishes the
-successor, and opens its local admission latch. Commit failure restores the
-predecessor before unlock. An impossible post-commit fault closes both claim
-admissions, serves a fixed unavailable target, drains both generations, and
-requests outer-server termination rather than serving mismatched authority.
+### Responses and caching
 
-The server receives a composed application boundary rather than a database or
-broad repository. Authentication, currentness, decisions, policy, preparation,
-guarded effects, recovery, and support execute as named application operations
-behind the owner-operation serialization gate. Library and Attention use the existing application owner and root admission.
-Activity history and explicit permission readiness each retain a dedicated
-query-only reader connection, reader-local request gate and generation-owned
-admission. The query-only PRAGMA is verified before
-use; description-authority binding only installs passive callbacks. Classification
-propagates to root and reader without granting a permit or authority. SQLite
-remains the sole transaction owner. Accepted Activity pages, transition, permission and consent reads count before waiting
-for their reader lock. Drain refuses new reads and retains all
-dependencies on timeout; a later successful drain closes both local coordinators
-and readers before recovery dependencies and the owner, never another generation's shared root coordinator. FastAPI retains only
-request bounds, exact Host/Origin enforcement, session/CSRF dependencies,
-response translation, and lifecycle delegation.
+Every response has a restrictive same-origin CSP, frame denial,
+`no-referrer` and `nosniff`, plus HSTS under browser HTTPS. Fonts are
+vendored. Errors are fixed value-free codes.
 
-The authenticated Settings API shares that boundary. Its closed GET/PATCH
-documents are bounded to 32 connections/providers and 128 libraries, responses
-are private and `no-store`, and unsafe requests additionally require CSRF,
-exact Origin, and the installed build identity. Revision comparison and the
-settings/secret update are one SQLite transaction. Secret values are accepted
-only as 1–2,048 printable non-whitespace ASCII characters without an
-authorization-scheme prefix; they are never returned, logged, diagnosed, put
-in URLs or browser caches, or written to public artifacts. Reads disclose only
-presence plus four indicator characters. Invalid and persistence failures use
-fixed value-free envelopes. A present `/data/config.json` prevents every
-covered write and prevents any settings-store read, so an invalid file cannot
-switch authority.
+Everything is `private, no-store` except content-hashed assets and
+session-checked cover previews addressed by digest
+(`private, max-age=31536000, immutable`). Logout does not clear the browser
+cache, so that profile can show a viewed cover for up to a year. The library
+cover route serves only the preview the current report binds to the item's
+cover, digest-verified and never decoded.
 
-The #641 live update stream is one further authenticated read on that same
-entry point and adds no authentication mechanism. `GET /api/v1/updates` requires
-the same unexpired opaque session, refuses a cross-origin subscribe, and is
-served private and `no-store` like every other response except hashed review
-assets and cover previews (#1193). Because it is the one
-read whose body keeps arriving after the check that admitted it, the session is
-re-checked as the stream runs and a lapsed session ends it rather than being
-allowed to keep reading through a connection opened while it was valid; the
-stream is also bounded by its own lifetime and closed by the existing
-graceful-shutdown path.
+The preparation panel's book names (at most five current and eight recent)
+never enter update-stream frames, logs, audit identifiers, diagnostics,
+support bundles or reviewer input. `GET /api/v1/updates` streams
+invalidation, never state: each frame is a sequence, a topic and an optional
+case identity, and the session is re-checked while the stream runs.
 
-Its frames carry invalidation and never state. Each frame's data is a closed
-object of exactly a sequence, a topic, and either null or a review case
-identity, so there is nowhere in the encoding to place a count, a work record, a
-status string, a preparation run, a book display name, a path, a credential, a provider payload, an unfinished proposal,
-or book content; the browser discards whole any frame that is not exactly those
-three fields. A subscriber is told what changed and refetches the authoritative
-answer over the ordinary HTTP surface, which is what keeps every existing
-redaction, bound, and authority check on the only path that carries content. A
-reader whose pending set outgrows its bound is answered with more invalidation
-rather than less -- its identities collapse to whole topics -- which is sound
-only because a frame carries nothing that could be lost by collapsing it.
-Resume is the browser's own `Last-Event-ID`, and an identity minted by a
-previous process is answered with a full resync rather than a position in this
-order. A hidden tab does not refetch from frames; on its next foreground
-transition it takes one ordinary snapshot read, so HTTP still supplies the
-current redacted state and no stale frame can manufacture a transition. An
-untouched visible tab defers Library and attention frames and takes only bounded
-preparation snapshots; pointer or keyboard input pays that deferred debt with
-the same one ordinary snapshot resync, while active input retains immediate
-coalesced invalidation. While Library frames keep arriving, an active tab marks
-Library and attention stale at once but reads them at most once per 1.5
-seconds, and reads once more after the last frame (#1224); this bounds how much
-of the shared database lane one tab can take during preparation and changes no
-authority, redaction or refusal.
-Activity keeps at most two reader-local pages, stamped inside the same SQLite
-snapshot from the five append-only ledgers and the exact owner-visible policy
-transition shape. Field-effect rows resolve their optional report through the
-immutable originating decision and review case, never through a later current
-report pointer; a cache hit serves only after one current stamp comparison. The
-dedicated cross-thread Activity reader serializes each complete Activity or
-transition request locally, so two requests cannot share or end one another's
-read transaction; it remains separate from the guarded background-operation
-gate.
+### Settings API
 
-The generated API contract declares that opaque owner session as an API-key
-cookie on every protected operation and marks mutation CSRF and idempotency
-headers as required. Runtime failures retain separate, value-free meanings:
-invalid or expired sessions are unauthorized, CSRF mismatches are forbidden,
-absent case identifiers are not found, and repository outages are unavailable.
-Logout deletes the cookie only after durable revocation succeeds, so an outage
-cannot be presented as a completed logout. Creation and deletion retain the
-same Path, HttpOnly, SameSite=Strict, and canonical-origin Secure attributes;
-the cookie carries only its opaque bearer token.
+Settings documents are closed, private and bounded (a 256 KiB body, with
+[collection limits](../reference/configuration.md#top-level-fields)). The
+revision check and the settings and secret update are one transaction. A
+secret is 1 to 2,048 printable non-whitespace ASCII characters with no scheme
+prefix; reads show only presence and, from eight characters, the last four.
+Reviewer paths are never browser fields. When `/data/config.json` exists,
+covered writes are refused and the store is not read.
 
-The #448 library and attention responses join only exact-current report and
-case pointers. Pages contain at most 50 rows, cursors are bound to their lens
-and search, and the field queue admits only unresolved or explicitly manual
-destinations. Sibling identifiers cannot widen a query, and automatic-only
-cases expose no mutation control. Each case detail, evidence, bounded
-current-case history, Library page with its lens counts and decision summaries,
-and Attention page with its field count is read from one authoritative SQLite
-snapshot. Concurrent supersession and decision commits therefore appear wholly
-before or wholly after a response; a failed snapshot yields only the existing
-bounded unavailable response. The #1407 Not matched reason is a closed state
-derived from a reconstructible browse fact, never provider text. Its one
-promise of another lookup is read after that snapshot, through an
-application-owned port, from the provider-recovery store and only for the
-visible page's unavailable rows; it is display-only and never enters a count,
-so a job finishing between the two reads can only withdraw the promise.
+New settings start a dormant successor runtime under one cutover lock. A
+commit failure keeps the predecessor; a fault after commit stops the server
+rather than run mismatched authority.
 
-Cover membership uses immutable derived facts validated against the complete
-canonical consideration at publication and root open. This does not grant
-selection or effect authority: those boundaries still validate complete evidence.
-One browse operation captures live cover policy, replay identity and active
-provider fetch identities before its short application snapshot, then rechecks
-them after projection. One fetching-only drift permits a complete fresh read
-under the original policy/replay authority; authority drift, capture failure and
-repeated fetching drift return unavailable. Direct repository readers refuse
-drift. The original disconnect check and shutdown lifetime span both attempts,
-with ownership released between them (#1140). It never holds the application
-and recovery locks together, and this observation does not promise cross-database
-atomicity or freshness after the response. Browse borrowers close before root
-authority during failed activation, handover and shutdown (#1072).
+### Transport
 
-Foreground/background request hints affect only local scheduling after the normal
-authentication boundary. They cannot widen a read, bypass CSRF, grant effect
-consent, or upgrade nested background work. All owner mutations remain foreground.
-Accepted transactions drain through commit or proven rollback; disconnected queued
-browse reads are removed before SQL, while executing reads finish under ownership.
-External reviewer and target calls hold no local database permit. Durable effect
-claims and reviewer revision checks still prevent stale or duplicate authority.
-A credential operation whose external change succeeds before a mapping conflict
-remains a partial failure, with read-only reconciliation and no compensating guess.
-
-Decision acknowledgements distinguish a durable decision from confirmed current
-case readback. Only a validated confirmed case can update the same browser query
-and advance its field; unavailable confirmation never implies the write failed or
-permits an optimistic advance. Repeating the same idempotency key can retry this
-readback without adding another decision.
-
-
-The reachable assets are private case metadata and evidence plus session
-authority. Exact canonical Host and state-changing Origin checks prevent
-cross-origin use; HttpOnly SameSite cookies (Secure for browser HTTPS) and per-session CSRF protect
-browser mutation. Forwarded Host or scheme is rejected unless the direct peer
-is explicitly configured, and Uvicorn ambient proxy handling remains disabled.
-Every response carries a restrictive CSP, frame denial, no-referrer, and
-no-sniff; browser HTTPS additionally receives HSTS. The CSP admits scripts,
-styles and fonts from the same origin only (`font-src 'self'`, #1289): the
-workspace's Inter faces are vendored, content-hashed manifest assets, so no
-untrusted font input is parsed. Sign-in and the setup app reuse those faces;
-setup admits `font-src 'self'` and serves only manifest font assets under
-`/assets/review-app/`, under its own no-store policy. Setup reach failures are
-closed codes (`name_resolution`, `refused`, `tls`, `timeout`, `unauthorized`,
-`unavailable`); the page builds the origin it names from the owner's own
-input, so no key, userinfo or password is echoed (#1287). Every response is
-private/no-store except two route-set families whose bytes their URL fixes:
-manifest-admitted hashed scripts, styles and fonts, and session-checked cover previews
-addressed by a content-derived consideration and reference. Those are
-`private, max-age=31536000, immutable`, so no shared cache may keep them and
-they carry no session, CSRF, credential, or account state; a revoked session
-still meets the existing refusal on any request that reaches the server
-(#1193). Logout does not clear the browser cache, so the same browser profile
-can still show a previously viewed cover preview from its private cache for up
-to a year after logout. Validation and runtime errors use fixed
-value-free codes, so passwords, tokens, paths, hostile metadata, and internal
-exceptions do not enter responses. The one #449 mutation accepts only a
-server-presented exact ordinary-field proposal under owner session, CSRF,
-Origin, target-fingerprint, case-currentness, and idempotency checks. Its
-decision and audit event commit atomically and are append-only. The interface
-has no automatic-decision, apply-plan, target client, media-write,
-target-write, bulk, or reversal constructor.
-
-The #450 browser activation rotates the stored CSRF digest when an authenticated
-detail page is served. The raw replacement token is emitted only in that
-private/no-store HTML response, removed from the DOM when the bounded script
-starts, and retained only in page memory. It is never placed in a cookie,
-`localStorage`, `sessionStorage`, URL, log, trace, or durable artifact. A
-rotated-away token fails, and each decision still requires the exact Origin,
-session, case, proposal, target fingerprint, destination, action, selected
-value, and idempotency key. Browser success follows the typed server
-acknowledgement; a failed or ambiguous response neither advances nor displays
-success. Response loss or an invalid acknowledgement reloads authoritative
-detail/history without resubmitting the mutation. A current-case 409 reloads
-that state, while a stale 409 routes to the authoritative Library; neither
-re-enables obsolete controls. If another authenticated page rotated the sole
-session digest, the client fetches a fresh private/no-store page token into
-memory and sends the unchanged decision once more under its same idempotency
-key; a second refusal asks the owner to press again. An expired session
-instead crosses to sign-in and never retries a decision without fresh
-authentication.
-
-The activated React workspace preserves this boundary. Generated OpenAPI DTOs
-grant no request authority; its handwritten same-origin client keeps CSRF and
-the exact build identity only in page memory, and renews CSRF once after a 403
-whose structured code is `csrf` by reading a private page token. It then sends
-the request at most once more, and only when it carries an idempotency key or
-is side-effect free (decision recording, description-advice selection, and
-policy validate and preview). Every other unsafe request, and a resend refused
-again, is not resent: the owner sees "Your session was refreshed. Press again."
-An `origin` or unparsable 403 is an ordinary refusal with no renewal (#1018).
-The client converts a 401 into
-document navigation to `/login`, and passes abort signals through critical and
-progressive reads. Every unsafe
-browser request carries `x-ml-build-identity`; FastAPI rejects a missing or
-mismatched value before application authority. Apart from that one bounded
-CSRF resend, mutations do not retry automatically; they never claim optimistic
-success and reconcile ambiguous outcomes from authoritative state. The client uses no browser storage, inline script,
-external origin, worker, blob, source map, credential, target client, or write
-adapter. The packaged loader validates bounded exact paths, sizes, digests, a
-content-derived build identity, and the independently emitted expected identity
-before serving any authenticated shell; any failure becomes one stable
-owner-recovery state with no automatic reload loop. Brotli and gzip siblings
-are manifest entries under the same bounds and digests; verified bytes are held
-for the process, so a sibling that fails verification is never served and its
-identity asset is served instead.
+Transport modes and their rules are in
+[origin, TLS and proxies](../reference/configuration.md#origin-tls-and-proxies)
+and [network access](../operations/deployment.md#network-access)
+([ADR-0072](decisions/0072-explicit-local-transport.md)). HTTP carries
+credentials, sessions and metadata in plaintext, so it is for an
+owner-controlled network or VPN only. There is no TLS-disable flag. Direct
+TLS validates certificate and key as one identity before the database or
+listener opens and limits TLS 1.2 to ECDHE AEAD ciphers. The edge admits at
+most 100 connections, limits incomplete events to 16 KiB and closes
+incomplete headers after 10 seconds.
 
 ## Credentials and egress
 
-Secret material is read only in infrastructure and represented nowhere in the
-report, catalogue, or manifest. Target authorization is attached only to the
-configured origin's exact library, library-items, and current-item GET route
-shapes used by the selected operation. Provider authorization is attached only
-to the fixed HTTPS Hardcover GraphQL URL. Inventaire and Open Library have no
-secret; Open Library's operational contact appears only in the User-Agent of
-requests to the fixed metadata and Covers origins. HTTP clients ignore ambient
-proxy/environment configuration and redirects.
-The Hardcover secret file contains the bare provider token without an
-authorization scheme. Infrastructure adds the required `Bearer` scheme only to
-an exact POST to the fixed GraphQL URL.
+Secrets are read only in infrastructure while building their named client;
+a disabled provider's stored key builds nothing.
+Every HTTP client ignores ambient proxy settings, follows no redirect itself,
+verifies certificate and host name on HTTPS, and uses an explicit timeout and
+one connection. No endpoint is arbitrary and nothing is cached.
 
-In settings-store mode, the same egress boundary consumes credentials from the
-owner-only application database only while composing their named target or
-enabled provider clients. Every connection requires a credential; enabled
-Hardcover requires one and enabled Google Books may omit one. A disabled
-store-managed provider may retain its write-only value inside settings
-authority, but that value is not copied into the runtime credential map and no
-provider client or egress is constructed from it. The deploy-only review
-bootstrap and contained-reviewer profile path are never browser fields. Runtime
-activation prepares an isolated candidate before
-persistence; failure leaves the authoritative revision and admitting generation
-unchanged. After CAS commit, the new generation governs the next admitted unit
-while requests already admitted to the predecessor drain against it.
+### Target (Audiobookshelf)
 
-Reviewer access is separate application authority in both settings modes. Its
-public document contains only task mapping, exact model, revision, secret
-presence, and closed status; the OpenRouter key is a write-only `SecretStr` at
-the HTTP boundary and a separate validated database row. Dispatch snapshots the
-mapping revision and required secret together in one SQLite statement, releases
-the owner-operation gate before network work, and the consideration write verifies
-the same revision inside its SQLite transaction. An A-B-A replacement therefore
-cannot make old evidence current. Provider response bodies and raw errors never
-enter the status grammar, logs, or persisted failure identity.
+The API key goes only to the configured origin, on the route shapes the
+operation uses: library and item reads, the capability probe, and the
+guarded write and upload. An `http://` endpoint is plaintext, under the
+[transport](#transport) rule. Target TLS, authentication, authorization and
+availability failures become durable connection conditions with a closed
+code only; owner recovery is a CSRF-bound probe that echoes no endpoint or
+transport detail.
 
-OpenRouter egress is fixed to `https://openrouter.ai`: key and model capability
-checks precede the one exact-model chat-completions request. Redirect and
-ambient proxy inheritance are disabled. Every response stream is consumed in
-chunks and refused as `response_too_large` past its endpoint-specific cap,
-including when `Content-Length` is absent or false. The model catalogue has no
-total cap: it is scanned as one stream and each entry is held, up to 64 KiB, only
-until it is parsed, so memory stays bounded while the catalogue grows. Each
-public call shares one deadline across key, catalogue and chat requests and
-fails `timed_out` at the first check after it is spent: before each request and
-after each read. Each request's own timeout is capped by the time remaining
-when it starts, so one stalled read can overrun the deadline by at most that
-per-phase cap (30 seconds by default); the deadline is not a hard limit. Error bodies are read up to 8 KiB only to
-recognise the data-policy and image-count refusals, and are never retained.
-Cover previews, the sealed
-packet, instruction, and strict schema are the only model inputs; no target
-credential or write authority crosses this boundary.
+### Metadata providers
 
-Codex boot passively admits the image-owned or explicit deployment-owned
-contained profile. Setup, selection and dispatch re-admit current bytes before
-use; ordinary status uses cached provisioning evidence. Device flow uses a
-private staged `CODEX_HOME`; bounded stdout chunks are parsed through the exact
-URL/code grammar. Owner cancellation, expiry, runtime cutover, and shutdown
-stop the exact process group with TERM, a bounded wait, KILL when needed, a
-death check, thread join, and staging cleanup. Generation teardown does not
-delete an already validated installed credential. A replacement sign-in first
-deselects an active Codex mapping at a new access revision. Installation and
-cancellation serialize at the final commit, and a newly installed credential is
-not dispatchable until the owner explicitly selects Codex again.
+A disabled provider builds no client and loses its library associations,
+which enabling does not restore.
 
-The outer container retains its non-root user, read-only root, dropped
-capabilities, no-new-privileges, PID ceiling, and memory ceiling while its
-checked-in seccomp profile admits Bubblewrap's two exact namespace-clone flag
-sets and mount-namespace construction. The
-profile remains deny-by-default and does not admit an arbitrary clone flag set;
-the kernel rejects the mount calls before entry to the admitted user namespace.
-The nested PID namespace mounts no procfs, because hardened container runtimes
-may reject a new proc mount and binding the outer procfs would expose sibling
-processes. A synthetic `/proc/self/exe` symlink resolves only to the sealed
-`/runtime/codex` binding required by the pinned CLI.
+- Every adapter dispatches through the bounded session in
+  `adapters/providers/sdk.py` (request, retry, byte and deadline limits),
+  with a 20-second share of the 60-second preparation deadline.
+- Responses are read under per-response and aggregate byte ceilings and
+  projected to closed facts. Overruns, quota and service failures are typed
+  outcomes, never a no-match.
+- A plan that cannot fit (more than eight ISBN families) is refused before
+  a client exists; input with no ISBN and no complete title-and-author sends
+  nothing.
+- Retries cover only the statuses below and allow-listed transport causes,
+  never TLS, proxy or decoding failures, and never inspect exception text.
+- Reports keep a closed dispatch lineage, never queries, credentials or
+  responses. [Dispatch](../reference/configuration.md#dispatch) sends
+  audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS`.
 
-An immutable architecture-specific seccomp program installed after namespace
-construction denies `unshare`, `setns`, process-creating `fork`, `vfork`,
-`clone3`, and non-thread `clone` calls while permitting `CLONE_THREAD`.
-The nested filesystem binds only the six required device nodes and does not use
-Bubblewrap's devpts-producing `--dev` option, so setup needs no second user
-namespace.
-Authentication, credential recheck, and observation share one activity gate.
-Their broker, outer Bubblewrap supervisor, namespace PID 1, and sole Codex
-payload have respective 64, 64, 64, and 832 MiB address-space ceilings, exactly
-the contained profile's 1 GiB contract.
+Per provider, where *5xx* means 500, 502, 503 and 504:
 
-The Codex observation invocation binds a sealed local model catalogue that has
-no apply-patch or code-mode selector, so remote model metadata cannot add those
-tools. It disables shell, unified execution, agents,
-apps, plugins, browser/computer use, hooks, web search, and every other optional
-model tool named by its strict pinned configuration, including view-image,
-plan, and owner-input. Because no model-callable
-process tool remains, the CLI uses internal `danger-full-access` mode inside
-the outer Bubblewrap sandbox rather than attempting a second Bubblewrap layer.
-The label describes only the skipped inner CLI sandbox: the process still sees
-only the outer sandbox's sealed Codex binary, read-only credential, private job
-directory, bounded images, selected system files, and network needed for the
-one reviewer request.
+- **Hardcover**: `POST` to the fixed GraphQL URL, with the bearer token on
+  that request only. GraphQL `errors` are checked before `data` and yield
+  nothing; their text is never kept. Retries 5xx, and 429 only when
+  `Retry-After` or Hardcover's rate-limit reset fits the deadline.
+- **Open Library**: fixed-origin `GET`. The contact email goes only in the
+  User-Agent to its fixed origins and is stored nowhere else. Retries 5xx,
+  never 429.
+- **Google Books**: fixed-origin `GET` with an optional API key that only the
+  credential-bearing controller reads. Retries 503 only.
+- **Inventaire**: fixed-origin `GET`, no credential. Retries 5xx, and 429
+  only with a bounded `Retry-After`; at most three attempts per request.
+- **Audible catalog**: `GET` to ten hosts from a closed marketplace map, so no
+  provider value becomes a host. An oversized page is refused, not truncated.
+- **Audnexus** (`api.audnex.us`) and **AudioSilo** (under
+  `meta.audiosilo.app/api/v1`): `GET` paths built only from identifiers of a
+  closed shape, so they cannot leave the base path. AudioSilo's HTML error
+  pages are never evidence.
+- **iTunes Search**: `GET` to `itunes.apple.com/search`, ebooks only, with the
+  query only in `term`. It states no narrator or runtime, so it never
+  satisfies runtime corroboration.
 
-Disabled providers cause no client construction or egress. Disabling also
-removes their library associations; enabling them again does not recreate those
-associations.
-Unreferenced providers are never bound. An audiobook plan is dispatched only to
-referenced providers in `AUDIOBOOK_DISPATCH_ADAPTERS` (the Audible catalog,
-Audnexus, AudioSilo, Hardcover and Open Library; ADR-0061 clause 9, #1247):
-Google Books, Inventaire and iTunes Search are never constructed, contacted,
-recorded or retried for an audiobook, an audiobook report gives them no failure
-evidence even where a retry successor carried an older observation forward, a
-binding with no authority is never dispatched, and a recovery job already
-queued for one of them closes as stale before any resolver, target read or
-factory call. Ebook dispatch is unchanged.
-Each of at most eight distinct
-checksum-valid ISBN-10/13 families selects one exact ISBN lane; one
-title-plus-complete-author work lane is also admitted when that complete input
-exists. An audiobook plan may add one alternative work lane from its recorded
-discovery title, with the asserted authors and the target title's input
-references; it never adds a third work lane, changes the authors or queries a
-series and sequence (#1255). More than eight ISBN families return `query_limit_exceeded` before
-provider client construction and permits no subset egress. With neither an ISBN
-lane nor a complete work lane, title-only or incomplete-author input returns
-`insufficient_input` without a provider request.
-The first actual metadata-provider dispatch captures one bounded canonical UTC
-access time from the adapter's injected wall clock. Invalid, non-finite, or
-out-of-range clock output fails before egress. Disabled, insufficient-input,
-query-overflow, repeated-call, and pre-dispatch deadline or budget outcomes do
-not read that clock and retain an explicit absent time. Later lanes, retries,
-report reopen, proposal derivation, and deterministic packet projection reuse the original
-value; none refreshes it.
+Audible, Audnexus, AudioSilo and iTunes send no credential and retry only
+after `Retry-After` on 429 and 503, which Audible caps at one minute.
 
-Each referenced enabled Hardcover provider makes one fixed GraphQL query per
-admitted lane, with at most two bounded retries and 27 aggregate attempts.
-Each referenced enabled Open Library provider makes at most one fixed Search
-query per lane and at most two edition plus two distinct work-detail queries per
-lane. An individual request may retry once, with at most four retries across the
-observation and 49 aggregate attempts. Each referenced enabled Google Books
-provider makes one fixed Volumes query per lane, with at most five retries and
-54 aggregate attempts. Inventaire makes fixed-origin search and entity reads
-only, with three attempts per request, 27 attempts per observation, batches of
-eight, and an aggregate response ceiling of the smaller of nine configured
-response limits and 2 MiB. It sends the fixed
-`MechanicalLibrarian/0.19.0 (+https://github.com/atabbott/mechanical-librarian)`
-user agent and no credential. The lanes share one client, response-byte
-aggregate, and, in a preparation, the provider's 20-second share of the
-60-second deadline;
-Google Books, Hardcover, Inventaire, and Open Library
-use shared one-second request-start pacers across foreground and recovery work.
+### Provider cover admission
 
-Within one provider observation, semantically identical provider lookups are
-coalesced before dispatch and later lanes replay the exact immutable result.
-The private request key contains provider authority and pinned revision,
-operation, canonical provider arguments, and response projection; it excludes
-local references and raw query text. Coalescing is not a cache and never adds
-request, retry, byte, pacing, or deadline authority.
+Cover acquisition is report-only and needs the connection's `cover_enabled`.
+At most four sources per provider and eight overall are admitted. A
+descriptor is admitted only against a candidate the same provider observed in
+the same observation: by a provider-local work identity or, when the provider
+resolved no work, by one of that provider's own candidate editions. Two
+unresolved placeholders never match, and a descriptor with no edition matches
+nothing. A refused descriptor is dropped before any request is built.
 
-Retries are provider-local and fixed. Only HTTP 500, 502, 503, and 504 are
-transient for Hardcover and Open Library; Google Books retries only 503.
-Hardcover 429 retries only when one canonical, bounded `Retry-After` value fits
-the remaining deadline, while Open Library never retries 429. A valid bounded
-`Retry-After` may govern 503; otherwise fresh truncated exponential backoff and
-jitter applies. The transport classifier uses only a narrow HTTPX type and
-bounded typed-cause allowlist; it never inspects exception text and rejects TLS,
-proxy/configuration, invalid protocol/URL, local stream-state, decoding,
-pool/write-timeout, and unknown failures. Every retry remains inside pacing,
-deadline, byte, and request-count authority. Attempt records are bounded and
-process-local. Provider adapters also count optional parser/schema rejections
-at their actual rejection points. The application canonically merges those
-counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v45`; provider, attempt ordinal, delay, elapsed time,
-headers, bodies, and exception text are dropped. Application-created
-query-limit outcomes follow the same closed mapping and persist
-provider/lookup_construction/lookup without constructing or invoking a
-provider. Missing, malformed, or exception-raising optional attempt records map
-to a bounded provider/unknown/response aggregate. Provider observations admit
-only sorted unique provider-component aggregates whose category and stage are
-one supported provider combination.
+Allowed cover origins:
 
-Work-query shaping never rewrites retained evidence. The canonical report keeps
-only a closed dispatch lineage; rendered queries, shaped values, credentials,
-and responses are not retained. Every single transformation family stays
-query-only and cannot grant candidate or write authority. One closed compound
-production, `author_prefix_then_underscores` — the complete first-author prefix,
-a separator from the closed set, and a remainder carrying at least one filename
-underscore that normalizes to the provider title under the unchanged closed
-comparison — grants WORK admission, and the report persists its ordered lineage
-of families, production name, and local side. Replay rejects every lineage that
-is not exactly that enabled production. ADR-0068 additionally permits the
-closed Latin combining-mark family. Its admission lineage records exact changed
-local/provider title and author ordinals, while dispatch lineage records only
-the actual request; no retained claim is rewritten and compatibility or
-transliteration matching remains unavailable. ADR-0067's #1260 amendment adds
-three band-corroborated productions that admit only inside the tight runtime
-band on an audiobook plan's asserted lane. The identity floor and every
-translation, adaptation, abridgement, and variant-marker veto are unchanged.
-All widening and narrowing requests remain inside the existing deadline,
-pacing, byte, dispatch-count, and retry-accounting boundaries; ISBN/ASIN
-dispatch is unchanged.
+- Audiobookshelf's raw cover route, with no credential, cookie or referrer.
+- Hardcover, with bounded manual redirects; every hop must be public HTTPS on
+  port 443.
+- Open Library and Inventaire, on constructed fixed-origin URLs.
+- Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
+  `is5-ssl.mzstatic.com`.
 
-The fixed Hardcover selections stay within three relationship levels. Typed
-taxonomy is joined from bounded sibling-root tag rows by exact provider IDs.
-Required edition/book identity and their exact join fail closed; malformed or
-over-bound optional taxonomy members and links are excluded locally, retain no
-partial prefix when the collection is over-cap, and cannot erase independent
-claims.
-HTTP-success GraphQL `errors` are inspected before `data` and produce no
-candidates or cover descriptors. Their bounded structure is validated only to
-type the failure; provider messages, paths, extensions, and partial data are not
-logged, persisted, or copied into reviewer material.
+Only Hardcover follows redirects. Any other host is a typed `unsafe_remote`
+outcome and no socket opens. Remote covers use their own address-pinned
+transport with bounded bytes, attempts and deadline. Embedded audiobook art
+is never acquired. Reports never keep the remote URL.
 
-Cover acquisition remains report-only. The ABS raw-cover route is bracketed by
-the final item read and has no credentials, cookies, referrer, or user agent.
-Remote Hardcover cover requests are separately credential-free, require public
-HTTPS port 443 at every hop, use identity coding, and have bounded manual
-redirects, bytes, attempts, and aggregate deadline. Hostile JPEG, PNG, and
-static WebP bytes are decoded in a constrained child; reports retain only
-validated content digests, dimensions, media type, and preview references.
-Open Library cover requests use the same transport and decoder boundary, but
-allow no redirect, use constructed fixed-origin numeric-ID URLs, and share the
-adapter's one-second request-start pacer. Its bounded two-edition/two-distinct-
-work observation can make at most four remote cover requests.
-Inventaire cover requests use that same no-redirect transport and decoder
-boundary, accept only fixed-origin `/img/entities/` paths with a 40-character
-lowercase hexadecimal identity, and share the observation's one-second pacer.
-Provider cover admission is limited to four sources per provider and eight
-overall. A descriptor is admitted only against a candidate the same provider
-observed in the same observation: by a qualified provider-local work identity,
-or, when that provider resolved no work and states the unresolved placeholder,
-by an edition identity equal to one of that provider's own candidate editions.
-Two unresolved placeholders comparing equal never admit anything, and a
-descriptor naming no edition holds no identity to match. A refused descriptor
-is dropped before any request is constructed, so it produces no egress and no
-source row. Reports retain safe allowlisted provenance and explicit truncation,
-never the remote URL.
+### Provider recovery
 
-## Output and persistence
+[Provider recovery](../operations/provider-recovery.md) is background egress
+under the same limits. Before building a client it rechecks the source
+report, review package, target and media identity, provider binding and
+configuration generation, and it runs outside write transactions. Missing or
+contradictory quota evidence takes the conservative path. **Retry now** is a
+Settings write that sends no request, and no view shows a key's value.
 
-Authorities: `docs/reference/review-openapi-v1.json` for every response shape
-and field, `src/mechanical_librarian/domain/metadata_report.py`,
-`domain/proposal_set.py`, `domain/review_case.py` and `domain/cover_evidence.py`
-for what a persisted document may contain,
-`adapters/persistence/` for the transactions and schema admission that publish
-it, `application/cover_packets.py`, `application/cover_packet_semantics.py`,
-`application/cover_policy.py` and `adapters/reviewers/contained_reviewer.py`
-for the contained cover boundary, and `adapters/providers/` for provider egress.
-Every bound, field list, chunk profile and closed vocabulary named as fixed
-below is stated exactly once, in those artifacts. This section states the
-invariants they must keep; it does not restate them.
+## Parsers and hostile input
+
+No untrusted media or image byte is parsed in the server process.
+
+**EPUB.** A descriptor-bound child with no credentials, network or
+persistence parses one bounded immutable snapshot
+([ADR-0011](decisions/0011-isolated-epub-inspector.md)). The parent
+revalidates file content and target identity inside the publication
+transaction, so a replaced file is refused. Digits inside non-ISBN schemes
+and URIs never become ISBNs.
+
+**Audiobooks.** `ffprobe` runs as an isolated child over a passed descriptor
+([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)): no network, no
+inherited `PATH`, a minimal environment, its own session, and CPU, memory,
+file, output and wall-clock limits installed before exec. Its output and
+sidecars are read in the EPUB child under a closed recognition grammar, never
+an XML or container parser.
+
+- An over-long, unreadable or non-UTF-8 sidecar is dropped whole; a badly
+  shaped identifier is reported as malformed, not believed.
+- A directory listing refuses past 1,024 entries; path evidence uses bare
+  names only.
+- A description over 512 characters is checked whole, then kept only as
+  `oversized`; the cut text is never proposed or written.
+- A multi-file item allows at most 512 files and a 600-second reading wall
+  ([ADR-0066](decisions/0066-multi-file-audiobook-composition.md)). Each file
+  gets its own child; one hostile file denies the whole item.
+- A folder name or title tag over 255 characters, or holding a control,
+  format, surrogate or bidirectional code point, is refused whole. It is only
+  ever query text, never a claim.
+
+**Text.** Every value entering a report passes the shared projection grammar:
+forbidden code points, private paths and credentials are refused, never
+repaired. Comparison never strips diacritics or uses fuzzy distance.
+
+Incumbent description HTML is rendered by the one provider renderer, which
+drops attributes and refuses event handlers and unbalanced markup; path and
+credential checks run on the rendered text, with character references
+decoded once. A description containing `<` or `>` is never proposed, so
+markup never reaches a write. Markup built to hide a path is an accepted
+risk.
+
+**Images.** JPEG, PNG and static WebP are decoded only in a constrained
+child, which also computes the perceptual hash.
+
+## AI reviewer boundary
+
+A model is untrusted ([ADR-0004](decisions/0004-ai-is-untrusted.md),
+[AI trust boundary](ai-boundary.md)). It never sees a target credential,
+chooses inputs, changes policy or gets write authority; everything it reads
+is evidence, never instructions.
+
+Reviewer access is separate authority
+([ADR-0062](decisions/0062-owner-managed-reviewer-access.md)). Dispatch reads
+the mapping revision and secret together and releases the owner-operation
+gate before network work; the result write rechecks the revision, so an A-B-A
+change cannot make old evidence current.
+
+### OpenRouter
+
+Egress is fixed to `https://openrouter.ai` and one exact model, with
+`require_parameters: true`. Cover requests also deny data collection;
+description requests also set `allow_fallbacks: false`. Upstream data
+practice is not verified. Responses past each endpoint's cap are refused as
+`response_too_large`, whatever `Content-Length` says. One deadline spans the
+key, catalogue and chat requests; a single read can overrun it by its phase
+cap (30 seconds by default). Error bodies are read up to 8 KiB to recognise
+known refusals and never kept.
+
+### Contained Codex reviewer
+
+Each use re-admits the image-owned or deployment-owned profile bytes, and an
+invalid override never falls back
+([ADR-0081](decisions/0081-image-owned-reviewer-provisioning.md)). Device
+sign-in uses a private staging `CODEX_HOME`; cancellation or shutdown kills
+the exact process group and proves it dead. A new credential is used only
+after the owner selects Codex again.
+
+- The container is non-root, read-only, capability-free and
+  no-new-privileges, with PID and memory ceilings; its seccomp profile admits
+  only Bubblewrap's namespace setup
+  ([deployment](../operations/deployment.md#contained-codex-reviewer)).
+- Inside, a second seccomp program denies `unshare`, `setns` and process
+  creation. No procfs is mounted.
+- Broker, supervisor, namespace init and Codex have 64, 64, 64 and 832 MiB
+  address-space ceilings.
+- Every optional Codex tool is off (shell, agents, plugins, browser, web
+  search, image viewing). `danger-full-access` only skips a
+  redundant inner sandbox: the process still sees only the sealed binary,
+  read-only credential, private job directory, images and one request's
+  network.
+
+### Cover observer
+
+The cover observer is the only model use that can influence a decision, as
+advisory evidence
+([ADR-0049](decisions/0049-owner-confirmed-cover-considerations.md)). It
+returns a fixed set of visual properties with explicit unknowns and no
+ranking, winner or identity field. The local parser needs exactly one
+observation per admitted candidate and checks every binding. The adjudicator
+makes no model call and recomputes identity from the retained report.
+
+Each preview is verified against its report digest and re-encoded into a
+metadata-free single-frame PNG; admission requires byte equality after
+re-decoding. Bytes go into sealed memory descriptors, re-verified in the child
+before Bubblewrap copies them read-only.
+
+### Description advice
+
+Description advice sends only bounded provider-backed texts and the owner's
+cleanup choices, never owner decisions, titles, identifiers, paths or
+credentials, and accepts one bounded description with a closed disposition
+([AI trust boundary](ai-boundary.md#where-models-are-used),
+[configuration](../reference/configuration.md#description-advice)). An
+attempt is durable before transport; after a crash only an explicit retry
+calls again.
+
+## Decision and write authority
+
+Only these project authority, and only into the guarded effect pipeline: an
+owner `accept` or `owner_entered`, an owner `keep_current` as a corrective
+write back to the case target, or a sealed qualified automatic decision
+(`candidate`). Proposals, previews, advice and policy dispositions cannot
+([ADR-0037](decisions/0037-origin-neutral-guarded-field-effects.md),
+[ADR-0071](decisions/0071-book-media-guarded-application.md)). Which values a
+field may take, and when automation may decide, is in
+[automation policy](../product/automation-policy.md).
+
+### Owner decisions
+
+An owner decision needs the session, CSRF, Origin, target fingerprint, case
+currentness and an idempotency key. It names a server-presented proposal or an
+owner-entered value. The decision and its audit event commit atomically and
+are append-only. Automation never overrides an owner decision.
+
+Withdrawal appends a valueless row, revokes unclaimed authority in the same
+transaction and never re-arms automation. The previous value offered as a
+suggestion grants no authority: choosing it is an ordinary owner-entered write
+that refuses as stale if the field has changed. A manual hold follows the work
+to its successor case; Return to automatic releases it only after the scan it
+requests succeeds, and only if no later owner decision replaced the hold
+([ADR-0039](decisions/0039-continuous-guarded-application.md)).
+
+Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
+points of NFC text with no control, path, credential or URI. No automatic path
+reads an owner-entered value. Clearing, rollback and undo are not available
+([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
+An owner may choose a retained cover whose match is not confirmed, but not
+one with a positive contradiction.
+
+### Automatic decisions
+
+Automatic policy is decision-only
+([ADR-0036](decisions/0036-qualified-decision-only-automatic-policy.md),
+[ADR-0087](decisions/0087-operation-bound-qualification-authority.md)). Only
+qualified field options can decide, each binding the qualification digest
+that allowed it; everything else abstains to the owner. Pause and suspension
+fail closed to the owner queue; only a CSRF-protected owner action lifts a
+suspension.
+
+Policy bodies are closed and capped at 16 KiB, and drafts and previews
+activate nothing. [Activation](../operations/review-case.md#policy-activation)
+is a CSRF-protected mutation bound to the expected active policy and exact
+draft, and old proposals then fail as stale.
+
+Automation replaces a populated cover only with a confirmed candidate
+against a confirmed incumbent, and any other automatic cover write needs a
+known-empty target. It replaces a populated ebook description only through
+description advice with `description_automatic_application` on. Evidence
+never creates series, contributor, title or recording identity on its own;
+conflicts go to the owner, never to a write. The explicit flag is set only by
+an exact positive.
+
+### Consent and guarded effects
+
+Writes need the owner's library-scoped consent for the exact destination set
+shown in Activity; adding a destination lapses it, and policy activation
+carries forward only current consent, never widening it. A grant must match
+a fresh capability probe. A policy or consent change between the browser's
+re-read and the grant is not detected; a capability or library change is
+still refused.
+
+Every claim rechecks backup readiness, capability, authority, consent,
+dependencies, target pre-state, pause and optimistic state in one transaction.
+Failures suspend the connection or destination
+([suspended destinations](../operations/backups-and-recovery.md#suspended-destinations)),
+and a probe never clears `unexpected_effect_behavior`. Read-only keys cannot
+write; update-only keys cannot upload covers.
+
+Audiobookshelf has no compare-and-set. The adapter makes one minimal request
+after its final pre-read, then reads back and reconciles; another actor's
+change to the same field in that gap can be lost.
+
+- A request with an unknown outcome is never resent. Anything retried passes
+  every guard again; withdrawn authority or consent cancels it without a
+  request, and a pre-read already showing the desired value verifies without
+  one.
+- Paired title and subtitle go in one request; both must verify, and a
+  partial result is reconciled, never blindly retried.
+- Descriptions are compared as the text Audiobookshelf shows, so another
+  actor's markup-only edit is overwritten. Read-back verifies only when the
+  stored form shows the desired text, and a partially dropped value is never
+  resent. A restore that would lose formatting is refused with
+  `restore_unavailable`.
+- Cover upload reads only the digest-verified original. The private cover
+  recovery directory must belong to the runtime user with `0700` and `0600`
+  modes; a failure there stops only that cover effect.
+
+Restart and reconciliation are in
+[guarded field-effect recovery](../operations/backups-and-recovery.md#guarded-field-effect-recovery).
+
+## Persistence and output
 
 ### What may cross the boundary
 
-Successful output and persisted documents contain only bounded target and item
-identity, opaque file identity and digest, current title, fact-local opening
-excerpts with their closed provenance, controlled contributor and production
-roles, typed date event and precision claims, provider candidate and
-provider-local work identities, canonical provider access time where egress
-occurred, comparison facts with their closed method, structurally parsed
-name-to-identity bindings, closed provider evidence kinds with scope and
-occurrence ordinal, and derived relationships built only from those
-already-admitted identities.
-
-They contain no credential, private path, unadmitted or rejected provider
-value, provider response body, or arbitrary EPUB text. An optional invalid
-value crosses the adapter boundary only as a value-free bounded schema count.
-Target and provider titles pass the same closed public-safe projection before
-either can enter a report. Failure output is fixed and value-free.
-
-Comparison normalization is closed. It never strips diacritics, never uses
-fuzzy distance, and cannot turn an alias, a rank, or a repeated query into
-another source. No policy stores an inferred corporate equality, hierarchy,
-registry result, or fuzzy match. A relationship projection duplicates no
-observation or excerpt, and a bibliographic combination grants no new evidence
-authority: a member may reference only an already-admitted alternative or an
-exact fingerprint of the bound target field, and exact normalized containment
-may reject a tuple but may never split text, create a value, rank a provider,
-or infer a preference. Production, conversion, scanning, software, retailer and
-workflow credits are a separate contextual claim kind and cannot cross into the
-bibliographic contributor or author boundary; copyright-holder, printer,
-distributor, retailer, conversion, advertisement, preview and other-work text
-cannot cross into rear subtitle, publisher, or imprint claims. Source position
-changes provenance only, and grants neither candidate nor write authority.
-
-Report generation performs no decision and grants no write authority. A
-ProposalSet duplicates no report excerpt and no provider or cover payload, and
-carries no current pointer, review state, lifecycle, or mutation authority.
+Reports, proposals and cases hold only bounded identities, digests, admitted
+claims with closed provenance and comparison facts, never a credential,
+private path, rejected provider value, response body or arbitrary EPUB text
+([data privacy](data-privacy.md)).
 
 ### Publication
 
-Report and current-pointer publication is one SQLite transaction. Immutable
-report rows carry update and delete triggers. The transaction runs the bounded
-target and media currentness precondition before inserting the report or
-advancing the pointer; the pointer may advance, but a predecessor report is
-never changed.
-
-Validated cover originals and previews stage before that transaction. Only
-report-bound preview digests can be reopened offline; raw originals and remote
-locations have no CLI or replay surface. A failed currentness check leaves no
-new report or pointer, and unreferenced staged bytes are recoverable cleanup,
-not a database repair protocol.
-
-Proposal creation performs one fresh target, media and cover validation and
-verifies every referenced private preview without constructing a provider
-client. An immediate transaction then rechecks the exact immutable report and
-current pointer before inserting the ProposalSet; drift or malformed input
-inserts nothing. The interval after the last external read is unavoidable and
-is why review admission revalidates freshness. Review admission rechecks the
-persisted ProposalSet, report and durable pointers inside SQLite, stores only
-bounded identities and canonical projections, and accepts no credential,
-reviewer identity, decision, or target-write capability.
+Report and pointer publication is one transaction that first rechecks target
+and media currentness; reports are immutable by trigger. Proposal creation
+and review admission recheck the report and pointers inside SQLite and hold
+no credential or write capability. External reads stay outside write
+transactions. [Preparation](../operations/review-case.md#preparation) creates
+no owner decision, plan or write.
 
 ### Schema admission
 
-The report database, `catalogue-v2` database, `config-v9`, artifact records,
-and `batch-manifest-v5` each accept only absent or their exact current schema.
-An earlier schema, an extra object, altered SQL, or a failed integrity check
-fails closed before mutation, and is never migrated, imported, preserved, or
-passed through a compatibility parser. SQLite's integrity check skips CHECK
-constraints on a read-only connection, so every read-only open re-evaluates
-each CHECK and refuses a row any of them refuses, naming only the table
-(#1401). The expressions come from the DDL the application defines, once open
-has proved the store holds exactly that schema. Only the qualification-state
-bridge's historical source, which this build defines no DDL for, takes them
-from its own text, and only after a code-held digest has bound that text byte
-for byte. A CHECK the scanner cannot extract refuses rather than being
-skipped. On a read-write connection `quick_check` does report a row breaking a
-CHECK or NOT NULL constraint, so open-time admission and ordinary backup
-readiness, which runs on the reader's read-write connection, both catch one.
-The fresh readiness check runs `quick_check` on a read-only verifier and does
-not. That gap is accepted: adding such a row while the store is running needs
-write access to the state volume, which already allows replacing the whole
-store. Closing it measured 2.4 to 3.2 times the fresh check's latency on a
-10,000-work store. Persisted
-content is validated when a
-read selects it and when a selected report participates in publication;
-malformed targeted content fails closed. Unselected history stays isolated and
-is refused only when a read selects it. Browse facts are the exception
-(#1199): open compares the report and proposal facts with their documents for
-every row a current review package, a current review-case lineage (and the
-case it names) or a current report lineage points at, so a malformed or
-fact-changing row behind any of those pointers refuses the database at open.
-Publication that makes a stored report current again, and admission that binds
-a stored proposal again, compare that one row's facts inside their transaction
-and roll back on a difference, so moving a pointer never brings an unchecked
-fact into row selection or counts. An edit bypassing
-`metadata_reports_no_update` after open is refused where the row renders and at
-the next open. Open also compares every attention fact with its definition in
-both directions (#1232), so a missing, extra or altered fact refuses the
-database. The facts are bound to the interpreter's
-`unicodedata.unidata_version`, so a Python upgrade that changes it is an upgrade
-event: open refuses with a clean-rebuild-required message and never repairs or
-re-derives at startup. Recovery uses clean current state plus
-catalogue refresh, fresh manifest creation, or supported report regeneration.
-This is the narrower runtime application of ADR-0013's repository-wide
-pre-release clean-schema rule; it does not limit that rule to database state.
+Every store follows
+[the clean-state rule](../reference/compatibility.md#the-clean-state-rule):
+anything but absence or the exact current schema fails closed before any
+mutation. Admission does not rely on SQLite alone:
 
-Cover acquisition reads the declared incumbent before provider dispatch inside
-the existing single aggregate window (#1156). Each provider observation is
-capped at a 20-second share of that window and never past it, apart from one
-in-flight transport phase overrunning slightly as the aggregate already allows, so one slow
-provider cannot starve the providers or alternative covers after it; request,
-retry, byte and pacer ceilings are unchanged (#1248). Expired acquisition starts no
-request; known terminal descriptors precede pacing and transport. EPUB directory
-entries are excluded from file identity matching only after unchanged archive
-validation. Child wall timeout and cancellation retain process/pipe cleanup.
-Final target/media/digest currentness, admission caps, default-off automatic
-application and explicit owner authority remain unchanged.
+- A read-only open re-evaluates every CHECK constraint itself, because
+  SQLite's read-only integrity check skips them. A CHECK it cannot extract
+  refuses.
+- The permission-readiness check does not see a CHECK-breaking row, an
+  accepted gap since adding one needs write access to the volume.
+- Browse and attention facts are compared with their documents at open for
+  every current row; any difference refuses the database
+  ([ADR-0084](decisions/0084-persisted-attention-facts.md)). No product code
+  writes with `REPLACE`, which would skip delete triggers.
 
-### The contained cover observer
+Database-root crash recovery is explicit, runs under an exclusive lock and
+rolls back a private journal on verified copies first; unknown or malformed
+state refuses.
 
-There is no generic model-selected write authority and no generic reviewer
-queue in the installed runtime. ADR-0049 and ADR-0050 define the sole installed
-exception: one cover-specific contained observer over bounded private
-report-cover previews. Its result is advisory evidence only. Deterministic
-identity and cover policy decide eligibility, and an explicit owner interaction
-is the sole source of cover write authority; a missing, failed, or unqualified
-observer preserves the fully supported model-free manual path. Generic kernel
-use remains reachable only through the source workbench and receives only
-synthetic or irreversibly sanitized inputs.
+### Read caches
 
-The isolated child has no repository, database, media, service configuration,
-target or provider credential, shell, tool, plugin, web, history, approval, or
-environment authority. Its private profile binds the exact artifacts,
-credential store, limits and model configuration, and the policy path binds the
-exact profile bytes: a substituted profile or a well-shaped invented observer
-reference fails closed. A durable consideration records bounded attempt
-evidence and input identities before any result can influence advice. The
-adapter withholds child release until an in-memory callback has observed the
-exact PID, process group and start token, and those process facts are
-deliberately not persisted. Timeout or cancellation kills the captured process
-group and proves its identity dead; credential drift or cleanup failure blocks
-success. Raw streams, paths, prompts, credentials and reasoning never cross the
-boundary.
+In-memory caches ([sizes](data-privacy.md#what-surfaces-show)) hold only
+admitted documents, never credentials, and grant no authority. Browse
+documents are reused only for the exact bytes they were validated from; a
+refusal is never cached
+([ADR-0083](decisions/0083-validated-browse-document-reuse.md)). Activity
+facts are re-verified against source rows
+([activity reads](sqlite-topology.md#activity-reads)); an out-of-band edit
+may show briefly there, but Activity feeds no write. Library, Attention
+and Activity each read one snapshot and fail closed on a malformed row;
+consent grants and claims read the writable store afresh.
 
-The observer's instruction is the only authoritative input. Packet data,
-provider context, images, visible text and OCR-like text are hostile evidence,
-not instructions. Its vocabulary is a fixed set of visual properties with
-explicit unknown values and no owner-policy, eligibility, ranking, winner,
-identity or write field. The local parser requires exactly one closed
-observation for every admitted opaque candidate, rejects an invented or
-repeated reference and an extra or hostile value, verifies the complete
-execution, request, image and result bindings, and emits only opaque identities
-plus exact preview digest and variant facts. Raw model output is not an
-observation report until that validation passes.
+### Diagnostics and support
 
-The adjudicator introduces no model or provider call. It re-admits the exact
-packet and images, recomputes identity outcomes from the exact retained source
-report rather than trusting a caller-authored identity document, and requires
-the current classifier, taxonomy, instruction and output-schema identities
-before using any candidate fact. Its policy is canonical booleans, never prompt
-text. Conflict and unknown-identity candidates cannot be rescued and are
-excluded individually; identity abstains only when no eligible candidate
-remains, and unavailable observations produce the fixed abstention. Its report
-carries only opaque acceptable references, one exact admitted recommendation or
-null, and closed reason and content identities. No image, path, URL, free text,
-production target, persistence, or write authority enters this boundary.
+Status and support routes need the session; export also needs CSRF and is
+re-redacted and size-bounded. Secrets, target values, paths, databases,
+environment, media and cover bytes never enter diagnostics. Process events on
+standard error carry only allow-listed keys with closed values, never a
+title, query, URL, body, exception message, credential, path or item id;
+writing them never raises into the caller and nothing is persisted
+([log lines](../operations/observability.md#log-lines)).
 
-Cover identity classification is a local pre-review projection. It binds the
-exact report and already-admitted candidate identities, emits only opaque
-references and fixed outcome and reason codes, gives retained identifier,
-edition/work and manifestation contradictions precedence over provider
-verification, and has no image inference, provider dispatch, child process,
-persistence, policy, or write authority. Plausible is not verified: an
-unresolved provider cover is plausible only under the retained-lane, title-
-agreement and creator-agreement conditions the module states, and anything else
-remains unknown. Admission reopens every bound source preview through the
-report reader, verifies its source digest, re-normalizes it deterministically
-to the candidate transport identity, and recomputes the report-bound reference,
-provenance, incumbent, dimension and variant facts, so a foreign packet fails
-closed.
+## Operator and maintainer tools
 
-### Image transport
+None of these has target-write, media-write or startup authority.
 
-The generic reviewer entry point is image-free: its closed request and adapter
-method have no image member or argument. A distinct cover request is created
-only by the full packet parser, which validates every closed field and
-invariant and requires exact ordered reference and digest equality with the
-supplied images; producer and admission use that same semantic validator.
-
-Packet preparation verifies each exact report-bound source digest and bounded
-PNG framing, discards every ancillary and profile chunk, decodes one RGBA
-frame, and deterministically re-encodes the exact pixels into a metadata-free
-derived transport. That encoder is platform-independent and delegates no
-serialization or compression decision to Pillow, libpng, or the platform zlib
-build; Pillow remains the bounded decoder only. Source reference and digest
-bindings stay separate from the derived transport's. Admission checks the
-complete bounded, canonically ordered chunk structure and checksums, fully
-decodes, re-encodes, and requires byte equality before mounting, and admits
-only a single-frame RGBA PNG within the fixed dimension bound whose decoded and
-declared dimensions agree. ICC profiles, palettes and every other ancillary or
-unknown chunk are absent from the derived transport; those source bytes cannot
-cross the reviewer boundary. A forged signature, corrupt or truncated stream,
-invalid chunk state, trailing byte, unsafe dimension, or decoder warning
-crosses only the value-free response-format boundary.
-
-Before process creation, admitted bytes are copied into anonymous Linux memory
-descriptors, rehashed, and sealed against write, growth, shrink, and further
-seal changes; an image over the profile's child file limit fails before
-dispatch. After gated release the child reopens every sealed descriptor
-read-only through its own `/proc`, verifies its identity, seals, size and
-digest, rewinds the independent open-file description, and replaces the
-inherited descriptor before limits and exec. Bubblewrap copies from those
-child-private cursors through descriptor-data mounts into private read-only
-sandbox files, so a dispatch callback or another same-UID process can neither
-mutate the sealed bytes nor steer Bubblewrap through a shared inherited file
-offset. The image-capable adapter independently reconstructs and fully re-admits
-the packet and exact ordered image tuple immediately before this path, so a
-directly constructed private request object has no admission authority.
-Arbitrary paths, URLs, originals, remote fetches, target or service identities,
-and generic attachments remain unavailable.
-
-Qualification history for this boundary — the sealed-v2 attempt, its Bubblewrap
-diagnosis, the memory-envelope correction, and the semantic and policy
-benchmark cohorts and their coverage caveats — is in git history and in the
-issues those runs closed. What survives from it is a rule, not a result: every
-run retains immutable configuration and aggregate-only receipts, makes no
-unseen-holdout claim, and widens no model, prompt, schema, taxonomy, threshold,
-resource, provider, network, corpus, production, or write authority.
-
-### Provider egress
-
-A provider adds no production-write authority and no new network authority. A
-disabled provider constructs no client and produces no egress. Per-response,
-aggregate-byte, row, lane, request and deadline bounds fail closed into typed
-provider outcomes, and a quota or service failure is never reclassified as a
-no-match. Lane overflow is typed before client construction and causes no
-subset egress. One adapter instance owns lane sequencing, request maxima, the
-aggregate byte ceiling, and the shared pacer and deadline.
-
-Every metadata adapter dispatches through the one bounded session in
-`adapters/providers/sdk.py`, which applies those request, retry, byte and
-deadline bounds and records the attempt evidence; the adapter supplies only its
-fixed request and its status mapping. Moving Hardcover and Open Library onto it
-(#984) changed no method, origin, header, credential, bound or retry authority:
-the Hardcover token still reaches only its GraphQL requests through the client
-built at the credential boundary, and the egress and threat model below are
-unchanged.
-
-Every provider metadata client is constructed in
-`infrastructure/security/credentials.py` with environment and proxy trust off,
-client-level redirect following off, TLS verification on, an explicit timeout,
-and one connection; arbitrary endpoints and caching are unavailable to all of
-them. Remote cover acquisition does not use that client at all: it has its own
-address-pinned socket transport, described below. The method and origin
-contract differs by provider and is not provider-wide:
-
-- **Open Library** issues fixed-origin `GET` requests only. Its cover requests
-  use constructed fixed-origin numeric-ID URLs, allow no redirect, and share the
-  adapter's request-start pacer.
-- **Google Books** issues fixed-origin `GET` requests only, with compression
-  declined.
-- **Hardcover** issues one `POST` per request, carrying a fixed GraphQL query to
-  one fixed HTTPS URL with identity coding, and is the only provider whose
-  metadata traffic is not a `GET`. Its remote cover requests are separately
-  credential-free and follow **bounded manual redirects**, each hop revalidated
-  against public HTTPS port 443 before use, as recorded under credentials and
-  egress above. No redirect is ever followed by an HTTP client automatically;
-  the cover transport resolves and re-checks each hop itself.
-- **Audible catalog** issues `GET` requests only, to the ten fixed origins of a
-  closed marketplace-code-to-host mapping held in the adapter —
-  `api.audible.com`, `.co.uk`, `.de`, `.fr`, `.com.au`, `.in`, `.ca`, `.co.jp`,
-  `.it`, `.es`. Every URL is built from that mapping, so a configured code that
-  is not a key in it is refused at construction and no provider value ever
-  becomes part of a host. It is keyless by design: no credential surface exists
-  for it in the configuration schema or the client. Compression is declined, one
-  observation spends at most three attempts per request, twenty-four dispatches
-  in total -- an audiobook's alternative work lane, dispatched only after the
-  asserted lane finds nothing, shares that budget rather than adding to it --
-  the configured per-response ceiling and a fixed 1 MiB in aggregate for every
-  configured ceiling, under one request timeout and one observation deadline,
-  behind the adapter's shared request-start pacer. An audiobook `WORK` search
-  whose item states one composed runtime asks for a 25-result page instead of
-  six and reads it under a fixed 262,144-byte per-response bound, the schema
-  maximum of `provider_response_bytes`, whatever value is configured (#1256).
-  A larger body is `oversized` and zeroes the aggregate; it is never truncated
-  or parsed. The whole page is parsed before anything is dropped: more than 25
-  products, a missing canonical ASIN or a duplicated identity fails it as
-  malformed, and only then are products outside the 600-second loose runtime
-  band removed before the five-candidate bound applies. `Retry-After` is
-  honoured on `429` and `503`, bounded to one minute; `401`, `403` and `404` are
-  typed as authentication, authorization and no-match, and any other status is
-  terminally unavailable rather than a no-match. Responses must be
-  `application/json`; a product without a canonical ASIN fails closed, and every
-  other field is tolerated as optional. Its cover requests carry no credential,
-  follow no redirect, and share the adapter's request-start pacer. The URL is
-  the widest product image the product itself stated, admitted only if its host
-  is `m.media-amazon.com`: the closed host set is checked where the descriptor
-  is built, so a URL naming any other origin becomes a typed `unsafe_remote`
-  cover outcome and no socket is opened for it. Acquisition happens only when
-  the connection's `cover_enabled` is set.
-- **Audnexus** issues `GET` requests only, to the single fixed origin
-  `https://api.audnex.us`, on the two paths `/books/{asin}` and
-  `/books/{asin}/chapters` built from a canonical ASIN, with the marketplace
-  region carried as a query parameter drawn from the same closed code set. It is
-  keyless by design. Compression is declined; one observation spends at most
-  three attempts per request, twenty dispatches in total, and the configured
-  per-response ceiling with nine times that ceiling capped at 1 MiB in
-  aggregate, under one request timeout, one observation deadline, and the shared
-  request-start pacer. `Retry-After` is honoured on `429` and `503`; a `404`
-  carrying the provider's `REGION_UNAVAILABLE` code advances the region walk and
-  never becomes a service failure, while `401` and `403` end it. Responses must
-  be `application/json`; a book without a canonical ASIN fails closed, and a
-  chapter document that cannot be read removes one evidence value rather than
-  the candidate. It acquires no cover bytes and constructs no cover source.
-- **AudioSilo** issues `GET` requests only, to the single fixed origin
-  `https://meta.audiosilo.app` under the fixed base path `/api/v1`. Work and
-  recording identifiers are matched against a closed identifier shape before any
-  URL is built, so a hostile identifier cannot traverse out of that base path.
-  It is keyless by design. Compression is declined; one observation spends at
-  most three attempts per request, eighteen dispatches in total — a lookup, a
-  work read, and at most one chapter read per identifier — and the configured
-  per-response ceiling with nine times that ceiling capped at 1 MiB in
-  aggregate, under one request timeout, one observation deadline, and the shared
-  request-start pacer. `Retry-After` is honoured on `429` and `503`. The service
-  answers an unknown API path with an HTML single-page document rather than a
-  structured error: a `404` is classified from its status alone, and an HTML
-  `200` fails the strict `application/json` check, so no HTML body is ever read
-  as evidence on either path. A lookup that does not name both a work and its
-  recording fails closed. A recording's regional identifier map over the
-  ten-marketplace bound is read no further than its first 64 entries, and only
-  for the queried ASIN's own entry in an admitted marketplace; nothing else in
-  that map becomes evidence (#1308). A chapter document over its bound is
-  dropped and named `oversized_response`, charging the aggregate budget only for
-  the bytes read. It acquires no cover bytes and constructs no cover source.
-- **iTunes Search** issues `GET` requests only, to the single fixed origin
-  `https://itunes.apple.com` on the single fixed path `/search`. The query
-  travels entirely in the `term` parameter beside a fixed `media=audiobook` and
-  a fixed result limit, so no provider or owner value ever becomes part of a URL
-  path or a host. It is keyless by design. It is not dispatched for audiobooks
-  (#1254); its egress arises only from ebook work lanes, where a library
-  connects it, and its adapter still never sends an alternative discovery-title
-  lane. Compression is declined; one
-  observation spends at most three attempts per request, twelve dispatches in
-  total — one work lane walking a ladder of at most three queries — and the
-  configured per-response ceiling with nine times that ceiling capped at 1 MiB
-  in aggregate, under one request timeout, one observation deadline, and the
-  shared request-start pacer. `Retry-After` is honoured on `429` and `503`;
-  `401`, `403` and `404` are typed as authentication, authorization and
-  no-match, and any other status is terminally unavailable. The store answers
-  `text/javascript` rather than `application/json`, so this adapter — and only
-  this adapter — admits that one additional media type by name; the admission is
-  a closed pair rather than a fallback, and anything outside it is still
-  malformed. A result without a collection identifier fails closed. The adapter
-  states no narrator and no running time at all, because the store publishes
-  neither, so no candidate it builds can satisfy the runtime corroboration gate.
-  Its cover requests carry no credential, follow no redirect, and share the
-  adapter's request-start pacer. The URL is built from the `artworkUrl100` the
-  store stated: when — and only when — that URL ends in the exact segment
-  `/100x100bb.jpg`, that one segment is replaced by `/600x600bb.jpg`, asking
-  the same origin for the same asset at a legible rendition; any other shape is
-  used unmodified, because a URL the adapter cannot read is one it may not
-  rewrite. This is Open Library's constructed fixed-origin cover URL in the one
-  shape iTunes publishes. The result is admitted only if its host is one of the
-  five artwork shards `is1-ssl.mzstatic.com` through `is5-ssl.mzstatic.com`;
-  the store balances one result set across that set, so pinning a single
-  observed shard would silently drop the art of every result answered by
-  another. The closed host set is checked where the descriptor is built, so a
-  URL naming any other origin — `is6-ssl`, a shard without `-ssl`, or any
-  non-`mzstatic` host — becomes a typed `unsafe_remote` cover outcome and no
-  socket is opened for it. Acquisition happens only when the connection's
-  `cover_enabled` is set.
-
-Every cover byte, whichever provider supplied it, passes through the same
-public-address pinning, bounded decoder child, and private artifact path. The
-decoder child also states each image's 64-bit perceptual hash, computed beside
-the preview from the bytes it already decoded, so no other process decodes an
-untrusted image to obtain one.
-
-The #967 parser expansion retains bounded typed publisher, release date,
-language, taxonomy and contributor outcomes from existing audiobook responses.
-Malformed or differently attributed credits remain completeness evidence;
-they cannot silently disappear and authorize a partial cast. Publisher and
-imprint, genre and explicitly typed tag, and unknown-format ISBN remain distinct.
-The only added title admission grammar removes a whole suffix explained by the
-same candidate's structured series and sequence, with author agreement and
-replayable lineage. It grants no broader subtitle or recording authority.
-Audiobook cover consideration uses existing bounded descriptors and deterministic
-recording evidence with no model observer. Its separately qualified Automatic
-fill requires a known-empty target at creation, reopening and effect validation;
-it cannot authorize replacement. Existing source, owner-final and concurrency
-checks still precede authority and effect.
-
-Open Library's enabled configuration requires a non-secret contact email, held
-only long enough to identify its fixed-origin requests; it enters no
-fingerprint, report, ID, manifest, persisted artifact, log, or diagnostic.
-Google Books may be credential-free or may use one owner-only API-key file;
-only the credential-bearing controller reads that file, and report, proposal,
-admission and reviewer code receives neither credential nor network authority.
-
-Provider recovery is credential-bearing background egress under those same
-limits. The claimant revalidates the exact source report, the full current
-review-package tuple, target and media identity, the enabled provider binding,
-and the positive configuration generation immediately before constructing the
-client. Provider work runs outside SQLite writer transactions. Shared
-authentication, authorization, quota, unavailable and incomplete results are
-classified before publication by one application-owned rule shared with the
-initial report. Exact Google API reasons and exact Hardcover rate-limit header
-grammars distinguish bounded burst waits from daily quota waits aligned to
-Pacific and UTC midnight respectively. Missing, malformed, contradictory, and
-unknown evidence remains the generic conservative case. A deferred burst or
-daily-quota result consumes no recovery-health or job execution attempt.
-Outbox delivery atomically enrolls each job's
-bounded member and health scope before it is claimable; a failed delivery keeps
-its row for retry, continues the bounded drain, and returns any already-claimed
-preparation successor through the existing typed state machine. Diagnostics retain no credential, raw
-header, query, payload, response body, work identifier, or private path.
-
-After a quota-pressure recovery package is exact-current, application code
-classifies its durable job from that package and report only. The stored closed
-reason names a decided-field opportunity or blanket fallback, never provider
-heuristics or provider data. One canonical health owner atomically freezes a
-finite cohort of every currently due, eligible and unblocked job for the same
-provider connection, adapter and generation. Credential-bearing claims use
-strict reason-rank, member and scope order inside it. Later or refreshed jobs
-cannot enter that cohort, but remain claimable in the next one. Per-scope
-health remains authoritative for eligibility, backoff and Activity outcomes;
-only cohort participation shares provider transport failure effects. Target
-holds restore the exact owner, cohort and job snapshot. The recovery database
-accepts only this exact schema; earlier pre-release recovery state requires a
-clean rebuild under ADR-0013.
-
-### Decision authority
-
-The deterministic shadow-decision preview adds no network or credential
-authority. It opens only an existing regular exact-current report database
-through the dedicated read-only, no-create path, verifies query-only behaviour,
-and never initializes, upgrades, migrates or persists state; success and every
-accepted failure preserve database bytes, directory entries and SQLite
-sidecars. The domain policy may select only an exact compiler action with
-closed citations and combinations, and abstains to manual on ambiguity or
-unsupported state. Its canonical output is operator-visible data, not approval
-or an apply token.
-
-Policy Preview composes that same provider-independent policy into the persisted
-projection stage without adding a network client or provider call. The
-owner-session and CSRF commands move through the closed
-`review | preview | automatic` posture. Review and Preview report authority
-`none`; explicit confirmation revalidates the exact preview before reporting
-the qualified decision-only authority. Outcome publication revalidates every
-identity it depends on — case, report, proposal, target fingerprint, policy
-generation and resolution, source decision set, catalogue, action, evidence and
-rule — in one immediate transaction; stale work publishes no outcome. Outcome
-and history reads validate the whole append-only document before returning
-anything, cap the sample and the encoded projection, and construct no target or
-apply client. Leave-Preview is impact-only, and the separate confirmation
-command is CSRF-protected and fails closed when the preview is unavailable.
-
-Automatic policy intent is accepted only after the authenticated owner enters
-Preview, and both draft persistence and activation recheck that stored posture
-inside their transactions. Human admission substitutes Ask only for Automatic
-categories and preserves explicit Ask, Ignore and Unsupported choices. Only the
-closed qualified category and option matrix may reach decision-only Automatic;
-all other automatic intent is rejected, and no automatic outcome grants effect
-or target-write authority.
-
-### Authenticated per-work diagnostics
-
-The Evidence and History endpoints are private, authenticated, `no-store`
-projections with no mutation, retry, recovery, provider-call, or target-write
-authority. Evidence keeps the raw reference index inside the application for
-Library choice contexts, but its diagnostic response projects only bounded
-semantic observations, aggregate missing-lineage truth, and the existing closed
-provider outcomes. Missing references produce a partial-lineage limitation;
-malformed report or persisted content still fails closed. The browser maps
-History to owner language and joins automatic values only by exact durable
-decision identity, never by destination or display order. Default diagnostic
-reading contains no raw retained fact document or internal case, report, target,
-event, decision, consideration, candidate, or reference identifiers.
-
-### Authenticated Activity history
-
-The authenticated Activity endpoint is a private, `no-store`, read-only history
-projection. Its bounded event type, date range, page, page size, and search
-inputs are validated before one read snapshot selects a page and its count
-from the same durable ledger projection. The response has no export,
-write, target, provider, or recovery authority. Stored documents are hostile
-input: malformed, oversized, or inconsistent rows fail closed rather than
-exposing a raw row, private path, or invented verification claim. The projection
-contains only bounded readable labels and source-recorded facts. Current waiting
-work is independently read from the present field-effect state, so filtering or
-pagination cannot make completed historical work appear active. Count and page
-are snapshot-consistent only for the individual read transaction; concurrent
-append-only activity can change a later request. Focused repository,
-application, API, and browser tests cover bounds, redaction, malformed rows,
-current-state recovery, and private-cache headers.
-
-The runtime may retain up to 64 MiB of serialized readable facts and exact source
-witnesses for independently configured query-only readers (ADR-0082). Every new
-borrower scans source bytes; later reuse binds its own revision, file identity
-and store version. Witnesses retain exact scalar types and document SQL types
-alongside raw-byte hashes, so a normal commit cannot conceal a same-ID byte change.
-Affected canonical candidates are revalidated before search, including old and new
-missing/excluded dependencies. Schema drift or inability to admit the optimized
-representation returns to canonical query-scoped validation; overflow never returns
-partial counts. Schema validation and both Activity readers of every generation
-reuse the metadata reports they validated through one store per store root,
-keyed by the SHA-256 of the exact document bytes, bounded at 48 Mi characters of
-report text and never keeping a refusal; a report is deeply immutable, so no
-reader can change what another receives (#1231). Reprojected candidates reach SQL as one bound
-JSON parameter; source kinds are code literals. A candidate identity containing
-NUL, or a persisted outcome that fails validation during a refresh, returns reads
-to the canonical query-scoped path, which refuses only the queries selecting it.
-This store grants no permission, backup, consent or effect authority.
-
-Changed revisions witness trigger-enforced append-only tables incrementally above
-a recorded `max(rowid)` and `count(*)`; a deletion whose row is not replaced at
-or below the mark, renumbering or a reused key re-witnesses the table at the next
-refresh (#1200). Changes that keep the mark and count (raw file bytes behind an
-ordinary commit, `REPLACE` naming an existing rowid or an unused rowid at or below
-the mark, BLOB I/O, trigger removal through `writable_schema`) are found by a
-rolling 256-row re-verification, covering zero and negative rowids, rather than
-at the next refresh: a row present when the sweep enters its table within
-⌈rows / 256⌉ refreshes or unchanged-revision Activity reads that advance the
-sweep, and a row appended while the sweep is inside its table within about two
-laps (#1218). An idle library's reads advance the sweep too, so stale facts
-cannot stay visible beyond that bound. Until then Activity may display the
-prior readable fact; Activity facts feed no write, permission or
-effect path, so that exposure is display-only. Every new borrower generation
-performs a full witness against the previous snapshot rather than admitting
-tables from an earlier generation's marks. The product uses none of those routes on
-append-only tables, enforced by a static source test and a schema test requiring
-both refusal triggers. No credential, network, parser or write authority is added.
-
-A refresh projects at most 512 affected candidates in one read transaction and
-records the rest as pending; a snapshot with pending candidates is never served,
-so no read sees a partly projected history (#1225). A pending candidate is
-projected from the snapshot of the refresh that projects it, and every step still
-witnesses, sweeps and falls back exactly as one refresh does. A read that leaves
-candidates pending finishes them in bounded read transactions of its own and
-retries; its third attempt serves the canonical projection. Witness values use an
-injective literal encoding that keeps exact SQLite types. This bounds how long a
-read that reaches the store delays a writer's commit; the canonical fallback and
-the appended-row witness remain unbounded. Readiness runs no catch-up between its
-fresh check and its snapshot. It changes no busy timeout, journal mode, result,
-refusal, or authority.
-
-The history reader's background projector runs those same bounded steps off the
-request path, at startup and after commits (#1231). It holds no write, credential,
-network or root-admission authority: it uses the reader's own query-only
-connection and local admission. It waits for none of the reader's cache lock,
-its admission and the readiness window. It decides whether to step, including
-its revision probe, under the first two alone, and holds the window only for a
-step, so it never steps while permission readiness is between its fresh check
-and its snapshot, and readiness never queues behind a probe or a history request
-holding the cache lock or the admission. Readiness can wait for the one step in
-progress, which may itself wait out a writer's commit as readiness's own check
-can. The check is neither cached nor deferred.
-A request still finds the store current at its own snapshot or finishes the
-remaining steps itself, so it serves no pending or stale facts. Its exit is
-logged as one value-free record, an unexpected error by type only. It starts
-only after composition binds the reader's authority, and shutdown and Settings
-cutover stop it before its reader closes, waiting for the step in progress to
-finish: one bounded step, never a request's catch-up. Past 30 s that wait logs a
-warning and continues; it is not cut short under a live step. A
-tampered report validated at startup refuses as before, because reuse is keyed
-by its exact bytes.
-
-Ordinary history returns required null backup-readiness and example fields. The
-separate authenticated permission-readiness endpoint checks the existing database
-consistency boundary freshly, then compares that checked revision inside its own
-read snapshot. Only equality permits a true or false result; drift or an unavailable
-check is null. One response supplies all consent-display gates and no ledger.
-Each reader reuses its prepared counts and that example only at the exact
-SQLite revision and database file identity it read them at, sampled before and
-after the read. A refusal and the consistency check are never reused, and the
-consent grant and every claim still read the writable store afresh (#1223).
-The browser keeps a permission draft until its consent basis -- the configured
-libraries, each destination's capability state and consent, and the active
-policy -- differs in a later Activity response, and re-reads that basis before
-confirming; a changed basis sends no grant (#1279). Command and preclaim checks
-remain authoritative. A policy activation, or a consent change on any library,
-landing between that re-read and the grant is not detected by the browser; a
-capability or library change in that window is still refused by the server.
-There is no TTL or cross-system atomicity claim.
-
-Library's write-ready notice reads authenticated `GET /api/v1/activity/consent-state`
-instead of an Activity page (#1236). It returns only what the consent offer
-reads: the waiting reasons, destination capabilities, configured libraries,
-lapsed consents and the null backup readiness ordinary history reports, projected by the same code
-as Activity's. The permission reader serves it in one read snapshot that takes
-no Activity facts, no catch-up, no consistency check and never the readiness
-window, so neither history nor the projector delays it. It does share that
-reader's locks with readiness, so each can wait once for the other: the consent
-read for readiness's fresh check, and readiness for one consent read in
-progress, a bounded wait ADR-0082 records. That reader now carries the
-provider-recovery snapshot Activity's waiting reasons count. The read does not
-inherit the history page's refusals, such as a failed cleanup-count check; the
-notice links into an Activity page that shows its own refusal. It grants
-nothing: enabling writes still opens the permission review and its fresh check.
-
-Guarded field effects add the first persisted mutation boundary. The installed
-product composes the API-key Audiobookshelf target only after authenticated,
-library-scoped consent for the exact eligible destination subset disclosed in
-Activity. That set is the sixteen book-media destinations, including the exact boolean
-explicit field (#1056). Because the consent envelope identity digests the
-whole set, adding explicit lapses every
-existing library consent, and Activity re-offers it before anything is
-scheduled. An owner's policy activation carries each library's consent that is
-current for the outgoing resolved policy to the incoming one inside the
-activation's own transaction, for the same connection, library, destination and
-action, and records the transition and the replaced consent as its closed basis
-(#1370). It never widens consent, and a replay, no-op or refused activation
-carries nothing. Entering Preview from automatic at the unbound first
-generation resolves every configured library the same way, and later
-generations reuse the stored resolutions, so it lapses no consent. A consent it cannot carry -- after a changed destination set or
-envelope schema, or for a library the active policy does not resolve -- lapses,
-and Activity and Library state the lapse with its closed reason, which grants
-nothing. Explicit receives no consent until the owner grants the newly
-disclosed eligible subset; automatic application remains disabled by default. The submitted destination matrix must still equal a fresh capability
-probe before its atomic consent replacement is accepted; a changed subset fails
-closed and must be reviewed again. A partially consented library remains
-available when a newly eligible destination needs incremental consent. Only exact
-`HumanDecision(accept)` or sealed
-qualified `AutomaticDecision(candidate)` instances project authority; raw
-proposals, previews, advice, policy dispositions, and caller-supplied origin
-strings cannot. Planning rejects any decision/current-case mismatch in
-destination, work, target fingerprint, or target version, and requires a
-separate current consent for the exact connection/library/destination/action.
-Every claim rechecks backup, capability, authority, consent, dependencies,
-target pre-state/version, circuit, pause, and optimistic state. Persisted
-authority, consent, pause, and claim state are conditioned atomically in one
-repository transaction together with persisted decision/current-lineage and
-automatic safety currentness. Capability observations have closed application-
-owned outcomes. Authentication, inactive-account, or basic library/item access
-failure durably suspends the connection; insufficient destination permission,
-an incompatible destination shape, or unexpected effect behavior durably
-suspends only that destination. A successful read-only capability observation
-may clear only older connection, permission, or field-shape evidence it can
-disprove; it cannot clear `unexpected_effect_behavior`. The claim transaction rechecks both scopes, so
-a suspension racing the final claim cannot be bypassed. The supported Audiobookshelf adapter has no
-target-side CAS: it makes one minimal API-key request only after its final
-authoritative pre-read, then read-backs the destination and reconciles any
-refusal, ambiguity, drift or disagreement. A same-field update may still be
-lost in the interval before Audiobookshelf accepts that request; this boundary
-does not claim cross-system atomicity. Cover upload reads only the immutable
-digest-verified original artifact, never recovery bytes, and neither bytes nor
-credentials enter diagnostics, logs, support bundles or reviewers.
-Unknown and stale facts fail closed. A request whose outcome is unknown is never
-sent again; a retry whose final pre-read shows the desired value at the desired
-version is verified without a request (#1402). A claim recovered at startup sent
-nothing and returns unsent as `retryable`, applied only through every guard and
-a fresh claim. A plan staled only by a connection-scoped refusal or a lost
-pre-read releases its decision and is planned again, at most three times, once a
-fresh observation reaches the connection: `/api/me` succeeded for an active,
-selected account and the item request returned a readable item or a `4xx`
-other than `408` or `429`, a 404 included. A transport failure on either
-request, a rejected key, an inactive or unselected account, a `5xx`, `408` or
-`429`, or an unreadable or oversized body keeps it waiting with its bound
-untouched. The re-plan reuses the waiting
-plan's `capability_digest`, so it re-enters the full guard order, where the
-preclaim checks a fresh observation against that digest and current consent and
-authority. The stale after the last is terminal, and covers stay terminal.
-A decision that met the lost connection before it had a plan waits on the same
-probe, which alternates with any waiting plan and observes that decision's own
-item, and it is planned for the first time through every guard, with no attempt
-spent and no request before it (#1423).
-Withdrawn authority or consent supersedes a retry or a waiting connection stale
-without a request, and a
-superseded or abandoned plan whose history reached `applying` is never planned
-afresh. Target and credential authority are absent
-from domain code and reviewers and credentials stay outside diagnostics and the
-API. Continuous composition contains the Audiobookshelf target and API-key
-capability observer; qualification proves
-the selected item/library and destination permission, never a version alone.
-Read-only keys are insufficient for every destination; update-only keys permit
-metadata/tags but are insufficient for cover, which also requires upload.
-Qualification reads the actual canonical, gap-free append-only event documents
-from SQLite and publishes only their aggregate count and digest.
-
-F46a's paired title/subtitle application requires both exact current automatic
-decisions and destination consents, with owner holds, source bindings and target
-values checked through the final claim and pre-read. One destination-minimal
-PATCH contains the two supported values; neither member is also scheduled as a
-standalone effect. Both readbacks must verify. A partial or ambiguous result
-retains the existing reconciliation state and cannot trigger a blind retry or
-automatic rollback. The same optimistic-concurrency limitation applies to both
-members. Activity carries the companion value and its actual observed result.
-
-Audiobook tag unions and plausible narrator agreement reconstruct all selected
-source references from the event-bound current report. Missing, changed or
-resealed references cannot substitute a different candidate or incomplete cast.
-A positively invalid or conflicting recording runtime, or an explicit conflict
-under the existing recording language/variant rules, excludes that source's
-narrator credits from owner choices and complete-cast agreement.
-Those credits remain source-bound, nonselectable review evidence; unresolved
-recording identity alone does not exclude an otherwise plausible cast.
-
-Work applicability does not grant recording identifier authority. Original
-publication dates require the work-first-publication event and audio media kind;
-recording release claims remain evidence without becoming date votes. Exact
-boolean adult-product positives may set true; absence or false preserves the
-current explicit state and never claims that content is suitable for children.
-Malformed source values remain failures. ISBN explanations distinguish absence,
-unavailability, malformed/incomplete values, material conflicts and insufficient
-association only after the earlier policy and authority gates have been reached.
-Regional audiobook synopsis selection keeps the existing applicable-source
-authority order and uses stable provider/record identity for an equal-authority
-tie. It retains other text alternatives and exact selected references; it does
-not infer preference from text length or change recording identifier elections.
-Unsafe relevant text and multiple competing texts inside one record refuse.
-
-Useful title/author preservation records one durable no-change outcome before
-target guards. That terminal state grants no write authority. Audiobook cover
-replacement separately reconstructs the bound incumbent dimensions and source:
-below 300 pixels on its shorter edge, with an eligible portrait/square
-alternative at least 500 pixels and twice that edge. Unknown or stale incumbent
-facts refuse replacement; upload still uses the digest-verified original.
-## Guarded-operation diagnostics
-
-Operational status and support routes share the authenticated owner boundary;
-support export additionally requires CSRF. Anonymous health exposes only the
-fixed liveness/readiness words. Diagnostic producers are allow-listed and
-export is re-redacted and size bounded. Secrets, target values, private paths,
-databases, environment, media, cover bytes and recovery storage are outside the
-diagnostic trust boundary. The private recovery directory and files require the
-runtime UID with `0700`/`0600` modes and bounded count/size; failures stop only
-the affected cover effect and remain recoverable from durable state.
+- [Batch manifests](../operations/ebook-evidence-batches.md) are private
+  immutable files bound by content-addressed ID, holding no credential.
+- Policy and shadow-decision preview is read-only; output is not approval.
+- [Provider-evidence replay](../development/provider-evidence-replay.md)
+  capture strips keys, authorization and contact identity and scans for
+  secrets before sealed publication; replay uses placeholder credentials and
+  no network.
+- The qualification-state bridge (`scripts/qualification_state_bridge.py`)
+  is test-state tooling with no credential, network or provider authority,
+  and never writes its source.
+- [Reviewer cost measurement](../development/reviewer-cost-measurement.md)
+  is read-only by default; paid runs need explicit confirmation and a
+  monitored budget, which an in-flight request may overshoot.
 
 ## Automated scanning boundary
 
-One continuous integration check scans the repository itself rather than the
-product's behavior. It is a supply-chain control and is unrelated to the
-library scan the product performs over media.
-
-`dependency-audit`, a job of the public gate, scans `uv.lock` with OSV-Scanner
-on every pull request and every push to `main`, and fails on any known advisory
-affecting the locked closure. `uv.lock` is the complete resolved closure, so
-the runtime dependencies and the development group are audited together: CI
-installs both, and a compromised test-time dependency executes on the same
-machine as a compromised runtime one. The scanner uses a readable version tag plus an exact image digest,
-with execution bound to that digest, and fetches advisory data from OSV at
-run time, so a fixed scanner still sees current advisories. The pin, the exact
-arguments, and the reason for that pinning choice are in
-`.github/workflows/public-gate.yml`; the same command reproduces the check on a
-maintainer's machine. The frontend half of the same supply chain is audited
-separately inside `fast-source` by `npm audit --audit-level=low`, with licence
-metadata enforced by `npm run licenses`.
-
-The only mechanism that may hold a `dependency-audit` failure open is the
-time-boxed advisory acceptance register, `osv-scanner.toml`. Each entry names
-one advisory, states why it cannot be fixed now, and carries an explicit expiry
-date; there is no severity floor, package exclusion, or repository-wide
-loosening, and an advisory that can be fixed is fixed rather than accepted. The
-time box is enforced from both sides. OSV-Scanner stops filtering an advisory
-once its date has passed, so an expired acceptance fails the audit again, and
-`tests/unit/test_security_scanning_contract.py` fails the required
-`fast-source` check when an entry is already expired, runs more than 90 days
-past the current date, carries no substantive reason, or introduces any table
-other than `IgnoredVulns`. An acceptance therefore cannot be open-ended and
-cannot rot unnoticed if the advisory is later withdrawn.
-
-No static analysis of this repository's own source runs anywhere, and no check
-compares a pull request's dependency graph with its base. Both were designed
-against the pinned CodeQL and dependency-review actions and then deferred to
-issue #674: each requires GitHub code scanning and the dependency review API,
-which a private repository cannot use without GitHub Code Security, and neither
-can report a truthful result until the repository is public or covered by that
-plan. Nothing dormant, commented, or conditionally skipped was left behind for
-them.
-
-Every workflow runs with `contents: read` at the workflow level, grants no
-write authority over the repository, pins every action to a commit with its
-version comment, and sets `persist-credentials: false` on every checkout.
-`tests/unit/test_security_scanning_contract.py` sweeps `.github/workflows` and
-fails the gate if a workflow added later breaks any of those.
-
-The default-branch ruleset requires `dependency-audit` alongside all four
-artifact/source jobs, with strict currentness and no bypass. The narrow OSV
-Renovate manager updates only the scanner tag and digest in this workflow.
-A failing audit prevents native auto-merge; the acceptance register retains its
-existing expiry and review requirements.
-
-These remain maintainer-manual and are deliberately outside the scanning
-boundary:
-
-- Triaging and fixing what the audit reports. An advisory is not remediated by
-  this boundary; each is tracked and fixed as its own work, and accepting one
-  through the register is the exception rather than the route.
-- Static analysis of this repository's source and pull-request dependency
-  review, until issue #674 lands.
-- Secret scanning beyond GitHub's own defaults, software bill of materials
-  publication, and container image scanning. None of the three is performed
-  here.
-
-The application-owned provider return and failure snapshots add no egress or
-effect authority. Operational records remain process-local and pass through the
-existing bounded diagnostic normalization; raw chained exceptions are never
-persisted or exposed. Descriptor locators and pacing callbacks remain confined
-to acquisition. Cancellation-compatible carriers preserve shutdown semantics
-and the original cause even when client cleanup fails. No provider credentials
-or arbitrary response payload fields enter this contract.
-
-
-## Explicit local transport
-
-[ADR-0072](decisions/0072-explicit-local-transport.md) admits explicit HTTP
-Audiobookshelf origins and three browser modes. HTTP carries credentials,
-metadata and effect requests in plaintext and is limited operationally to an
-owner-controlled local network or VPN. It grants no new effect authority.
-Target HTTPS retains strict certificate/hostname verification, no redirects,
-no ambient proxies and same-origin closed-route authentication. Provider, cover
-and reviewer egress remain under their existing HTTPS contracts.
-
-HTTP listeners require no TLS identity. Direct HTTPS requires the existing
-validated paired identity before database/listener creation. Proxied HTTPS
-requires no local identity and at least one exact trusted peer IP; only that
-actual peer may provide one complete canonical X-Forwarded-Host/Proto pair.
-Duplicate Host/forwarding fields, partial pairs, chains and Forwarded are
-rejected, with Uvicorn proxy handling disabled. Setup uses the same boundary.
-Cookie creation/deletion and HSTS follow the canonical browser scheme, including
-body limits and other early failures. All other authentication, CSRF, request
-bounds, build checks and shutdown controls are unchanged.
-
-
-## Authored description advice
-
-F39 adds a closed description-only request to the existing contained and fixed
-OpenRouter transports. Provider text is untrusted data, never instructions or
-write authority. Projection omits owner decisions, target-only text, titles,
-identifiers, file paths and credentials; bounded canonical alternatives, three
-cleanup booleans, and pinned instruction/schema are the entire input. The
-response is bounded, duplicate-free structured JSON with one description and
-one closed disposition. There is no additional semantic classifier or model
-confidence authority. OpenRouter uses the exact selected model with
-`require_parameters:true` and `allow_fallbacks:false`; upstream data practices
-vary and are not verified by the application.
-
-An attempt is durable before transport starts, and transport holds no SQLite
-write transaction. Access revision, exact model/profile and request identity
-are distinct from case/report/proposal/target/policy/preferences admission
-identity. Publication, owner selection, automatic admission and guarded apply
-recheck currentness. A passive composition-owned bounded profile read checks
-the live contained model/profile without auth, transport or a second database.
-A verified changing Description effect retires only its original case binding;
-durable application history remains truthful after that binding becomes stale.
-Crash recovery interrupts ambiguous running attempts;
-only explicit bounded retry can request another call. Immutable candidates and
-decisions retain authored/advised provenance through stale and no-change states.
-Raw provider errors and streams never enter failure history.
-
-The default-OFF automatic preference does not suppress deterministic fill.
-Ready automatic advice still requires current policy, absence of owner-final
-choice, consent, backup, concurrency, read-back and audit. Pending competing
-authority is revoked transactionally; existing replacement blocking prevents
-racing an in-flight effect. Owner reversal uses ordinary field decisions and
-manual holds. Same-value selections use the existing no-change terminal path.
-Schema creation, exact object inventory, immutable triggers and cross-row
-validation enforce the clean-rebuild boundary. See the
-[configuration contract](../reference/configuration.md) and
-[reviewer-access decision](decisions/0062-owner-managed-reviewer-access.md).
-
-## Independently supported ebook titles
-
-The ISBN-linked title election (#1007) uses only retained report evidence and
-selects an existing alternative. Packet-v7 binds the independent-title fact to
-that candidate; it cannot grant the same exception to dissenting alternatives.
-The reason-specific current F19a option is decision-only, and old manifests
-cannot authorize it. The existing title-layout pause/suspension, owner-final,
-consent, backup, currentness, read-back and audit boundaries remain unchanged.
-No new external call, parser, provider or write capability is introduced.
-
-The #1004 chapter fallback originally granted owner review only. Failed-set audiobook WORK
-lookup candidates retain original bounded evidence separately from admitted
-metadata, with exact work and local-reference validation. F46a additionally
-consumes the complete plausible set for narrator agreement, with every member
-and contributor reference reconstructed; that agreement cannot elect an ASIN
-or ISBN. Bounded ASIN acquisition and matched-runtime vetoes retain their
-separate roles. A lookup hint or runtime alone grants no work or recording
-authority. The ASIN feed gains one origin (#1257), the canonical ASIN of an
-Audible product refused on title whose runtime is inside the tight band; the
-dispatch set, the four-lane cap, the per-provider bounds and URL construction
-are unchanged, and the dispatch set does not grow. A fed ASIN the item's own
-surfaces did not name admits only with exact work-identity admission and the
-tight band; a candidate refused on work identity keeps only its ASIN, so no
-fed origin's stated runtime or work statements reach recording identity or a
-proposal. Existing provider
-limits, isolated probe limits, read-only media and explicit retry stay unchanged.
-Each audiobook lane's dispatch record (#1258) holds enum values and integers
-only. Its near-miss is a signed whole-second difference between two stated
-runtimes, taken from a page the adapter already parsed, with no provider text,
-title or ASIN and no new request.
-
-The band-corroborated productions (#1260) add no request, parser, provider or
-write capability. They read the title, authors and runtime an audiobook
-authority's search page already stated, compare them under closed rules with no
-fuzzy matching, and run only on an audiobook plan's asserted lane when the
-candidate is inside the tight band of the item's own runtime. The band never
-admits alone: a title production needs the provider title and ordered authors
-to admit exactly against the lane's own shaped rung title and the product's own
-stated series to name, on one membership, the series the rung stripped and
-the position it stripped where it stripped one, refuses a
-local title with a variant marker or whole-word recording-format term, and
-refuses a product the asserted title explicitly contradicts; the initials fold needs closed-equal
-titles and ordered authors. The alternative lane, fed ASIN lanes, hints and
-exact admission are unchanged, so a target assertion still cannot settle
-identity. Report validation and the proposal set replay the band-aware
-admission from the report's own claims, so a forged band lineage is refused.
-
-## Incumbent description paragraphs
-
-Report v45 retains exact Audiobookshelf incumbent description text (#1080),
-including LF/CRLF paragraphs and space/tab boundary whitespace. This field-only
-vocabulary preserves original character/byte bounds, exact string types, and
-control/Unicode, private-path and credential refusal; lone CR, internal tabs and
-blank text remain malformed. Intake checks safety before oversized classification;
-domain admission checks original bounds before controls, paths and credentials.
-Provider descriptions and generic scalar admission are unchanged. NFC, whitespace
-collapse and case folding are comparison-only: fingerprints, field-effect versions,
-optimistic preconditions and read-back remain exact. A populated value cannot become
-fill-empty. Owner-final, Ask/Ignore, consent, backup and verification authority are
-unchanged. The report/SQL successor requires a clean rebuild, never migration.
-
-Report v54 widens this field-only grammar by two shapes (#1251). An
-attribute-free closing or self-closing HTML tag (`</p>`, `<br />`) is markup.
-Text holding one is admitted only when three scans pass: every rule but the
-absolute-path rule on the original text; the absolute-path rule on the text with
-each such tag rewritten to its slash-free form; and the whole default scan,
-every path and credential rule, on the text with every tag-like span (opening,
-closing or self-closing, with or without attributes) removed and its edges
-stripped, once with plain spans (`<[^<>]*>`) and once with quote-aware spans
-that keep a quoted `>` inside its tag; each alone misses either a quoted `>` or
-an unbalanced quote. So `</p>/srv/media`, `<a href="/x">`, `<img src="/x" />`
-and `&lt;/p&gt;` stay refused, and so does a credential, label or non-absolute
-path any well-formed tag splits or a leading tag hides (`https://u:p</i>@h`,
-`pass<b>word</b>=x`, `C<b>:</b>\Books`, `<p>Secret: x</p>`). Whatever this
-admits, the default scan admits with every tag-like span removed, both ways.
-Deliberately malformed, nested, unterminated or entity-encoded markup built to
-hide a path or credential is an accepted risk and out of scope: base admits such
-forms too, and this boundary guards against accidental leakage, not obfuscation.
-Only ASCII tag names and ASCII spacing form a tag. U+2028 is a line separator:
-the codepoint scan reads it as LF after CRLF folds, so `\r\u2028` still exposes
-a lone CR. Admission order is exact type and non-blank text, original bounds,
-forbidden codepoints and edge whitespace (C1 masked), then C1, production paths
-and credentials. Text whose only defect is C1 (U+0080–U+009F, usually
-Windows-1252 decoded as Latin-1) is refused as `contains C1 control text` (the
-adapter keeps only the field's `malformed` state, as for every other refusal);
-it is never repaired, because a guessed decoding would show a value the library
-does not hold. C1 beside another forbidden codepoint keeps the generic refusal.
-The stored value, fingerprints and field-value versions stay the original
-string. Tag-bearing incumbents compare as literal text and stay
-`target_state_unusable` for automatic synopsis authority. A path inside an
-attribute (`<a href="/x">`, `<img src="/x" />`) stays refused, and a slash
-inside a tag with attributes is never read as markup. U+2029, NEL and
-entity-escaped tags stay refused. Discovery titles, provider and local claims
-and every other projection keep the shared grammar and `_FORBIDDEN_CODEPOINTS`
-unchanged. Shadow-review packets may now carry literal markup or U+2028 in
-incumbent text, as JSON data only.
-
-Report v58 admits an Audiobookshelf incumbent description as the text it shows
-(#1424), because the service stores sanitised HTML: a bare `&`, `<` or `>` is
-stored as a character reference and `<script>` is dropped with its content. The
-adapter bounds the stored text at the description bound before anything parses
-it, as the provider path does, so an over-bound value is `oversized` unread. Text
-carrying `<` or `>` is rendered by the one provider renderer, which drops
-attributes and refuses rejected elements, event handlers and unbalanced markup;
-other text has only its character references decoded. The incumbent grammar
-above, original bounds, codepoints, paths and credentials, then checks the
-rendered text, so an attribute's path never enters the report while a path the
-text shows stays refused. Markup the renderer refuses or that shows no text is
-checked and kept as stored, as in v57. The write still sends the exact desired
-value. The pre-read and read-back read the field through the same conversion:
-the pre-read must equal the admitted text exactly, and read-back verifies only
-when the stored form shows what the desired value shows; a service that drops
-part of the value leaves a third value and is never resent. The pre-read
-compares visible text, so another actor's edit that changes only markup, such
-as making a word bold, is not a conflict and the write replaces it; an edit that
-changes the text shown still is. Read-back renders the desired value once: a
-desired value whose rendering still carries markup, or would decode again, never
-verifies against displayed markup. Every plain-text description is read once
-by the same function: the incumbent's, each provider's, and each local EPUB or
-audio description's. Its character references are decoded once, so both sides
-of a comparison are decoded exactly once and a provider stating an
-incumbent's own text is not a proposal. Text that carries a tag once decoded is
-markup, held to the same renderer and its refusals, and a reading that would
-still carry a tag or decode again is refused, so no decoded text becomes a claim
-with a live tag and `Fish &amp;amp; chips` is never read twice. Audible,
-Audnexus, iTunes and Google Books render such text and record the
-transformation; Open Library, Hardcover, Inventaire, Audiosilo and local files
-record none, so it is unprojectable there; the incumbent keeps it as stored,
-because Audiobookshelf shows an escaped tag as its literal brackets. Markup that
-Open Library, Hardcover, Inventaire, Audiosilo or a local EPUB or audio tag
-states is not read by that function and is kept as stated, as before #1424; the
-field projection refuses some of it, but slash-free markup such as
-`<img src=x onerror=alert(1)>Hi` remains a valid claim. The guard is the
-proposal policy's `_eligible_description`, which makes any description
-containing `<` or `>` ineligible, so such a claim never reaches a write. Keeping the
-current description after a verified write restores it only when the admitted
-field is `restorable`, meaning the service stores that text as it stored the
-original and the text carries no `<`, `>` or character reference. Otherwise the restore is refused before any
-request with `restore_unavailable`, and the owner is asked to restore the
-formatting in Audiobookshelf, because writing the rendered text would flatten
-it. The raw stored HTML is never persisted. The renderer's one new input is that
-bounded stored text; no request, write capability or authority is added. The report/SQL successor requires a clean rebuild, never
-migration.
-
-## Author evidence authority
-
-Author attribution is evidence, never authority by itself (#1083). Opening and rear EPUB paths share whole-statement structural classification and the original bounded navigation selection; fragment roles never spread across a resource. Incidental credits cannot mint Authors authority, and complete-set proposal conflicts cannot be bypassed by the shadow policy. Report v46, proposal policy v28 and shadow policy v15 invalidate old admission bindings; clean rebuild required. Historical automatic documents remain historical. Consent, exact currentness, backup, optimistic preconditions, read-back and durable audit still govern every permitted effect.
-
-
-## Provider title comparison admission
-
-Provider TITLE/SUBTITLE ingress and VALID report claims require the existing observed-title validator. Rejected text never becomes persisted payload, diagnostics or an inferred normalized match. Canonical rejection references bind state/value; existing candidate identity and occurrence order survive where the existing admission rules retain the claim. Same-candidate admissible fields and independent provider/local evidence retain their authority. Overflow witnesses and audiobook recording admission keep their existing complete-evidence requirements. Report v47 requires a clean rebuild; no effect, egress or reviewer authority changes (#1084).
-
-## Ordinary title preservation and explicit recovery
-
-The ordinary citation-bound title preservation witness grants unchanged-value
-authority only. Automatic-only coherence excludes Ask and Ignore from safety
-failure. Existing authenticated CSRF/build-protected recovery atomically removes
-only the requested suspension. Recovery or resume requeues eligible exact-current
-completed title projections only when title permission changes from blocked to
-permitted; retained pause, global or title blockers leave completed work untouched.
-Resume changes only the pause flag. Both commands read safety inside their writer
-transaction, preserving suspensions committed by competing projection workers.
-Report/proposal/case and policy currentness and owner-final constrain the cohort,
-while a manual hold withholds the planned write and never the decision; final projection checks and insertion uniqueness remain authoritative.
-No external acquisition, model, target or media write authority is added. A failed
-transaction rolls back safety, work, scan and presentation together. Predecessor
-v6 state requires a clean rebuild, never silent clearing or migration. See
-[ADR-0079](decisions/0079-supported-title-preservation-and-recovery.md).
-
-## Language evidence authority
-
-Language equivalence groups supported names/codes before admission (#1071).
-Undetermined facts never authorize a candidate, preservation or effect; genuine
-base/script and unsupported-form conflicts survive all compiler shortcuts.
-Representation is reconstructed from the elected alternative's exact report
-references. Local audiobook facts use the same single-source correlation in
-proposal and packet summaries, including creator roles, without granting
-recording identity. Consent, currentness, backup and effect guards are unchanged.
-The report/proposal/action/decision/outcome version rotation requires a clean rebuild.
-
-
-## Genre creator applicability
-
-Accepted creator display equivalence removes only false negative identity vetoes
-under existing title-query overlap (#1074). It never grants positive WORK admission.
-Explicit Ask exposes only case-bound genre actions already admitted by the domain;
-Ignore, owner-final, stale/forged-choice refusal and effect guards are unchanged.
-Report v49/proposal policy v30 require a clean rebuild; old pruned evidence is not
-recoverable or current authority. No egress, provider, credential or write scope is added.
-
-
-## Same-name title and series (#1075)
-
-Whole normalized-token equality permits only a supported series-name slot to
-coexist with a preserved KEEP title while filling empty series. It grants no
-title replacement, sequence exemption or series-identity merge. Existing
-association, title-witness, policy, owner-final, consent, backup, currentness,
-read-back and audit checks remain mandatory. Proposal policy v31 requires a
-clean rebuild; report v49 remains unchanged. No new egress or write scope exists.
-
-## Audiobook synopsis authority (#1070)
-
-The closed whole-value chapter/track and no-description/no-synopsis vocabulary
-is comparison-only. It grants replacement only for recognized safe plain
-placeholders; useful incumbents remain unchanged. Source safety, identity and
-same-record conflict refusals remain prior checks, and persisted value authority
-reconstructs the same restriction. This is no semantic quality classifier.
-Owner-final, Ask/Ignore, consent, backup, currentness, optimistic preconditions,
-read-back and audit remain mandatory. Shared shadow policy v17 and successor
-qualification bindings require a clean rebuild of prior derived stores; no new
-provider, parser, model, egress or write capability is introduced.
-
-#1250 widens the vocabulary without opening it. Structured credit lines (one to
-six segments, each a role verb with "by" and names, a bare role verb with "by",
-a role label with ":", a format word, a length, or a publisher or release-date
-label, with at least one credit; one to six people of one to five letter tokens,
-where only a ripper or tagger credit's tokens may hold digits or `_`; at most
-240 characters, with a closed prose-word list that keeps sentences out), closed
-format words and "unabridged" cut to four or more letters, numbered chapter,
-track, part, section, disc, CD or side markers, markup with no text, two closed
-encoder watermarks, and `n/a`, `none`, `unknown` or `tbd` are recognized whole,
-by shape and never by length alone. A name after a comma has at most three
-tokens; casefolded text still cannot tell a short tagline such as "Narrated by
-X, Y faces Z" from a credit, and the effect of that ambiguity is bounded to
-replacement by an admitted provider synopsis. Markup with no text, read as real
-tag syntax over a closed set of formatting elements or comments, is the only
-tag-bearing incumbent this admits, and only for replacement; any tag-bearing
-incumbent holding text still abstains as unusable. This widens
-`replace_safe_plain_text` replacement of such an incumbent and narrows automatic
-fills, since a candidate matching the floor is refused with
-`description_quality_floor_not_met`; ebooks are unchanged. The same release
-treats an audiobook genre list of format words alone as empty, as an unknown
-language is: under the default `fill_empty` option a qualified candidate now
-fills such an incumbent automatically, a format-only candidate is `no_candidate`
-and never makes a real genre candidate ambiguous, and any list naming a real
-genre is still preserved. The F46 identity registry and permission set are
-unchanged; only their records rotate. Every write keeps the consent, backup,
-currentness, optimistic, read-back and audit gates, and persisted authority
-reconstructs the same floor. The cut description prefix from the inspector is
-never a candidate.
-
-## Ebook synopsis authority (#1076)
-
-Automatic ebook fills reject only whole normalized duplicate and numeric
-page/size catalogue markers after source safety and WORK admission. Source-record
-conflicts precede deterministic election; persisted effect authority reconstructs
-the exact winner and citations. Fitness never vetoes an explicit admitted owner
-choice, and populated ebook targets remain outside automatic fill authority.
-Shared shadow policy v18 and successor qualification bindings require a clean
-rebuild. Existing consent, backup, currentness, optimistic checks, supported APIs,
-read-back and audit remain mandatory; no new egress or write scope is introduced.
-
-## Compact qualification authority
-
-F19a, F20 and F46 current digests bind only canonical authority objects and the
-explicit semantic source partition. Provenance-only changes do not grant or rotate
-automatic authority; moving authority into those sources requires reclassification.
-Immutable historical permission sets support decoding only. Runtime performs no
-archive, Git or network lookup. Exact outcome-v9 DDL rejects v8 stores, including
-empty stores, without mutation; clean rebuild required, no adoption or migration.
-Existing owner-final, Ask/Ignore, consent, backup, currentness, read-back, audit and
-recovery checks remain mandatory. Authored-description authority is independent.
-
-## Google burst admission (#1082)
-
-Only an actual exact Google burst response arms its composition-owned monotonic
-pacer. Admission refusal precedes SDK dispatch accounting and creates no HTTP
-attempt or access timestamp. A trusted reader of that same pacer supplies only
-the remaining delay to existing initial-report and successor recovery. It is
-excluded from persisted configuration identity and never grants currentness or
-write authority. Actual generic 429 and conflicting rate-limit evidence retain
-precedence. No transaction spans provider work; no schema, restart-wide hold,
-new egress, credential access, quota budget or effect authority is introduced.
-
-## Durable refusal explanations (#1081)
-
-Outcome v10 retains closed destination-specific compiler refusal codes without
-changing candidate election, disposition or write authority. The current-case
-snapshot reads the latest matching final document independently of automatic
-decisions and validates its canonical identity and row/current-policy bindings.
-Explanatory reads do not compile reports; selected-value effect validation and
-explicit draft preview retain authoritative compilation. Snapshot-consistent
-current suspension does not rewrite an immutable recorded cause. Invalid records
-fail closed. **Clean rebuild required**; no adoption or historical rewriting.
-
-
-### Library catalogue identity reads
-
-Library may attach the app-owned retained catalogue read-only to name terminal
-preparation failures. Exact schema and integrity admission happens once per
-owning review repository lifetime. Each short attachment checks retained file
-and directory identity and the schema version before and after the existing
-read snapshot, then detaches after commit or rollback. Missing catalogues are
-not created; an admitted file that disappears or changes is refused until
-close and reopen. Ordinary SQLite WAL/SHM coordination is permitted; logical
-catalogue writes through this read path are not. Identity joins require the
-current configured fingerprint, current catalogue generation and all target
-keys. Page and count observe consistent per-store snapshots, not an atomic
-cross-file publication or cross-request pagination guarantee.
-
-
-Policy-edit comparison (#1011) reads one bounded retained SQLite snapshot and
-compiles outside its read transaction. The transient active/draft comparison
-adds no durable authority, network access or effect scheduling. The existing
-sixteen-destination consent surface now opens one exact-scope review from every
-entry point; only explicit confirmation submits it. Fresh capability validation,
-backup, owner-final checks, optimistic concurrency and durable verified read-back
-remain unchanged. An ambiguous confirmation is read back without resending.
-
-Automatic cover authority v3 binds the selected policy option into the decision,
-idempotency and rule identity. An ebook known-empty fallback retains deterministic
-cover qualification, never an F46 identity; admission and effect validation both
-require the recorded option to match the retained resolved policy and generation.
-V2 documents and prior selection-table schemas are rejected before startup
-mutation: clean rebuild required under ADR-0013, with no adoption path.
-
-Policy activation requires the exact active policy identity and positive generation
-captured by preview. Returning to an earlier policy identity cannot revive a stale
-preview. Idempotent retries match the immediately following generation and its
-recorded from/to identities; internal same-policy reconciliation cannot masquerade
-as an externally requested no-op. These checks use existing transaction records.
-
-
-## Image-owned reviewer provisioning (#1009)
-
-ADR-0081 extends the historical lazy-profile rule: runtime composition may
-passively read the bounded canonical profile and required model/resource
-contract at boot. It does not read credentials or executables, create a device
-manager, start a process or contact a provider. Store-mode default and explicit
-override remain deployment authority; invalid overrides never fall back.
-Use-time and passive advice-currentness admission validate current bytes, and
-invocation binds the admitted identity. Provisioning precedes host and credential
-readiness without bypassing session, origin or access-revision gates.
-Cancellation, clear and cleanup remain reachable during profile drift.
-
-The image owns its fixed read-only profile; container initialization creates
-only the fixed owner-private reviewer directories. Existing unsafe entries are
-refused, never chmod/chown repaired or followed. Known bounded staging remains
-owned by the existing device manager, not a new recovery mechanism. Task
-selection is advisory availability, separate from Policy preferences and
-Activity write consent. No prompt, tool, model or provider authority changes.
-
-## Owner-confirmed retained covers (#1078)
-
-An authenticated CSRF-protected explicit choice can choose an intact, current
-non-incumbent retained cover despite unconfirmed identity or lower visual
-quality. Since #1290 that choice is the owner's one tap on the card, which says
-"Match not confirmed" before it is tapped; the dialog that asked again is gone,
-and the command's `cover_confirmation` binding is unchanged. Positive contradiction, including unknown identity with retained creator
-disagreement, remains refused. The owner authority preserves the observed identity
-and exact artifact, preview, consideration and target bindings; it does not alter
-automatic election, ranking, qualification permissions or reviewer authority.
-
-The existing application `BEGIN IMMEDIATE` transaction compares the target-scoped
-selection token, appends the decision/selection/events, revokes prior unclaimed
-authority and advances the pointer. Claimed, applying, reconciling and verified
-cover effects block revision across cases. Superseded idempotent replays are stale.
-Bounded currentness and artifact reads run immediately before publication and at
-guarded planning/claim. Recovery storage and artifacts remain outside SQLite's
-atomic boundary. Drift removes effect eligibility without rewriting history;
-consent, backup, final target comparison, supported API upload and read-back remain
-mandatory. No provider, reviewer or Settings calls occur inside this transaction.
-
-## Library cover reads (#1290)
-
-`GET /api/v1/library/cover?connection&library&item&preview` is a read-only,
-session-gated route that serves one retained preview: the one the item's
-current report binds to its ABS cover source. The report is read through the
-bounded browse reader, which verifies its content address and reads every cover
-source under the canonical rule; a digest from an EPUB, a provider, an older
-report or another item is not found. The bytes come from the same retained
-preview reader as cover comparisons and are verified against the digest before
-they are served as `image/png`, privately cacheable as immutable because the
-URL names them by digest, under the application's content security policy and
-`nosniff`. No image is parsed or decoded, and no new parser is added.
-
-
-## Stable cover reviewer posture (#1124)
-
-Cover-only OpenRouter profiles bind the exact selected model, 8,192-token
-ceiling, data-collection denial and capability-driven minimal/excluded reasoning.
-Retention is allowed; ZDR is not required. Description profiles and request
-behavior remain unchanged. Strict current instruction, schema, image, candidate
-and response-model binding precede advisory publication. The displaced v3
-instruction is admitted only when reading retained history, never as current
-observation authority. No automatic policy, credential or effect authority is
-added; unavailable advice requires explicit manual retry.
-
-
-## Reviewer cost measurement (#1069)
-
-The owner-run measurement script defaults to local read-only inventory and has
-no runtime scheduler. Explicit preflight permits existing capability GETs only;
-execute binds a qualified installed wheel, immutable cohort, task/model choices,
-data-use confirmation and monitored budget. Sequential dispatch stops at known
-threshold or unknown charge; an in-flight request may overshoot. No account
-limit, retry, endpoint or write authority is added. Existing contained local-abort
-retry evidence remains disclosed. Owner-private exclusive files preserve starts,
-supported final responses and terminal accounting, excluding credentials, hidden
-reasoning and unrestricted streams. Incomplete runs publish no aggregate rows.
-The public allowlist separates strict parse success from charged failures.
-Reviewer-access-v3 and exact reviewer-table DDL require a clean rebuild, including
-empty predecessor stores. Cover prices remain saved-model-bound; description
-capability, currentness, key confinement and advisory-only authority are unchanged.
-
-
-## Scalar audiobook title admission (#1134)
-
-The scalar title witness binds only the four already-qualified audiobook
-fill/replacement options to their exact outcome, candidate and citations. It
-grants no ebook or paired-title exception. Admission and guarded reconstruction
-share that witness; media, current report evidence, owner-final, policy, consent,
-backup, optimistic concurrency and read-back checks remain mandatory. Compact
-qualification bindings rotate without new permissions; displaced bindings are
-historical only. Prior derived stores require a clean rebuild, with no schema
-shape change, adoption, migration or historical rewrite.
-
-
-## Exact incumbent title election (#1138)
-
-Scalar incumbent election reuses the compiled citation-bound keep action; it
-adds no admission exception or permission. Material conflicts, owner-final,
-Ask/Ignore, pause, suspension, currentness and all effect guards remain intact.
-Shadow policy v20 requires a clean rebuild, with no migration or adoption.
-
-### Work-only audiobook review (#1166)
-
-Work-only scope is recomputed from the bound report, never accepted as a client
-permission. Each description/genre source must independently establish the full
-work relationship. Recording remains unresolved; fields other than description,
-genres, series and title (the last two since #1253, below) are masked before
-combinations, and automatic reconstruction, covers and authored-description
-preparation/retry remain unavailable. Explicit owner choices reuse exact-current
-binding, library consent, backup readiness, target comparison, supported service
-writes, read-back verification and durable reconciliation. No provider or reviewer
-receives credentials or write authority through this route.
-
-Series, series position and title (#1253) follow the same per-source witness;
-local tags and lookup-only candidates are never read for them, a title is never
-synthesised, and the subtitle stays masked with the recording fields. The
-`work_alternative_immaterial` reason only withdraws a description or genre choice
-from the attention count; it grants no automatic decision, effect or write.
-
-
-## Recovery settlement diagnostics (#1157)
-
-Closed bounded outcomes and observed/partial/unknown request accounting are
-operational evidence only. They grant no retry, credential, currentness or write
-authority and contain no raw provider or work-identifying values. One diagnostic
-commits with each executed member settlement in the existing recovery store;
-shared scope updates cannot multiply physical request counts. Activity exposes
-only current closed reasons, never diagnostic history or counts. Provider work
-remains outside transactions. Exact predecessor recovery stores require a clean
-rebuild, with no migration or retained-state modification; report schema and all
-publication and effect guards remain unchanged.
-
-## Canonical cover report references (#1158)
-
-Only the persistence representation of a cover consideration is compact. Its
-canonical immutable report must match before publication within the writer
-transaction. Readers bind the report in the same SQLite statement/read snapshot,
-refuse missing or mismatched evidence, and enforce the expanded size bound before
-returning byte-identical v4 documents. Authority digests remain over expansion;
-owner confirmation, automatic permission, currentness and guarded effects retain
-their checks. No atomicity across artifact staging or backup files is implied.
-Exact predecessor schemas require a clean rebuild; reports and history remain
-append-only, with no migration, adoption or new cleanup authority.
-
-## Persisted attention facts (#1232)
-
-Which fields ask for the owner is derived inside the database from already
-admitted rows, with no new input. Triggers on every write that can change an
-input re-derive the reachable facts in the writer's own statement, so a fact can
-never be committed apart from its inputs; refusals and rollbacks take both
-together. The active cover policy and replay references and live cover
-currentness are not database writes, so each read still tests them per request
-over the stored facts. Nothing in `src` or `scripts` writes with `REPLACE`, and
-no table declares a `REPLACE` conflict clause, either of which would skip a
-delete trigger. See [ADR-0084](decisions/0084-persisted-attention-facts.md).
-
-## Audiobook series-label strip and disjoint narrator cast (#1252)
-
-Both guards only withdraw automatic authority from a recording; neither adds an
-identity, permission, operation or input. They read the bound report, proposal
-and outcome set already admitted, run only on the audiobook branch and only for
-a field the owner routed to Automatic, and route a withdrawn field to Ask, never
-to a write. A title replacement that deletes a series label, in a combination
-or not, asks unless the target series is populated, the same outcome set elects
-an automatic series fill, or its automatic subtitle split carries the removed
-segment. The label test is total over valid titles: a blank or unkeyable part
-of a title is no strip, so it never fails a projection. A narrator replacement
-asks when the file's own narrator
-credits and the product's cast share no member; a credit naming several people
-is never split, so it can only make a cast shared, never disjoint. A recording's
-author reorder becomes a keep-current preservation recorded as one durable
-no-change, so it reaches no target, effect guard or write. Ebook outcomes are
-unchanged. Proposal policy v34 and decision policy v21 require a clean rebuild,
-with no migration or adoption; displaced qualification records keep their
-frozen permission sets and grant no current authority.
-
-## Library provider throttling and Retry now (#1282)
-
-The throttling projection is one read-only, bounded statement over the recovery
-store: at most 4,096 unrecovered health rows become at most 256 entries of
-library name, adapter, closed state, closed reasons, deferred count, next retry
-time and a closed remedy. Provider instance names, credentials, headers,
-payloads and work identities never leave the server; a remedy is computed from
-whether a key is configured, never from its value. Retry now is a session- and
-CSRF-bound owner command with a closed 2,048-byte body. It can only raise
-`provider_recovery_generation` by one against the generation the owner saw,
-through the existing Settings write and its optimistic revision, so it grants
-no credential, write, budget or pacing authority and sends no provider request
-by itself. File-managed settings refuse it. The recovery cutover now runs only
-after the settings commit, so a failed save cannot leave recovery ahead of
-configuration and stop the next start, and a cutover that fails after the
-commit fails the service closed rather than keep superseded settings running.
-
-## Owner-entered values, withdrawal and reselection (#1285)
-
-Owner-entered values, genre subsets and withdrawals use the existing
-session- and CSRF-bound decision command and grant no new destination, action
-kind, consent or permission. Owner text is refused, never rewritten, unless it
-is 1 to 512 code points of NFC text with collapsed whitespace and no control,
-path, credential or URI text; a genre subset must be an in-order subset of the
-current and eligible proposed genres, at most 32. Suggestions are pure local
-transforms of the current value. No proposal, shadow, automatic-decision,
-policy or qualification path reads an owner-entered or previous value. The
-previous value is the pre-image the guarded pipeline read back before the
-latest verified write of that field, read through a bounded index and offered
-only as a suggestion: it grants no authority, and choosing it is an ordinary
-owner-entered write, so a field changed since refuses as stale and the claim
-re-read and the adapter's re-check before its request both apply. The
-lost-update window between that re-check and the request remains, as
-Audiobookshelf offers no compare-and-set. Clearing, rollback, Undo and revert
-stay unavailable.
+`dependency-audit`, a required public-gate job, scans `uv.lock` with a
+digest-pinned OSV-Scanner on every pull request and push to `main`, failing
+on any known advisory in runtime or development dependencies;
+`.github/workflows/public-gate.yml` has the command. Frontend checks are in
+[what merging proves](../../CONTRIBUTING.md#what-merging-proves).
+
+The only way to hold a failure open is an `osv-scanner.toml` entry naming one
+advisory, a reason and an expiry at most 90 days out; there is no severity
+floor or package exclusion.
+`tests/unit/test_security_scanning_contract.py` enforces the register and
+checks that every workflow has `contents: read`, pins actions to commits and
+sets `persist-credentials: false`.
+
+Not covered: triage and fixes, source static analysis, pull-request
+dependency review (these need GitHub Code Security), extra secret scanning,
+SBOMs and container image scanning.

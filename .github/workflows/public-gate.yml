@@ -18,6 +18,18 @@ concurrency:
   # A merged `main` commit is verified exactly once and is never cancelled.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The repository's Actions caches are written only by a push to `main`. A pull
+# request, including one from outside the repository, cannot poison the caches
+# `main` restores, but every entry it writes counts against the shared 10 GB
+# budget and can evict them. So every cache write below is gated on
+# `github.event_name == 'push'`: setup-uv keeps restoring and only its save is
+# switched off, the Buildx layer cache keeps `cache-from` and loses `cache-to`,
+# and the Chromium payload save carries the event in its condition. setup-node
+# has no restore-only mode -- its post step saves whenever the restored key
+# missed -- so a pull request runs without its npm cache and `npm ci` fetches
+# from the registry; the cost is time, never a different closure, because the
+# lockfile pins every package by integrity.
+
 jobs:
   fast-source:
     runs-on: ubuntu-24.04
@@ -38,7 +50,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
-          cache: npm
+          cache: ${{ github.event_name == 'push' && 'npm' || '' }}
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install the manifest-pinned npm
@@ -48,6 +60,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
           version: "0.12.23"
 
       - name: Verify the lockfile is current
@@ -119,7 +132,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
-          cache: npm
+          cache: ${{ github.event_name == 'push' && 'npm' || '' }}
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install the manifest-pinned npm
@@ -129,6 +142,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
           version: "0.12.23"
 
       - name: Install locked development dependencies
@@ -157,7 +171,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
-          cache: npm
+          cache: ${{ github.event_name == 'push' && 'npm' || '' }}
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install the manifest-pinned npm
@@ -167,6 +181,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
           version: "0.12.23"
 
       - name: Install locked development dependencies
@@ -195,7 +210,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
-          cache: npm
+          cache: ${{ github.event_name == 'push' && 'npm' || '' }}
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install the manifest-pinned npm
@@ -205,6 +220,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
           version: "0.12.23"
 
       - name: Install locked development dependencies
@@ -232,7 +248,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
-          cache: npm
+          cache: ${{ github.event_name == 'push' && 'npm' || '' }}
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install the manifest-pinned npm
@@ -242,6 +258,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
           version: "0.12.23"
 
       - name: Verify the lockfile is current
@@ -273,7 +290,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
-          cache: npm
+          cache: ${{ github.event_name == 'push' && 'npm' || '' }}
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install the manifest-pinned npm
@@ -283,6 +300,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
           version: "0.12.23"
 
       - name: Verify the lockfile is current
@@ -325,9 +343,10 @@ jobs:
         run: uv run python scripts/verify_playwright_browser.py
 
       # Saved only after the payload is accepted, so a malformed one is never
-      # persisted for a later run to restore.
+      # persisted for a later run to restore. Only a push to `main` writes it;
+      # a pull request restores and verifies the payload but never saves one.
       - name: Save the recorded Chromium qualification payload
-        if: steps.chromium-payload.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && steps.chromium-payload.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
@@ -381,7 +400,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24.21.0"
-          cache: npm
+          cache: ${{ github.event_name == 'push' && 'npm' || '' }}
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install the manifest-pinned npm
@@ -391,6 +410,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          save-cache: ${{ github.event_name == 'push' }}
           version: "0.12.23"
 
       - name: Verify the lockfile is current
@@ -414,18 +434,25 @@ jobs:
       # probe binary (#929) and the SQLite library (#1211) the tiers below
       # execute. Layers restore
       # from the repository Actions cache; a step re-executes only when its
-      # inputs change. Base-image freshness comes from the digest pins the
+      # inputs change. Only a push to `main` exports layers back to that
+      # cache; on a pull request `cache-to` is empty and nothing is written.
+      # Base-image freshness comes from the digest pins the
       # Dockerfile carries on every FROM line, not from `--pull` -- a base
       # moves only when its pinned digest is bumped.
       - name: Build the shipped container image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        env:
+          # The action otherwise uploads a build record as a workflow
+          # artifact on every run; nothing reads it, and on a public
+          # repository it would publish build metadata to anyone.
+          DOCKER_BUILD_RECORD_UPLOAD: "false"
         with:
           context: .
           tags: mechanical-librarian:gate
           push: false
           load: true
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
 
       # The runner image preinstalls a distribution ffmpeg at
       # `/usr/bin/ffprobe`, which is first in the closed candidate set the

@@ -1,170 +1,163 @@
-# Observability and support
+# Observability
 
-The supported review runtime exposes two anonymous operational endpoints:
-process liveness at `/health/live` and startup/drain readiness at
-`/health/ready`. Neither requires a credential, and the container's own
-`HEALTHCHECK` reads readiness on that basis. Liveness says only that the HTTPS
-process responds. Readiness becomes successful only after the exact-current
-application store opens, and becomes unavailable before worker shutdown begins.
+Mechanical Librarian reports its state through two anonymous health endpoints,
+authenticated status and Activity pages, short value-free JSON lines on
+stderr, optional stage timings and an owner-reviewed support bundle. It sends
+no telemetry and raises no external alerts.
 
-Authenticated `GET /api/v1/operations/status` returns
-`operational-status-v1`: readiness, aggregate counts, bounded stage timing and
-typed incidents. Status distinguishes healthy activity, owner action,
-automatic recovery, field/category suspension, authentication failure, backup
-failure and service incompatibility. Common service causes aggregate at their
-narrow connection, library or category scope. A currentness conflict stays
-attached to its opaque work and field. Routine processing creates no external
-alert.
+None of these is audit history. The durable record is the application
+database; see [SQLite topology](../architecture/sqlite-topology.md).
 
-Authenticated `GET /api/v1/activity` is the owner-facing, value-bounded status
-projection for continuous guarded application. It reports consented libraries,
-prepared origin counts, aggregate plan states, a bounded chronological ledger,
-pause, and scoped capability suspensions. It is not audit authority; canonical
-field-effect events remain the durable proof. Activity never exposes credentials,
-cover bytes, evidence excerpts, unrestricted paths, or a general queue console.
-The authenticated Activity page presents those facts as a calm state and outcome
-ledger: consent is explicit, pause prevents new claims while existing safe
-checkpoints can finish, and removing a library's permission prevents new work
-there. It derives bounded readable title and author labels from the exact current
-report lineage without exposing report documents, work IDs, or connection IDs as
-display identity. A common suspension is grouped only when its persisted reason,
-connection, and scope match; Activity reports affected destinations and an honest
-indeterminate reconciliation state rather than an invented completion estimate.
-It does not add a retry command or duplicate the human decision queue in Attention.
-Authenticated `GET /api/v1/activity/consent-state` returns only the consent
-inputs of that projection -- waiting reasons, destination capabilities,
-configured libraries and a null backup readiness -- for Library's write-ready
-notice, without reading Activity history (#1236).
-An equal automatic candidate is shown as **No change required** from its
-identifier-only immutable ledger fact; it is not pending guarded work and no
-write guard or service operation is consulted.
+## Health endpoints
 
-Timing is disabled by default. Set the documented
-`review.diagnostic_timings_enabled` configuration field to retain at most 256
-stage duration/wait-class records in the owner-private data area. The closed
-stages are extraction, provider search, policy evaluation, human wait, apply,
-verification, reconciliation, cover, proposal and persistence: cover
-acquisition and the proposal stage are measured on their own (#1258), and
-`persistence` covers report publication: the currentness re-check (a target
-read and, for an audiobook, a re-digest of its tracks), the durable write and
-the read-back. Its wait class is `none` although it contains that target I/O.
-With no cover observer configured, the cover stage is still recorded, at close
-to 0 ms. The ring keeps the newest 256, so a long run keeps only its
-tail. Timing is advisory and never audit authority.
-Timing-store failure cannot change a preparation, decision or field-effect
-outcome; unreadable advisory evidence produces a bounded authenticated 503.
+| Endpoint | Credential | Meaning |
+| --- | --- | --- |
+| `GET /health/live` | None | The process responds. |
+| `GET /health/ready` | None | `200 ready` once the stores are open and Activity's history is loaded; `503 draining` before that and from the start of shutdown. |
 
-Preparation status keeps one validated, lifecycle-owned foreground repository
-open before its two worker lanes start. It serializes independent preparation
-progress and connection-condition snapshots with owner scan and retry controls,
-and closes only after both lanes stop. Worker and recovery actions open dependent
-repositories under that lifecycle owner's authority on every platform: they
-inherit its schema admission and inode identity, and treat the owner's hot
-rollback journal as a live transaction rather than recovery state. Ordinary
-Linux server roots can admit one verified private binding journal through the
-source-preserving copy boundary in
-[ADR-0078](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md).
-Other root opens remain reject-only; configured-basename journals and WAL are
-always refused.
+The container's own health check reads `/health/ready`; see
+[deployment](deployment.md#starting-stopping-and-restarting).
 
-If a claimed stage cannot commit its failure settlement, preparation reports
-**Preparation stopped**. Restart the Mechanical Librarian service; refreshing
-the browser, Scan and Resume cannot clear this process-local stop. Ready books
-remain browsable, and the last durable progress is retained. Authenticated status
-and support evidence carry `preparation_restart_required`, runtime scope, the
-bounded `prep-` reference, stage, primary code and attempt, with optional
-`settlement_code: persistence`. This does not assert that the work has a durable
-terminal row. Successful fresh startup uses the existing checkpoint recovery.
-Subscriber wake failures do not fail the producer or another subscriber.
+## Operational status
 
-Unclassified preparation exceptions emit a bounded structured JSON WARNING through one
-best-effort service stderr write (`preparation_unknown_failure`). Match `reference` to the
-terminal preparation reference in authenticated operations/support evidence when
-settlement commits; if settlement fails, match `restart_reference` to the runtime
-stop instead. `observation: before_fail` records an observed exception, not a
-committed outcome. Execution and owned stages can differ after a committed handoff.
-The record contains only validated code identities and application frame locations,
-never exception text, metadata or paths. Typed failures retain their existing codes.
-Keep service logs under operator-controlled retention: these advisory records are
-not durable audit history and cannot reconstruct a failure from before this change.
-Logging failure does not change settlement, recovery or retry behavior (#1136).
+`GET /api/v1/operations/status` (signed in) returns `operational-status-v1`:
+readiness, aggregate counts, bounded stage timing and typed incidents. An
+incident is one of healthy activity, owner action needed, automatic recovery,
+field or category suspension, authentication failure, backup failure or service
+incompatibility. Common causes are grouped by connection, library or category;
+a currentness conflict stays with its work item and field.
 
-A preparation claim that loses SQLite's writer lock to a long reader, failing
-with plain `SQLITE_BUSY` once its transaction scope has ended and its connection
-holds no open transaction, committed nothing, so its lane retries on the next
-one-second wake instead of stopping preparation (#1216). Each retry writes one
-fixed WARNING line, `preparation_claim_contended` with `code: contention` and no
-value-bearing field. A run of them means a reader is holding the database past
-the five-second busy timeout; status meanwhile shows preparation active with
-unchanged counts. Any other claim failure still reports **Preparation stopped**
-as above, and so does a claimed stage whose failure settlement is blocked by the
-same long read; #1217 tracks that settlement case.
+## Activity
 
-Provider dispatch and provider recovery write one value-free JSON line to
-stderr through the same best-effort write (#1299). They are on by default and
-have no switch, environment variable or `logging` configuration.
+`GET /api/v1/activity` (signed in) returns guarded-write state and a bounded,
+searchable, newest-first ledger. `GET /api/v1/activity/consent-state` returns
+only the inputs Library's write-ready notice needs. Neither exposes internal
+identifiers, credentials, cover bytes, evidence excerpts or paths.
+Reconciliation shows as indeterminate, never as a completion estimate. An
+automatic decision that matched the current value appears as **No change
+required** and is not pending work.
+
+The Activity ledger is read-only. Activity offers no queue administration,
+blind retry or export. Its only actions are the existing server-checked
+consent, pause and recovery commands. Provider recovery phases are in
+[provider recovery](provider-recovery.md#what-activity-shows).
+
+## Preparation stopped
+
+If a claimed preparation stage cannot record its own failure, preparation shows
+**Preparation stopped**. Restart the service: refreshing the browser, Scan and
+Resume cannot clear it. Ready books stay browsable and the last durable progress
+is kept. Status and support bundles carry `preparation_restart_required` with
+the runtime scope, a `prep-` reference, the stage, the primary code and the
+attempt, and `settlement_code: persistence` when that applies. The work may not
+have a durable terminal row. A clean restart resumes from the last checkpoint
+([ADR-0078](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md)).
+
+A claim that loses SQLite's write lock to a long reader commits nothing and
+retries on the lane's next one-second wake instead of stopping. Each retry logs
+`preparation_claim_contended` (below). Many in a row mean a reader is holding
+the database past the five-second busy timeout; status meanwhile shows
+preparation active with unchanged counts. Any other claim failure reports
+**Preparation stopped**.
+
+## Log lines
+
+The service writes single-line JSON events to stderr. Nothing configures Python
+`logging`; these lines are always on and have no switch. Each write is best
+effort: a failed write never changes preparation, dispatch, settlement or
+recovery. Lines carry no title, author, query, URL, response body, exception
+text, credential or path.
 
 | `event` | Written when |
-|---|---|
-| `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane with no failing attempt. Its `outcome_class` names `malformed_response`, `oversized_response` and `candidate_limit_exceeded` apart (#1308). An adapter's `not_found` attempt is never one, and a `http_404` or `region_unavailable` attempt is not one when every lane answered with candidates or no match: that is the provider's ordinary "not found". |
-| `provider_throttled` | `quota_rate_limit`, `burst_throttle`, `daily_quota_exhausted`, or `held` for a lane the shared pacer held without a request |
-| `provider_deadline_stop` | `stop: before_dispatch` when the deadline left a request unsent; `stop: in_flight` when it ended a retry |
-| `provider_recovery_job` | A recovery job's `transition`: `started`, `settled`, `failed`, `stale` or `held` |
+| --- | --- |
+| `preparation_unknown_failure` | An unclassified preparation exception is observed (WARNING). |
+| `preparation_claim_contended` | A preparation claim lost the write lock and will retry (WARNING, `code: contention`). |
+| `activity_projector` | The background Activity projector stopped. `code` is `stopped`, `released` or `admission_closed` (info), or `unexpected` (WARNING, with the exception type in `error`). Shutdown adds `join_timeout` (WARNING) if the projector's current step outlasts the join bound; closing still waits for that step. |
+| `provider_recovery_schedule` | The review library cannot read the recovery schedule, so it withdraws the retry promise (WARNING, `code: unavailable`). |
+| `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_recovery_job` | See [provider logs](#provider-logs). |
 
-Dispatch events are de-duplicated per observation, with a `count`. Every line
-carries `adapter`, `provider` and `item_ref`: `item-` plus 16 hex characters
-of a SHA-256 over connection, library and item, never the item id. It also
-carries `phase` (`discovery`, `asin_feed` or `recovery`), `lane_kind`,
-`query_family`, `outcome_class`, `http_status`, `elapsed_ms`, `deadline_ms` and
-`deadline_kind` (`provider_share`, `aggregate` or `recovery_window`).
+`preparation_unknown_failure` holds only validated code identities and
+application frame locations. Match its `reference` to the preparation reference
+in status or support evidence when the failure was recorded, or its
+`restart_reference` to a **Preparation stopped** reference when it was not.
+`observation: before_fail` means the exception was seen, not that an outcome
+was committed.
 
-Recovery events add `job_attempt`, `physical_requests` and `dispatch_reason`.
-Each key is allow-listed. Each value is a closed vocabulary or a bounded
-integer, and an out-of-shape value is written as `null`. A line is at most 1024
-bytes, written in one call. A clean dispatch writes nothing.
+### Provider logs
 
-Lines carry no title, author, query, URL, body, exception text, credential or
-path. Attempt records carry no lane, so an observation that dispatched more than
-one lane reports `mixed`. A failed write changes no dispatch, report or
-settlement.
+Provider dispatch and provider recovery write one line per event. A clean
+dispatch writes nothing.
 
-For a library of about 240 audiobooks, the expected volume is a few hundred
-lines per preparation. That is an estimate, not a bound. Recovery adds about
-two lines per job attempt. These are advisory, not audit history. Docker's default
-`json-file` log driver does not rotate, so set `max-size` and `max-file` or
-another retention the operator controls.
+| `event` | Written when |
+| --- | --- |
+| `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane. `outcome_class` separates `malformed_response`, `oversized_response` and `candidate_limit_exceeded`. A provider's ordinary "not found" (`not_found`, or `http_404` or `region_unavailable` when every lane still answered) is not a failure. |
+| `provider_throttled` | `quota_rate_limit`, `burst_throttle`, `daily_quota_exhausted`, or `held` when the shared pacer held a lookup without sending it. |
+| `provider_deadline_stop` | `stop: before_dispatch` when the deadline left a request unsent; `stop: in_flight` when it ended a retry. |
+| `provider_recovery_job` | A recovery job changed state; `transition` is below. |
 
-The background activity projector writes one line of the same kind when its
-thread ends: `{"code":"stopped","event":"activity_projector","level":"info"}`,
-`released` when its fact store was released, `admission_closed` when the
-service is closing, or `unexpected` at `warning` with `error` set to the
-exception's type name. Shutdown adds `join_timeout` at `warning` when the
-projector's current step outlasts the join bound; closing still waits for that
-step (#1231, #1304). When the review library cannot read the provider-recovery
-schedule, it withdraws the retry promise and writes
-`{"code":"unavailable","error":"<exception type>","event":"provider_recovery_schedule","level":"warning"}`
-(#1407, #1447). Nothing configures Python `logging`, so no event depends on it.
+| `transition` | Written after |
+| --- | --- |
+| `started` | a job is claimed |
+| `settled` | the canary authorises the other items, or an item succeeds |
+| `failed` | a canary failure, an exhausted scope, interrupted retries or an item failure |
+| `stale` | a job closes as stale |
+| `held` | a target hold is released |
 
-`GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
-shape and size. Authenticated, CSRF-bound
-`POST /api/v1/operations/support/export` creates it again and re-runs redaction.
-The JSON is capped at 64 KiB. It excludes secrets and auth state, unrestricted
-environment data, databases, metadata values, excerpts, paths, media, covers
-and the private recovery store. Review the preview before sharing an export.
-When a browse read maps a SQLite storage or resource failure to the owner's
-value-free `unavailable` response, this existing export retains only the bounded
-exception class. It does not retain the database error text, query, row, path,
-or a telemetry record.
+A recovery line is written only after its store change commits.
 
-Library and Attention can also report unavailable when live cover policy or
-provider-recovery identities change during an otherwise consistent collection
-read. Retry uses a fresh observation. Pending or unavailable totals are not
-zero, and this state does not authorize a decision or target effect. Collection
-reads have their own persistent connection; a completed SQL snapshot is released
-before visible work is projected. The bounded projection still owns local
-admission, so a waiting owner interaction enters at the next safe boundary.
-Preparation and external reviewer/target work cannot retain that admission across
-network calls. Timing investigations distinguish admission wait, SQLite transaction
-wait, local computation and rendered confirmation; a health response is not owner
-interaction evidence. [ADR-0077](../architecture/decisions/0077-owned-responsive-review-reads.md)
-states the ownership and clean-rebuild boundary.
+Dispatch events are de-duplicated per lookup, with a `count`. Every provider
+line carries:
+
+- `adapter`, `provider`;
+- `item_ref`: `item-` plus 16 hex characters of a SHA-256 over connection,
+  library and item, never the item ID;
+- `phase` (`discovery`, `asin_feed` or `recovery`), `lane_kind`,
+  `query_family`, `outcome_class`, `http_status`;
+- `elapsed_ms`, `deadline_ms` and `deadline_kind` (`provider_share`,
+  `aggregate` or `recovery_window`).
+
+Recovery lines add `job_attempt`, `physical_requests` and `dispatch_reason`.
+A lookup that used more than one lane reports `lane_kind` as `mixed`. Every key
+is allow-listed and every value is a closed word or bounded integer; anything
+else is written as `null`. A line is at most 1,024 bytes.
+
+### Log retention
+
+As a rough estimate, expect a few hundred lines per full preparation of a
+library of a few hundred books, and about two per recovery attempt. Docker's
+default `json-file` driver does not rotate logs: set `max-size` and `max-file`,
+or use another retention you control.
+
+## Diagnostic timings
+
+Timings are off by default. Set `review.diagnostic_timings_enabled` to keep the
+newest 256 stage records (duration and wait class) in the private data area.
+The stages are extraction, provider search, policy evaluation, human wait,
+apply, verification, reconciliation, cover, proposal and persistence. The
+cover stage is recorded even with no cover reviewer configured.
+`persistence` is report publication: the currentness re-check (a target read
+and, for an audiobook, a re-digest of its tracks), the write and the read-back.
+It has wait class `none` although it includes target I/O. See
+[configuration](../reference/configuration.md#diagnostic-timings).
+
+Timings are advisory. A timing-store failure never changes an outcome;
+unreadable timing data returns a bounded `503` to the signed-in owner.
+
+## Support bundle
+
+`GET /api/v1/operations/support/preview` shows the exact bundle and its size.
+`POST /api/v1/operations/support/export` (signed in, CSRF-protected) builds it
+again with fresh redaction. The JSON is at most 64 KiB. It excludes secrets,
+authentication state, environment data, databases, metadata values, excerpts,
+paths, media, covers and the private recovery store. When a browse read fails
+on a SQLite storage or resource error, the bundle keeps only the exception
+class, never its message, query, row or path. Review the preview before sharing
+an export.
+
+## Unavailable reads
+
+Library and Attention report **unavailable** when cover policy or provider
+recovery changes during a read, or when storage fails. Pending or unavailable
+totals are not zero, and an unavailable page authorises no decision or write.
+Retrying reads afresh. How reads stay responsive under background work is in
+[ADR-0077](../architecture/decisions/0077-owned-responsive-review-reads.md).
