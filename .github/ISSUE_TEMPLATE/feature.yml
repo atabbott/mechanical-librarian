@@ -3,7 +3,6 @@ description: Propose a concrete user-facing capability within product scope.
 title: "feature: "
 labels:
   - needs-triage
-type: Feature
 body:
   - type: textarea
     id: problem
