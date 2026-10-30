@@ -189,22 +189,34 @@ def test_prose_that_merely_resembles_a_credit_stays_a_synopsis(value):
     assert not recognized_synopsis_placeholder(value)
 
 
+@pytest.mark.parametrize("option", ["safe_plain_text", "replace_safe_plain_text"])
 @pytest.mark.parametrize(
     "current", _CREDIT_LINES + _SHORT_FRAGMENTS + _CREDIT_LINE_EXTENSIONS
 )
-def test_persisted_reconstruction_replaces_what_the_floor_recognizes(current):
-    """The persisted projection reads the same floor the preview does."""
+def test_persisted_reconstruction_replaces_what_the_floor_recognizes(current, option):
+    """The persisted projection reads the same floor the preview does.
+
+    A placeholder is missing knowledge, so either option fills it (#1317).
+    """
     candidate = {"kind": "text", "value": "A voyage reveals a hidden city."}
     assert (
         project_audiobook_automatic_decision_value(
             "description",
             "description_fill",
-            "replace_safe_plain_text:audiobook_description_replace",
+            f"{option}:audiobook_description_fill",
             candidate,
             current,
         )
         == candidate
     )
+    with pytest.raises(RichMetadataPreviewError):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            f"{option}:audiobook_description_replace",
+            candidate,
+            current,
+        )
     with pytest.raises(RichMetadataPreviewError):
         project_audiobook_automatic_decision_value(
             "description",
@@ -227,6 +239,7 @@ def test_persisted_reconstruction_preserves_what_stays_a_synopsis(current):
         )
 
 
+@pytest.mark.parametrize("option", ["safe_plain_text", "replace_safe_plain_text"])
 @pytest.mark.parametrize(
     "current",
     [
@@ -237,7 +250,7 @@ def test_persisted_reconstruction_preserves_what_stays_a_synopsis(current):
     ],
 )
 def test_a_recognized_incumbent_is_replaced_through_the_persisted_decision(
-    tmp_path, current
+    tmp_path, current, option
 ):
     report = synopsis_report(current, ("A voyage reveals a hidden city.",))
     database = tmp_path / "floor.sqlite"
@@ -246,7 +259,7 @@ def test_a_recognized_incumbent_is_replaced_through_the_persisted_decision(
             repository,
             report,
             ("description_fill",),
-            selected_options={"description_fill": "replace_safe_plain_text"},
+            selected_options={"description_fill": option},
         )
         repository.persist_shadow_outcome(case_id, 4)
     with closing(open_repository(database)) as repository:
@@ -264,9 +277,7 @@ def test_a_recognized_incumbent_is_replaced_through_the_persisted_decision(
             for document in repository.get_review_case_decisions(case_id)
             if json.loads(document)["destination"] == "description"
         )
-        assert decision.policy_option == (
-            "replace_safe_plain_text:audiobook_description_replace"
-        )
+        assert decision.policy_option == f"{option}:audiobook_description_fill"
 
 
 @pytest.mark.parametrize("option", ["safe_plain_text", "replace_safe_plain_text"])

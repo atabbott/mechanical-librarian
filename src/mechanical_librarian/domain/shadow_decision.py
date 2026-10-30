@@ -14,6 +14,7 @@ from mechanical_librarian.domain.field_value_comparison import (
     contributor_credit_prefixed,
     promotional_announcement,
 )
+from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACE_LANGUAGES
 from mechanical_librarian.domain.proposal_set import (
     _TITLE_PART_BOUNDARY,
     DECORATION_TIDY_TITLE_REASONS,
@@ -31,7 +32,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v23"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v24"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -129,6 +130,20 @@ _RULE_TABLE = {
         "credit_line_name_tokens": [1, 5],
         "credit_line_prose_words_refuse": True,
         "optional_final_full_stop": True,
+        "placeholder_incumbent_is_empty_equivalent": True,
+        "leading_header_line_ignored_in_comparison": [
+            "about the book",
+            "about this book",
+            "book description",
+            "description",
+            "publisher's summary",
+            "summary",
+            "synopsis",
+        ],
+        "header_led_incumbent_replaceable_under": "replace_safe_plain_text",
+        "cut_off_source_vetoes_unless_another_safe_source_extends_it": True,
+        "cut_off_incumbent_replaceable_only_by_its_extension": True,
+        "language_gate": "stated_source_language_else_marketplace",
         "preserve_other_safe_plain_incumbents": True,
         "safety_and_identity_precede_comparison": True,
         **_PRAISE_RULE,
@@ -150,7 +165,37 @@ _RULE_TABLE = {
             "mp3 cd",
         ],
         "format_only_candidate_refusal": "no_candidate",
+        "language_gate": "stated_source_language_or_marketplace",
+        "language_gate_refusal": "candidate_language_differs",
         "ebook_unchanged": True,
+    },
+    "audiobook_language_gate": {
+        "known_language": [
+            "local_language_claims",
+            "single_declared_library_language",
+        ],
+        "comparison": "language_equivalence_class",
+        "marketplace_languages": {
+            code: list(bases) for code, bases in AUDIOBOOK_MARKETPLACE_LANGUAGES.items()
+        },
+        "unknown_language_gates_nothing": True,
+        "gated_alternative_stays_choosable": True,
+    },
+    "audiobook_subtitle": {
+        "marketing_copy_refused": True,
+        "marketing_copy": [
+            "whole_value_announcement",
+            "bestseller_or_bestselling",
+            "award_or_prize_winner_or_winning",
+            "winner_of_award_or_prize",
+            "from_or_by_the_author_creator_or_writer_of",
+            "now_on_streaming_or_a_screen_adaptation",
+            "inspired_the_show_series_film_or_movie",
+            "named_streaming_service",
+            "must_read",
+            "million_copies",
+            "number_one",
+        ],
     },
     "audiobook_recording": {
         "report_derived_candidate_binding": True,

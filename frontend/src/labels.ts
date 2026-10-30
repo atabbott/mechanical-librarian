@@ -471,6 +471,8 @@ export const automaticRefusalReasons: Readonly<Record<string, string>> = {
     'The retained evidence does not verify the ISBN for this edition.',
   description_quality_floor_not_met:
     'Retained source text does not meet the automatic synopsis rules.',
+  candidate_language_differs:
+    'The retained value comes from a source in another language than this item.',
   series_membership_incomplete:
     'Series membership or position evidence is incomplete or malformed.',
   series_conflicting_membership:

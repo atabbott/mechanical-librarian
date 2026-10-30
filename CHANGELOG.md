@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** A placeholder or cut-off audiobook synopsis is
+  filled under the default option (a cut-off one only by its own full text),
+  and an "About the book" header line no longer counts as a difference.
+  Marketing lines are never chosen as subtitles, and genres or synopses from a
+  store in another language wait for your choice (#1317).
 - **Clean rebuild required.** An Audiobookshelf item holding audio and an EPUB
   is prepared as an audiobook, with the EPUB's details kept only as supporting
   evidence. The audio filter lists only items that hold audio (#1319).

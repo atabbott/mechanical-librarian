@@ -571,7 +571,9 @@ def _target_work_preview(report: MetadataReport):
             "no_op",
             "target_preserved",
         ),
-        ("<p></p>", "abstain", "target_state_unusable"),
+        # A markup-only incumbent is missing knowledge under the fill-only
+        # option too (#1317), so it reaches election: two synopses are a choice.
+        ("<p></p>", "abstain", "ambiguous_evidence"),
     ),
     ids=("markup", "line_separator", "markup_only_under_fill_only"),
 )
