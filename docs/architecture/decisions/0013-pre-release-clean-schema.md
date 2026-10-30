@@ -243,6 +243,14 @@ report cannot state what a v62 report records, and the proposal policy moves to
 `fixed-conservative-v39` (ADR-0064). Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Issue #1317 also takes the clean-rebuild branch. The proposal policy moves to
+`fixed-conservative-v40`, because a placeholder description incumbent now
+counts as missing knowledge and a placeholder alternative is never elected, and
+the decision policy moves to `deterministic-shadow-decision-policy-v24`,
+because the audiobook synopsis, subtitle and genre rules change (placeholder and
+cut-off fills, header lines, marketing copy and the language gate). The report
+schema is unchanged; no adoption is supplied.
+
 Issue #1319 also takes the clean-rebuild branch. `metadata-report-v63` adds
 the `companion` section, the EPUB an audiobook item holds beside its tracks
 with the claims read from it, so a v62 report cannot state what a v63 report

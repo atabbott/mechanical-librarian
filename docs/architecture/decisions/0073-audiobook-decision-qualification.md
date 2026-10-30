@@ -26,7 +26,10 @@ The operation describes the actual effect on the report-bound current value:
 preserve, fill, normalize, add or replace. Fill evidence never qualifies a
 populated replacement. An audiobook genre list naming only the recording's
 format, such as "Audiobook" or "Unabridged", is empty-equivalent, as an unknown
-language is, so filling it is a fill (#1250). Valid-ASIN supersession is
+language is, so filling it is a fill (#1250). A placeholder synopsis is
+empty-equivalent too, and a cut-off one is filled only by a complete synopsis
+that extends it, so both are fills; a leading header line is not compared, and
+removing it is a replacement (#1317). Valid-ASIN supersession is
 distinct from replacing an invalid incumbent. The closed registry names
 supported field/option operations; only identities in the published passing set
 grant authority.

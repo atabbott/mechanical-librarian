@@ -1068,6 +1068,30 @@ def test_narrator_qualification_names_actual_effect(current, desired, operation)
 
 def test_rich_effect_reconstruction_rejects_fill_identity_for_replacement():
     candidate = {"kind": "text", "value": "A supported source description."}
+    # A placeholder incumbent is missing knowledge, so filling it is a fill
+    # under either option and never a replacement (#1317).
+    assert (
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_fill",
+            candidate,
+            "Chapter 1",
+        )
+        == candidate
+    )
+    with pytest.raises(
+        RichMetadataPreviewError, match="rich automatic operation is unqualified"
+    ):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_replace",
+            candidate,
+            "Chapter 1",
+        )
+
+    header_led = "About the book\nA supported source description."
     with pytest.raises(
         RichMetadataPreviewError, match="rich automatic operation is unqualified"
     ):
@@ -1076,7 +1100,7 @@ def test_rich_effect_reconstruction_rejects_fill_identity_for_replacement():
             "description_fill",
             "replace_safe_plain_text:audiobook_description_fill",
             candidate,
-            "Chapter 1",
+            header_led,
         )
     assert (
         project_audiobook_automatic_decision_value(
@@ -1084,7 +1108,7 @@ def test_rich_effect_reconstruction_rejects_fill_identity_for_replacement():
             "description_fill",
             "replace_safe_plain_text:audiobook_description_replace",
             candidate,
-            "Chapter 1",
+            header_led,
         )
         == candidate
     )

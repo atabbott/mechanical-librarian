@@ -19,6 +19,7 @@ from mechanical_librarian.domain.field_outcomes import (
 from mechanical_librarian.domain.field_value_comparison import (
     audiobook_format_only_genres,
     canonical_text,
+    synopsis_missing,
     values_match,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -162,6 +163,9 @@ def identity_for_effect(
             and language_is_unknown(current)
         )
         or (destination == "genres" and audiobook_format_only_genres(current))
+        # A placeholder synopsis, or a cut-off one the value completes, holds
+        # nothing to keep (#1317).
+        or (destination == "description" and synopsis_missing(current, desired))
     ):
         operation = "fill"
     elif (
@@ -175,7 +179,10 @@ def identity_for_effect(
     elif (
         _language_effect_equivalent(current, desired)
         if destination == "language"
-        else values_match(TargetDestination(destination), current, desired)
+        # A synopsis that compares equal still differs in bytes, such as a
+        # dropped boilerplate header, so it replaces (#1317).
+        else destination != "description"
+        and values_match(TargetDestination(destination), current, desired)
     ):
         operation = "normalize"
     elif (

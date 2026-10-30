@@ -24,19 +24,58 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 def canonical_text(destination: TargetDestination, value: str) -> str:
-    """Return the proposal evaluator's comparison form for one text field."""
+    """Return the proposal evaluator's comparison form for one text field.
+
+    A synopsis compares without a leading boilerplate header line (#1317).
+    """
     if destination is TargetDestination.DESCRIPTION:
         return " ".join(
             unicodedata.normalize(
                 "NFC",
-                validate_incumbent_description(
-                    value,
-                    "proposal value",
-                    MAX_DESCRIPTION_CHARACTERS,
+                _synopsis_after_header(
+                    validate_incumbent_description(
+                        value,
+                        "proposal value",
+                        MAX_DESCRIPTION_CHARACTERS,
+                    )
                 ),
             ).split()
         ).casefold()
     return normalize_title(value).casefold()
+
+
+# A closed boilerplate heading a synopsis may open with, alone on its first
+# line, optionally followed by a colon. Matched whole against the line's
+# whitespace-collapsed, casefolded text (#1317).
+_SYNOPSIS_HEADER: Final = re.compile(
+    r"(?:about (?:the|this) book|(?:book )?description|synopsis|summary"
+    r"|publisher['’]?s summary) ?:?"
+)
+_FIRST_LINE_END: Final = re.compile(r"\r?\n|\u2028")
+
+
+def _synopsis_after_header(value: str) -> str:
+    """The text after a leading header line, or the whole value without one."""
+    parts = _FIRST_LINE_END.split(value.lstrip(), maxsplit=1)
+    if (
+        len(parts) == 2
+        and parts[1].strip()
+        and _SYNOPSIS_HEADER.fullmatch(
+            " ".join(unicodedata.normalize("NFC", parts[0]).split()).casefold()
+        )
+        is not None
+    ):
+        return parts[1]
+    return value
+
+
+def synopsis_header(value: object) -> bool:
+    """Whether a synopsis opens with a boilerplate header line (#1317).
+
+    Comparison ignores the header; the retained bytes keep it. Pure, and
+    never raises.
+    """
+    return type(value) is str and _synopsis_after_header(value) != value
 
 
 def title_identity_key(value: str) -> str:
@@ -414,6 +453,37 @@ def promotional_announcement(value: object) -> bool:
     )
 
 
+# Phrases that sell a book rather than name it: sales and award claims, an
+# author's other books, and screen adaptations. Searched anywhere in the
+# whitespace-collapsed value, case-insensitively (#1317).
+_MARKETING_COPY: Final = re.compile(
+    r"\bbest-?sell(?:er|ers|ing)\b"
+    r"|\b(?:award|prize)[- ]winn(?:er|ing)\b"
+    r"|\bwinner of\b.*\b(?:award|prize)\b"
+    r"|\b(?:from|by) the (?:[\w-]+ ){0,2}(?:author|creator|writer)s? of\b"
+    r"|\bnow (?:on|streaming|a (?:major )?(?:motion picture|film|movie"
+    r"|television series|tv series))\b"
+    r"|\binspired the (?:[\w+]+ ){0,3}(?:show|series|film|movie)\b"
+    r"|\b(?:netflix|apple tv\+|prime video|hbo max|disney\+|hulu)(?!\w)"
+    r"|\bmust-read\b|\bmillion copies\b|(?<!\w)#1(?!\d)",
+    re.IGNORECASE,
+)
+
+
+def marketing_copy(value: object) -> bool:
+    """Whether one subtitle candidate is marketing copy rather than a subtitle.
+
+    A whole-value announcement counts, and so does any phrase above: a sales
+    or award claim, "from the author of", "now on" a streaming service or a
+    screen adaptation. Shape only, so a real subtitle that quotes such a
+    phrase stays the owner's to choose. Pure, and never raises (#1317).
+    """
+    return type(value) is str and (
+        promotional_announcement(value)
+        or _MARKETING_COPY.search(" ".join(value.split())) is not None
+    )
+
+
 # A quoted span and the dash attribution that may follow it. The attribution
 # stops at a line end, the next quote, or a full stop that ends a word longer
 # than one letter, so an initial stays inside it and a following synopsis
@@ -471,6 +541,68 @@ def plain_audiobook_synopsis(value: object) -> TypeGuard[str]:
 
 
 _WORD: Final = re.compile(r"\w+")
+
+
+def cut_off_synopsis(value: object) -> TypeGuard[str]:
+    """Whether a synopsis is plain text that ends in a visible cutoff (#1317)."""
+    if (
+        type(value) is not str
+        or "<" in value
+        or ">" in value
+        or not value.rstrip().endswith(DESCRIPTION_VISIBLE_CUTOFFS)
+    ):
+        return False
+    try:
+        canonical_text(TargetDestination.DESCRIPTION, value)
+    except ValueError:
+        return False
+    return True
+
+
+def description_extends(cut_off: object, complete: object) -> bool:
+    """Whether a visibly cut-off synopsis is the opening of a complete one.
+
+    `cut_off` is plain text ending in a visible cutoff; `complete` passes the
+    synopsis floor. Both are read without a leading header, NFC-normalised,
+    casefolded and split into words. The cut-off words, except a last word
+    that may itself be cut, open the complete text, the last one opens the
+    complete word in its place, and the complete text says more. Pure, and
+    never raises (#1317).
+    """
+    if not cut_off_synopsis(cut_off) or not plain_audiobook_synopsis(complete):
+        return False
+    cut = _synopsis_words(_synopsis_after_header(cut_off))
+    full = _synopsis_words(_synopsis_after_header(complete))
+    return (
+        bool(cut)
+        and len(full) >= len(cut)
+        and full != cut
+        and full[: len(cut) - 1] == cut[:-1]
+        and full[len(cut) - 1].startswith(cut[-1])
+    )
+
+
+def synopsis_missing(current: object, desired: object) -> bool:
+    """Whether an audiobook incumbent synopsis holds no knowledge to keep.
+
+    A placeholder incumbent -- plain or markup-only text the closed marker
+    vocabulary recognises -- is missing, as is a cut-off incumbent that
+    `desired` extends, so a safe complete synopsis fills either (#1317).
+    Pure, and never raises.
+    """
+    if type(current) is not str:
+        return False
+    try:
+        placeholder = recognized_synopsis_placeholder(current)
+    except ValueError:
+        return False
+    return (
+        placeholder
+        and (
+            plain_audiobook_synopsis(current)
+            or not SYNOPSIS_MARKUP_TAG.sub("", current).strip()
+        )
+    ) or description_extends(current, desired)
 
 
 def description_alternative_immaterial(current: object, candidate: object) -> bool:
@@ -545,11 +677,16 @@ __all__ = [
     "canonical_text",
     "contributor_credit_prefixed",
     "creator_list_reordered",
+    "cut_off_synopsis",
     "description_alternative_immaterial",
+    "description_extends",
     "genre_alternative_immaterial",
+    "marketing_copy",
     "mostly_quoted_praise",
     "plain_audiobook_synopsis",
     "promotional_announcement",
     "recognized_synopsis_placeholder",
+    "synopsis_header",
+    "synopsis_missing",
     "values_match",
 ]
