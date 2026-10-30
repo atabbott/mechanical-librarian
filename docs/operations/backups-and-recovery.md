@@ -34,11 +34,27 @@ Where each store's schema and recovery rules are defined is in
 3. Verify the copy:
    - run `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the copied
      application database;
-   - check that each file in `artifacts/` has a SHA-256 equal to its name.
-     Do not print or log the files' contents.
+   - list every cover digest the copied database references, and check that
+     each one is present in the copied `artifacts/` as a regular file, not a
+     symlink, whose SHA-256 equals its name. Do not print or log the files'
+     contents.
+
+   ```sql
+   SELECT substr(artifact_id, 7) FROM metadata_report_cover_references
+    WHERE artifact_id IS NOT NULL
+   UNION
+   SELECT preview_digest FROM metadata_report_cover_references
+    WHERE preview_digest IS NOT NULL;
+   ```
+
+   A missing or mismatched file means the backup is incomplete. Checking only
+   the files that happen to be present proves nothing, because an empty
+   directory passes. Do not discard the original volume on the strength of an
+   incomplete backup.
 
 There is no built-in backup verifier. The runtime checks each artifact's
-digest on every read, so a damaged artifact is refused rather than served.
+digest on every read, so a damaged artifact is refused rather than served, and
+a missing one fails the cover operation that needs it.
 
 ## Protecting backups
 
