@@ -6223,10 +6223,7 @@
             "type": "string"
           },
           "option": {
-            "enum": [
-              "preserve",
-              "display_name"
-            ],
+            "const": "display_name",
             "title": "Option",
             "type": "string"
           }

@@ -71,7 +71,7 @@ preference; supersede or amend it.
 | [0062](0062-owner-managed-reviewer-access.md) | accepted | Keep reviewer access owner-managed and task-scoped |
 | [0063](0063-isolated-audiobook-inspector.md) | accepted; multi-file exclusion superseded by 0066 | Read audiobook evidence through two isolated children |
 | [0064](0064-audiobook-provider-evidence-vocabularies.md) | accepted | Admit audiobook evidence vocabularies and corroboration rules |
-| [0065](0065-language-equivalence-classes.md) | accepted | Group language codes by base and script |
+| [0065](0065-language-equivalence-classes.md) | accepted; amended for display names | Group language codes by base and script |
 | [0066](0066-multi-file-audiobook-composition.md) | accepted | Compose multi-file audiobooks into one evidence set |
 | [0067](0067-decoration-equivalence-and-compound-admission.md) | accepted | Elect decoration-equivalent titles; admit one author-prefix compound |
 | [0068](0068-latin-combining-mark-work-identity.md) | accepted | Admit Latin combining-mark work identity |

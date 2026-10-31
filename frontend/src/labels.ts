@@ -70,6 +70,8 @@ const materialReasonLabels = {
   date_refinement_requires_corroboration:
     'A more exact date needs a second source before it can replace this one',
   date_year_conflict: 'The sources disagree about the year',
+  language_display_name:
+    'The current value names the same language; accepting only changes how it is written',
   field_policy_conflict:
     'Your policy for this field and the evidence point different ways; choose the value yourself',
   insufficient_independent_corroboration: 'Not enough independent sources agree on this value',

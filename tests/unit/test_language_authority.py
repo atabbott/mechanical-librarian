@@ -44,12 +44,11 @@ def test_language_authority_survives_real_publication(tmp_path, audio, current, 
         1 if supported or values == ("qqq",) else 0 if values == ("und",) else 2
     )
     assert all(value.value.value not in {"UND", "und"} for value in result.alternatives)
+    # A current "en-US" names the class the evidence names, so its display
+    # name is the owner's to accept, never automatic (#1314).
+    respelled = supported and current == "en-US"
     assert ("manual" if decision is None else decision.recommendation) == (
-        "recommend_keep_current"
-        if supported and current == "en-US"
-        else "recommend_candidate"
-        if supported
-        else "manual"
+        "recommend_candidate" if supported and not respelled else "manual"
     )
     assert report.to_json() == raw
     path = tmp_path / "language.sqlite"
@@ -76,16 +75,13 @@ def test_language_authority_survives_real_publication(tmp_path, audio, current, 
         language_decisions = [
             value for value in decisions if value["destination"] == "language"
         ]
-        assert bool(language_decisions) is supported
+        assert bool(language_decisions) is (supported and not respelled)
 
 
 @pytest.mark.parametrize("audio", (False, True))
-@pytest.mark.parametrize("option", ("preserve", "display_name"))
 @pytest.mark.parametrize("values", (("English", "en"), ("English",), ("en",)))
-@pytest.mark.parametrize("current", (None, "UND", "eng"))
-def test_observed_representation_survives_restart(
-    tmp_path, audio, option, values, current
-):
+@pytest.mark.parametrize("current", (None, "UND", "eng", "English"))
+def test_display_name_survives_restart(tmp_path, audio, values, current):
     from mechanical_librarian.adapters.persistence.field_effect_validation import (
         _automatic_decision_value,
     )
@@ -100,17 +96,21 @@ def test_observed_representation_survives_restart(
             repository,
             report,
             ("language_rendering",),
-            selected_options={"language_rendering": option},
         )
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
         )
     with closing(open_repository(path)) as repository:
-        decision = next(
+        decisions = tuple(
             AutomaticDecision.from_json(value)
             for value in repository.get_review_case_decisions(case_id)
             if json.loads(value)["destination"] == "language"
         )
+        if current == "eng":
+            # Respelling a current language is offered, never automatic.
+            assert decisions == ()
+            return
+        (decision,) = decisions
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
         )
@@ -118,10 +118,9 @@ def test_observed_representation_survives_restart(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
         value = _automatic_decision_value(decision, case, report, proposal, outcome)
-        selected = "English" if option == "display_name" else "en"
-        if selected not in values:
-            selected = values[0]
-        expected = None if current == "eng" else {"kind": "text", "value": selected}
+        expected = (
+            None if current == "English" else {"kind": "text", "value": "English"}
+        )
         assert value == expected
         detail = InspectCurrentReviewCase(repository).run(case_id)
         field = next(
@@ -138,7 +137,7 @@ def test_observed_representation_survives_restart(
         )
         if audio:
             assert decision.policy_option.endswith(
-                "_preserve" if current == "eng" else "_fill"
+                "_preserve" if current == "English" else "_fill"
             )
 
 
@@ -412,7 +411,7 @@ def test_summary_counts_local_language_once_without_recording_authority(audio):
 
 
 @pytest.mark.parametrize(
-    "option, expected", (("preserve", "en"), ("display_name", "en"))
+    "option, expected", (("preserve", None), ("display_name", "English"))
 )
 def test_representation_cannot_borrow_name_outside_candidate_references(
     option, expected
@@ -594,7 +593,6 @@ def test_language_owner_choice_remains_final_after_automatic_replay(tmp_path, au
         case_id, _ = publish_language_case(
             repository,
             language_report(("English", "en"), audio=audio),
-            option="preserve",
         )
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
@@ -675,7 +673,8 @@ def test_audio_provider_aliases_remain_one_correlation_beside_local_source():
         ("ask", None, ("English", "en", "UND"), True),
         ("ask", "UND", ("English", "en", "UND"), True),
         ("ask", None, ("UND", "und"), False),
-        ("ask", "eng", ("English", "en"), False),
+        # A current code of the elected class is offered its display name.
+        ("ask", "eng", ("English", "en"), True),
         ("ignore", None, ("English", "en"), False),
         ("ask", None, ("English", "fr"), True),
         ("ask", None, ("qqq",), True),
@@ -945,42 +944,19 @@ def test_language_ask_stays_case_bound_then_retires_with_report_replacement(
 
 
 @pytest.mark.parametrize("audio", (False, True))
-def test_language_preserve_label_in_persisted_automatic_and_policy_activity(
-    tmp_path, audio
-):
+def test_language_display_name_label_in_persisted_automatic_activity(tmp_path, audio):
     from mechanical_librarian.adapters.field_effect_authority import (
         PersistedFieldEffectAuthority,
     )
     from mechanical_librarian.application.continuous_field_effects import (
         ContinuousGuardedApplication,
     )
-    from mechanical_librarian.domain.metadata_policy import (
-        MetadataPolicyProfile,
-        resolve_policy,
-    )
     from tests.support.language_reports import publish_language_case
 
     path = tmp_path / "activity.sqlite"
     with closing(open_repository(path)) as repository:
         report = language_report(("English", "en"), audio=audio)
-        case_id, _ = publish_language_case(repository, report, option="preserve")
-        original = MetadataPolicyProfile.from_data(
-            json.loads(repository.active_metadata_policy())
-        )
-        replacement = MetadataPolicyProfile.create(
-            "Language display",
-            dict(original.options) | {"language_rendering": "display_name"},
-            dict(original.destinations),
-        )
-        resolved = resolve_policy(replacement, report.target.library)
-        repository.create_metadata_policy_draft(replacement.canonical_json)
-        repository.activate_metadata_policy(
-            replacement.policy_id,
-            original.policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            5,
-            expected_active_generation=2,
-        )
+        case_id, _ = publish_language_case(repository, report)
     with closing(open_repository(path)) as repository:
         decision = next(
             json.loads(d)
@@ -1003,14 +979,29 @@ def test_language_preserve_label_in_persisted_automatic_and_policy_activity(
             if i["event_id"] == decision["decision_id"]
         )
         facts = {i["label"]: i["value"] for i in event["evidence"]}
-        assert facts["Policy setting"] == "Language rendering: Preserve supported form"
-        assert facts["New value"] == "en"
-        changes = repository.field_effect_activity_page(
-            search=None, event_type="policy", occurred_after=0, page=1, page_size=25
-        )["events"][0]["record"]["policy_changes"]
-        assert {
-            "field": "Language rendering",
-            "setting": "Representation",
-            "previous": "Preserve supported form",
-            "next": "Display name",
-        } in changes
+        assert facts["Policy setting"] == "Language rendering: Display name"
+        assert facts["New value"] == "English"
+
+
+@pytest.mark.parametrize("audio", (False, True))
+def test_respelling_a_current_language_says_why_it_waits_for_the_owner(tmp_path, audio):
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    report = language_report(("English", "en"), "eng", audio=audio)
+    with closing(open_repository(tmp_path / "respell.sqlite")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository, report, ("language_rendering",)
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "language"
+        )
+        assert field["automatic_decision"] is None
+        assert field["notices"] == ["language_display_name"]
+        assert field["proposed_values"] == [{"kind": "text", "value": "English"}]
+        assert field["automatic_withheld_reason"] == (
+            "The current value names the same language in another spelling. "
+            "Writing its display name is always your choice, never automatic."
+        )

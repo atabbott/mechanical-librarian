@@ -32,7 +32,7 @@ from tests.support.proposal_evidence import (
 )
 
 
-def test_language_policy_preserves_supported_regional_target() -> None:
+def test_language_policy_offers_the_display_name_for_a_regional_target() -> None:
     fields = _fields(
         language=TargetField(
             TargetDestination.LANGUAGE,
@@ -73,12 +73,14 @@ def test_language_policy_preserves_supported_regional_target() -> None:
     proposal_set = evaluate_report(report)
     result = _result(proposal_set, TargetDestination.LANGUAGE)
 
-    assert ProposalOutcome.KEEP == result.outcome
-    assert ("field_policy_preservation",) == result.reasons
-    assert result.selected_alternative_id is None
+    # The current tag names the class the evidence names, so the owner is
+    # offered its display name rather than a silent rewrite (#1314).
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert ("language_display_name",) == result.reasons
+    assert result.alternatives[0].alternative_id == result.selected_alternative_id
     assert 1 == len(result.alternatives)
-    assert "en" == result.alternatives[0].value.value
-    assert ProposalAssessment.PRESERVES_TARGET is result.alternatives[0].assessment
+    assert "English" == result.alternatives[0].value.value
+    assert ProposalAssessment.REPLACES_TARGET is result.alternatives[0].assessment
     assert 2 == len(result.alternatives[0].evidence_references)
     assert 1 == len(result.alternatives[0].correlations)
     assert {"en", "eng"} == {
@@ -95,7 +97,7 @@ def test_language_policy_strips_region_before_grouping() -> None:
         language=TargetField(
             TargetDestination.LANGUAGE,
             TargetFieldState.VALUE,
-            "en-US",
+            "English",
         )
     )
     providers = (
@@ -272,7 +274,7 @@ def test_equivalent_language_candidates_form_one_unique_candidate() -> None:
     assert ("unique_typed_candidate",) == result.reasons
     assert 1 == len(result.alternatives)
     assert result.alternatives[0].alternative_id == result.selected_alternative_id
-    assert "en" == result.alternatives[0].value.value
+    assert "English" == result.alternatives[0].value.value
     assert 2 == len(result.alternatives[0].evidence_references)
     assert 1 == len(result.alternatives[0].correlations)
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
@@ -308,7 +310,7 @@ def test_deprecated_bh_language_alias_maps_to_favored_bih() -> None:
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
     assert 1 == len(result.alternatives)
     assert result.alternatives[0].alternative_id == result.selected_alternative_id
-    assert "bh" == result.alternatives[0].value.value
+    assert "Bihari languages" == result.alternatives[0].value.value
     assert 2 == len(result.alternatives[0].evidence_references)
     assert 1 == len(result.alternatives[0].correlations)
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
@@ -453,7 +455,7 @@ def test_private_use_language_region_cannot_be_selected(
 
     assert outcome == result.outcome
     assert reasons == result.reasons
-    assert value == result.alternatives[0].value.value
+    assert ("English" if selected else value) == result.alternatives[0].value.value
     assert selected == (result.selected_alternative_id is not None)
 
 
@@ -857,3 +859,92 @@ def test_selected_epub_publisher_does_not_need_provider_anchor() -> None:
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
     assert "Selected EPUB Press" == result.alternatives[0].value.value
     assert (local_publisher.reference,) == result.alternatives[0].evidence_references
+
+
+def _language_result(current: str | None, *values: str):
+    fields = _fields(
+        language=TargetField(
+            TargetDestination.LANGUAGE,
+            TargetFieldState.MISSING if current is None else TargetFieldState.VALUE,
+            current,
+        )
+    )
+    providers = tuple(
+        _provider(
+            name,
+            f"{name}-edition",
+            (
+                _claim(
+                    name,
+                    f"{name}-edition",
+                    ClaimKind.LANGUAGE,
+                    value,
+                    scope=ClaimScope.EDITION,
+                ),
+            ),
+        )
+        for name, value in zip(("alpha", "beta", "gamma"), values, strict=False)
+    )
+    proposal_set = evaluate_report(_report(fields=fields, providers=providers))
+    assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
+    return _result(proposal_set, TargetDestination.LANGUAGE)
+
+
+@pytest.mark.parametrize(
+    ("values", "name"),
+    (
+        (("english", "eng", "en-US"), "English"),
+        (("spanish",), "Spanish"),
+        (("spa", "es-MX"), "Spanish"),
+        (("zh-Hans", "chi-Hans"), "Chinese (Simplified)"),
+        (("Chinese (Simplified)", "zh-Hans-CN"), "Chinese (Simplified)"),
+        (("bh",), "Bihari languages"),
+    ),
+)
+def test_a_language_fill_writes_its_class_display_name(values, name) -> None:
+    result = _language_result(None, *values)
+
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert 1 == len(result.alternatives)
+    assert name == result.alternatives[0].value.value
+    assert ProposalAssessment.FILLS_EMPTY is result.alternatives[0].assessment
+
+
+def test_a_class_without_a_named_script_keeps_its_admitted_form() -> None:
+    result = _language_result(None, "en-Shui")
+
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert "en-Shui" == result.alternatives[0].value.value
+
+
+def test_a_current_display_name_is_preserved_exactly() -> None:
+    result = _language_result("English", "en", "eng")
+
+    assert ProposalOutcome.KEEP == result.outcome
+    assert ("field_policy_preservation",) == result.reasons
+    assert ProposalAssessment.PRESERVES_TARGET is result.alternatives[0].assessment
+
+
+@pytest.mark.parametrize("current", ("en", "eng", "en-GB", "english", "ENGLISH"))
+def test_a_current_language_in_another_spelling_is_offered_its_name(current) -> None:
+    result = _language_result(current, "en", "eng")
+
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert ("language_display_name",) == result.reasons
+    assert result.alternatives[0].alternative_id == result.selected_alternative_id
+    assert "English" == result.alternatives[0].value.value
+    assert ProposalAssessment.REPLACES_TARGET is result.alternatives[0].assessment
+
+
+@pytest.mark.parametrize(
+    ("current", "values"),
+    (("fr", ("en",)), ("French", ("english",)), ("zh-Hant", ("zh-Hans",))),
+)
+def test_a_current_language_of_another_class_is_never_respelled(
+    current, values
+) -> None:
+    result = _language_result(current, *values)
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
+    assert ("field_policy_conflict",) == result.reasons
+    assert result.selected_alternative_id is None

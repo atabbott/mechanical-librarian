@@ -257,6 +257,15 @@ with the claims read from it, so a v62 report cannot state what a v63 report
 records. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
 
+Issue #1314 also takes the clean-rebuild branch. Every language is written as
+its class's display name and the `preserve` language option is retired
+(ADR-0065), so the proposal policy moves to `fixed-conservative-v41` and the
+decision policy to `deterministic-shadow-decision-policy-v25`. The policy
+profile document keeps its shape and `metadata-policy-profile-v3` label: a
+profile, override or configuration naming `preserve` is refused as an
+unavailable option, and every other v3 profile reads as before. The report
+schema is unchanged; no adoption is supplied.
+
 Issue #1451 also takes the clean-rebuild branch. `review_preparation_work`
 gains the nullable `research_not_before` column, which marks when an audiobook
 whose report admitted no recording is searched again (ADR-0089). A predecessor

@@ -1230,7 +1230,8 @@ def test_audio_date_qualification_retains_supported_precision(source, option, el
         ("en-Latn", "eng", "replace"),
         ("en-US", "en-GB", "replace"),
         ("fr", "english", "replace"),
-        ("French", "fr", "replace"),
+        # "French" names the class "fr" names (#1314).
+        ("French", "fr", "normalize"),
     ),
 )
 def test_audio_language_operation_preserves_script_and_region(
@@ -1238,9 +1239,9 @@ def test_audio_language_operation_preserves_script_and_region(
 ):
     assert (
         identity_for_effect(
-            "language", "language_rendering", "preserve", current, desired
+            "language", "language_rendering", "display_name", current, desired
         )
-        == "language_rendering:preserve:audiobook_language_" + operation
+        == "language_rendering:display_name:audiobook_language_" + operation
     )
 
 

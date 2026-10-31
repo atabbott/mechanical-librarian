@@ -32,7 +32,7 @@ from mechanical_librarian.domain.work_identity import closed_creator_display_pos
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "8fbdc80abd49eebb54479f212a736082ef3cb3b367ed6c114815a260921f96e7"
+    "885689d853bc56cee3069f48fc49db6512e3506a141448915a91dcdf7522083d"
 )
 
 _FIELD_OPTIONS: Final = {
@@ -58,7 +58,7 @@ _FIELD_OPTIONS: Final = {
     "description": ("description_fill", ("safe_plain_text", "replace_safe_plain_text")),
     "publishedDate": ("date_precision", ("year", "full_date")),
     "publisher": ("publisher_preference", ("publisher", "imprint")),
-    "language": ("language_rendering", ("preserve", "display_name")),
+    "language": ("language_rendering", ("display_name",)),
     "asin": ("asin", ("preserve_exact",)),
     "isbn": ("isbn_form", ("preserve_exact", "prefer_isbn13")),
     "explicit": ("explicit", ("adult_product",)),
@@ -246,8 +246,8 @@ def _language_effect_equivalent(current: object, desired: object) -> bool:
         return False
     if current.casefold() == desired.casefold():
         return True
-    left = language_identity("en" if current.casefold() == "english" else current)
-    right = language_identity("en" if desired.casefold() == "english" else desired)
+    left = language_identity(current)
+    right = language_identity(desired)
     return left is not None and left == right
 
 
@@ -295,13 +295,7 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "isbn_form:preserve_exact:audiobook_isbn_fill",
         "isbn_form:preserve_exact:audiobook_isbn_preserve",
         "language_rendering:display_name:audiobook_language_fill",
-        "language_rendering:display_name:audiobook_language_normalize",
         "language_rendering:display_name:audiobook_language_preserve",
-        "language_rendering:display_name:audiobook_language_replace",
-        "language_rendering:preserve:audiobook_language_fill",
-        "language_rendering:preserve:audiobook_language_normalize",
-        "language_rendering:preserve:audiobook_language_preserve",
-        "language_rendering:preserve:audiobook_language_replace",
         "publisher_preference:publisher:audiobook_publisher_fill",
         "publisher_preference:publisher:audiobook_publisher_preserve",
         "series:add_qualified:audiobook_series_add",

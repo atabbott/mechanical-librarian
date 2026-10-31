@@ -168,7 +168,7 @@ def test_equivalent_language_forms_replay_as_one_candidate() -> None:
         (value for value in packet.proposals if value["destination"] == "language")
     )
     assert "propose_change" == language["outcome"]
-    assert ["en"] == [
+    assert ["English"] == [
         candidate["value"]["value"] for candidate in language["candidates"]
     ]
     assert all(

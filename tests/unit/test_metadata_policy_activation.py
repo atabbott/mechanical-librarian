@@ -646,7 +646,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
     )
     follow_up = MetadataPolicyProfile.create(
         "Follow-up policy",
-        {**dict(draft.options), "language_rendering": "preserve"},
+        {**dict(draft.options), "contributor_names": "preserve"},
         dict(draft.destinations),
     )
     repository.create_metadata_policy_draft(follow_up.canonical_json)
@@ -1176,7 +1176,7 @@ def test_partly_failed_activation_keeps_preview_and_next_activation_available(
     )
     follow_up = MetadataPolicyProfile.create(
         "Follow-up policy",
-        {**dict(draft.options), "language_rendering": "preserve"},
+        {**dict(draft.options), "contributor_names": "preserve"},
         dict(draft.destinations),
     )
     repository.create_metadata_policy_draft(follow_up.canonical_json)
@@ -1276,7 +1276,7 @@ def test_policy_route_previews_retries_and_dismisses_after_partial_failure(
     )
     follow_up = {
         "name": "Follow-up policy",
-        "options": {**dict(draft.options), "language_rendering": "preserve"},
+        "options": {**dict(draft.options), "contributor_names": "preserve"},
         "destinations": dict(draft.destinations),
     }
     try:
@@ -1463,7 +1463,7 @@ def test_retry_reopens_the_scan_an_idle_claim_closed(state_path: Path) -> None:
 def _follow_up(repository, draft: MetadataPolicyProfile) -> MetadataPolicyProfile:
     follow_up = MetadataPolicyProfile.create(
         "Follow-up policy",
-        {**dict(draft.options), "language_rendering": "preserve"},
+        {**dict(draft.options), "contributor_names": "preserve"},
         dict(draft.destinations),
     )
     repository.create_metadata_policy_draft(follow_up.canonical_json)
@@ -1888,7 +1888,7 @@ def test_new_library_preview_can_establish_next_generation_resolution(
     assert "completed" == transition.state
     second = MetadataPolicyProfile.create(
         "Expanded policy",
-        {**dict(first.options), "language_rendering": "preserve"},
+        {**dict(first.options), "contributor_names": "preserve"},
         dict(first.destinations),
     )
     repository.create_metadata_policy_draft(second.canonical_json)

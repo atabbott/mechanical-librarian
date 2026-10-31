@@ -31,6 +31,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.field_outcomes import (
+    language_canonical_name,
     language_equivalence_class,
     language_identity,
     language_is_unknown,
@@ -113,7 +114,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v40"
+POLICY_VERSION = "fixed-conservative-v41"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -293,6 +294,8 @@ VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 RECORDING_ASSOCIATED_ISBN_REASON = "recording_associated_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
 WORK_ALTERNATIVE_IMMATERIAL_REASON = "work_alternative_immaterial"
+# A current language one class's display name only spells differently (#1314).
+LANGUAGE_DISPLAY_NAME_REASON = "language_display_name"
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
@@ -300,6 +303,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("unique_safe_cover",),
             (EVIDENCE_LED_TITLE_REASON,),
             ("unique_typed_candidate",),
+            (LANGUAGE_DISPLAY_NAME_REASON,),
             ("explicit_author_corroborates_untyped_creator",),
             ("local_attested_subtitle",),
             (VERIFIED_MANIFESTATION_ISBN_REASON,),
@@ -797,8 +801,18 @@ class ProposalResult:
                 is ProposalAssessment.PRESERVES_TARGET
                 or (
                     self.destination is TargetDestination.LANGUAGE
-                    and selected_alternative.assessment
-                    is ProposalAssessment.REPLACES_TARGET
+                    and (
+                        selected_alternative.assessment
+                        is ProposalAssessment.REPLACES_TARGET
+                    )
+                    != (self.reasons == (LANGUAGE_DISPLAY_NAME_REASON,))
+                )
+                or (
+                    self.reasons == (LANGUAGE_DISPLAY_NAME_REASON,)
+                    and (
+                        self.destination is not TargetDestination.LANGUAGE
+                        or len(self.alternatives) != 1
+                    )
                 )
             ):
                 raise ProposalValueError("proposal selection is inconsistent")
@@ -4504,6 +4518,15 @@ def _evaluate(
     ):
         target = TargetField(destination, TargetFieldState.MISSING)
     alternatives = _alternatives(destination, target, observations, report)
+    if _language_respelling(destination, target, alternatives):
+        return ProposalResult(
+            destination,
+            ProposalOutcome.PROPOSE_CHANGE,
+            alternatives,
+            alternatives[0].alternative_id,
+            (LANGUAGE_DISPLAY_NAME_REASON,),
+            dependencies,
+        )
     if target.state in {
         TargetFieldState.UNLOADED,
         TargetFieldState.MALFORMED,
@@ -4647,11 +4670,14 @@ def _evaluate(
 def select_language_representation(
     report: MetadataReport, candidate: ProposalAlternative, option: str
 ) -> str | None:
-    """Choose an observed spelling only from the elected alternative's sources."""
-    if (
-        option not in {"preserve", "display_name"}
-        or type(candidate.value.value) is not str
-    ):
+    """Return the value an elected language alternative writes (#1314).
+
+    The alternative already states its class's canonical display name, or
+    the form its own evidence admitted when the table cannot name the class.
+    It is returned only while every one of its sources still states that
+    class, so a value is never borrowed from unrelated evidence.
+    """
+    if option != "display_name" or type(candidate.value.value) is not str:
         return None
     identity = language_equivalence_class(candidate.value.value)
     if identity is None:
@@ -4666,20 +4692,14 @@ def select_language_representation(
         reference for value in observations for reference in value.references
     }:
         return None
-    values = {
-        value.value.value
+    if any(
+        type(value.value.value) is not str
+        or language_equivalence_class(value.value.value) != identity
         for value in observations
-        if type(value.value.value) is str
-        and language_equivalence_class(value.value.value) == identity
-    }
-    if len(values) != len({value.value.value for value in observations}):
+    ):
         return None
-    preferred = {
-        value
-        for value in values
-        if (value.casefold() == "english") == (option == "display_name")
-    }
-    return min(preferred or values, default=None)
+    name = language_canonical_name(candidate.value.value)
+    return candidate.value.value if name is None else name
 
 
 def _field_policy_accepts_all(
@@ -4702,6 +4722,23 @@ def _field_policy_accepts_all(
             for right in values[index + 1 :]
         )
     return False
+
+
+def _language_respelling(
+    destination: TargetDestination,
+    target: TargetField,
+    alternatives: tuple[ProposalAlternative, ...],
+) -> bool:
+    """A current language the sole alternative only spells differently (#1314)."""
+    return (
+        destination is TargetDestination.LANGUAGE
+        and target.state is TargetFieldState.VALUE
+        and type(target.value) is str
+        and len(alternatives) == 1
+        and alternatives[0].assessment is ProposalAssessment.REPLACES_TARGET
+        and type(alternatives[0].value.value) is str
+        and language_outcomes_compatible(target.value, alternatives[0].value.value)
+    )
 
 
 def _field_policy_conflicts(
@@ -4811,9 +4848,22 @@ def _alternatives(
             proposal_value = _value(
                 destination, tuple(cast("tuple[str, ...]", target.value))
             )
-        if target.state is TargetFieldState.VALUE and _matches(
-            destination, target.value, proposal_value
+        if (
+            destination is TargetDestination.LANGUAGE
+            and type(proposal_value.value) is str
+            and (name := language_canonical_name(proposal_value.value)) is not None
         ):
+            # Every grouped form names one class, so the alternative states
+            # the class's canonical display name (#1314). Only that exact
+            # spelling preserves a current value; another spelling of the
+            # same class is a respelling the owner is offered.
+            proposal_value = ProposalValue(ProposalValueKind.TEXT, name)
+            preserves = target.state is TargetFieldState.VALUE and target.value == name
+        else:
+            preserves = target.state is TargetFieldState.VALUE and _matches(
+                destination, target.value, proposal_value
+            )
+        if preserves:
             assessment = ProposalAssessment.PRESERVES_TARGET
         elif target.state is TargetFieldState.VALUE:
             assessment = ProposalAssessment.REPLACES_TARGET

@@ -881,7 +881,7 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
         for value in proposal["result"]["alternatives"]
         if value["assessment"] != "preserves_target"
     }
-    first_value, second_value = choices["en"], choices["fr"]
+    first_value, second_value = choices["English"], choices["French"]
     proposal_id = proposal["proposal_id"]
     assert type(proposal_id) is str
 
@@ -953,10 +953,10 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
 
     first = decision(first_value, "activity-replacement-first-0001", 1_000)
     effects.repository.record_human_decision(first)
-    verify(first, None, "en", 1_010)
+    verify(first, None, "English", 1_010)
     second = decision(second_value, "activity-replacement-second-0001", 1_020)
     effects.repository.record_human_decision(second)
-    verify(second, "en", "fr", 1_030)
+    verify(second, "English", "French", 1_030)
 
     decisions = [
         HumanDecision.from_json(document)
@@ -984,11 +984,11 @@ def test_verified_owner_replacement_retains_history_and_activity_predecessor(
         if event["change_id"] != first.decision_id
         and event["destination"] == "language"
         and event["state"] == "verified"
-        and _facts(event).get("New value") == "fr"
+        and _facts(event).get("New value") == "French"
     )
-    assert replacement["change"] == "en → fr"
-    assert _facts(replacement)["Previous value"] == "en"
-    assert _facts(replacement)["New value"] == "fr"
+    assert replacement["change"] == "English → French"
+    assert _facts(replacement)["Previous value"] == "English"
+    assert _facts(replacement)["New value"] == "French"
 
 
 def test_a_second_owner_entry_names_the_value_the_first_one_wrote(

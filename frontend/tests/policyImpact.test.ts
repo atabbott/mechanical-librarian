@@ -335,7 +335,6 @@ describe('policy impact projections', () => {
       'title_layout:title_and_subtitle',
       'contributor_names:preserve',
       'contributor_names:canonical',
-      'language_rendering:preserve',
       'language_rendering:display_name',
       'subtitle:fill_empty',
       'subtitle:corroborated_split',
@@ -399,19 +398,19 @@ describe('policy impact projections', () => {
         expect(guidance.fallback).toBe('makes no change when Automatic cannot decide safely')
       }
     }
-    for (const [option, preferred, fallback] of [
-      ['preserve', 'an observed code', 'uses another recorded form when no code is present'],
-      ['display_name', 'an observed English name', 'uses a recorded code when no name is present'],
-    ] as const) {
-      const guidance = policyRepresentationGuidance[`language_rendering:${option}`]
-      if (!guidance) throw new Error(`missing language guidance: ${option}`)
-      expect(guidance.admitted).toContain('already-produced exact candidate')
-      expect(guidance.transformation).toBe(
-        `keeps an equivalent current value; when filling, prefers ${preferred}`,
-      )
-      expect(guidance.effect).toBe('Automatic writes only a form present in the selected evidence')
-      expect(guidance.fallback).toBe(`${fallback}; an undetermined language is never written`)
-    }
+    const language = policyRepresentationGuidance['language_rendering:display_name']
+    if (!language) throw new Error('missing language guidance')
+    expect(language.admitted).toContain('already-produced exact candidate')
+    expect(language.transformation).toBe(
+      'writes the display name of the language the evidence names, such as English; keeps a current value already spelled that way',
+    )
+    expect(language.effect).toBe(
+      'Automatic only fills an empty or undetermined language; respelling a current value is always offered for review',
+    )
+    expect(language.fallback).toBe(
+      'keeps the recorded form when a language has no display name; an undetermined language is never written',
+    )
+    expect(policyRepresentationGuidance['language_rendering:preserve']).toBeUndefined()
     expect(policyRepresentationGuidance['date_precision:year']?.effect).toBe(
       'Automatic writes only the selected publication date or year',
     )

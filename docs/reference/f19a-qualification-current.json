@@ -8,7 +8,6 @@
       "date_precision:full_date",
       "date_precision:year",
       "language_rendering:display_name",
-      "language_rendering:preserve",
       "publisher_preference:publisher",
       "title:replace_target:decoration_tidy",
       "title:replace_target:isbn_creator_supported",

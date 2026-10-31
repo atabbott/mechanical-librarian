@@ -17,6 +17,9 @@ brackets are GitHub issues.
   and an "About the book" header line no longer counts as a difference.
   Marketing lines are never chosen as subtitles, and genres or synopses from a
   store in another language wait for your choice (#1317).
+- **Clean rebuild required.** Every language is written as one display name,
+  such as "English"; a current `en` or `eng` is offered for review, never
+  rewritten. The `preserve` language option is gone (#1314).
 - **Clean rebuild required.** An Audiobookshelf item holding audio and an EPUB
   is prepared as an audiobook, with the EPUB's details kept only as supporting
   evidence. The audio filter lists only items that hold audio (#1319).
