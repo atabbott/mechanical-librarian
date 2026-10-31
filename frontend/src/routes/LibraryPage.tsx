@@ -2783,8 +2783,9 @@ export default function LibraryPage({
     // them; any other lens is brought clear of both fades.
     const reveal = (lens: Element | null) => {
       if (lens instanceof HTMLElement) {
-        if (lens === row.firstElementChild) row.scrollLeft = 0
-        else if (lens === row.lastElementChild) row.scrollLeft = row.scrollWidth
+        let left = row.scrollLeft
+        if (lens === row.firstElementChild) left = 0
+        else if (lens === row.lastElementChild) left = row.scrollWidth - row.clientWidth
         else {
           const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
           const rowBox = row.getBoundingClientRect()
@@ -2792,14 +2793,14 @@ export default function LibraryPage({
           // A lens too wide to clear both fades is centred, or starts at the
           // row's edge when even the row is narrower, so its label's start shows.
           if (box.width > rowBox.width - 2 * fade)
-            row.scrollLeft +=
+            left +=
               box.width > rowBox.width
                 ? box.left - rowBox.left
                 : box.left - rowBox.left - (rowBox.width - box.width) / 2
-          else if (box.left < rowBox.left + fade) row.scrollLeft -= rowBox.left + fade - box.left
-          else if (box.right > rowBox.right - fade)
-            row.scrollLeft += box.right - (rowBox.right - fade)
+          else if (box.left < rowBox.left + fade) left -= rowBox.left + fade - box.left
+          else if (box.right > rowBox.right - fade) left += box.right - (rowBox.right - fade)
         }
+        if (Math.abs(left - row.scrollLeft) > 0.5) row.scrollLeft = left
       }
       mark()
     }
