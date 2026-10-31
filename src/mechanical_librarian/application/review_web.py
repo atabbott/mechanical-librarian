@@ -981,6 +981,7 @@ class InspectCurrentReviewCase:
                 # With no alternative to list, an unsupported field is a
                 # contextual row, which offers no controls (below).
                 owner_entry=owner_entry and bool(alternatives),
+                immaterial_alternatives="work_alternative_immaterial" in reasons,
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty

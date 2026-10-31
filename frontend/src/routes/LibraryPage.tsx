@@ -691,7 +691,11 @@ const completionOutcome = (field: ReviewField) =>
           : 'Recorded outcome'
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
+// An optional choice's reason is its one statement: a condition worded as
+// asking the owner would contradict "no review is needed", so none is shown
+// beside it (#1450).
 const comparisonNotices = (field: ReviewField) =>
+  field.classification === 'owner_choosable' ||
   field.choiceContexts.some((context) =>
     context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
   )
