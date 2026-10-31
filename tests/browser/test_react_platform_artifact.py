@@ -1789,6 +1789,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert search_box.input_value() == ""
         stage[0] = "library:touch-targets"
         page.goto("https://react-platform.invalid/library?lens=all")
+        page.locator(".lenses a").first.wait_for()
         for control in page.locator(
             ".masthead nav a, .shell-status button, .shell-actions button"
         ).all():
