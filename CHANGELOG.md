@@ -67,8 +67,6 @@ brackets are GitHub issues.
   title, so the same field in two works is no longer announced identically
   (#1361).
 
-## 0.29.3 — Review fixes and hygiene (in progress)
-
 - Codex sign-in from Settings or setup shows the link and one-time code the
   bundled Codex CLI prints, instead of failing at once. The link opens in a
   new tab, and the code stays still while you select it and has a Copy
