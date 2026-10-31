@@ -136,13 +136,32 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     + _SHADOW_ABSTENTION_SQL
     + ")"
 )
-# A field is decided by its latest owner decision unless that withdrew it
-# (ADR-0085); an earlier decision never settles a field the owner took back.
+
+
+def _episode_decision_sql(decision: str) -> str:
+    """Whether the owner decision row `decision` is of its case's episode.
+
+    A case id is a content hash, so a work that returns to an earlier content
+    admits that case again as a new episode. The owner decisions recorded on
+    it before then are history: they settle, word and hold nothing in it
+    (#1358, ADR-0085). A case admitted once has no episode row.
+    """
+    return (
+        f"{decision}.ordinal>COALESCE((SELECT episode.decision_floor "
+        "FROM review_case_episodes episode "
+        f"WHERE episode.review_case_id={decision}.review_case_id),0)"
+    )
+
+
+# A field is decided by its latest owner decision of the case's episode unless
+# that withdrew it (ADR-0085); an earlier decision never settles a field the
+# owner took back, nor one the work has since left and returned to.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=result.destination "
-    "ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
+    "AND decision.destination=result.destination AND "
+    + _episode_decision_sql("decision")
+    + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description') "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
@@ -369,6 +388,7 @@ __all__ = [
     "_REVIEW_SEARCH_SQL",
     "_SHADOW_ABSTENTION_SQL",
     "_SHADOW_OUTCOME_HISTORY_SQL",
+    "_episode_decision_sql",
 ]
 
 

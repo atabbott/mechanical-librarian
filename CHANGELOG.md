@@ -102,6 +102,11 @@ brackets are GitHub issues.
   empty sections, idle library cards and "No recommendation retained" are
   gone. Reminders that writes are protected remain only in the guided first
   review and Activity's permission control (#1519).
+- **Clean rebuild required.** A work that returns to an earlier content, for
+  example after you choose the previous value again, reads as new: it no
+  longer shows its earlier decision as written while the library holds
+  another value. Return to automatic also stops a field showing as held
+  (#1358).
 - A work whose preparation could not finish is no longer counted under "No
   attention needed". Library gives such works their own Could not finish lens,
   lists them after the works needing a decision, and names their count beside
@@ -129,6 +134,8 @@ brackets are GitHub issues.
   (#1304).
 - Renovate moves Node, Python and uv pins together in one pull request; a new
   Node major or Python minor version waits for approval (#1448).
+- The standalone Attention page is gone; Attention lives in Library. An old
+  `/attention` bookmark opens Library with Attention open (#700).
 
 ## 0.29.1 — Clarity and accessibility
 

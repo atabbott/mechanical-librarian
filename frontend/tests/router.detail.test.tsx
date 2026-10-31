@@ -6,7 +6,7 @@ import { ApiError, mapCaseDetail, mapEvidence, mapHistory } from '../src/api/htt
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import { normalizeDetailSearch } from '../src/router'
-import type { AttentionView, CaseDetailView, ReviewHttp } from '../src/api/http'
+import type { CaseDetailView, ReviewHttp } from '../src/api/http'
 import { createHttp, detail, renderRoute } from './fixtures'
 
 describe('Library review ownership', () => {
@@ -698,136 +698,6 @@ describe('Library review ownership', () => {
     await open('case-4')
     expect(await screen.findByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
     expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
-  })
-
-  it('opens an Attention field directly in its selected Library preview', async () => {
-    const attention: AttentionView = {
-      total: 1,
-      items: [
-        {
-          id: 'case-1',
-          destination: 'title' as const,
-          title: 'A Book',
-          authors: [],
-          library: 'Books',
-          mediaKind: 'epub' as const,
-          classificationReason: 'This field needs your review.',
-          notices: [],
-          provenance: [],
-          workAttentionCount: 1,
-        },
-      ],
-    }
-    const user = userEvent.setup()
-    const { router } = renderRoute('/attention', {
-      ...createHttp(),
-      getAttention: vi.fn(async () => attention),
-    })
-    await user.click(await screen.findByRole('link', { name: /Open exact field/u }))
-    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
-    expect(router.state.location.pathname).toBe('/library')
-    expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', field: 'title' })
-  })
-
-  it('keeps a later Attention page identity through its exact Library field', async () => {
-    const later: AttentionView = {
-      total: 2,
-      items: [
-        {
-          id: 'case-later',
-          destination: 'authors' as const,
-          title: 'Later attention work',
-          authors: ['Later owner'],
-          library: 'Books',
-          mediaKind: 'epub' as const,
-          classificationReason: 'This later field needs your review.',
-          notices: [],
-          provenance: [],
-          workAttentionCount: 1,
-        },
-      ],
-    }
-    const field = detail.fields[0]
-    if (!field) throw new Error('detail field fixture required')
-    const user = userEvent.setup()
-    const http = {
-      ...createHttp(),
-      getAttention: vi.fn(async () => later),
-      getCaseDetail: vi.fn(async (id: string) => ({
-        ...detail,
-        id,
-        title: 'Later attention work',
-        fields: [{ ...field, destination: 'authors' as const }],
-      })),
-    }
-    const { router } = renderRoute('/attention?cursor=later-page', http)
-
-    await user.click(await screen.findByRole('link', { name: /Open exact field/u }))
-    expect(await screen.findByRole('heading', { name: 'Later attention work' })).toBeVisible()
-    expect(router.state.location.search).toEqual({
-      lens: 'all',
-      attentionCursor: 'later-page',
-      preview: 'case-later',
-      field: 'authors',
-    })
-    expect(http.getAttention).toHaveBeenLastCalledWith(
-      { cursor: 'later-page' },
-      expect.any(AbortSignal),
-      'foreground',
-    )
-  })
-
-  it('keeps a retained Attention page visible but inert until the newer search settles', async () => {
-    const item = (id: string, title: string) => ({
-      id,
-      destination: 'title' as const,
-      title,
-      authors: [],
-      library: 'Books',
-      mediaKind: 'epub' as const,
-      classificationReason: 'This field needs your review.',
-      notices: [],
-      provenance: [],
-      workAttentionCount: 1,
-    })
-    let settle: (view: AttentionView) => void = () => undefined
-    const http = {
-      ...createHttp(),
-      getAttention: vi.fn(async (search: { q?: string }) =>
-        search.q
-          ? new Promise<AttentionView>((resolve) => (settle = resolve))
-          : { total: 7, nextCursor: 'old-page-2', items: [item('case-old', 'Old result')] },
-      ),
-    }
-    const user = userEvent.setup()
-    const { router } = renderRoute('/attention', http)
-    expect(await screen.findByRole('heading', { name: 'Old result' })).toBeVisible()
-    await user.type(screen.getByLabelText('Search title, author, library, or media'), 'new{Enter}')
-    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'new' }))
-
-    const route = document.querySelector('.attention-route')
-    expect(route).toHaveAttribute('aria-busy', 'true')
-    expect(screen.getByRole('heading', { name: 'Old result' })).toBeVisible()
-    expect(screen.getByText('7')).toBeVisible()
-    const next = screen.getByRole('link', { name: 'Next page →' })
-    const row = screen.getByRole('link', { name: /Open exact field/u })
-    expect(next).toHaveAttribute('aria-disabled', 'true')
-    expect(row).toHaveAttribute('aria-disabled', 'true')
-    await user.click(next)
-    next.focus()
-    await user.keyboard('{Enter}')
-    expect(next).toHaveFocus()
-    await user.click(row)
-    expect(router.state.location.pathname).toBe('/attention')
-    expect(router.state.location.search).toEqual({ q: 'new' })
-
-    settle({ total: 1, items: [item('case-new', 'New result')] })
-    expect(await screen.findByRole('heading', { name: 'New result' })).toBeVisible()
-    expect(screen.queryByRole('heading', { name: 'Old result' })).toBeNull()
-    expect(route).not.toHaveAttribute('aria-busy')
-    expect(screen.getByRole('link', { name: /Open exact field/u })).not.toHaveAttribute(
-      'aria-disabled',
-    )
   })
 
   it('records the exact selected scalar choice and refreshes the Library read model', async () => {

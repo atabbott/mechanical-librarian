@@ -99,7 +99,8 @@ Sign-in has Show password. It says whether the password was wrong or the device
 must wait five minutes after too many attempts. There is no reset in the app;
 see [Forgotten owner password](../operations/deployment.md#forgotten-owner-password).
 Signing in returns to the page you opened, or to Library, and opening the
-address while signed in goes straight to Library.
+address while signed in goes straight to Library. Attention has no page of its
+own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
 It is sticky only while it takes at most a quarter of the window; taller, it
@@ -301,7 +302,9 @@ cannot be replaced; a verified reversible field write can.
 There is no Undo and there are no bulk decisions. Going back means choosing
 the earlier value: after a write, Enter a value suggests the value it replaced ("Use
 previous value") and Choose genres tags those genres **Previous**. Authors return to an earlier value only when a
-provider proposes it.
+provider proposes it. A work that returns to an earlier content reads as new:
+the decisions recorded on it before are history, and the field shows only
+what you decide now.
 
 ### Audiobooks
 

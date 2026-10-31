@@ -379,6 +379,19 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         case.to_json(),
                     ),
                 )
+            else:
+                # The work returned to this case's content, so the case starts
+                # a new episode: the owner decisions recorded on it so far are
+                # history and word, settle and hold nothing now (#1358).
+                self._connection.execute(
+                    "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
+                    "effect_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
+                    "human_decisions WHERE review_case_id=?),0),COALESCE((SELECT "
+                    "MAX(rowid) FROM field_effects),0)) ON CONFLICT(review_case_id) "
+                    "DO UPDATE SET decision_floor=excluded.decision_floor,"
+                    "effect_floor=excluded.effect_floor",
+                    (case.review_case_id, case.review_case_id),
+                )
             outcome = "superseded" if prior_case_id is not None else "admitted"
             # The owner's hold follows the work, not the case (ADR-0085): the
             # latest hold per destination across the item's cases carries

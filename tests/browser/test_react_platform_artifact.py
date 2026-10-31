@@ -623,7 +623,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.route("**/*", fulfill)
         routes = (
             ("/library?lens=all", "Works"),
-            ("/attention", "Needs your attention"),
             (
                 "/review/case-1?field=title&subview=evidence",
                 "Evidence",
@@ -729,16 +728,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     # restored after a restart; keep the route's navigation
                     # accounting scoped to its original direct entry.
                     before_entry += 2
-            if path == "/attention":
-                page.get_by_text(
-                    "This field needs your review.", exact=True
-                ).first.wait_for()
-                assert (
-                    0
-                    == page.get_by_text(
-                        "Conflicting retained evidence", exact=True
-                    ).count()
-                )
             if path.startswith("/policy"):
                 section = path.rsplit("=", 1)[-1]
                 expect(page.locator(f"#policy-{section}")).to_be_focused()

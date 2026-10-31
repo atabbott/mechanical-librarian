@@ -116,10 +116,11 @@ _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 # segment and a query of URL-safe characters, never a scheme, host or "//"
 # (#1371).
 _RETURN_PATH = re.compile(
-    r"/(?:library|attention|settings|policy|activity|review/[A-Za-z0-9_-]{1,128})"
+    r"/(?:library|settings|policy|activity|review/[A-Za-z0-9_-]{1,128})"
     r"(?:\?[A-Za-z0-9._~%!$&'()*+,;=:@/?-]{0,2048})?"
 )
 _DEFAULT_RETURN_PATH = "/library"
+_RETIRED_ATTENTION_PATH = "/library?lens=all&attention=open"
 
 
 def _return_path(value: str | None) -> str | None:
@@ -4350,11 +4351,11 @@ def _register_html_routes(
         return shell_response(request, ml_session)
 
     @app.get("/attention", include_in_schema=False)
-    def attention_page(
-        request: Request,
-        ml_session: str | None = Cookie(default=None),
-    ) -> Response:
-        return shell_response(request, ml_session)
+    def attention_page() -> RedirectResponse:
+        # The standalone Attention page was retired for Library's attention
+        # rail (#700). A bookmark lands on Library with that rail open; the
+        # target is fixed, so nothing from the request can redirect elsewhere.
+        return RedirectResponse(url=_RETIRED_ATTENTION_PATH, status_code=308)
 
     @app.get("/settings", include_in_schema=False)
     def settings_page(

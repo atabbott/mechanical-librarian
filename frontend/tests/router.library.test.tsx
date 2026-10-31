@@ -12781,27 +12781,6 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await waitFor(() => expect(document.activeElement).not.toBe(document.body))
     expect(screen.getByRole('button', { name: 'Back to works' })).toBeVisible()
   })
-
-  it.each([
-    [2, 'fields match this search'],
-    [1, 'field matches this search'],
-  ] as const)('V8: /attention under a search reads %i %s', async (total, copy) => {
-    const http = createHttp()
-    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({
-      total,
-      items: [railItem('case-1', 'title', 'A Book', total)],
-    }))
-    renderRoute('/attention?q=needle', http)
-    const count = await screen.findByText(copy)
-    expect(count.previousElementSibling).toHaveTextContent(String(total))
-    cleanup()
-    renderRoute('/attention', http)
-    expect(
-      await screen.findByText(
-        total === 1 ? 'field across current works' : 'fields across current works',
-      ),
-    ).toBeVisible()
-  })
 })
 
 // A field decision shows the question, the values and what is specific to

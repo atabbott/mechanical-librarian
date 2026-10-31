@@ -542,11 +542,28 @@ def test_a_released_hold_stays_released_when_an_earlier_case_recurs(
     assert store.case.review_case_id == first
     assert _hold(store) is None
     assert _automatic_genres(store) == [first]
-    # Its earlier decision still reads as before (ADR-0085 records the gap).
+    # The recurring case is a new episode: its earlier keep-current is
+    # history, so the field reads as handled automatically and unheld.
+    genres = _field(store, "genres")
+    assert (genres["manual_hold"], genres["human_decision"]) == (False, None)
     # The rewritten row passes the store's own validation on reopening.
     store.repository.close()
     store.repository = open_repository(store.root / "owner.sqlite")
     assert _hold(store) is None
+
+
+# #1358: Return to automatic on the case that holds the field releases it
+# there, so the case no longer shows the hold its own decision set.
+def test_returning_the_holding_case_to_automatic_clears_its_held_flag(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    assert _field(store, "genres")["manual_hold"] is True
+    assert store.repository.clear_field_effect_manual_hold(
+        store.case.review_case_id, "genres", store.clock(), token
+    )
+    assert _hold(store) is None
+    assert _field(store, "genres")["manual_hold"] is False
 
 
 def test_a_pending_return_reaches_an_earlier_case_that_recurs(
@@ -659,7 +676,10 @@ def test_a_decision_on_a_recurring_case_carries_no_hold_forward(
         store.write(store.decide("accept", _FANTASY, destination="genres"))
         later = rewritten(_HELD, publisher="Changed Elsewhere", genres=("Fantasy",))
     else:
+        # The accept recorded before the release is the earlier episode's
+        # (#1358), so the owner accepts and withdraws within this one.
         _recur_after_release(store, token, before_release="accept")
+        store.decide("accept", _FANTASY, destination="genres")
         store.decide("withdraw", destination="genres")
         later = rewritten(_HELD, publisher="Changed Later")
     # The Ask transition's work item went stale as the work changed under
@@ -854,3 +874,124 @@ def test_previous_value_follows_verification_order_within_one_second(
         assert store.previous()["title"] == ORCHARD["value"]
     finally:
         store.close()
+
+
+# #1358: a work read A, then B, then A again re-admits case A as a new
+# episode. Its wording, recorded outcome and held flag describe only what the
+# owner did since it became current again; earlier decisions stay as history.
+_BACK = {"kind": "text", "value": "Real Tigers"}
+
+
+def _decision_ids(store: OwnerStore) -> set[str]:
+    return {
+        str(json.loads(document)["decision_id"])
+        for document in store.repository.get_review_case_decisions(
+            store.case.review_case_id
+        )
+        if json.loads(document)["schema_version"].startswith("human")
+    }
+
+
+def _recur_by_reselection(store: OwnerStore) -> tuple[str, str]:
+    """Write ORCHARD on A, choose the previous value again on B, and read A
+    back; return both case ids."""
+    first = store.case.review_case_id
+    store.write(store.decide("owner_entered", ORCHARD))
+    _successor(store, title="The Silent Orchard")
+    second = store.case.review_case_id
+    store.write(store.decide("owner_entered", _BACK))
+    assert store.publish(genre_report()).review_case_id == first
+    return first, second
+
+
+def _asking(store: OwnerStore) -> set[object]:
+    connection = store.repository._connection
+    rows = sorted(connection.execute(_FACTS_SQL).fetchall(), key=repr)
+    assert rows == sorted(
+        connection.execute(_ATTENTION_FACT_SOURCE_SQL).fetchall(), key=repr
+    )
+    return {row[4] for row in rows}
+
+
+def test_choosing_the_previous_value_again_reads_the_earlier_case_as_new(
+    store: OwnerStore,
+) -> None:
+    before = _asking(store)
+    _recur_by_reselection(store)
+    title = _field(store, "title")
+    # Not "You entered The Silent Orchard", written, while the library holds
+    # Real Tigers again.
+    assert title["human_decision"] is None
+    assert title["owner_control"]["withdraw"] is None
+    assert _decision_ids(store) == set()
+    assert _asking(store) == before
+    _refused(store, "nothing_to_withdraw", "withdraw")
+    # The earlier episode stays as history, and the store reopens.
+    assert store.repository._connection.execute(
+        "SELECT count(*) FROM human_decisions WHERE review_case_id=?",
+        (store.case.review_case_id,),
+    ).fetchone() == (1,)
+    store.repository.close()
+    store.repository = open_repository(store.root / "owner.sqlite")
+    assert _field(store, "title")["human_decision"] is None
+
+
+def test_a_decision_on_the_readmitted_case_is_its_own(store: OwnerStore) -> None:
+    _recur_by_reselection(store)
+    another = {"kind": "text", "value": "Another Orchard"}
+    decision = store.decide("owner_entered", another)
+    assert _decision_ids(store) == {decision.decision_id}
+    title = _field(store, "title")
+    assert title["human_decision"]["decision_id"] == decision.decision_id
+    assert title["owner_control"]["withdraw"] == "available"
+    pending = {
+        json.loads(document)["decision_id"]
+        for document in store.repository.pending_field_effect_decision_documents(32)
+    }
+    assert decision.decision_id in pending
+    # The earlier episode's write is not what the library holds now.
+    plan = store.write(decision).plan
+    assert (plan.pre_value, plan.desired_value) == ("Real Tigers", "Another Orchard")
+
+
+def test_a_later_successor_that_recurs_is_a_new_episode_too(
+    store: OwnerStore,
+) -> None:
+    first, second = _recur_by_reselection(store)
+    # A recurring case's own decision is withdrawn within its episode.
+    store.decide("owner_entered", {"kind": "text", "value": "Another Orchard"})
+    store.decide("withdraw")
+    assert _field(store, "title")["human_decision"] is None
+    # B recurs: the previous-value write recorded on it is history too.
+    store.write(store.decide("owner_entered", ORCHARD))
+    _successor(store, title="The Silent Orchard")
+    assert store.case.review_case_id == second
+    assert _decision_ids(store) == set()
+    assert _field(store, "title")["human_decision"] is None
+    assert first != second
+
+
+def test_a_plan_from_the_earlier_episode_never_writes(store: OwnerStore) -> None:
+    """A plan made on A before the work left it and came back authorizes
+    nothing once A is a new episode, whether or not the owner decides again."""
+    first = store.case.review_case_id
+    earlier = store.plan(store.decide("owner_entered", ORCHARD))
+    _successor(store, publisher="Changed Elsewhere")
+    assert store.publish(genre_report()).review_case_id == first
+    assert store.service.apply(earlier.plan.plan_id).state != "verified"
+    assert earlier.plan.plan_id not in store.patches
+    # The owner's choice in this episode is the one that writes.
+    another = {"kind": "text", "value": "Another Orchard"}
+    written = store.write(store.decide("owner_entered", another))
+    assert written.plan.desired_value == "Another Orchard"
+    assert store.patches == [written.plan.plan_id]
+
+
+def test_deciding_again_closes_the_earlier_episodes_plan(store: OwnerStore) -> None:
+    first = store.case.review_case_id
+    earlier = store.plan(store.decide("owner_entered", ORCHARD))
+    _successor(store, publisher="Changed Elsewhere")
+    assert store.publish(genre_report()).review_case_id == first
+    store.decide("owner_entered", {"kind": "text", "value": "Another Orchard"})
+    closed = store.repository.get_field_effect(earlier.plan.plan_id)
+    assert (closed.state, closed.failure) == ("superseded", "authority_superseded")
