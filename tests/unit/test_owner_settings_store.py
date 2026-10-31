@@ -423,6 +423,76 @@ def test_library_display_name_rejects_noncanonical_text(display_name: str) -> No
         OwnerSettingsDocument.model_validate(value)
 
 
+# The stored document a producer before #1466 wrote for `_document()`, byte for
+# byte: no library carries a `languages` key.
+_PRE_LANGUAGES_STORED_DOCUMENT = (
+    '{"connections":[{"adapter":"audiobookshelf","endpoint":"https://library.example.invalid","name":"primary"}],'
+    '"cover_preferences":{"avoid_promotional_text":false,"avoid_tie_in_branding":false,"prefer_minimal_composition":false},'
+    '"description_advice":{"automatic_application":false,"remove_marketing":true,"remove_praise":true,"remove_sales_boasts":true},'
+    '"libraries":[{"connection":"primary","library_id":"library-1","media_kind":"ebook","mount":"books","name":"ebooks","policy_override":null,"provider_connections":["books","open"]}],'
+    '"limits":{"audio_source_bytes":8589934592,"provider_response_bytes":65536,"source_archive_bytes":268435456,"target_response_bytes":1048576,"timeout_seconds":30},'
+    '"pending_restart":[],"provider_recovery_generation":1,'
+    '"providers":[{"adapter":"google_books","cover_enabled":false,"enabled":true,"name":"books"},{"adapter":"open_library","contact_email":"owner@example.invalid","cover_enabled":false,"enabled":true,"name":"open"}],'
+    '"reduced_motion":"follow_system","revision":1,"schema_version":"owner-settings-v4",'
+    '"server":{"diagnostic_timings_enabled":false,"graceful_shutdown_seconds":30,"library_polling_interval_seconds":900,"session_lifetime_seconds":2592000}}'
+)
+
+
+def test_a_stored_document_without_languages_reads_back_canonical() -> None:
+    store = _store()
+    store._connection.execute(
+        "UPDATE owner_settings SET document=?", (_PRE_LANGUAGES_STORED_DOCUMENT,)
+    )
+    store._connection.commit()
+
+    document = store.read().document
+
+    assert document.libraries[0].languages == []
+    assert _canonical_json(document.model_dump()) == _PRE_LANGUAGES_STORED_DOCUMENT
+
+
+def test_library_languages_are_stored_in_order_and_read_back() -> None:
+    store = _store()
+    value = _document(2).model_dump()
+    value["libraries"][0]["languages"] = ["de", "en", "zh-Hant"]
+
+    store.write(OwnerSettingsDocument.model_validate(value), 1, ())
+
+    document = store.read().document
+    assert document.libraries[0].languages == ["de", "en", "zh-Hant"]
+    assert document.model_dump()["libraries"][0]["languages"] == ["de", "en", "zh-Hant"]
+    cleared = document.model_dump() | {"revision": 3}
+    cleared["libraries"][0]["languages"] = []
+    store.write(OwnerSettingsDocument.model_validate(cleared), 2, ())
+    assert "languages" not in store.read().document.model_dump()["libraries"][0]
+
+
+@pytest.mark.parametrize(
+    "languages",
+    (
+        ["de", "deu"],
+        ["und"],
+        ["mul"],
+        ["mis"],
+        ["zxx"],
+        ["qqq"],
+        ["DE"],
+        ["en-us"],
+        ["de", "en", "fr", "es", "it", "nl", "pt", "sv", "da"],
+        [1],
+        "de",
+    ),
+)
+def test_library_languages_are_refused_as_the_configuration_file_refuses_them(
+    languages: object,
+) -> None:
+    value = _document().model_dump()
+    value["libraries"][0]["languages"] = languages
+
+    with pytest.raises((OwnerSettingsError, ValidationError)):
+        OwnerSettingsDocument.model_validate(value)
+
+
 def test_maximum_bounded_document_fits_the_persistence_and_response_contract() -> None:
     value = _document().model_dump()
     value["connections"] = [

@@ -9,7 +9,8 @@
   },
   "packageManager": "npm@11.19.0",
   "overrides": {
-    "js-yaml": "4.3.2"
+    "js-yaml": "4.3.2",
+    "minimatch": "11.0.1"
   },
   "scripts": {
     "generate": "node scripts/generate-dtos.mjs",

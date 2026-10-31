@@ -460,6 +460,33 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         assert forbidden.status_code == 422
         assert forbidden.json()["error"]["code"] == "settings_invalid"
         assert OwnerSettingsStore(connection).read().document.revision == 1
+    # A library's languages are refused exactly as the configuration file's
+    # field is, before anything is stored (#1466).
+    for languages in (
+        ["de", "deu"],
+        ["und"],
+        ["mul"],
+        ["mis"],
+        ["zxx"],
+        ["qqq"],
+        ["de-latn"],
+        ["de", "en", "fr", "es", "it", "nl", "pt", "sv", "da"],
+        [1],
+    ):
+        invalid_document = document.model_dump() | {"revision": 2}
+        invalid_document["libraries"][0]["languages"] = languages
+        refused = web.client.patch(
+            "/api/v1/settings",
+            json={
+                "expected_revision": 1,
+                "document": invalid_document,
+                "secrets": [],
+            },
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        assert refused.status_code == 422
+        assert refused.json()["error"]["code"] == "invalid"
+        assert OwnerSettingsStore(connection).read().document.revision == 1
     response = web.client.patch(
         "/api/v1/settings",
         json={
@@ -491,16 +518,18 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
     assert "new-secret" not in response.text
     OwnerSettingsStore(connection).acknowledge_runtime(2)
     assert OwnerSettingsStore(connection).read().document.revision == 2
+    assert "languages" not in response.json()["document"]["libraries"][0]
+    with_languages = response.json()["document"] | {"revision": 3}
+    with_languages["libraries"][0]["languages"] = ["fr", "de", "en"]
     stale_after_ack = web.client.patch(
         "/api/v1/settings",
-        json={
-            "expected_revision": 2,
-            "document": response.json()["document"] | {"revision": 3},
-            "secrets": [],
-        },
+        json={"expected_revision": 2, "document": with_languages, "secrets": []},
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},
     )
     assert stale_after_ack.status_code == 200
+    assert web.client.get("/api/v1/settings").json()["document"]["libraries"][0][
+        "languages"
+    ] == ["fr", "de", "en"]
     connection.close()
     unavailable = web.client.get("/api/v1/settings")
     assert unavailable.status_code == 503

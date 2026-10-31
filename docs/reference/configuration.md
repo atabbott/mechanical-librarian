@@ -248,9 +248,10 @@ example `["de", "en"]`. Each entry is a lowercase ISO 639 tag with an optional
 script and region, such as `en`, `deu` or `zh-Hant`. No two entries may name the
 same language and script. `und`, `mul`, `mis` and `zxx` are refused.
 
-It is read only from the configuration file; a store-managed library
-declares no languages. It is a matching prior, never written into an item, and
-only audiobook matching reads it
+A store-managed library declares its languages on Settings, under Libraries;
+there the picker offers ISO 639 languages without a script or region. It is a
+matching prior, never written into an item, and only audiobook matching reads
+it
 ([ADR-0064](../architecture/decisions/0064-audiobook-provider-evidence-vocabularies.md)):
 
 - Audible marketplaces are reordered by language, first language first. None

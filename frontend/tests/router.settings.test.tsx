@@ -2133,6 +2133,165 @@ it('separates measured cover cost from observed rates and never lends prices to 
   expect(cover.queryByText(/0.000001 per input token/u)).toBeNull()
 })
 
+describe('library languages in Settings (#1466)', () => {
+  const title = 'Ebooks & Audiobooks: Collected Editions'
+  const withLanguages = (languages: string[], authority: 'file' | 'store' = 'store') => ({
+    ...view(authority),
+    document: {
+      ...document,
+      libraries: document.libraries.map((library) => ({ ...library, languages })),
+    },
+  })
+
+  it('adds by typed name, reorders and removes with focus kept, and saves the order', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let saved: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      saved = request
+      return { ...view(), document: { ...request.document, revision: 4 } }
+    })
+    renderRoute('/settings?group=libraries', http)
+
+    expect(await screen.findByText('No language is declared for this library.')).toBeVisible()
+    expect(
+      screen.getByText(/Audiobook matching reads them; nothing is written into an item/),
+    ).toBeVisible()
+    const picker = screen.getByRole('combobox', { name: `Add a language to ${title}` })
+    await user.click(picker)
+    await user.keyboard('ger')
+    expect(screen.getByRole('option', { name: 'German (de)' })).toHaveFocus()
+    await user.keyboard('{Enter}')
+    expect(picker).toHaveFocus()
+    await user.click(picker)
+    expect(screen.queryByRole('option', { name: 'German (de)' })).toBeNull()
+    await user.keyboard('fre')
+    await user.keyboard('{Enter}')
+
+    const list = screen.getByRole('list', { name: `Languages for ${title}` })
+    const entries = () => within(list).getAllByRole('listitem')
+    expect(entries().map((item) => item.firstChild?.textContent)).toEqual([
+      'German (de)',
+      'French (fr)',
+    ])
+    expect(entries()[0]).toHaveTextContent('Preferred')
+    expect(entries()[1]).not.toHaveTextContent('Preferred')
+    await user.click(screen.getByRole('button', { name: 'Move French (fr) up' }))
+    expect(entries()[0]).toHaveTextContent('French (fr)Preferred')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Move French (fr) down' })).toHaveFocus(),
+    )
+    await user.click(screen.getByRole('button', { name: 'Remove German (de)' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Remove French (fr)' })).toHaveFocus(),
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    const change = screen.getByText(`${title}: languages`).closest('li')
+    expect(change).toHaveTextContent('None declared')
+    expect(change).toHaveTextContent('becomes French (fr)')
+    // The review link goes back to the row, onto a control that can be used.
+    await user.click(within(change as HTMLElement).getByRole('button'))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Remove French (fr)' })).toHaveFocus(),
+    )
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(saved?.document.libraries[0]?.languages).toEqual(['fr'])
+  })
+
+  it('moves focus to the picker when the last language is removed, and Discard restores', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => withLanguages(['de']))
+    renderRoute('/settings?group=libraries', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Remove German (de)' }))
+    expect(screen.getByText('No language is declared for this library.')).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: `Add a language to ${title}` })).toHaveFocus(),
+    )
+    await user.click(screen.getByRole('button', { name: 'Discard all' }))
+    expect(screen.getByRole('list', { name: `Languages for ${title}` })).toHaveTextContent(
+      'German (de)Preferred',
+    )
+    expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('stops adding at the limit and says why', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () =>
+      withLanguages(['de', 'en', 'fr', 'es', 'it', 'nl', 'pt', 'sv']),
+    )
+    renderRoute('/settings?group=libraries', http)
+
+    const picker = await screen.findByRole('combobox', { name: `Add a language to ${title}` })
+    expect(picker).toBeDisabled()
+    expect(picker).toHaveAccessibleDescription(
+      'A library declares at most 8 languages. Remove one to add another.',
+    )
+    expect(
+      screen.getByText('A library declares at most 8 languages. Remove one to add another.'),
+    ).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Remove Swedish (sv)' }))
+    expect(picker).toBeEnabled()
+    expect(screen.queryByText(/declares at most 8 languages/)).toBeNull()
+  })
+
+  it('withholds a language the list already names under another tag', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => withLanguages(['deu', 'zh-Hant']))
+    renderRoute('/settings?group=libraries', http)
+
+    await user.click(await screen.findByRole('combobox', { name: `Add a language to ${title}` }))
+    expect(screen.queryByRole('option', { name: 'German (de)' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Chinese (zh)' })).toBeInTheDocument()
+    cleanup()
+    // An offered code withholds only itself: the browser's alias of `tl` to
+    // `fil` does not hide one the server accepts beside the other.
+    http.getSettings = vi.fn(async () => withLanguages(['fil']))
+    renderRoute('/settings?group=libraries', http)
+    await user.click(await screen.findByRole('combobox', { name: `Add a language to ${title}` }))
+    expect(screen.getByRole('option', { name: 'Filipino (tl)' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Filipino (fil)' })).toBeNull()
+    expect(screen.getByRole('option', { name: 'Bhojpuri (bih)' })).toBeInTheDocument()
+    // A listed alias or regional tag withholds the code the server groups it
+    // with: `tgl` is `tl`, and `bih-IN` is `bih`.
+    for (const [listed, withheld] of [
+      ['tgl', 'tl'],
+      ['bih-IN', 'bih'],
+    ] as const) {
+      cleanup()
+      http.getSettings = vi.fn(async () => withLanguages([listed]))
+      renderRoute('/settings?group=libraries', http)
+      await user.click(await screen.findByRole('combobox', { name: `Add a language to ${title}` }))
+      expect(screen.queryByRole('option', { name: new RegExp(`\\(${withheld}\\)$`) })).toBeNull()
+    }
+    expect(screen.queryByRole('option', { name: /\((und|mul|mis|zxx)\)$/ })).toBeNull()
+  })
+
+  it('shows a file-managed list read-only, or that none is declared', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => withLanguages(['de', 'en'], 'file'))
+    renderRoute('/settings?group=libraries', http)
+
+    const list = await screen.findByRole('list', { name: `Languages for ${title}` })
+    expect(list).toHaveTextContent('German (de)Preferred')
+    expect(list).toHaveTextContent('English (en)')
+    expect(within(list).queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: /Add a language/ })).toBeNull()
+    cleanup()
+    http.getSettings = vi.fn(async () => view('file'))
+    renderRoute('/settings?group=libraries', http)
+    expect(
+      await screen.findByText('The configuration file declares no language for this library.'),
+    ).toBeVisible()
+  })
+})
+
 describe('settings provider throttling (#1282)', () => {
   const throttled = (retry: 'available' | 'managed_by_file' = 'available'): PreparationView => ({
     schema_version: 'review-preparation-v2',
@@ -2237,6 +2396,37 @@ describe('settings provider throttling (#1282)', () => {
     await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
     expect(savedRequest?.expected_revision).toBe(4)
     expect(savedRequest?.document.provider_recovery_generation).toBe(2)
+  })
+
+  it('rebases an edited language list over newer saved values (#1466)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.getPreparation = vi.fn(async () => throttled())
+    http.retryProviderRecovery = vi.fn(async () => ({
+      ...view(),
+      document: { ...document, revision: 4, provider_recovery_generation: 2 },
+    }))
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...view(), document: { ...request.document, revision: 5 } }
+    })
+    renderRoute('/settings?group=libraries', http)
+    await user.click(await screen.findByRole('combobox', { name: /Add a language/ }))
+    await user.keyboard('ital{Enter}')
+    await user.click(await screen.findByRole('button', { name: 'Retry now' }))
+
+    expect(
+      await screen.findByText(
+        'Settings changed elsewhere. Your changes were kept on top of the newer saved values.',
+      ),
+    ).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.expected_revision).toBe(4)
+    expect(savedRequest?.document.libraries[0]?.languages).toEqual(['it'])
   })
 
   it('shows the file instruction under file authority and no command when settings are unavailable', async () => {

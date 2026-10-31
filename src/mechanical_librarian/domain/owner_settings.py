@@ -19,6 +19,10 @@ from pydantic import (
 )
 
 from mechanical_librarian.domain.description_advice import DescriptionAdviceSettings
+from mechanical_librarian.domain.field_outcomes import (
+    MAX_LIBRARY_LANGUAGES,
+    library_languages_valid,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
@@ -216,6 +220,20 @@ class LibrarySettings(_Closed):
     # Deploy-authoritative display-only association.
     mount: Name | None = None
     policy_override: dict[str, dict[str, str]] | None = None
+    # The languages the library holds, first preferred (#1466), validated as
+    # the configuration file's field is. Left out of a dump while empty, so a
+    # stored owner-settings-v4 document written before the key existed stays
+    # canonical and needs no schema increment.
+    languages: Annotated[list[StrictStr], Field(max_length=MAX_LIBRARY_LANGUAGES)] = (
+        Field(default=[], exclude_if=lambda value: not value)
+    )
+
+    @field_validator("languages")
+    @classmethod
+    def _validate_languages(cls, value: list[str]) -> list[str]:
+        if not library_languages_valid(tuple(value)):
+            raise OwnerSettingsError("library languages are invalid")
+        return value
 
     @field_validator("display_name")
     @classmethod

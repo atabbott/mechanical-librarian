@@ -129,6 +129,7 @@ def file_settings_projection(
                     "provider_connections": list(value.provider_connections),
                     "mount": value.mount,
                     "policy_override": value.policy_override,
+                    "languages": list(value.languages),
                 }
                 for value in configuration.libraries
             ],

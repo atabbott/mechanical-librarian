@@ -169,12 +169,13 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
     ) in workflow
     assert workflow.count("timeout-minutes: 25") == 1
     assert (
-        "  protected-browser:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n"
+        "  protected-browser:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 20\n"
     ) in workflow
     assert (
         "  container-image:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n"
     ) in workflow
-    assert workflow.count("timeout-minutes: 15") == 2
+    assert workflow.count("timeout-minutes: 15") == 1
+    assert workflow.count("timeout-minutes: 20") == 1
     for shard in (2, 3, 4):
         assert (
             f"  fast-source-{shard}:\n    runs-on: ubuntu-24.04\n"
