@@ -59,7 +59,8 @@ providers, libraries, mounts, an optional cover reviewer, and kickoff.
 [Deployment](../operations/deployment.md) covers the claim token and container.
 
 - Each step states its rules first. A refusal sits beside its field, clears
-  when the field changes, and gives a safe cause and one remedy, never a code.
+  when the field changes, and gives a safe cause and one remedy, never a code;
+  at 200% text it stays in view.
 - Completed steps collapse to a row with Change. Reopening removes only the
   answers and secrets that depend on it. Resume returns to the first incomplete
   step, and a change in another tab restores the latest recorded step.
@@ -97,9 +98,15 @@ Sign-in has Show password. It says whether the password was wrong or the device
 must wait five minutes after too many attempts. There is no reset in the app;
 see [Forgotten owner password](../operations/deployment.md#forgotten-owner-password).
 
-Navigation mounts without waiting for data. A pending or failed count is never
-shown as zero, and a failed read keeps a retry. An older response never
-replaces a newer selection. While a newer read is pending, the last content
+The masthead holds still while the live-update and preparation status change.
+It is sticky only while it takes at most a quarter of the window; taller, it
+scrolls away, so it never covers content or focus. The current destination is
+marked, and Library stays current while a review or Attention is open.
+
+Navigation mounts without waiting for data, and loading reads as one small
+line beside a dot that pulses only when motion is welcome. A pending or failed
+count is never shown as zero, and a failed read keeps a retry. An older
+response never replaces a newer selection. While a newer read is pending, the last content
 stays, marked busy with its controls inert, and the route is announced only
 when the read settles. Owner actions take priority over background refreshes.
 While preparation publishes works, an active tab refreshes Library and
@@ -153,7 +160,8 @@ If its catalogue identity has changed it reads `Preparation unavailable`.
 
 ## Library
 
-Library is the complete work list and the only place decisions are made.
+Library is the complete work list and the only place decisions are made. It
+opens with its write handoff in place, so the notice never moves the works.
 
 ### Counts and lenses
 
@@ -376,7 +384,8 @@ Categories are owner choice, automatic choice, policy change and recovery.
 Values come from the event's immutable record, so later changes never alter
 history. A record that was not a change, such as a paused preparation, says
 what happened instead. Automatic checks with nothing to write gather into one
-row, "Checked N fields, no changes". Search, filters, a 7, 30 or 90-day range and 25, 50 or
+row, "Checked N fields, no changes". Each Details control names its row's
+field, work, result and time. Search, filters, a 7, 30 or 90-day range and 25, 50 or
 100-row pages run on the server. An unknown filter shows every event and says
 so.
 
@@ -391,8 +400,10 @@ The page edits one draft of the whole configuration, with change counts per
 section. Indirect changes count too: turning a source off removes it from its
 libraries. A bottom tray, shared with Policy, appears while anything is unsaved,
 lists before and after values, and offers Discard all and Save settings. Save
-validates everything and goes to the first invalid value. A stale save reloads
-the newer settings and keeps the draft on top. An edit to a value that was
+validates everything and goes to the first invalid value. A save is confirmed
+once, as saved and in use, in a notice above the page's end and the tray, so it
+moves nothing. A stale save reloads the newer settings and keeps the draft on
+top. An edit to a value that was
 also changed elsewhere takes the newer saved value, and the tray says how many
 did. In file mode the page names
 `/data/config.json` and offers no edits
@@ -426,8 +437,10 @@ otherwise; future times are never relative.
   pixels and below, the list, the work and Attention are separate steps, and
   choosing a work scrolls Back to works just below the masthead.
 - No page scrolls horizontally at 1440, 884, 390 or 320 pixels in either
-  theme. At 200% text, Library, Policy and Activity keep every control
-  reachable at 1440, 375 and 320 pixels.
+  theme. At 200% text, Library, Policy, Activity and Settings keep every
+  control reachable inside its container at every width, and Activity rows
+  fold into cards. A word breaks inside itself only when wider than its line;
+  data tokens may break anywhere.
 - Focus never falls to the page. A running command keeps focus, marked
   `aria-disabled`, then moves to its outcome. A failed retry or an unreadable
   detail focuses Try again. Opening Attention focuses its heading; closing

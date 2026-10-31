@@ -1,6 +1,7 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode, RefObject } from 'react'
 
 import {
   AmbiguousMutationError,
@@ -587,6 +588,43 @@ const Secret = ({
   )
 }
 
+// The saved notice floats above the bottom edge. While it is shown it
+// publishes its height, re-measured on each render and resize (zoom included),
+// so a focused control scrolls clear of it as it does of the finish tray.
+const SavedNotice = ({
+  ref,
+  focusable = false,
+  children,
+}: {
+  ref?: RefObject<HTMLParagraphElement | null>
+  focusable?: boolean
+  children: ReactNode
+}) => {
+  const own = useRef<HTMLParagraphElement>(null)
+  const notice = ref ?? own
+  useLayoutEffect(() => {
+    const root = document.documentElement
+    const measure = () => {
+      if (notice.current)
+        root.style.setProperty(
+          '--settings-saved-height',
+          `${String(notice.current.offsetHeight)}px`,
+        )
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('resize', measure)
+      root.style.removeProperty('--settings-saved-height')
+    }
+  }, [notice, children])
+  return (
+    <p className="settings-saved" role="status" tabIndex={focusable ? -1 : undefined} ref={notice}>
+      {children}
+    </p>
+  )
+}
+
 export default function SettingsPage() {
   const { http, queryClient } = useReviewContext()
   const query = useQuery({
@@ -634,11 +672,7 @@ export default function SettingsPage() {
   return (
     <>
       <ProviderThrottleNotice />
-      {saved ? (
-        <p className="settings-saved" role="status">
-          Settings saved and in use.
-        </p>
-      ) : null}
+      {saved ? <SavedNotice>Settings saved and in use.</SavedNotice> : null}
       {reconciliation !== 'idle' ? (
         <div
           className="settings-stale-recovery"
@@ -967,9 +1001,9 @@ const SettingsEditor = ({
         </section>
       ) : null}
       {settled ? (
-        <p className="settings-saved" role="status" tabIndex={-1} ref={statusTarget}>
+        <SavedNotice focusable ref={statusTarget}>
           {statusCopy}
-        </p>
+        </SavedNotice>
       ) : null}
       <div className="settings-compact-sections">
         <Dropdown

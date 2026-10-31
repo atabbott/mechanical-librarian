@@ -1,4 +1,5 @@
 import type {
+  ActivityConsentView,
   ActivityDestinationView,
   ActivityDisplayView,
   ActivityLapsedConsentView,
@@ -7,6 +8,15 @@ import type {
   DestinationState,
 } from './api/http'
 import { writeHoldReasons } from './labels'
+
+// A lapse, and a library that holds permission beside one that does not, are
+// named as Settings names them, so the Library handoff needs the settings
+// read. Library's route waits on it as well, so the handoff still arrives with
+// the works (#1291).
+export const handoffNeedsLibraryNames = (data: ActivityConsentView | undefined) =>
+  data !== undefined &&
+  (data.lapsed_consents.length > 0 ||
+    data.capabilities.some((item) => item.destinations.some((entry) => entry.consented)))
 
 /**
  * What one `Enable writes` action would cover, read off the authoritative

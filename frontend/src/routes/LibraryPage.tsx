@@ -3729,7 +3729,7 @@ export default function LibraryPage({
     if (!action) return
     const bounds = action.getBoundingClientRect()
     const masthead = document.querySelector<HTMLElement>('.masthead')
-    const visibleTop = (masthead?.getBoundingClientRect().bottom ?? 0) + 8
+    const visibleTop = Math.max(0, masthead?.getBoundingClientRect().bottom ?? 0) + 8
     const reveal =
       bounds.top < visibleTop
         ? bounds.top - visibleTop
@@ -3750,7 +3750,8 @@ export default function LibraryPage({
       return
     }
     const masthead = document.querySelector<HTMLElement>('.masthead')?.getBoundingClientRect()
-    const top = window.scrollY + workspace.getBoundingClientRect().top - (masthead?.bottom ?? 0)
+    const top =
+      window.scrollY + workspace.getBoundingClientRect().top - Math.max(0, masthead?.bottom ?? 0)
     window.scrollTo({ top })
     if (Math.abs(window.scrollY - top) <= 1 || selectedDetailReady || selectedReadError)
       revealWorkspace.current = false

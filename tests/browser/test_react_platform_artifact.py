@@ -684,6 +684,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     # The masthead now carries a status message whose width
                     # is its own text, and this cohort's stream ends at once,
                     # so the degraded notice is present on every route here.
+                    _fits_its_container(page, ".shell-status", width)
                     _fits_its_container(page, ".shell-actions", width)
                     _fits_its_container(page, ".masthead", width)
                 for width in (1440, 900, 390):
@@ -1228,7 +1229,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         ).all():
                             assert control.bounding_box()["height"] >= 40
                         for control in page.locator(
-                            ".masthead nav a, .shell-actions button"
+                            ".masthead nav a, .shell-status button, .shell-actions button"
                         ).all():
                             assert control.bounding_box()["height"] >= 44
                         # Authority controls and disclosures take no dense
@@ -1786,7 +1787,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert search_box.input_value() == ""
         stage[0] = "library:touch-targets"
         page.goto("https://react-platform.invalid/library?lens=all")
-        for control in page.locator(".masthead nav a, .shell-actions button").all():
+        for control in page.locator(
+            ".masthead nav a, .shell-status button, .shell-actions button"
+        ).all():
             assert control.bounding_box()["height"] >= 44
         for control in page.locator(
             ".lenses a, .library-work-row, .library-pager button"
@@ -1895,12 +1898,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert (
                 item.evaluate("node => getComputedStyle(node).whiteSpace") == "nowrap"
             )
-        assert (
-            page.locator(".masthead").evaluate(
-                "node => getComputedStyle(node).flexWrap"
-            )
-            == "wrap"
-        )
+        # The destinations take a row of their own below the brand's.
         assert page.locator(".masthead nav").bounding_box()["y"] >= (
             page.locator(".brand").bounding_box()["y"]
             + page.locator(".brand").bounding_box()["height"]
@@ -2327,7 +2325,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.get_by_role("heading", name="Evidence").count() == 0
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
-        for control in page.locator(".masthead nav a, .shell-actions button").all():
+        for control in page.locator(
+            ".masthead nav a, .shell-status button, .shell-actions button"
+        ).all():
             assert control.bounding_box()["height"] >= 44
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
 
@@ -3880,6 +3880,107 @@ def test_compact_selection_brings_back_to_works_into_view() -> None:
                     assert not page.evaluate(_FOCUS_ON_BODY), where
 
 
+_PULSE = """() => getComputedStyle(
+  document.querySelector('.route-state[aria-busy="true"] h1'), '::before').animationName"""
+
+
+def _busy_pulse(preference: str) -> str:
+    """The busy heading dot's animation while Library waits on its consent read,
+    with no system motion preference and the owner's motion setting given."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1100, "height": 800})
+        page.emulate_media(reduced_motion="no-preference")
+        _serve_cohort(page)
+        held: list[Route] = []
+        appearance = json.dumps({"reduced_motion": preference})
+        # Routes registered later take precedence over the cohort's.
+        page.route(
+            "**/api/v1/appearance",
+            lambda route: route.fulfill(
+                content_type="application/json", body=appearance
+            ),
+        )
+        page.route("**/api/v1/activity/consent-state", lambda route: held.append(route))
+        page.goto("https://react-platform.invalid/library?lens=all")
+        expect(page.get_by_role("heading", name="Loading library…")).to_be_visible()
+        if preference == "always_reduced":
+            expect(page.locator("html")).to_have_attribute(
+                "data-reduced-motion", "always-reduced"
+            )
+        animation = cast("str", page.evaluate(_PULSE))
+        for route in held:
+            route.abort()
+        return animation
+
+
+def test_the_loading_pulse_obeys_always_reduced_motion() -> None:
+    """The busy heading's dot pulses only while motion is allowed: the owner's
+    "Always reduced" setting stills it with no system preference (#1291)."""
+    assert _busy_pulse("follow_system") == "live-state-pulse"
+    assert _busy_pulse("always_reduced") == "none"
+
+
+# Each direct choice that runs past its grid, or past its own box.
+_CLIPPED_CHOICES = """() => [...document.querySelectorAll('.workspace-detail .direct-choice-grid')]
+  .flatMap((grid) => {
+    const bounds = grid.getBoundingClientRect();
+    return [...grid.children].flatMap((choice) => {
+      const box = choice.getBoundingClientRect();
+      const past = Math.max(box.right - bounds.right, bounds.left - box.left);
+      const inside = choice.scrollWidth - choice.clientWidth;
+      return [
+        ...(box.width && past > 0.5 ? [`${choice.className} past its grid by ${Math.round(past)}px`] : []),
+        ...(inside > 1 ? [`${choice.className} clipped by ${inside}px`] : []),
+      ];
+    });
+  })"""
+
+
+def test_attention_beside_a_work_never_clips_its_choices() -> None:
+    """With Attention open at 200% text, the selected work's choices are never
+    clipped and works rows stay whole: when three columns cannot fit, Attention
+    drops below the work, and opening it still brings its heading into view
+    (#1291)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1200, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: "html { font-size: 200% !important; }")
+        failures = []
+        for width in (1200, 1240, 1280, 1320, 1360, 1440):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all&attention=open")
+            page.wait_for_load_state("networkidle")
+            expect(
+                page.locator(".workspace-detail .direct-choice-grid").first
+            ).to_be_visible()
+            expect(page.locator(".attention-rail")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            failures += [
+                f"{width}px: {item}" for item in page.evaluate(_CLIPPED_CHOICES)
+            ]
+            split = page.evaluate(_POLICY_MID_WORD, _WORKS_ROWS)
+            if split:
+                failures += [
+                    f"{width}px: works row {word}"
+                    for word in page.evaluate(_NEEDLESS_SPLITS, [_WORKS_ROWS, split])
+                ]
+        assert failures == [], "\n".join(failures)
+        # Reopened where it sits below the work, its heading comes into view.
+        page.set_viewport_size({"width": 1200, "height": 900})
+        page.locator(".attention-toggle").click()
+        expect(page.locator(".attention-rail")).to_have_count(0)
+        page.locator(".attention-toggle").click()
+        heading = page.locator(".attention-rail h2").first
+        expect(heading).to_be_focused()
+        expect(heading).to_be_in_viewport()
+
+
 def test_closing_the_rail_keeps_back_to_works_in_view() -> None:
     """Closing the Attention rail over a compact selection, with its Close or
     the toolbar's toggle, brings the workspace's top, where Back to works leads
@@ -4313,3 +4414,859 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                 "'.owner-controls')).color"
             )
         assert backgrounds["light"] != backgrounds["dark"], backgrounds
+
+
+# An update stream the test drops, restores and publishes on, so the masthead's
+# status can change in place rather than across reloads.
+_CONTROLLED_UPDATE_STREAM = """
+globalThis.EventSource = class extends EventTarget {
+  constructor(url) {
+    super();
+    this.url = url;
+    this.readyState = 1;
+    (globalThis.__streams ??= []).push(this);
+    queueMicrotask(() => this.onopen?.(new Event('open')));
+  }
+  close() { this.readyState = 2; }
+};
+globalThis.__sequence = 0;
+globalThis.__publish = (topic) => {
+  for (const stream of globalThis.__streams ?? [])
+    stream.dispatchEvent(new MessageEvent(topic, {
+      data: JSON.stringify({sequence: ++globalThis.__sequence, subject: null, topic}),
+    }));
+};
+globalThis.__drop = () => {
+  for (const stream of globalThis.__streams ?? []) {
+    stream.readyState = 0;
+    stream.onerror?.(new Event('error'));
+  }
+};
+globalThis.__restore = () => {
+  for (const stream of globalThis.__streams ?? []) {
+    stream.readyState = 1;
+    stream.onopen?.(new Event('open'));
+  }
+};
+"""
+
+# Every layout shift that moved a node of the masthead outside its status slot.
+# What the masthead's own size moves below it is read from its box instead,
+# since a route's content also moves with the reads it waits on.
+_SHIFTS_OUTSIDE_STATUS = """
+(() => {
+  globalThis.__shifts = [];
+  new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      const moved = entry.sources.map((source) => source.node)
+        .map((node) => node?.nodeType === 1 ? node : node?.parentElement)
+        .filter((node) => node?.closest('.masthead') && !node.closest('.shell-status'));
+      if (moved.length)
+        globalThis.__shifts.push([entry.value, moved.map((node) => node.className || node.tagName)]);
+    }
+  }).observe({type: 'layout-shift', buffered: true});
+})();
+"""
+
+_MASTHEAD_GEOMETRY = """() => {
+  const box = (selector) => {
+    const bounds = document.querySelector(selector).getBoundingClientRect();
+    return [bounds.left, bounds.top, bounds.width, bounds.height].map(Math.round);
+  };
+  return {
+    masthead: box('.masthead'),
+    nav: box('.masthead nav'),
+    static: document.documentElement.dataset.masthead === 'static',
+  };
+}"""
+
+
+def test_masthead_holds_still_as_a_page_becomes_scrollable() -> None:
+    """With classic scrollbars, a page growing tall enough to scroll moves no
+    part of the masthead, even at the widths where the scrollbar's gutter would
+    cross one of its steps (#1291)."""
+    for width in (1025, 761):
+        with ExitStack() as stack:
+            playwright = stack.enter_context(sync_playwright())
+            # Headless Chromium hides scrollbars unless asked not to.
+            browser = playwright.chromium.launch(
+                headless=True, ignore_default_args=["--hide-scrollbars"]
+            )
+            stack.callback(browser.close)
+            page = browser.new_page(
+                viewport={"width": width, "height": 900}, locale="en-US"
+            )
+            page.add_init_script(_LIVE_UPDATE_STREAM)
+            _serve_cohort(page)
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.wait_for_load_state("networkidle")
+            expect(page.locator("#main-content h1").first).to_be_visible()
+            scrolls = "document.scrollingElement.scrollHeight > innerHeight"
+            page.evaluate(
+                "Object.assign(document.querySelector('main').style,"
+                " {height: '0', overflow: 'hidden'})"
+            )
+            page.evaluate(_TWO_FRAMES)
+            assert not page.evaluate(scrolls), width
+            short = page.evaluate(_MASTHEAD_GEOMETRY)
+            page.evaluate("document.querySelector('main').removeAttribute('style')")
+            page.evaluate(_TWO_FRAMES)
+            assert page.evaluate(scrolls), width
+            assert page.evaluate(_MASTHEAD_GEOMETRY) == short, width
+
+
+# The preparation states the masthead names, as overrides of the cohort's read.
+_PREPARATION_STATES: dict[str, dict[str, object]] = {
+    "absent": {"libraries": []},
+    "Preparation idle": {"active": False, "actionable": False},
+    "Preparing libraries": {"actionable": False},
+    "Preparation needs attention": {},
+    "Preparation paused": {"paused": True},
+    "Preparation stopped": {"recovery_required": True},
+}
+
+
+def test_masthead_holds_still_while_status_changes() -> None:
+    """Preparation loading, absent and in each of its states, and the update
+    stream dropping and returning, never move the masthead or its
+    destinations: nothing outside the status slot shifts and no label in the
+    masthead is clipped, at every width of the ladder. Enlarged text is root font-size 200% (rem and container
+    queries respond to it; px media queries do not): there the destinations
+    keep their place, and the masthead may change size only while it is
+    static, in the page's flow (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    state = {"preparation": "absent"}
+    held: list[Route] = []
+
+    def preparation(route: Route) -> None:
+        if state["preparation"] == "loading":
+            held.append(route)
+            return
+        payload = cast("dict[str, object]", rich_payload("/api/v1/review-preparation"))
+        payload |= _PREPARATION_STATES[state["preparation"]]
+        route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_CONTROLLED_UPDATE_STREAM)
+        page.add_init_script(_SHIFTS_OUTSIDE_STATUS)
+        page.clock.install()
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        page.route("**/api/v1/review-preparation", preparation)
+        trigger = page.locator(".masthead .preparation-activity > button")
+        notice = page.locator(".masthead .live-state")
+        for text in styles:
+            for width in (1440, 1200, 1100, 1025, 1024, 884, 761, 760, 390, 375, 320):
+                where = f"{text} text at {width}px"
+                page.set_viewport_size({"width": width, "height": 900})
+                state["preparation"] = "loading"
+                page.goto("https://react-platform.invalid/settings?group=connection")
+                page.get_by_role("heading", name="Settings", exact=True).wait_for()
+                page.evaluate(_TWO_FRAMES)
+                expect(trigger).to_have_count(0)
+                states = {"loading": page.evaluate(_MASTHEAD_GEOMETRY)}
+                clipped: list[str] = []
+                # The route has painted; from here only status changes.
+                page.evaluate("() => { globalThis.__shifts.length = 0 }")
+                state["preparation"] = "absent"
+                while held:
+                    preparation(held.pop())
+                page.evaluate(_TWO_FRAMES)
+                states["absent"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                # Each state live, then with the stream down; the notice waits
+                # a second before it shows, which the clock runs through.
+                for label in list(_PREPARATION_STATES)[1:]:
+                    state["preparation"] = label
+                    page.evaluate("() => globalThis.__publish('preparation')")
+                    expect(trigger).to_have_text(label)
+                    page.evaluate(_TWO_FRAMES)
+                    states[label] = page.evaluate(_MASTHEAD_GEOMETRY)
+                    clipped += [
+                        f"{label}: {c}" for c in page.evaluate(_MASTHEAD_CLIPPED)
+                    ]
+                    page.evaluate("() => globalThis.__drop()")
+                    page.clock.run_for(1_100)
+                    expect(notice).to_be_visible()
+                    page.evaluate(_TWO_FRAMES)
+                    states[f"{label}, reconnecting"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                    clipped += [
+                        f"{label}, reconnecting: {c}"
+                        for c in page.evaluate(_MASTHEAD_CLIPPED)
+                    ]
+                    page.evaluate("() => globalThis.__restore()")
+                    expect(notice).to_have_count(0)
+                page.evaluate(_TWO_FRAMES)
+                states["restored"] = page.evaluate(_MASTHEAD_GEOMETRY)
+                # Whatever the status says, every control keeps its whole label.
+                assert clipped == [], f"{where}: {clipped}"
+                navs = {state["nav"][0] for state in states.values()}
+                assert len(navs) == 1, f"{where}: the destinations moved {states}"
+                boxes = {
+                    json.dumps([state["masthead"], state["nav"]])
+                    for state in states.values()
+                }
+                if text == "100%":
+                    assert len(boxes) == 1, f"{where}: the masthead moved {states}"
+                    shifts = page.evaluate("() => globalThis.__shifts")
+                    assert shifts == [], f"{where}: {shifts}"
+                elif len(boxes) > 1:
+                    assert all(state["static"] for state in states.values()), (
+                        f"{where}: a sticky masthead changed size {states}"
+                    )
+
+
+# The masthead's links and buttons whose label runs past their box.
+_MASTHEAD_CLIPPED = """() => [...document.querySelectorAll('.masthead :is(a, button)')]
+  .filter((node) => node.getClientRects().length > 0 && node.scrollWidth > node.clientWidth)
+  .map((node) => `${node.textContent.trim()} by ${node.scrollWidth - node.clientWidth}px`)"""
+
+
+# Where the masthead and the focused control are, and every sticky region.
+_MASTHEAD_COVER = """() => {
+  const masthead = document.querySelector('.masthead');
+  const bounds = masthead.getBoundingClientRect();
+  const focused = document.activeElement;
+  const focus = focused && focused !== document.body && !masthead.contains(focused)
+    ? focused.getBoundingClientRect() : null;
+  const sticky = [...document.querySelectorAll('main *')]
+    .filter((node) => getComputedStyle(node).position === 'sticky'
+      && getComputedStyle(node).top !== 'auto' && node.getClientRects().length > 0)
+    .map((node) => [String(node.className).slice(0, 40), Math.round(node.getBoundingClientRect().top)]);
+  return {
+    static: document.documentElement.dataset.masthead === 'static',
+    position: getComputedStyle(masthead).position,
+    share: bounds.height / innerHeight,
+    height: bounds.height,
+    bottom: bounds.bottom,
+    focus: focus && [focused.tagName, (focused.textContent || '').trim().slice(0, 32),
+      Math.round(focus.top), Math.round(focus.bottom)],
+    sticky,
+  };
+}"""
+
+
+def test_compact_and_enlarged_masthead_never_covers_content() -> None:
+    """The masthead sticks only while it takes at most a quarter of the
+    viewport, and otherwise scrolls with the page; whichever it is, no focused
+    control and no sticky region lies beneath it, and the preparation popover
+    opens inside the viewport. Enlarged text is root font-size 200%, which rem
+    and container queries follow and px media queries do not (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text in styles:
+            for width, height in (
+                (375, 812),
+                (375, 667),
+                (320, 568),
+                (320, 640),
+                (390, 844),
+                (1024, 768),
+                (1440, 900),
+            ):
+                page.set_viewport_size({"width": width, "height": height})
+                for route in (
+                    "/library?lens=all",
+                    "/policy?section=identity",
+                    "/activity?eventType=all&rangeDays=30&page=1&pageSize=25",
+                ):
+                    where = f"{text} text at {width}x{height} on {route}"
+                    page.goto(f"https://react-platform.invalid{route}")
+                    page.locator("main h1").first.wait_for()
+                    page.locator(".masthead .preparation-activity > button").wait_for()
+                    page.evaluate(_TWO_FRAMES)
+                    cover = page.evaluate(_MASTHEAD_COVER)
+                    assert cover["static"] == (cover["share"] > 0.25), (
+                        f"{where}: {cover}"
+                    )
+                    assert cover["position"] == (
+                        "relative" if cover["static"] else "sticky"
+                    ), f"{where}: {cover}"
+                    if text == "100%" and (width, height) == (375, 812):
+                        # No phone pays more chrome than before (#1291).
+                        assert cover["height"] <= 160.5, f"{where}: {cover}"
+                        top = page.evaluate(
+                            "() => document.querySelector('main').getBoundingClientRect().top"
+                        )
+                        assert top <= 176, f"{where}: content starts at {top}"
+                    page.locator(".skip-link").focus()
+                    for _ in range(18):
+                        page.keyboard.press("Tab")
+                        cover = page.evaluate(_MASTHEAD_COVER)
+                        if cover["focus"] is not None:
+                            assert cover["focus"][2] >= cover["bottom"] - 1, (
+                                f"{where}: focus under the masthead {cover}"
+                            )
+                    page.evaluate(
+                        "() => window.scrollTo(0, document.body.scrollHeight / 2)"
+                    )
+                    page.evaluate(_TWO_FRAMES)
+                    cover = page.evaluate(_MASTHEAD_COVER)
+                    if not cover["static"]:
+                        under = [
+                            region
+                            for region in cover["sticky"]
+                            if region[1] < cover["bottom"] - 1
+                        ]
+                        assert under == [], f"{where}: under the masthead {cover}"
+        # The popover opens inside the viewport, however the status wraps.
+        for width in (1440, 1100, 884, 390, 320):
+            for text in styles:
+                where = f"{text} text at {width}px"
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto("https://react-platform.invalid/settings?group=connection")
+                trigger = page.locator(".masthead .preparation-activity > button")
+                trigger.click()
+                popover = page.get_by_role("region", name="Background activity")
+                expect(popover).to_be_visible()
+                box = popover.bounding_box()
+                assert box is not None
+                assert box["x"] >= 0 and box["x"] + box["width"] <= width, (
+                    f"{where}: {box}"
+                )
+                page.keyboard.press("Escape")
+                expect(trigger).to_be_focused()
+
+
+# The words an owner reads as interface: headings, controls, labels and the
+# pager's status. The #1290 review choices, covers and works rows are proved
+# by their own tests; works rows are walked here too, at desktop widths, where
+# enlarged text must widen their column rather than split their words.
+_UI_LABELS = (
+    ":is(h1, h2, h3, h4, button, a, label, summary, legend, dt, th, "
+    ".library-pager > span):not(:is({owned}), :is({owned}) *)".format(
+        owned=".workspace-detail .value-choice, .field-filmstrip, .cover-card, "
+        ".library-cover-card, .library-work-row, .metadata-choice"
+    )
+)
+_WORKS_ROWS = ".library-work-row"
+# Of the split words `_POLICY_MID_WORD` found, those the layout split without
+# need. A word may break only when it is wider than its whole line box. For a
+# word of the interface that box must also hold at least half the page's
+# width: a narrower one is a column the layout squeezed. A data token -- an
+# id, a path, an address, an unbroken title -- may break in any box it
+# overflows.
+_NEEDLESS_SPLITS = """([selector, words]) => {
+  const main = document.querySelector('#main-content');
+  const page = main.clientWidth - parseFloat(getComputedStyle(main).paddingLeft)
+    - parseFloat(getComputedStyle(main).paddingRight);
+  const token = word => /[\\/_:.@=#?&<>\\d]/.test(word) || word.length > 24;
+  const lineBox = node => {
+    let box = node;
+    while (['inline', 'contents'].includes(getComputedStyle(box).display)) box = box.parentElement;
+    const style = getComputedStyle(box);
+    return box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  };
+  const needless = new Set();
+  for (const node of document.querySelectorAll(selector)) {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/[^\\s\\u2010-\\u2014-]+/g)) {
+        if (!words.includes(match[0])) continue;
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const rects = [...range.getClientRects()].filter(rect => rect.width > 0);
+        if (new Set(rects.map(rect => Math.round(rect.top))).size < 2) continue;
+        const width = rects.reduce((sum, rect) => sum + rect.width, 0);
+        const room = lineBox(text.parentElement);
+        const excused = width > room - 1 && (token(match[0]) || room >= page / 2);
+        if (!excused)
+          needless.add(`${match[0]} (${Math.round(width)}px in ${Math.round(room)}px, `
+            + `${node.tagName.toLowerCase()} "${node.textContent.trim().slice(0, 40)}")`);
+      }
+  }
+  return [...needless];
+}"""
+
+
+def test_words_break_only_where_they_must() -> None:
+    """No interface word splits where the layout could have kept it whole, on
+    every route state at every frozen width and both text sizes, and no page
+    is wider than the window (#1291). Enlarged text is root font-size 200%.
+    From 1100px up a works row's words, title included, stay whole too."""
+    routes = {
+        "library": "/library?lens=all",
+        "selected": "/library?lens=all&preview=case-1",
+        "attention": "/library?lens=all&attention=open",
+        "review": "/review/case-1",
+        "policy": "/policy?section=identity",
+        "activity": "/activity?eventType=all&rangeDays=30&page=1&pageSize=25",
+        "settings": "/settings?group=connection",
+    }
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        failures = []
+        for text in styles:
+            for name, route in routes.items():
+                for width in (1440, 1200, 1100, 1024, 884, 760, 390, 375, 320):
+                    where = f"{name}, {text} text at {width}px"
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.goto("https://react-platform.invalid" + route)
+                    page.wait_for_load_state("networkidle")
+                    expect(page.locator("#main-content h1").first).to_be_visible()
+                    page.evaluate(_TWO_FRAMES)
+                    split = page.evaluate(_POLICY_MID_WORD, _UI_LABELS)
+                    if split:
+                        needless = page.evaluate(_NEEDLESS_SPLITS, [_UI_LABELS, split])
+                        failures += [f"{where}: {word}" for word in needless]
+                    rows = page.evaluate(_POLICY_MID_WORD, _WORKS_ROWS)
+                    if rows and width >= 1100:
+                        needless = page.evaluate(_NEEDLESS_SPLITS, [_WORKS_ROWS, rows])
+                        failures += [f"{where}: works row {word}" for word in needless]
+                    overflow = page.evaluate(
+                        "document.scrollingElement.scrollWidth - innerWidth"
+                    )
+                    if overflow > 0:
+                        failures.append(f"{where}: the page is {overflow}px too wide")
+        assert failures == [], "\n".join(failures)
+
+
+# Cells of one Activity row that overlap another cell of the same row.
+_ROW_OVERLAPS = """() => [...document.querySelectorAll('.cm-activity-event-group article')]
+  .flatMap(row => {
+    const cells = [...row.children].filter(cell => {
+      const box = cell.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && !cell.matches('.sr-only');
+    });
+    return cells.flatMap((cell, index) => cells.slice(index + 1).flatMap(other => {
+      const [a, b] = [cell.getBoundingClientRect(), other.getBoundingClientRect()];
+      const across = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const down = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      return across > 1 && down > 1
+        ? [`"${cell.textContent.trim().slice(0, 20)}" overlaps "${other.textContent.trim().slice(0, 20)}"`]
+        : [];
+    }));
+  })"""
+
+
+# Each pagination or filter control cut short by its own box or by an
+# ancestor that clips it. A row that scrolls, as the phone filters do, is not
+# cutting what it scrolls to.
+_CUT_CONTROLS = """() => [...document.querySelectorAll(
+    '.cm-activity-pagination :is(button, input, .cm-dropdown-trigger, strong, span),'
+    + ' .cm-activity-filters button, .cm-activity-search input,'
+    + ' .cm-activity-range :is(.cm-dropdown-trigger, .cm-dropdown-trigger > span)')]
+  .filter((node) => node.getClientRects().length)
+  .flatMap((node) => {
+    const name = `${node.className || node.tagName} "${node.textContent.trim().slice(0, 32)}"`;
+    const box = node.getBoundingClientRect();
+    const found = node.scrollWidth - node.clientWidth > 1
+      ? [`${name} is clipped by ${node.scrollWidth - node.clientWidth}px`] : [];
+    for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+      const overflow = getComputedStyle(parent).overflowX;
+      if (overflow === 'auto' || overflow === 'scroll') break;
+      if (overflow === 'visible') continue;
+      const bounds = parent.getBoundingClientRect();
+      const past = Math.max(box.right - bounds.right, bounds.left - box.left);
+      if (past > 0.5) {
+        found.push(`${name} is cut by ${Math.round(past)}px`);
+        break;
+      }
+    }
+    return found;
+  })"""
+
+
+# How many rows the pager's pages and page jump take.
+_PAGER_ROWS = """() => {
+  const boxes = [...document.querySelector('.cm-activity-pagination-nav').children]
+    .filter((node) => node.getClientRects().length)
+    .map((node) => node.getBoundingClientRect())
+    .sort((a, b) => a.top - b.top);
+  let rows = 0;
+  let bottom = -Infinity;
+  for (const box of boxes) if (box.top >= bottom) { rows += 1; bottom = box.bottom; }
+  return rows;
+}"""
+
+
+def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
+    """At ordinary text and with root font-size 200%, every Activity row -- a
+    check's members open -- keeps its promises and whole labels, with no cell
+    clipped, past its row or over another, and no pagination or filter control
+    cut short, from the widest window to the narrowest phone (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text in styles:
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(
+                "https://react-platform.invalid/activity"
+                "?eventType=all&rangeDays=30&page=1&pageSize=25"
+            )
+            page.locator("article.is-checks").get_by_role("button").click()
+            expect(page.locator(".cm-activity-checks > li").first).to_be_visible()
+            for width in (1440, 1100, 884, 761, 760, 430, 390, 375, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.evaluate(_TWO_FRAMES)
+                where = f"{text} text at {width}px"
+                if text == "100%" and 430 <= width <= 760:
+                    # The pages and the page jump wrap only when one row cannot hold them.
+                    assert page.evaluate(_PAGER_ROWS) == 1, where
+                # Cards follow the ledger's own width, not the window's.
+                cards = page.evaluate(
+                    "() => getComputedStyle(document.querySelector('.cm-activity-columns'))"
+                    ".display === 'none'"
+                )
+                assert page.evaluate(_ROW_PROMISES, cards) == [], where
+                labels = page.evaluate(_ROW_LABELS, cards)
+                assert labels == [], f"{where}: {labels}"
+                overlaps = page.evaluate(_ROW_OVERLAPS)
+                assert overlaps == [], f"{where}: {overlaps}"
+                clipped = [
+                    failure
+                    for node in page.locator(
+                        ".cm-activity-event-group article button"
+                    ).all()
+                    for failure in node.evaluate(_NAMED_CLIP)
+                ]
+                assert clipped == [], f"{where}: {clipped}"
+                cut = page.evaluate(_CUT_CONTROLS)
+                assert cut == [], f"{where}: {cut}"
+
+
+# Each Policy selected value cut short inside its control.
+_TRUNCATED_VALUES = """() => [...document.querySelectorAll(
+    '.cm-policy-route .cm-dropdown-trigger > span')]
+  .filter((node) => node.getClientRects().length && node.scrollWidth > node.clientWidth + 1)
+  .map((node) => `"${node.textContent.trim()}" by ${node.scrollWidth - node.clientWidth}px`)"""
+# Each word split across lines although the column it sits in could hold it.
+_SPLIT_THOUGH_THE_COLUMN_FITS = """([selector, column]) => {
+  const room = document.querySelector(column).clientWidth;
+  const found = [];
+  for (const node of document.querySelectorAll(selector)) {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/[^\\s\\u2010-\\u2014-]+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        const rects = [...range.getClientRects()].filter((rect) => rect.width > 0);
+        if (new Set(rects.map((rect) => Math.round(rect.top))).size < 2) continue;
+        const width = rects.reduce((sum, rect) => sum + rect.width, 0);
+        if (width < room) found.push(`${match[0]} (${Math.round(width)}px; the column is ${room}px)`);
+      }
+  }
+  return found;
+}"""
+
+
+def test_insets_and_columns_never_cut_a_word_short() -> None:
+    """A Policy value is never truncated in its control, at any width and
+    either text size, and on the narrowest phones at 200% text the provider
+    recovery card's insets leave its words the line the Activity column
+    allows (#1291)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        failures = []
+        for text in styles:
+            for width in (1440, 1200, 1100, 1024, 884, 761, 760, 390, 320):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto("https://react-platform.invalid/policy?section=identity")
+                page.wait_for_load_state("networkidle")
+                expect(page.locator(".cm-policy-field").first).to_be_visible()
+                page.evaluate(_TWO_FRAMES)
+                failures += [
+                    f"Policy, {text} text at {width}px: {value}"
+                    for value in page.evaluate(_TRUNCATED_VALUES)
+                ]
+        text = "200%"
+        for width in (390, 375, 320):
+            page.set_viewport_size({"width": width, "height": 900})
+            page.goto(
+                "https://react-platform.invalid/activity"
+                "?eventType=all&rangeDays=30&page=1&pageSize=25"
+            )
+            page.wait_for_load_state("networkidle")
+            expect(page.locator(".activity-recovery")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            failures += [
+                f"recovery, 200% text at {width}px: {word}"
+                for word in page.evaluate(
+                    _SPLIT_THOUGH_THE_COLUMN_FITS,
+                    [".activity-recovery", ".cm-activity-route"],
+                )
+            ]
+        assert failures == [], "\n".join(failures)
+
+
+def test_policy_sidebar_keeps_its_header_in_view_on_short_screens() -> None:
+    """The Policy sidebar's header and first chapter can each be brought into
+    view and pressed, clear of the masthead and the finish tray, on short
+    phones at both text sizes and on short windows with root font-size 200%
+    (#1291)."""
+    styles = {"default": "", "200%": "html { font-size: 200% !important; }"}
+    text = "default"
+    cases = [
+        (text, width, height)
+        for text in styles
+        for width, height in ((320, 568), (375, 667), (320, 640))
+    ] + [
+        ("200%", width, height)
+        for width, height in ((1024, 768), (884, 800), (761, 600))
+    ]
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text, width, height in cases:
+            where = f"{text} text at {width}x{height}"
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto("https://react-platform.invalid/policy?section=identity")
+            expect(page.locator(".cm-finish-tray")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            for target in (
+                ".cm-policy-sidebar > header strong",
+                ".cm-policy-sidebar > header small",
+                ".cm-policy-sidebar nav button",
+            ):
+                found = page.locator(target).first.evaluate(
+                    """node => {
+                      node.scrollIntoView({block: 'nearest'});
+                      const box = node.getBoundingClientRect();
+                      const x = box.left + Math.min(box.width / 2, 20);
+                      const y = box.top + Math.min(box.height / 2, 12);
+                      const hit = y >= 0 && y < innerHeight ? document.elementFromPoint(x, y) : null;
+                      const tray = document.querySelector('.cm-finish-tray').getBoundingClientRect();
+                      const masthead = document.querySelector('.masthead').getBoundingClientRect();
+                      return {
+                        text: node.textContent.trim().slice(0, 24),
+                        height: Math.round(box.height),
+                        pressable: !!hit && (hit === node || node.contains(hit)),
+                        underTray: box.bottom > tray.top + 1 && box.top < tray.bottom - 1,
+                        underMasthead: box.top < masthead.bottom - 1 && box.bottom > masthead.top + 1,
+                      };
+                    }"""
+                )
+                assert found["pressable"], f"{where}: {found}"
+                assert not found["underTray"], f"{where}: {found}"
+                assert not found["underMasthead"], f"{where}: {found}"
+
+
+# Controls in `selector` that run past the window or past an ancestor that
+# clips or scrolls them, named with how far.
+_ESCAPED_CONTROLS = """selector => [...document.querySelectorAll(selector)].flatMap(node => {
+  const box = node.getBoundingClientRect();
+  if (!box.width || !box.height) return [];
+  const name = `${node.tagName.toLowerCase()} "${(node.textContent || node.getAttribute('aria-label') || node.name || '').trim().slice(0, 30)}"`;
+  const found = [];
+  if (box.left < -1 || box.right > document.documentElement.clientWidth + 1)
+    found.push(`${name} runs past the window (${Math.round(box.left)}..${Math.round(box.right)})`);
+  for (let ancestor = node.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+    const style = getComputedStyle(ancestor);
+    const edge = ancestor.getBoundingClientRect();
+    if (style.overflowX !== 'visible' && (box.left < edge.left - 1 || box.right > edge.right + 1))
+      found.push(`${name} runs ${Math.round(Math.max(edge.left - box.left, box.right - edge.right))}px past ${ancestor.className || ancestor.tagName}`);
+  }
+  return found;
+})"""
+
+
+# The Settings section picker's value cut short, or its trigger under 44px tall.
+_CUT_SECTION_PICKER = """() => [...document.querySelectorAll(
+    '.settings-compact-sections .cm-dropdown-trigger > span')]
+  .filter((node) => node.getClientRects().length)
+  .flatMap((node) => {
+    const name = `section picker "${node.textContent.trim()}"`;
+    const height = node.parentElement.getBoundingClientRect().height;
+    return [
+      ...(node.scrollWidth > node.clientWidth + 1
+        ? [`${name} is cut by ${node.scrollWidth - node.clientWidth}px`] : []),
+      ...(height < 44 ? [`${name} is ${Math.round(height)}px tall`] : []),
+    ];
+  })"""
+
+
+def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> None:
+    """With root font-size 200%, no Policy finish step or action and no
+    Settings field, label or control runs past the window or is clipped by
+    the editor or sheet that holds it, at every frozen width (#1291)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: "html { font-size: 200% !important; }")
+        routes = {
+            "/policy?section=identity": ".cm-finish-tray :is(button, ol > li)",
+        } | {
+            f"/settings?group={group}": (
+                ".settings-sheet :is(label, input, select, button, "
+                ".settings-field-control)"
+            )
+            for group in (
+                "connection",
+                "libraries",
+                "providers",
+                "reviewer",
+                "background",
+                "access",
+                "appearance",
+            )
+        }
+        failures = []
+        for width in (1440, 1100, 1024, 884, 760, 390, 375, 320):
+            page.set_viewport_size({"width": width, "height": 900})
+            for route, controls in routes.items():
+                page.goto("https://react-platform.invalid" + route)
+                page.wait_for_load_state("networkidle")
+                expect(page.locator("#main-content h1").first).to_be_visible()
+                page.evaluate(_TWO_FRAMES)
+                assert page.locator(controls).count(), f"{route} has no {controls}"
+                failures += [
+                    f"{route} at {width}px: {failure}"
+                    for failure in page.evaluate(_ESCAPED_CONTROLS, controls)
+                ]
+                failures += [
+                    f"{route} at {width}px: {failure}"
+                    for failure in page.evaluate(_CUT_SECTION_PICKER)
+                ]
+        assert failures == [], "\n".join(failures)
+
+
+# Layout shifts, and where the first works row stands when it first paints.
+_FIRST_ROW_AND_SHIFTS = """(() => {
+  window.__shifts = [];
+  new PerformanceObserver(list => {
+    for (const entry of list.getEntries())
+      if (!entry.hadRecentInput) window.__shifts.push([entry.startTime, entry.value]);
+  }).observe({type: 'layout-shift', buffered: true});
+  const look = () => {
+    const row = document.querySelector('.library-work-row');
+    if (row && row.getBoundingClientRect().height) {
+      window.__firstRow = {at: performance.now(), top: row.getBoundingClientRect().top + scrollY};
+      return;
+    }
+    requestAnimationFrame(look);
+  };
+  requestAnimationFrame(look);
+})()"""
+
+
+# Writes enabled for a consented destination: the handoff names its library as
+# Settings does, so it also waits on the settings read.
+_CONSENTED_HANDOFF = {
+    **_WRITES_OFF_CONSENT,
+    "capabilities": [
+        {
+            "connection": "primary",
+            "library": "Household ebooks",
+            "state": "allowed",
+            "destinations": [
+                {
+                    "destination": "title",
+                    "state": "allowed",
+                    "consented": True,
+                    "prepared": 2,
+                }
+            ],
+        }
+    ],
+    "waiting": {
+        "applying": 0,
+        "awaiting_permission": 0,
+        "held_for_recovery": 0,
+        "retrying": 0,
+        "scheduled": 2,
+    },
+}
+
+
+def test_library_handoff_arrives_with_the_works() -> None:
+    """With the handoff's consent read held for 1.5s, and, while writes are
+    enabled, the settings read that names its library held 1s longer, the works
+    appear with the handoff above them, so from the moment the first row paints
+    nothing moves it (#1291)."""
+    held: list[Route] = []
+    held_settings: list[Route] = []
+    for consent, width in (
+        (_WRITES_OFF_CONSENT, 1440),
+        (_WRITES_OFF_CONSENT, 390),
+        (_CONSENTED_HANDOFF, 1440),
+        (_CONSENTED_HANDOFF, 390),
+    ):
+        held.clear()
+        held_settings.clear()
+        hold_settings = consent is _CONSENTED_HANDOFF
+        where = ("enabled" if hold_settings else "off", width)
+        with ExitStack() as stack:
+            playwright = stack.enter_context(sync_playwright())
+            browser = playwright.chromium.launch(headless=True)
+            stack.callback(browser.close)
+            page = browser.new_page(
+                viewport={"width": width, "height": 900}, locale="en-US"
+            )
+            page.add_init_script(_LIVE_UPDATE_STREAM)
+            page.add_init_script(_FIRST_ROW_AND_SHIFTS)
+            _serve_cohort(page, writes_off_handoff=True)
+            page.route(
+                "**/api/v1/activity/consent-state", lambda route: held.append(route)
+            )
+            if hold_settings:
+                page.route(
+                    "**/api/v1/settings", lambda route: held_settings.append(route)
+                )
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.wait_for_timeout(1_500)
+            assert held, "the consent read was never made"
+            for route in held:
+                route.fulfill(content_type="application/json", body=json.dumps(consent))
+            if hold_settings:
+                page.wait_for_timeout(1_000)
+                assert held_settings, "the settings read was never made"
+                page.unroute("**/api/v1/settings")
+                for route in held_settings:
+                    route.fallback()
+            heading = page.locator(".cm-library-handoff h2")
+            expect(heading).to_be_visible()
+            if hold_settings:
+                expect(heading).to_contain_text("Writes are enabled")
+            expect(page.locator(".library-work-row").first).to_be_visible()
+            page.wait_for_timeout(2_000)
+            first = page.evaluate("() => window.__firstRow")
+            now = page.evaluate(
+                "() => document.querySelector('.library-work-row')"
+                ".getBoundingClientRect().top + scrollY"
+            )
+            moved = sum(
+                value
+                for start, value in page.evaluate("() => window.__shifts")
+                if start >= first["at"] - 1
+            )
+            assert abs(now - first["top"]) <= 1, (where, first, now)
+            assert moved == 0, (where, moved)

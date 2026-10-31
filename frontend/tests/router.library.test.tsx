@@ -165,8 +165,11 @@ it('keeps resync debt with its exact collection while search and cursor replace 
 
 it('retries unavailable Works while the Library shell remains usable', async () => {
   const user = userEvent.setup()
+  // Library opens once the handoff's read settles, and opening retries a read
+  // that failed meanwhile, so the failure is shown only once it recurs.
   const getLibrary = vi
     .fn()
+    .mockRejectedValueOnce(new Error('temporary Library failure'))
     .mockRejectedValueOnce(new Error('temporary Library failure'))
     .mockResolvedValue(library)
   renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -176,6 +179,102 @@ it('retries unavailable Works while the Library shell remains usable', async () 
   expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
   expect(getLibrary.mock.calls.length).toBeGreaterThan(failedReads)
   await waitFor(() => expect(screen.queryByText('Works are unavailable.')).toBeNull())
+})
+
+it('holds Library in its pending state until the handoff consent read settles', async () => {
+  let release: (value: ReturnType<typeof consentOf>) => void = () => undefined
+  const getActivityConsent = vi.fn(
+    () =>
+      new Promise<ReturnType<typeof consentOf>>((resolve) => {
+        release = resolve
+      }),
+  )
+  renderRoute('/library?lens=all', { ...createHttp(), getActivityConsent })
+  expect(await screen.findByRole('heading', { level: 1, name: 'Loading library…' })).toBeVisible()
+  await waitFor(() => expect(getActivityConsent).toHaveBeenCalledTimes(1))
+  expect(screen.queryByRole('heading', { name: 'Library' })).toBeNull()
+  await act(async () => {
+    release(consentOf(activity()))
+    await Promise.resolve()
+  })
+  expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
+  expect(screen.queryByRole('heading', { name: 'Loading library…' })).toBeNull()
+  // A failed read settles too, and Library shows without the notice.
+  cleanup()
+  const getFailingConsent = vi.fn(async () => {
+    throw new Error('consent unavailable')
+  })
+  renderRoute('/library?lens=all', { ...createHttp(), getActivityConsent: getFailingConsent })
+  expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
+  expect(document.querySelector('.cm-library-handoff')).toBeNull()
+  expect(getFailingConsent.mock.calls.length).toBeLessThanOrEqual(2)
+})
+
+it('holds Library pending for the library names a consented handoff states', async () => {
+  const consented = activity({
+    capabilities: [
+      {
+        connection: 'primary',
+        library: 'fiction',
+        state: 'allowed' as const,
+        destinations: [
+          {
+            consented: true,
+            destination: 'title' as const,
+            prepared: 2,
+            state: 'allowed' as const,
+          },
+        ],
+      },
+    ],
+    waiting: {
+      applying: 0,
+      awaiting_permission: 0,
+      held_for_recovery: 0,
+      retrying: 0,
+      scheduled: 2,
+    },
+  })
+  let release: (value: ReturnType<typeof settingsView>) => void = () => undefined
+  const getSettings = vi.fn(
+    () =>
+      new Promise<ReturnType<typeof settingsView>>((resolve) => {
+        release = resolve
+      }),
+  )
+  renderRoute('/library?lens=all', {
+    ...createHttp(),
+    getActivityConsent: vi.fn(async () => consentOf(consented)),
+    getSettings,
+  })
+  await waitFor(() => expect(getSettings).toHaveBeenCalled())
+  expect(screen.getByRole('heading', { level: 1, name: 'Loading library…' })).toBeVisible()
+  expect(screen.queryByRole('heading', { name: 'Library' })).toBeNull()
+  await act(async () => {
+    release(settingsView())
+    await Promise.resolve()
+  })
+  // The works and the notice arrive together.
+  expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
+  expect(document.querySelector('.cm-library-handoff')).not.toBeNull()
+  // A names read that fails falls through: Library opens without waiting on it.
+  cleanup()
+  const getFailingSettings = vi.fn(async () => {
+    throw new Error('settings unavailable')
+  })
+  renderRoute('/library?lens=all', {
+    ...createHttp(),
+    getActivityConsent: vi.fn(async () => consentOf(consented)),
+    getSettings: getFailingSettings,
+  })
+  expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
+  // Open, it stays open: the notice's own read of the names never loops.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300))
+  })
+  expect(screen.getByRole('heading', { name: 'Library' })).toBeVisible()
+  expect(getFailingSettings.mock.calls.length).toBeGreaterThan(0)
+  expect(getFailingSettings.mock.calls.length).toBeLessThanOrEqual(3)
 })
 
 const terminalPreparation = (

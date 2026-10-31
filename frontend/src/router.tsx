@@ -54,6 +54,7 @@ import type { LiveUpdateStream } from './liveUpdates'
 import { formatWhen } from './dates'
 import { preparationOutcomes, scanStateLabels } from './labels'
 import { useLibraryName } from './libraryNames'
+import { handoffNeedsLibraryNames } from './writeConsent'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
@@ -204,6 +205,17 @@ export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) =>
 // limit, so the default landing read is the summary: it shares that request,
 // and with no q no search can reach a global figure (#1284).
 export const librarySummaryQuery = (http: ReviewHttp) => libraryQuery(http, { lens: 'all' })
+// The narrow consent read behind Library's completion handoff (#1236). Library
+// waits for it to settle, so the handoff arrives with the works rather than
+// pushing them down after they are read (#1291).
+export const handoffConsentQuery = (http: ReviewHttp) =>
+  queryOptions({
+    queryKey: ['activity', 'library-handoff'] as const,
+    queryFn: (queryContext) =>
+      http.getActivityConsent(queryContext.signal, queryWorkClass(queryContext)),
+    staleTime: 4_000,
+    retry: false,
+  })
 export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) =>
   queryOptions({
     queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const,
@@ -1067,13 +1079,17 @@ const useAnnounceRetaining = (retaining: boolean) => {
   }, [setRetaining, retaining])
 }
 const Shell = () => {
-  const shell = useRef<HTMLDivElement>(null)
   const masthead = useRef<HTMLElement>(null)
   const main = useRef<HTMLElement>(null)
   const previousPath = useRef('')
   const popNavigation = useRef(false)
   const navigation = useRouterState({
     select: (state) => ({ href: state.location.href, status: state.status }),
+  })
+  // A review and the attention queue are both parts of Library, so Library
+  // stays the current destination while either is open.
+  const libraryCurrent = useRouterState({
+    select: (state) => /^\/(?:library|attention)(?:\/|$)|^\/review\//.test(state.location.pathname),
   })
   const { http, queryClient, updates } = rootRoute.useRouteContext()
   useLiveInvalidation(updates, queryClient)
@@ -1102,22 +1118,27 @@ const Shell = () => {
     else delete document.documentElement.dataset.reducedMotion
   }, [appearance.data?.reduced_motion])
   useLayoutEffect(() => {
-    const shellElement = shell.current
     const mastheadElement = masthead.current
-    if (!shellElement || !mastheadElement) return
+    if (!mastheadElement) return
+    const root = document.documentElement
+    // The masthead sticks only while it takes at most a quarter of the
+    // viewport. Taller -- a phone, a short window, enlarged text -- it scrolls
+    // away with the page, so it never covers what the owner reads or focuses.
     const updateMastheadClearance = () => {
-      const clearance = mastheadElement.getBoundingClientRect().height + 8
-      shellElement.style.setProperty('--masthead-clearance', `${clearance.toString()}px`)
+      const height = mastheadElement.getBoundingClientRect().height
+      root.style.setProperty('--masthead-clearance', `${(height + 8).toString()}px`)
+      if (height > window.innerHeight / 4) root.dataset.masthead = 'static'
+      else delete root.dataset.masthead
     }
     updateMastheadClearance()
-    if (!('ResizeObserver' in window)) {
-      return () => shellElement.style.removeProperty('--masthead-clearance')
-    }
-    const observer = new ResizeObserver(updateMastheadClearance)
-    observer.observe(mastheadElement)
+    addEventListener('resize', updateMastheadClearance)
+    const observer = 'ResizeObserver' in window ? new ResizeObserver(updateMastheadClearance) : null
+    observer?.observe(mastheadElement)
     return () => {
-      observer.disconnect()
-      shellElement.style.removeProperty('--masthead-clearance')
+      observer?.disconnect()
+      removeEventListener('resize', updateMastheadClearance)
+      root.style.removeProperty('--masthead-clearance')
+      delete root.dataset.masthead
     }
   }, [])
   useEffect(() => {
@@ -1158,7 +1179,7 @@ const Shell = () => {
     }
   }
   return (
-    <div ref={shell} className="app-shell">
+    <div className="app-shell">
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
@@ -1167,7 +1188,7 @@ const Shell = () => {
           to="/library"
           search={{ lens: 'all' }}
           className="brand"
-          aria-label="Mechanical Librarian home"
+          aria-label="Mechanical Librarian"
         >
           <span className="brand-mark" aria-hidden="true">
             ML
@@ -1179,7 +1200,7 @@ const Shell = () => {
             to="/library"
             search={{ lens: 'all' }}
             activeOptions={{ includeSearch: false }}
-            activeProps={{ 'aria-current': 'page' }}
+            aria-current={libraryCurrent ? 'page' : undefined}
           >
             Library
           </Link>
@@ -1206,9 +1227,12 @@ const Shell = () => {
             Settings
           </Link>
         </nav>
-        <div className="shell-actions">
+        {/* Status has a slot of its own, so a notice arriving moves nothing else. */}
+        <div className="shell-status">
           <LiveStreamNotice state={streamState} />
           <PreparationActivity />
+        </div>
+        <div className="shell-actions">
           <ThemeControl />
           <button className="sign-out" type="button" onClick={() => void signOut()}>
             Sign out
@@ -1298,8 +1322,19 @@ const LibraryRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
   const query = useRetainedQuery(libraryQuery(http, search))
+  const handoff = useQuery(handoffConsentQuery(http))
+  const names = useLibraryName(http, handoffNeedsLibraryNames(handoff.data))
   const [railRetaining, setRailRetaining] = useState(false)
   useAnnounceRetaining(query.isPlaceholderData || railRetaining)
+  // Library waits for the handoff's read to settle once, either way, and for
+  // the library names the notice states, so the notice above the works is
+  // there when they are and never moves them. A read that failed has settled
+  // even while a later mount retries it, and a failed names read falls through.
+  // Once open, Library never returns to pending: a later read only updates.
+  const [opened, setOpened] = useState(false)
+  const settling = (!handoff.dataUpdatedAt && !handoff.errorUpdatedAt) || !names.ready
+  if (!opened && !settling) setOpened(true)
+  if (!opened && settling) return <RoutePending title="Library" />
   return (
     <LibraryPage
       data={query.data}

@@ -1,10 +1,22 @@
-import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useRequiredQuery as useQuery } from '../queryWork'
 import { Link } from '@tanstack/react-router'
 import { Button } from './Button'
 
-import { librarySummaryQuery, useLiveStream, usePreparation, useReviewContext } from '../router'
+import {
+  handoffConsentQuery,
+  librarySummaryQuery,
+  useLiveStream,
+  usePreparation,
+  useReviewContext,
+} from '../router'
 import { useLibraryName } from '../libraryNames'
-import { libraryList, readWriteConsent, writesEnabled, writesOffSentence } from '../writeConsent'
+import {
+  handoffNeedsLibraryNames,
+  libraryList,
+  readWriteConsent,
+  writesEnabled,
+  writesOffSentence,
+} from '../writeConsent'
 
 /**
  * The completion handoff, stated once and compactly inside the Library flow.
@@ -29,26 +41,15 @@ export const WriteReadyNotice = () => {
   const summary = useQuery(librarySummaryQuery(http))
   const works = summary.data?.counts.all
   const query = useQuery({
-    queryKey: ['activity', 'library-handoff'] as const,
-    queryFn: (queryContext) =>
-      http.getActivityConsent(queryContext.signal, queryWorkClass(queryContext)),
-    staleTime: 4_000,
-    retry: false,
+    ...handoffConsentQuery(http),
     // The cadence is the degraded fallback only. While the stream is up, an
     // `activity` invalidation is what brings this notice up to date, which is
     // why the event needs to carry nothing but the fact that it changed.
     refetchInterval: live ? false : 15_000,
   })
   const data = query.data
-  // A lapse, and a library that holds permission beside one that does not, are
-  // named as Settings names them; the notice waits for that read so it is
-  // announced once, with the name (#1370, #1286).
-  const names = useLibraryName(
-    http,
-    data !== undefined &&
-      (data.lapsed_consents.length > 0 ||
-        data.capabilities.some((item) => item.destinations.some((entry) => entry.consented))),
-  )
+  // The notice waits for the names so it is announced once, with them (#1370, #1286).
+  const names = useLibraryName(http, handoffNeedsLibraryNames(data))
   if (!data || !names.ready) return null
   const connectionUnavailable = (preparation?.connections ?? []).some(
     (item) => item.state !== 'recovered',

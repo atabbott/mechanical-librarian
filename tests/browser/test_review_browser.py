@@ -5257,7 +5257,8 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                           const control = document.activeElement
                           const bounds = control?.getBoundingClientRect()
                           const masthead = document.querySelector('.masthead')
-                          const visibleTop = (masthead?.getBoundingClientRect().bottom ?? 0) + 8
+                          // A static masthead may have scrolled away above the top.
+                          const visibleTop = Math.max(0, masthead?.getBoundingClientRect().bottom ?? 0) + 8
                           window.__compactReveal = {
                             requested: typeof options === 'object' ? options.top : null,
                             beforeTop: bounds?.top ?? null,
@@ -5282,7 +5283,7 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                         return null
                       const bounds = control.getBoundingClientRect()
                       const masthead = document.querySelector('.masthead')
-                      const mastheadBottom = masthead?.getBoundingClientRect().bottom ?? 0
+                      const mastheadBottom = Math.max(0, masthead?.getBoundingClientRect().bottom ?? 0)
                       const hit = document.elementFromPoint(
                         Math.min(innerWidth - 1, Math.max(0, bounds.left + bounds.width / 2)),
                         Math.min(innerHeight - 1, Math.max(0, bounds.top + 1)),
@@ -6522,7 +6523,11 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 page.route(
                     "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
                 )
+                # A phone with enlarged text, where the refusal falls below
+                # the fold unless it is brought into view (#1291).
+                page.set_viewport_size({"width": 390, "height": 844})
                 page.goto(origin)
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
                 expect(
                     page.get_by_role("heading", name="Create your owner password")
                 ).to_be_visible()
@@ -6530,10 +6535,49 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
                 page.get_by_label("Confirm owner password", exact=True).fill(_PASSWORD)
                 page.get_by_role("button", name="Create owner access").click()
-                expect(page.get_by_role("alert")).to_contain_text(
+                refusal = page.get_by_role("alert")
+                expect(refusal).to_contain_text(
                     "That setup claim token was not accepted"
                 )
                 expect(claim_token).to_have_attribute("aria-invalid", "true")
+
+                def assert_refusal_in_reach(height: int) -> None:
+                    # The focused field is never off screen. When it and its
+                    # refusal fit together both are in view; otherwise the
+                    # field leads and the refusal begins below it.
+                    page.evaluate("() => new Promise(requestAnimationFrame)")
+                    field = claim_token.bounding_box()
+                    box = refusal.bounding_box()
+                    assert field is not None and box is not None
+                    assert field["y"] >= 0, (height, field, box)
+                    assert field["y"] + field["height"] <= height, (height, field)
+                    assert box["y"] < height, (height, field, box)
+                    # Scroll offsets snap to whole pixels, so allow one.
+                    if box["y"] + box["height"] - field["y"] <= height:
+                        assert box["y"] + box["height"] <= height + 1, (height, box)
+                    expect(claim_token).to_be_focused()
+
+                assert_refusal_in_reach(844)
+                # Shorter and narrower phones, each refused on a fresh page; at
+                # 150% the two fit together, at 200% the field leads.
+                for width, height, size in (
+                    (375, 667, "200%"),
+                    (320, 640, "200%"),
+                    (375, 667, "150%"),
+                    (320, 640, "150%"),
+                ):
+                    page.set_viewport_size({"width": width, "height": height})
+                    page.goto(origin)
+                    page.evaluate(f"document.documentElement.style.fontSize = '{size}'")
+                    page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
+                    page.get_by_label("Confirm owner password", exact=True).fill(
+                        _PASSWORD
+                    )
+                    page.get_by_role("button", name="Create owner access").click()
+                    expect(refusal).to_contain_text(
+                        "That setup claim token was not accepted"
+                    )
+                    assert_refusal_in_reach(height)
                 assert token_file.exists()
                 claim_token.fill(token)
                 page.get_by_role("button", name="Create owner access").click()
@@ -7717,6 +7761,20 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(
                     page.get_by_role("button", name="Show the Hardcover API key")
                 ).to_be_visible()
+                # With 200% text on the narrowest phone, a key and its Show
+                # button share the row or wrap inside it, never past it.
+                page.set_viewport_size({"width": 320, "height": 800})
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                overflowing = page.evaluate(
+                    """() => [...document.querySelectorAll('.reveal-row')].filter(row => {
+                      const edge = row.getBoundingClientRect().right;
+                      return row.scrollWidth > row.clientWidth + 1 || [...row.children]
+                        .some(child => child.getBoundingClientRect().right > edge + 1);
+                    }).length"""
+                )
+                assert overflowing == 0
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 1440, "height": 900})
                 expect(
                     page.get_by_text(
                         "Cover evidence from Audible stays off until you turn it on "
@@ -7968,6 +8026,21 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
             browser.close()
 
 
+# The focused control and how much of it the floating saved notice covers.
+_UNDER_SAVED_NOTICE = """() => {
+  const notice = document.querySelector('.settings-saved');
+  const focused = document.activeElement;
+  if (!notice || !focused || notice.contains(focused)) return null;
+  const a = notice.getBoundingClientRect();
+  const b = focused.getBoundingClientRect();
+  const x = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+  const y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+  if (x <= 0.5 || y <= 0.5) return null;
+  const name = focused.getAttribute('aria-label') || focused.textContent.trim().slice(0, 40);
+  return `${name} by ${Math.round(y)}px of ${Math.round(b.height)}px`;
+}"""
+
+
 def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -8145,7 +8218,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                           const main = document.querySelector('#main-content')?.getBoundingClientRect();
                           const brandMarkElement = document.querySelector('.brand-mark');
                           const brandMark = brandMarkElement?.getBoundingClientRect();
-                          const shellActions = document.querySelector('.shell-actions')?.getBoundingClientRect();
+                          const shellControls = [...document.querySelectorAll('.shell-status > *, .shell-actions')].map((node) => node.getBoundingClientRect());
                           return {
                             overlaps: overlapElements.length,
                             overlapDiagnostic: {
@@ -8173,9 +8246,9 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                               ? brandMarkElement.scrollWidth <= brandMarkElement.clientWidth
                                 && brandMarkElement.scrollHeight <= brandMarkElement.clientHeight
                               : false,
-                            brandActionsOverlap: brandMark && shellActions
-                              ? Math.min(brandMark.right, shellActions.right) > Math.max(brandMark.left, shellActions.left)
-                                && Math.min(brandMark.bottom, shellActions.bottom) > Math.max(brandMark.top, shellActions.top)
+                            brandActionsOverlap: brandMark
+                              ? shellControls.some((controls) => Math.min(brandMark.right, controls.right) > Math.max(brandMark.left, controls.left)
+                                && Math.min(brandMark.bottom, controls.bottom) > Math.max(brandMark.top, controls.top))
                               : false,
                             compactHeaderShare: masthead ? masthead.height / innerHeight : null,
                             compactContentTopShare: main ? main.top / innerHeight : null,
@@ -8392,8 +8465,38 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     expect(page.locator("html")).to_have_attribute(
                         "data-theme", "light" if shown == "dark" else "dark"
                     )
+                heading_top = (
+                    "() => document.querySelector('.settings-heading h1')"
+                    ".getBoundingClientRect().top + scrollY"
+                )
+                before_save = page.evaluate(heading_top)
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
+                # The notice floats; its arrival moves no heading.
+                assert abs(page.evaluate(heading_top) - before_save) <= 1
+                # Tabbing on after the save never leaves focus under the
+                # floating notice, at either text size (WCAG 2.4.11). Text is
+                # resized before the window, as a zoom does both at once.
+                hidden = []
+                for size, width, height in (
+                    ("", 390, 844),
+                    ("", 1440, 900),
+                    ("200%", 390, 844),
+                    ("200%", 1100, 700),
+                ):
+                    page.evaluate(f"document.documentElement.style.fontSize = '{size}'")
+                    page.set_viewport_size({"width": width, "height": height})
+                    page.evaluate("scrollTo(0, 0); document.activeElement?.blur()")
+                    for _ in range(120):
+                        page.keyboard.press("Tab")
+                        if page.evaluate("document.activeElement === document.body"):
+                            break
+                        under = page.evaluate(_UNDER_SAVED_NOTICE)
+                        if under:
+                            hidden.append(f"{size or '100%'} at {width}px: {under}")
+                assert hidden == [], "\n".join(hidden)
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 320, "height": 800})
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[
                     "document"
                 ]

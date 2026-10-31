@@ -63,6 +63,11 @@ brackets are GitHub issues.
 
 ## 0.29.1 — Clarity and accessibility (in progress)
 
+- The masthead holds still as its status changes and scrolls away once taller
+  than a quarter of the window. Library opens with its write handoff in place
+  and stays current on reviews and Attention; saving settings moves nothing.
+  At 200% text Activity, Policy, Settings and setup refusals stay in view, and
+  words break only where they must (#1291).
 - Review choices form one keyboard-navigable radio group, field tabs state
   their status in words, and a cover records in one tap with its pixel size and
   sources (#1290).
