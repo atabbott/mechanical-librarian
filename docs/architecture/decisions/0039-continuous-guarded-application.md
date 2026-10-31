@@ -7,7 +7,8 @@ admission carries a work's active hold to its successor case.
 Issue #1370 amends consent across an owner's policy activation: see
 [Consent across policy activation](#consent-across-policy-activation).
 Issue #1402 amends recovery: a stranded claim returns unsent, and a plan a lost
-connection staled is planned again within a bound.
+connection staled is planned again within a bound. Issue #1415 extends that to
+cover plans.
 
 ## Context
 
@@ -85,14 +86,17 @@ connection is reached the decision is planned for the first time through every
 guard, spending no re-plan attempt (#1423).
 A retry whose earlier outcome was unknown is never sent again: when its
 pre-read shows the desired value at the desired version it is `verified` with no
-request. Cover plans keep `capability` and stay terminal.
+request. A cover plan waits the same way, keeping its consideration and
+recovery copy with no cleanup until it is superseded or ends
+`connection_exhausted` (#1415).
 
 Withdrawn authority or consent supersedes a `retryable` plan or a
 connection-stale plan waiting on it; neither sends anything.
 A superseded or abandoned plan whose history reached `applying` is never planned
 afresh, since that would send an unknown outcome again. A superseded automatic
 cover is planned again only once its recovery cleanup has completed, and the
-re-plan retires that discharged cleanup with the terminal state it belonged to.
+scheduler starts over once that cleanup completes; the re-plan retires that
+discharged cleanup with the terminal state it belonged to.
 
 Pause and library consent revocation stop new claims. They do not interrupt a
 claimed service request. Startup recovers only claimed, applying, verifying, or

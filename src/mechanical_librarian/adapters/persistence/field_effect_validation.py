@@ -1459,6 +1459,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 operation is None
                 or operation.plan.destination != "cover"
                 or operation.state not in TERMINAL_STATES
+                or (operation.state, operation.failure) == ("stale", "connection")
                 or not cleanup(raw)
                 or (raw["plan_id"], raw["state"], raw["attempt"], raw["updated_at"])
                 != (plan_id, state, attempt, updated_at)
@@ -1466,11 +1467,13 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             ):
                 raise FieldEffectError("invalid_cleanup")
             cleanups.add(plan_id)
+        # A cover waiting for its connection has no cleanup until it ends (#1415).
         expected_cleanups = {
             plan_id
             for plan_id, operation in operations.items()
             if operation.plan.destination == "cover"
             and operation.state in TERMINAL_STATES
+            and (operation.state, operation.failure) != ("stale", "connection")
         }
         if cleanups != expected_cleanups:
             raise FieldEffectError("invalid_cleanup")
