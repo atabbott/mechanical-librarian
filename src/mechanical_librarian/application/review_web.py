@@ -110,6 +110,10 @@ _CURRENT_VALUE_REFUSAL_TEXT = {
     "candidate_credit_prefixed": 'The current value carries a credit label such as "Narrated by", so automatic handling never confirms it.',
     "candidate_promotional_title": 'The current title carries an announcement such as "Now a Major Motion Picture", so automatic handling never confirms it.',
 }
+_LANGUAGE_DISPLAY_NAME_TEXT = (
+    "The current value names the same language in another spelling. "
+    "Writing its display name is always your choice, never automatic."
+)
 _AUTOMATIC_REFUSAL_TEXT = {
     "isbn_title_material_conflict": "The sources disagree about the work or title; choose the title yourself.",
     "no_candidate": "No eligible value was found in the retained evidence.",
@@ -1161,7 +1165,12 @@ class InspectCurrentReviewCase:
                     "unsupported",
                 }:
                     message = (
-                        None
+                        # Respelling a current language is never automatic
+                        # (#1314), so it says so rather than "no reason".
+                        _LANGUAGE_DISPLAY_NAME_TEXT
+                        if destination == "language"
+                        and "language_display_name" in field.get("notices", ())
+                        else None
                         if field["proposed_values"]
                         else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
                     ) or _AUTOMATIC_REFUSAL_TEXT.get(

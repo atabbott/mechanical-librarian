@@ -981,3 +981,27 @@ def test_language_display_name_label_in_persisted_automatic_activity(tmp_path, a
         facts = {i["label"]: i["value"] for i in event["evidence"]}
         assert facts["Policy setting"] == "Language rendering: Display name"
         assert facts["New value"] == "English"
+
+
+@pytest.mark.parametrize("audio", (False, True))
+def test_respelling_a_current_language_says_why_it_waits_for_the_owner(tmp_path, audio):
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    report = language_report(("English", "en"), "eng", audio=audio)
+    with closing(open_repository(tmp_path / "respell.sqlite")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository, report, ("language_rendering",)
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "language"
+        )
+        assert field["automatic_decision"] is None
+        assert field["notices"] == ["language_display_name"]
+        assert field["proposed_values"] == [{"kind": "text", "value": "English"}]
+        assert field["automatic_withheld_reason"] == (
+            "The current value names the same language in another spelling. "
+            "Writing its display name is always your choice, never automatic."
+        )

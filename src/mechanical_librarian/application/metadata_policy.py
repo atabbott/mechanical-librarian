@@ -649,7 +649,15 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
                 if not item["automatic_available"]
                 else "fill"
                 if (field == "cover_order" and option == "replace_if_strictly_better")
-                or field in {"subtitle", "description_fill", "isbn_form", "series"}
+                or field
+                in {
+                    "subtitle",
+                    "description_fill",
+                    "isbn_form",
+                    "series",
+                    # A current language is only ever respelled by the owner.
+                    "language_rendering",
+                }
                 or option == "fill_empty"
                 else "add"
                 if option == "add"
