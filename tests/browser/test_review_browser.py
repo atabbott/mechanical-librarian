@@ -3637,7 +3637,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         badge = page.locator(".attention-toggle strong")
         rail = page.get_by_role("complementary", name="Attention queue")
         handoff = page.locator(".cm-library-handoff h2")
-        expect(status).to_have_text("3 works · 1 not matched")
+        expect(status).to_have_text("3 works · 1 not matched · 1 could not finish")
         expect(badge).to_have_text("1 work")
         expect(rail.locator("header p")).to_have_text("1 work needs a decision")
         # One work with two open fields is one group with two rows.
@@ -3663,7 +3663,7 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         expect(badge).to_have_text("1 work")
         search.fill("")
         expect(page).not_to_have_url(re.compile(r"q="))
-        expect(status).to_have_text("3 works · 1 not matched")
+        expect(status).to_have_text("3 works · 1 not matched · 1 could not finish")
         expect(rail.locator("header p")).to_have_text("1 work needs a decision")
         expect(badge).to_have_text("1 work")
         expect(handoff).to_have_text("3 works are in Library. Writes are off.")
@@ -3681,10 +3681,17 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         )
         for lens, visible, announced in (
             ("Not matched", "Found 0 of 1 work", "Found 0 of 1 work not matched"),
+            # The retained work's latest preparation failed, so it is
+            # counted where it could not finish, not as clear (#1413).
             (
                 "No attention needed",
+                "Found 0 of 0 works",
+                "Found 0 of 0 works needing no attention",
+            ),
+            (
+                "Could not finish",
                 "Found 1 of 1 work",
-                "Found 1 of 1 work needing no attention",
+                "Found 1 of 1 work that could not finish",
             ),
             ("All", "Found 1 of 3 works", "Found 1 of 3 works"),
             (
