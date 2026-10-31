@@ -1795,6 +1795,7 @@ def validate_preparation_presentation(connection: sqlite3.Connection) -> None:
             preparation_presentation_snapshot(connection, 0)
         except (
             PreparationPresentationError,
+            KeyError,
             TypeError,
             ValueError,
             sqlite3.Error,

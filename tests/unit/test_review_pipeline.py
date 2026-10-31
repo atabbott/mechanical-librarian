@@ -43,7 +43,10 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
-from mechanical_librarian.adapters.persistence.schema import _REVIEW_WORK_SQL
+from mechanical_librarian.adapters.persistence.schema import (
+    _REVIEW_WORK_SQL,
+    _check_constraint_violation,
+)
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
@@ -1891,9 +1894,18 @@ _PRESENTATION_REFUSAL = (
 
 
 def _assert_presentation_validator_refuses(path: Path) -> None:
-    """Reach the content validator the read-only CHECK sweep now pre-empts."""
+    """One at-rest layer refuses the row: a CHECK or the content validator.
+
+    The read-only CHECK sweep runs before the validator on every open, so a
+    rule that a CHECK states is no longer restated in Python (#1394).
+    """
     connection = sqlite3.connect(path)
     try:
+        objects = connection.execute(
+            "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+        ).fetchall()
+        if _check_constraint_violation(connection, objects) is not None:
+            return
         with pytest.raises(
             MetadataReportError, match="^database is unavailable or incompatible$"
         ):
