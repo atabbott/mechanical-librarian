@@ -24,8 +24,10 @@ from mechanical_librarian.adapters.reviewers import process_group as process_gro
 from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
 
 _DEVICE_URL = "https://auth.openai.com/codex/device"
-_CODE = re.compile(r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
-_CODE_ANYWHERE = re.compile(r"[A-Z0-9]{4}-[A-Z0-9]{4}")
+# The service issues the code, not the pinned CLI: observed codes are four and
+# five characters, and a bounded range absorbs a service-side length change.
+_CODE = re.compile(r"^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$")
+_CODE_ANYWHERE = re.compile(r"[A-Z0-9]{4,8}-[A-Z0-9]{4,8}")
 _URL_ANYWHERE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 # The pinned CLI colours its prompt even with stdout piped, NO_COLOR or
 # TERM=dumb. Only complete SGR sequences are removed; any other escape stays.

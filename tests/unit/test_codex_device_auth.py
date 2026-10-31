@@ -222,8 +222,18 @@ def test_captured_prompt_enters_explicit_issued_state_before_waiting() -> None:
     assert state is not None
     assert state.state == "issued"
     assert state.verification_url == "https://auth.openai.com/codex/device"
-    assert state.user_code == "ABCD-EFGH"
+    assert state.user_code == "ABCD-EFGHJ"
     assert state.expires_in_seconds == 900
+
+
+@pytest.mark.parametrize("code", ("ABCD-EFGH", "AB2D-EFG3J", "ABCDEFGH-23456789"))
+def test_issued_code_length_is_bounded_not_pinned(code: str) -> None:
+    prompt = _PROMPT.replace(b"ABCD-EFGHJ", code.encode())
+    state = _issued_state(
+        [_validated_output_line(line) for line in prompt.split(b"\n")]
+    )
+    assert state is not None
+    assert state.user_code == code
 
 
 def test_captured_prompt_publishes_issued_while_the_cli_waits() -> None:
@@ -247,7 +257,7 @@ def test_captured_prompt_publishes_issued_while_the_cli_waits() -> None:
         CodexDeviceAuthState(
             "issued",
             verification_url="https://auth.openai.com/codex/device",
-            user_code="ABCD-EFGH",
+            user_code="ABCD-EFGHJ",
             expires_in_seconds=900,
         )
     ]
@@ -609,19 +619,19 @@ def _sgr(text: bytes) -> bytes:
 
 
 _URL = _sgr(b"https://auth.openai.com/codex/device")
-_CODE = _sgr(b"ABCD-EFGH")
+_CODE = _sgr(b"ABCD-EFGHJ")
 _EXPIRY = b"Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m"
 
 
 @pytest.mark.parametrize(
     "output",
     (
-        pytest.param(b"https://evil.test/device\nABCD-EFGH\n", id="foreign-url-only"),
+        pytest.param(b"https://evil.test/device\nABCD-EFGHJ\n", id="foreign-url-only"),
         pytest.param(
             _PROMPT.replace(b"15 minutes", b"10 minutes"), id="different-expiry"
         ),
         pytest.param(
-            _PROMPT.replace(b"ABCD-EFGH", b"../../etc/passwd"), id="malformed-code"
+            _PROMPT.replace(b"ABCD-EFGHJ", b"../../etc/passwd"), id="malformed-code"
         ),
         pytest.param(b"\xff\n", id="invalid-utf8"),
         pytest.param(
@@ -645,7 +655,7 @@ _EXPIRY = b"Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m"
             id="over-output-bound",
         ),
         pytest.param(_PROMPT + _URL + b"\n", id="second-url"),
-        pytest.param(_PROMPT + b"   ABCD-EFGH\n", id="second-code"),
+        pytest.param(_PROMPT + b"   ABCD-EFGHJ\n", id="second-code"),
         pytest.param(_PROMPT + b"   WXYZ-2345\n", id="different-second-code"),
         pytest.param(
             _PROMPT.replace(b"Continue only", b"See https://evil.test/ Continue only"),
@@ -667,9 +677,15 @@ _EXPIRY = b"Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m"
             id="url-with-extra-text",
         ),
         pytest.param(
-            _PROMPT.replace(b"ABCD-EFGH", b"ABCD-EFGH now"), id="code-with-extra-text"
+            _PROMPT.replace(b"ABCD-EFGHJ", b"ABCD-EFGHJ now"), id="code-with-extra-text"
         ),
-        pytest.param(_PROMPT.replace(b"ABCD-EFGH", b"abcd-efgh"), id="lower-case-code"),
+        pytest.param(
+            _PROMPT.replace(b"ABCD-EFGHJ", b"abcd-efghj"), id="lower-case-code"
+        ),
+        pytest.param(_PROMPT.replace(b"ABCD-EFGHJ", b"ABC-EFGHJ"), id="short-code"),
+        pytest.param(
+            _PROMPT.replace(b"ABCD-EFGHJ", b"ABCD-EFGHJKLMN"), id="over-long-code"
+        ),
         pytest.param(
             _PROMPT.replace(b"2. Enter", b"2.Enter"), id="step-prefix-without-space"
         ),

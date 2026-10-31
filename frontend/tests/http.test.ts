@@ -290,9 +290,12 @@ describe('reviewer access transport vocabulary', () => {
       failure: null,
     }
     expect(mapCodexDevice(issued).state).toBe('issued')
-    expect(() => mapCodexDevice({ ...issued, user_code: 'Bearer secret' })).toThrow(
-      'invalid_codex_device_response',
-    )
+    expect(mapCodexDevice({ ...issued, user_code: 'ABCD-EFGHJ' }).user_code).toBe('ABCD-EFGHJ')
+    for (const user_code of ['Bearer secret', 'ABC-1234', 'ABCD-123456789']) {
+      expect(() => mapCodexDevice({ ...issued, user_code })).toThrow(
+        'invalid_codex_device_response',
+      )
+    }
     expect(() => mapCodexDevice({ ...issued, invented: true })).toThrow(
       'invalid_codex_device_response',
     )
