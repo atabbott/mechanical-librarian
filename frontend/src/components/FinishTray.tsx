@@ -31,7 +31,13 @@ export const FinishTray = ({
     const element = tray.current
     const root = document.documentElement
     const measure = () => {
+      const settled = element?.hasAttribute('data-static')
       element?.toggleAttribute('data-static', element.offsetHeight > window.innerHeight / 3)
+      // Settling into the page carries a focused command with it, so it is
+      // brought back into view.
+      const focused = document.activeElement
+      if (!settled && element?.hasAttribute('data-static') && focused instanceof HTMLElement)
+        if (element.contains(focused)) focused.scrollIntoView({ block: 'nearest' })
       if (element && getComputedStyle(element).position === 'sticky')
         root.style.setProperty('--finish-tray-height', `${String(element.offsetHeight)}px`)
       else root.style.removeProperty('--finish-tray-height')

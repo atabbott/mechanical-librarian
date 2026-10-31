@@ -5277,9 +5277,13 @@ def test_write_permission_panel_fits_a_phone_at_200_percent_text() -> None:
 
 def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> None:
     """With root font-size 200%, the Policy finish tray's preview-stage steps
-    and actions stay inside the editor at 1440, 1200, 1024 and 375px (#1490)."""
+    and actions stay inside the editor at 1440, 1200, 1024 and 375px (#1490).
+    While it validates, the tray grows past a third of the window and scrolls
+    with the page, and the focused command stays in view (#1503)."""
+    held: list[Route] = []
     with ExitStack() as stack:
         page = _enlarged_cohort(stack, 1440, 900)
+        page.route("**/api/v1/metadata-policy/validate", lambda route: held.append(route))
         failures = []
         for width, height in ((1440, 900), (1200, 900), (1024, 768), (375, 812)):
             page.set_viewport_size({"width": width, "height": height})
@@ -5288,6 +5292,15 @@ def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> 
                 "button", name="Ignore"
             ).click()
             page.get_by_role("button", name="Validate and preview").click()
+            page.get_by_role("button", name="Validating…").wait_for()
+            page.evaluate(_TWO_FRAMES)
+            focus = page.evaluate(
+                "() => { const box = document.activeElement.getBoundingClientRect();"
+                " return [document.activeElement.textContent.trim(), box.top, box.bottom]; }"
+            )
+            if focus[1] < 0 or focus[2] > height + 0.5:
+                failures.append(f"validating at {width}px: {focus} is off screen")
+            held.pop().fallback()
             page.get_by_role("button", name="Review activation").wait_for()
             page.evaluate(_TWO_FRAMES)
             failures += [
