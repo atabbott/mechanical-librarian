@@ -1337,6 +1337,11 @@ export class PageCsrfTokenStore implements CsrfTokenStore {
   }
 }
 
+// An expired session signs in again and returns to the page it was on; the
+// server accepts only a workspace page as the return path (#1371).
+export const signInLocation = (location: Pick<Location, 'pathname' | 'search'> = window.location) =>
+  `/login?next=${encodeURIComponent(location.pathname + location.search)}`
+
 export class ReviewApiClient implements ReviewHttp {
   private readonly fetch: typeof globalThis.fetch
   private readonly onSessionExpired: () => void
@@ -1346,7 +1351,8 @@ export class ReviewApiClient implements ReviewHttp {
   private sessionExpiryNavigationScheduled = false
   constructor(private readonly options: HttpClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis)
-    this.onSessionExpired = options.onSessionExpired ?? (() => window.location.assign('/login'))
+    this.onSessionExpired =
+      options.onSessionExpired ?? (() => window.location.assign(signInLocation()))
     this.onBuildMismatch = options.onBuildMismatch ?? (() => undefined)
     this.buildIdentity =
       options.buildIdentity && buildPattern.test(options.buildIdentity)

@@ -3,6 +3,7 @@ import currentActivity from './descriptionAdviceActivityFixture.json'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  signInLocation,
   ApiError,
   AmbiguousMutationError,
   CsrfRenewedError,
@@ -3886,5 +3887,14 @@ describe('deferred Activity permission contract', () => {
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
     expect(await client.getActivityConsent()).toEqual(mapActivityConsent(response))
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/activity/consent-state')
+  })
+})
+
+describe('signInLocation', () => {
+  it('carries the current page and query as the return path (#1371)', () => {
+    expect(signInLocation({ pathname: '/review/case-1', search: '?field=title' })).toBe(
+      '/login?next=%2Freview%2Fcase-1%3Ffield%3Dtitle',
+    )
+    expect(signInLocation({ pathname: '/library', search: '' })).toBe('/login?next=%2Flibrary')
   })
 })

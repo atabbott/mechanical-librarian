@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Iterable
 
 
-def login_html() -> str:
-    return """<!doctype html>
+def login_html(return_path: str | None = None) -> str:
+    """The caller validates ``return_path`` as a same-origin workspace page."""
+    next_attribute = (
+        "" if return_path is None else f' data-next="{html.escape(return_path)}"'
+    )
+    return (
+        """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -31,7 +37,9 @@ def login_html() -> str:
       <p class="eyebrow">Private owner access</p>
       <h1 id="login-title">Review your library with confidence.</h1>
       <p class="lede">Sign in to see what needs your attention in your library. Nothing changes in your library until you give write permission, and every change is checked before it is written.</p>
-      <form id="login" novalidate>
+      <form id="login" novalidate"""
+        + next_attribute
+        + """>
         <label for="password">Owner password</label>
         <div class="password-row">
           <input id="password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-status">
@@ -52,6 +60,7 @@ def login_html() -> str:
   <script src="/assets/login.js" defer></script>
 </body>
 </html>"""
+    )
 
 
 # Runs blocking in the head of sign-in and setup, before first paint. It applies
@@ -180,6 +189,20 @@ LOGIN_JS = r"""
     401: 'That password was not accepted. Check it and try again.',
     429: 'Too many sign-in attempts from this device. Wait five minutes, then try again.',
   };
+  // The server names a return page only after checking it; this check keeps
+  // the destination on this origin even so (#1371).
+  const returnPath = () => {
+    const next = document.querySelector('#login').dataset.next;
+    if (next && next.startsWith('/') && !next.startsWith('//') && !next.includes('\\')) {
+      try {
+        const url = new URL(next, window.location.origin);
+        if (url.origin === window.location.origin) return url.pathname + url.search;
+      } catch (_) {
+        // Fall through to Library.
+      }
+    }
+    return '/library';
+  };
   document.querySelector('#login').addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('button[type=submit]');
@@ -202,7 +225,7 @@ LOGIN_JS = r"""
       });
       status = response.status;
       if (response.ok) {
-        window.location.assign('/library');
+        window.location.assign(returnPath());
         return;
       }
     } catch (_) {

@@ -6,6 +6,7 @@ served composition.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -1553,6 +1554,93 @@ def test_expired_session_redirects_html_shell_while_api_remains_json(
     api = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert api.status_code == 401
     assert api.json()["error"]["code"] == "unauthorized"
+
+
+def test_root_opens_library_only_with_a_valid_session(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    signed_out = web.client.get("/", follow_redirects=False)
+    assert signed_out.status_code == 303
+    assert signed_out.headers["location"] == "/login"
+    web.login()
+    signed_in = web.client.get("/", follow_redirects=False)
+    assert signed_in.status_code == 303
+    assert signed_in.headers["location"] == "/library"
+    web.now += 601
+    expired = web.client.get("/", follow_redirects=False)
+    assert expired.headers["location"] == "/login"
+
+
+@pytest.mark.parametrize(
+    ("requested", "location"),
+    [
+        ("/library", "/login"),
+        ("/library?lens=all", "/login?next=%2Flibrary%3Flens%3Dall"),
+        ("/attention", "/login?next=%2Fattention"),
+        (
+            "/review/case-1?field=title",
+            "/login?next=%2Freview%2Fcase-1%3Ffield%3Dtitle",
+        ),
+        ("/settings", "/login?next=%2Fsettings"),
+        ("/review/case%201", "/login"),
+    ],
+)
+def test_signed_out_workspace_page_signs_in_with_its_return_path(
+    web: ReviewWebContext[FakeReviewRepository], requested: str, location: str
+) -> None:
+    shell = web.client.get(requested, follow_redirects=False)
+    assert shell.status_code == 303
+    assert shell.headers["location"] == location
+
+
+@pytest.mark.parametrize(
+    "next_path",
+    [
+        "/attention",
+        "/library?lens=all&page=2",
+        "/review/review_case_" + "a" * 64,
+        "/review/case-1?field=title",
+        "/activity?filter=stopped",
+    ],
+)
+def test_sign_in_page_carries_a_workspace_return_path(
+    web: ReviewWebContext[FakeReviewRepository], next_path: str
+) -> None:
+    page = web.client.get("/login", params={"next": next_path})
+    assert page.status_code == 200
+    assert f' data-next="{html.escape(next_path)}"' in page.text
+
+
+@pytest.mark.parametrize(
+    "next_path",
+    [
+        "//evil.invalid/library",
+        "///evil.invalid",
+        "/\\evil.invalid",
+        "https://evil.invalid/library",
+        "javascript:alert(1)",
+        "evil.invalid/library",
+        "/library/../../evil",
+        "/library/x",
+        "/login",
+        "/api/v1/library",
+        "/unknown",
+        "/library#top",
+        "/library?q=a b",
+        '/library?q="><script>',
+        "/library?q=\\evil",
+        "/library\n",
+        "/review/" + "a" * 129,
+        "/library?" + "a" * 2049,
+        "",
+    ],
+)
+def test_sign_in_page_refuses_any_other_return_path(
+    web: ReviewWebContext[FakeReviewRepository], next_path: str
+) -> None:
+    page = web.client.get("/login", params={"next": next_path})
+    assert page.status_code == 200
+    assert "data-next" not in page.text
 
 
 def test_malformed_case_decision_body_is_bounded_before_validation(

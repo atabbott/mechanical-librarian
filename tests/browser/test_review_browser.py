@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import Mock, patch
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import pytest
 import uvicorn
@@ -7406,6 +7406,75 @@ def test_sign_in_failures_are_specific_and_recoverable() -> None:
                     page.wait_for_url(f"{origin}/library")
                     assert errors == []
             browser.close()
+
+
+def test_sign_in_returns_to_the_requested_page_and_root_opens_library() -> None:
+    """#1371: a deep link survives sign-in, only to this origin, and / opens Library."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with (
+            sync_playwright() as playwright,
+            closing(ReservedPort()) as reserved_port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=reserved_port,
+            ) as (origin, case_id),
+        ):
+            browser = playwright.chromium.launch(headless=True)
+
+            def sign_in(page: Page) -> None:
+                page.get_by_label("Password").fill(_PASSWORD)
+                page.get_by_role("button", name="Sign in").click()
+
+            context = browser.new_context(ignore_https_errors=True)
+            with _closing_context(context):
+                page = context.new_page()
+                errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, errors))
+                page.route(
+                    "**/favicon.ico", lambda route: route.fulfill(status=204, body="")
+                )
+                deep_link = f"/review/{case_id}"
+                page.goto(origin + deep_link)
+                page.wait_for_url(f"{origin}/login?next=%2Freview%2F{case_id}")
+                sign_in(page)
+                page.wait_for_url(origin + deep_link)
+                expect(page.locator("#main-content")).to_have_attribute(
+                    "data-restored-path", deep_link
+                )
+
+                opened = context.request.get(origin + "/", max_redirects=0)
+                assert opened.status == 303
+                assert opened.headers["location"] == "/library"
+                page.goto(origin + "/")
+                page.wait_for_url(re.compile(re.escape(origin) + r"/library(\?.*)?$"))
+                assert errors == []
+
+            for refused in (
+                "//evil.invalid/library",
+                "https://evil.invalid/library",
+                "/\\evil.invalid/library",
+                "javascript:alert(1)",
+            ):
+                context = browser.new_context(ignore_https_errors=True)
+                with _closing_context(context):
+                    page = context.new_page()
+                    page.route(
+                        "**/favicon.ico",
+                        lambda route: route.fulfill(status=204, body=""),
+                    )
+                    page.goto(f"{origin}/login?next={quote(refused, safe='')}")
+                    assert page.locator("#login").get_attribute("data-next") is None
+                    sign_in(page)
+                    page.wait_for_url(f"{origin}/library")
 
 
 def test_sign_in_and_setup_paint_the_saved_or_system_theme_first() -> None:
