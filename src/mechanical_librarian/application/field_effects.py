@@ -715,7 +715,12 @@ class GuardedFieldApplication:
             return
         try:
             current = self._repository.get_field_effect(plan.plan_id)
-            if current.state in {"stale", "superseded", "abandoned"}:
+            # A cover waiting for its connection keeps its restore point: the
+            # re-plan resumes it, and capturing again would keep these bytes.
+            if current.state in {"stale", "superseded", "abandoned"} and (
+                current.state,
+                current.failure,
+            ) != ("stale", "connection"):
                 self._cover_recovery.remove(plan.plan_id)
         except FieldEffectError as error:
             # A vanished row is the one benign outcome: there is no terminal
@@ -1060,14 +1065,7 @@ class GuardedFieldApplication:
         return None
 
     def _connection_failure(self, plan: FieldEffectPlan) -> str:
-        """Name a stale caused only by a lost connection, within its bound.
-
-        A cover plan keeps `capability`: its stale retires the owner's cover
-        consideration and schedules recovery cleanup, which a later plan
-        cannot take back, so covers stay terminal as before (#1402).
-        """
-        if plan.destination == "cover":
-            return "capability"
+        """Name a stale caused only by a lost connection, within its bound."""
         return (
             "connection"
             if self._repository.field_effect_connection_stales(

@@ -94,6 +94,9 @@ brackets are GitHub issues.
 - A work's collapsed list of fields with nothing to decide is headed "No
   change:" and their names, counts waiting or unavailable fields separately,
   and says no source offered a different value (#1514).
+- A cover write held up because Audiobookshelf could not be reached now waits
+  and is applied once the connection is back, up to three times, like every
+  other field, instead of stopping. No clean rebuild is needed (#1415).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

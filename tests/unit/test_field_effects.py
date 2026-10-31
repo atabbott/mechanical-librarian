@@ -3472,6 +3472,29 @@ def test_cover_cleanup_faults_do_not_masquerade_as_claim_contention(
     assert effects.repository.field_effect_cleanup_pending(cover.plan.plan_id)
 
 
+def test_a_failed_claim_keeps_a_waiting_covers_recovery_copy(
+    effects: _EffectEnvironment,
+) -> None:
+    """A claim lost to a connection stale keeps the restore point its re-plan
+    resumes with, and schedules no cleanup for it (#1415)."""
+    cover = _plan(effects, "cover", None, "cover_" + "1" * 64, "c")
+    effects.claim_hook.callback = lambda plan: (
+        effects.repository.transition_field_effect(
+            plan.plan_id, "planned", "stale", effects.clock(), "connection"
+        )
+    )
+    with pytest.raises(GuardedApplicationError, match="claim_conflict"):
+        effects.service.apply(cover.plan.plan_id)
+    waiting = effects.service.status(cover.plan.plan_id)
+    assert (waiting.state, waiting.failure) == ("stale", "connection")
+    assert effects.recovery.exists(cover.plan.plan_id)
+    assert not effects.repository.field_effect_cleanup_pending(cover.plan.plan_id)
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM field_effect_cleanups WHERE plan_id=?",
+        (cover.plan.plan_id,),
+    ).fetchone() == (0,)
+
+
 def test_cover_cleanup_separates_a_vanished_row_from_a_storage_fault(
     effects: _EffectEnvironment,
 ) -> None:
