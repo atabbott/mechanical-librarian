@@ -51,6 +51,9 @@ brackets are GitHub issues.
   tray scrolls with the page once taller than a third of the window; setup's
   step list, the masthead's background-work popover and Activity's pager
   controls stay in view and full size (#1491, #1503).
+- When setup's step list is too narrow to hold a step's name beside its Change
+  button, as it is beside the steps with 200% text, the button moves under the
+  name, so words such as "Audiobookshelf" stay whole (#1508).
 
 ## 0.29.3 — Review fixes and hygiene (in progress)
 

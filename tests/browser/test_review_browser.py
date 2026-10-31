@@ -7038,6 +7038,14 @@ _SPLIT_SETUP_WORDS = """() => {
     found.push('the mark spills its letters');
   return found;
 }"""
+# Each step-list button that reaches past either side of the step list.
+_STEP_BUTTONS_PAST_ASIDE = """() => {
+  const aside = document.querySelector('aside').getBoundingClientRect();
+  return [...document.querySelectorAll('aside button')]
+    .map((node) => [node, node.getBoundingClientRect()])
+    .filter(([, box]) => box.left < aside.left - 0.5 || box.right > aside.right + 0.5)
+    .map(([node]) => `${node.getAttribute('aria-label')} reaches past the step list`);
+}"""
 # Each step-list button that, once focused, lies outside the viewport.
 _OFF_SCREEN_STEP_BUTTONS = """() => [...document.querySelectorAll('aside button')]
   .map((node) => { node.focus(); return [node, node.getBoundingClientRect()]; })
@@ -7049,11 +7057,12 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
     """On the providers step, the "ML" mark stands 3:1 off the masthead and its
     letters 4.5:1 off the mark in dark mode, set or followed from the system
     (#1490); every step-list Change button is a 2.75rem target at every width
-    and text size; and with 200% text at 375 and 320px no word breaks in the
-    step list, the mark, a provider's name or its access link, such as
-    Hardcover, and the mark holds its letters; and at 200% text on a wide
-    screen, root or browser font, the step list never holds a focused button
-    off screen (#1491)."""
+    and text size; with 200% text, in both themes and from 1440 to 320px, no
+    word breaks in the step list, such as Audiobookshelf beside its Change
+    button, the mark, a provider's name or its access link, such as Hardcover,
+    the mark holds its letters and every Change button stays inside the step
+    list (#1491, #1508); and at 200% text on a wide screen, root or browser
+    font, the step list never holds a focused button off screen (#1491)."""
     with tempfile.TemporaryDirectory() as directory:
         with (
             real_setup_server(Path(directory)) as (origin, token_file, _cert),
@@ -7095,19 +7104,29 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
                             f"dark ({'set' if theme else 'system'}): the mark is "
                             f"{mark:.2f}:1 off the masthead, its letters {letters:.2f}:1"
                         )
-                for text in ("", "200%"):
+                schemes: tuple[tuple[Literal["light", "dark"], str], ...] = (
+                    ("dark", ""),
+                    ("dark", "200%"),
+                    ("light", "200%"),
+                )
+                for scheme, text in schemes:
+                    page.emulate_media(color_scheme=scheme)
                     set_root_text(page, text)
-                    for width in (1440, 760, 390, 375, 320):
+                    for width in (1440, 1200, 760, 390, 375, 320):
                         page.set_viewport_size({"width": width, "height": 812})
-                        where = f"{text or '100%'} text at {width}px"
+                        where = f"{scheme}, {text or '100%'} text at {width}px"
                         failures += [
                             f"{where}: {short}"
                             for short in page.evaluate(_SHORT_STEP_BUTTONS)
                         ]
-                        if text and width <= 375:
+                        if text:
                             failures += [
                                 f"{where}: {split}"
                                 for split in page.evaluate(_SPLIT_SETUP_WORDS)
+                            ]
+                            failures += [
+                                f"{where}: {spill}"
+                                for spill in page.evaluate(_STEP_BUTTONS_PAST_ASIDE)
                             ]
                         if text and width == 1440:
                             failures += [
