@@ -685,7 +685,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
         events: [{ work_label: 'Changed work', state: 'stale', failure: 'target_changed' }],
       },
-      'Item changed; nothing written',
+      'Item changed; closed safely',
     ],
     [
       'connection-waiting',
@@ -1466,7 +1466,7 @@ describe('Activity route', () => {
   it.each([
     ['connection', 'Waiting safely'],
     ['connection_exhausted', 'Closed safely'],
-    ['target_changed', 'Item changed; nothing written'],
+    ['target_changed', 'Item changed; closed safely'],
   ])('labels each lifecycle stale from its own %s failure', async (failure, latest) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {

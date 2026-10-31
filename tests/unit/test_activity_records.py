@@ -145,7 +145,7 @@ def test_each_durable_state_has_one_closed_owner_visible_result(
         ("connection", "Waiting safely"),
         ("connection_exhausted", "Closed safely"),
         ("capability", "Closed safely"),
-        ("target_changed", "Item changed; nothing written"),
+        ("target_changed", "Item changed; closed safely"),
     ),
 )
 def test_only_a_connection_stale_reads_as_waiting(failure: str, result: str) -> None:

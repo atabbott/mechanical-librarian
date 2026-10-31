@@ -18,10 +18,11 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
 }
 // A change stopped only by a lost connection is still waiting to be prepared
 // again, so it reads as waiting rather than as a stopped stale (#1402). One
-// that closed because the item changed before the write says so (#1542).
+// that closed because the item changed says so, without claiming nothing was
+// written: an earlier attempt may have landed (#1542).
 const staleLabels: Readonly<Record<string, string>> = {
   connection: 'Waiting safely',
-  target_changed: 'Item changed; nothing written',
+  target_changed: 'Item changed; closed safely',
 }
 export const stateLabel = (
   state: string,

@@ -79,7 +79,7 @@ class ActivityResult(StrEnum):
     WAITING_SAFELY = "Waiting safely"
     VERIFIED = "Verified"
     CLOSED_SAFELY = "Closed safely"
-    ITEM_CHANGED = "Item changed; nothing written"
+    ITEM_CHANGED = "Item changed; closed safely"
     SUPERSEDED = "Superseded"
     STOPPED_SAFELY = "Stopped safely"
     RECORDED = "Recorded"
@@ -193,7 +193,8 @@ def activity_result_label(state: str, failure: object = None) -> ActivityResult:
 
     A change stopped only by a lost connection is still waiting to be prepared
     again, so it reads as waiting rather than as a stopped stale (#1402). One
-    that closed because the item changed before the write says so (#1542).
+    that closed because the item changed says so, without claiming nothing was
+    written: an earlier attempt may have landed (#1542).
     """
     if (state, failure) == ("stale", "connection"):
         return ActivityResult.WAITING_SAFELY
