@@ -2332,7 +2332,10 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
 
                 page.route("**/api/v1/metadata-policy/state", expire_policy_request)
                 policy.evaluate("(element) => element.click()")
-                expect(page).to_have_url(f"{origin}/login")
+                # The expired session signs in again toward the page it was opening.
+                expect(page).to_have_url(
+                    f"{origin}/login?next=%2Fpolicy%3Fsection%3Didentity"
+                )
                 _login(page, origin)
                 assert persisted_sessions() == [(1_400, 1_700)]
                 context.close()
