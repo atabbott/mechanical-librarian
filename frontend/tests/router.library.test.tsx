@@ -1759,7 +1759,7 @@ describe('Library route', () => {
       id: 'failed-work',
       title: 'Preparation unavailable',
       attentionCount: 0,
-      attention: 'no_attention_needed' as const,
+      attention: 'preparation_failed' as const,
       // Neither a case nor a report: there is nothing here to open.
       detailUrl: null,
       detailKind: null,
@@ -1791,16 +1791,21 @@ describe('Library route', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getLibrary: vi.fn(async () => ({
-        lens: 'all' as const,
+      getLibrary: vi.fn(async (search: LibrarySearch) => ({
+        lens: search.lens,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+        counts: { attention: 0, all: 1, clear: 0, notMatched: 0, failed: 1 },
         works: [failed],
       })),
     }
     renderRoute('/library?lens=all', http)
 
     expect(await screen.findByText('Preparation failed safely')).toBeVisible()
+    // Counted as failed beside the Works count, never as needing no attention,
+    // under its own heading in All (#1413).
+    expect(await screen.findByText('1 work · 1 could not finish')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Could not finish' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     const terminal = document.querySelector('.library-work-row.is-terminal')
     expect(terminal?.tagName).toBe('ARTICLE')
     expect(terminal).toHaveAttribute('aria-label', 'Terminal preparation failure')
@@ -1810,6 +1815,22 @@ describe('Library route', () => {
       'Update the configured provider credentials, then scan this library again.',
     )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
+
+    // Its own lens reads only failed works, alphabetically and without a group.
+    await userEvent.setup().click(screen.getByRole('link', { name: 'Could not finish' }))
+    await waitFor(() =>
+      expect(http.getLibrary).toHaveBeenCalledWith(
+        expect.objectContaining({ lens: 'preparation_failed' }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    )
+    expect(await screen.findByRole('link', { name: 'Could not finish' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    expect(screen.queryByRole('heading', { name: 'Could not finish' })).toBeNull()
+    expect(screen.getByText('Preparation failed safely')).toBeVisible()
   })
 
   it.each([
@@ -1939,7 +1960,7 @@ describe('Library route', () => {
         getLibrary: vi.fn(async () => ({
           lens: 'all' as const,
           page: 1,
-          counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+          counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
           works: [...library.works, recorded],
         })),
       }
@@ -2141,7 +2162,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
         works: [masked],
       })),
     }
@@ -2154,7 +2175,7 @@ describe('Library route', () => {
     expect(row).not.toHaveTextContent('No provider matched')
     expect(row).toHaveAccessibleName(/Preparation failed safely/u)
     expect(row).not.toHaveAccessibleName(/No provider matched/u)
-    expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.status-pill.is-notice')).not.toBeNull()
   })
@@ -2194,7 +2215,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: LibrarySearch) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 4, clear: 0, notMatched: 4 },
+      counts: { attention: 0, all: 4, clear: 0, notMatched: 4, failed: 0 },
       works,
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -2204,7 +2225,7 @@ describe('Library route', () => {
     expect(await screen.findByText('4 works · 4 not matched')).toBeVisible()
     expect(
       within(screen.getByRole('navigation', { name: 'Library lenses' })).getAllByRole('link'),
-    ).toHaveLength(4)
+    ).toHaveLength(5)
     expect(screen.getByRole('heading', { name: 'Not matched' })).toBeVisible()
     for (const [key, reason] of [
       ['refused', 'Found, but not this work'],
@@ -2246,11 +2267,11 @@ describe('Library route', () => {
     expect(screen.getByRole('link', { name: 'Not matched' })).toBeVisible()
   })
 
-  it('adds Not matched to the Works count only when there is one to state and no search (#1407)', async () => {
-    const page = (search: LibrarySearch, notMatched: number) => ({
+  it('adds Not matched and Could not finish to the Works count only when there is one to state and no search (#1407, #1413)', async () => {
+    const page = (search: LibrarySearch, notMatched: number, failed = 0) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2 - notMatched, notMatched },
+      counts: { attention: 0, all: 2, clear: 2 - notMatched - failed, notMatched, failed },
       works: [],
     })
     const counted = async (getLibrary: ReviewHttp['getLibrary']) => {
@@ -2267,7 +2288,13 @@ describe('Library route', () => {
         search.lens === 'all' ? new Promise<never>(() => undefined) : page(search, 1),
       ),
     )
-    await waitFor(() => expect(status).toHaveTextContent(/^2 works · … not matched$/u))
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works · …$/u))
+    status = await counted(vi.fn(async (search: LibrarySearch) => page(search, 1, 1)))
+    await waitFor(() =>
+      expect(status).toHaveTextContent(/^2 works · 1 not matched · 1 could not finish$/u),
+    )
+    status = await counted(vi.fn(async (search: LibrarySearch) => page(search, 0, 1)))
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works · 1 could not finish$/u))
     status = await counted(
       vi.fn(async (search: LibrarySearch) => {
         if (search.lens === 'all') throw new ApiError(503, 'unavailable')
@@ -2290,6 +2317,9 @@ describe('Library route', () => {
   it('keeps an unknown lens out of the URL it reads (#1407)', () => {
     expect(normalizeLibrarySearch({ lens: 'not_matched' })).toEqual({ lens: 'not_matched' })
     expect(normalizeLibrarySearch({ lens: 'not_matched_refused' })).toEqual({ lens: 'all' })
+    expect(normalizeLibrarySearch({ lens: 'preparation_failed' })).toEqual({
+      lens: 'preparation_failed',
+    })
   })
 
   it('states media health on an openable row whose latest preparation could not read a file', async () => {
@@ -2332,7 +2362,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
         works: [retained],
       })),
     }
@@ -2372,7 +2402,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
+        counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
         works: [current],
       })),
     }
@@ -2415,7 +2445,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+      counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
       works: search.q ? [] : [listed],
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -2463,7 +2493,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2, notMatched: 0 },
+      counts: { attention: 0, all: 2, clear: 2, notMatched: 0, failed: 0 },
       works: search.q ? [] : [first, second],
     }))
     const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -5577,10 +5607,13 @@ describe('Library route', () => {
         target_fingerprint: series.targetFingerprint,
       },
     }
-    const initialLibrary = { ...library, counts: { all: 1, attention: 1, clear: 0, notMatched: 0 } }
+    const initialLibrary = {
+      ...library,
+      counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+    }
     const settledLibrary = {
       ...initialLibrary,
-      counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
+      counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
       works: [{ ...work, attention: 'no_attention_needed' as const, attentionCount: 0 }],
     }
     let currentDetail: CaseDetailView = { ...detail, fields: [series] }
@@ -6127,7 +6160,7 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         ...library,
-        counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
+        counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
         works: library.works.map((work) => ({
           ...work,
           workAttentionCount: 0,
@@ -7722,7 +7755,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 1, all: 1, clear: 0, notMatched: 0 },
+                counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
                 works: [],
               },
       ),
@@ -7924,7 +7957,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 0, all: 1, clear: 1, notMatched: 0 },
+                counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
                 works: [],
               },
       ),
@@ -9715,7 +9748,7 @@ describe('Library route', () => {
           settle?.({
             ...library,
             works: [],
-            counts: { attention: 0, all: 0, clear: 0, notMatched: 0 },
+            counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
           })
         else reject?.(new Error('Collection unavailable'))
       })
@@ -9957,7 +9990,7 @@ describe('Library route', () => {
     const emptyLibrary: LibraryView = {
       lens: 'all',
       page: 1,
-      counts: { attention: 0, all: 0, clear: 0, notMatched: 0 },
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
       works: [],
     }
     const http: ReviewHttp = {
@@ -10325,9 +10358,7 @@ describe('Provider evidence rail', () => {
       getLibrary: vi.fn(async () => ({ ...library, works: [failed] })),
     })
     renderRoute('/library?lens=all', http)
-    expect(
-      await screen.findByRole('heading', { name: 'Preparation needs attention' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(screen.getByRole('article', { name: 'Terminal preparation failure' })).toHaveTextContent(
       'open Background activity and choose Retry',
@@ -11938,7 +11969,7 @@ describe('library provider throttling notice (#1282)', () => {
 describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const counted = (attention: number, all: number): LibraryView => ({
     ...library,
-    counts: { attention, all, clear: all - attention, notMatched: 0 },
+    counts: { attention, all, clear: all - attention, notMatched: 0, failed: 0 },
   })
   const badge = () => document.querySelector('.attention-toggle strong')
   const worksStatus = () => document.querySelector('.library-works-heading [role="status"]')
@@ -12040,8 +12071,8 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         ...library,
         lens: search.lens,
         counts: search.q
-          ? { attention: 1, all: 4, clear: 2, notMatched: 1 }
-          : { attention: 3, all: 10, clear: 5, notMatched: 2 },
+          ? { attention: 1, all: 4, clear: 2, notMatched: 1, failed: 0 }
+          : { attention: 3, all: 10, clear: 5, notMatched: 2, failed: 0 },
       }))
       renderRoute(`/library?lens=${lens}&q=needle`, http)
       await waitFor(() =>

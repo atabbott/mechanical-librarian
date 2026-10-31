@@ -2278,6 +2278,7 @@ def test_concurrent_initial_library_and_attention_use_real_http(tmp_path: Path) 
                 "needs_attention": expected[1],
                 "no_attention_needed": expected[0] - expected[1],
                 "not_matched": 0,
+                "preparation_failed": 0,
             }
             assert len(library_response.json()["items"]) == 5
             assert attention_response.json()["total"] == fields

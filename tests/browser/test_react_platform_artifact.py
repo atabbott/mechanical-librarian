@@ -3589,7 +3589,7 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
         expect(page.locator(".attention-toggle strong")).to_have_text("5 works")
         expect(page).to_have_url(re.compile(r"preview=case-1"))
         expect(page.locator(".library-works-heading [role='status']")).to_have_text(
-            "20 works"
+            "20 works · 1 could not finish"
         )
 
         # B2: the rail groups six field rows under four works.
