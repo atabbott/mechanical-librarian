@@ -4783,6 +4783,10 @@ _UI_LABELS = (
     )
 )
 _WORKS_ROWS = ".library-work-row"
+# A work's title and authors in the Attention rail and on a decision's
+# choices: data words that must stay whole wherever their line could hold them,
+# at every width (#1530).
+_WORK_TITLES = ".attention-work-identity, .workspace-detail .value-choice strong"
 # Of the split words `_POLICY_MID_WORD` found, those the layout split without
 # need. A word may break only when it is wider than its whole line box. For a
 # word of the interface that box must also hold at least half the page's
@@ -4827,7 +4831,9 @@ def test_words_break_only_where_they_must() -> None:
     """No interface word splits where the layout could have kept it whole, on
     every route state at every frozen width and both text sizes, and no page
     is wider than the window (#1291). Enlarged text is root font-size 200%.
-    From 1100px up a works row's words, title included, stay whole too."""
+    From 1100px up a works row's words, title included, stay whole too, and a
+    work's title in the Attention rail and on its choices does at every width
+    (#1530)."""
     routes = {
         "library": "/library?lens=all",
         "selected": "/library?lens=all&preview=case-1",
@@ -4864,6 +4870,12 @@ def test_words_break_only_where_they_must() -> None:
                     if rows and width >= 1100:
                         needless = page.evaluate(_NEEDLESS_SPLITS, [_WORKS_ROWS, rows])
                         failures += [f"{where}: works row {word}" for word in needless]
+                    titles = page.evaluate(_POLICY_MID_WORD, _WORK_TITLES)
+                    if titles:
+                        needless = page.evaluate(
+                            _NEEDLESS_SPLITS, [_WORK_TITLES, titles]
+                        )
+                        failures += [f"{where}: work title {word}" for word in needless]
                     overflow = page.evaluate(
                         "document.scrollingElement.scrollWidth - innerWidth"
                     )
