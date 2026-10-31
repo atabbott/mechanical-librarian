@@ -41,6 +41,7 @@ _CAPTURE = json.loads(_CAPTURE_PATH.read_text(encoding="utf-8"))
 _PROMPT = _CAPTURE["device_prompt"].encode()
 _STATUS = _CAPTURE["login_status"].encode()
 _APPROVED = _PROMPT + _CAPTURE["device_success"].encode()
+_CLI_TIMEOUT = _CAPTURE["device_timeout"].encode()
 
 
 def _auth_document() -> bytes:
@@ -305,6 +306,42 @@ def test_exact_timeout_is_expired_and_permission_failure_is_failed(
     _finish(failed)
     assert failed.status().state == "failed"
     assert failed.status().failure == "permission_or_process"
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        _CLI_TIMEOUT,
+        b"\x1b[31m" + _CLI_TIMEOUT.rstrip(b"\n") + b"\x1b[0m\n",
+        b"  " + _CLI_TIMEOUT.rstrip(b"\n") + b"   \n",
+        _CLI_TIMEOUT.rstrip(b"\n"),
+    ],
+    ids=["captured", "coloured", "padded", "unterminated"],
+)
+def test_cli_own_timeout_line_is_expired(tmp_path: Path, terminal: bytes) -> None:
+    manager = _manager(tmp_path, output=_PROMPT + terminal, returncode=1)
+    _finish(manager)
+    assert manager.status().state == "expired"
+
+
+@pytest.mark.parametrize(
+    "terminal",
+    [
+        b"Error logging in with device code: device auth timed out after 15 minutes!\n",
+        b"note: Error logging in with device code: device auth timed out after 15"
+        b" minutes\n",
+        b"Error logging in with device code: device auth timed out after 16 minutes\n",
+        b"Error logging in: device auth timed out after 15 minutes\n",
+        b"error logging in with device code: device auth timed out after 15 minutes\n",
+        _CLI_TIMEOUT + b"retrying\n",
+    ],
+    ids=["suffixed", "prefixed", "other-duration", "other-prefix", "case", "not-last"],
+)
+def test_near_miss_timeout_line_is_failed(tmp_path: Path, terminal: bytes) -> None:
+    manager = _manager(tmp_path, output=_PROMPT + terminal, returncode=1)
+    _finish(manager)
+    assert manager.status().state == "failed"
+    assert manager.status().failure == "permission_or_process"
 
 
 def test_staging_removal_refusal_after_install_never_publishes_usable(

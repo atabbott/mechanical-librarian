@@ -35,6 +35,9 @@ _SGR = re.compile(r"\x1b\[[0-9;]*m")
 _STEP_PREFIX = re.compile(r"^[0-9]+\. ")
 _EXPIRY_LINE = "Enter this one-time code (expires in 15 minutes)"
 _TIMEOUT_LINE = "device auth timed out after 15 minutes"
+# The pinned CLI's own line when its deadline wins over the manager's.
+_CLI_TIMEOUT_LINE = f"Error logging in with device code: {_TIMEOUT_LINE}"
+_TIMEOUT_LINES = frozenset({_TIMEOUT_LINE, _CLI_TIMEOUT_LINE})
 _MAX_OUTPUT_BYTES = 16_384
 _MAX_AUTH_BYTES = 65_536
 _DEVICE_DEADLINE_SECONDS = 900
@@ -348,8 +351,8 @@ class CodexDeviceAuthManager:
             if cancelled:
                 return
             if returncode != 0:
-                terminal = lines[-1] if lines else ""
-                if terminal == _TIMEOUT_LINE:
+                terminal = lines[-1].strip() if lines else ""
+                if terminal in _TIMEOUT_LINES:
                     self._set_state(CodexDeviceAuthState("expired"))
                 else:
                     self._set_state(
