@@ -64,6 +64,13 @@ brackets are GitHub issues.
   which takes focus, fully on screen and clear of the masthead at enlarged
   text (#1487).
 
+## 0.29.3 — Review fixes and hygiene (in progress)
+
+- Codex sign-in from Settings or setup shows the link and one-time code the
+  bundled Codex CLI prints, instead of failing at once. The link opens in a
+  new tab, and the code stays still while you select it and has a Copy
+  button (#1493).
+
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
 - **Clean rebuild required.** Automatic authority binds only the operations

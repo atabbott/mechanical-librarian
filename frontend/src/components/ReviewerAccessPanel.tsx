@@ -30,6 +30,38 @@ const headroom = (bytes: number) =>
   bytes >= 1_073_741_824
     ? `${(bytes / 1_073_741_824).toLocaleString(undefined, { maximumFractionDigits: 1 })} GB`
     : `${Math.round(bytes / 1_048_576).toLocaleString()} MB`
+// The code sits apart from the sentence so one click selects it whole. The
+// clipboard API needs a secure context; elsewhere the button selects the code.
+function DeviceCode({ code }: { code: string }) {
+  const element = useRef<HTMLElement>(null)
+  const [copied, setCopied] = useState('')
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied('Copied.')
+    } catch {
+      const selection = getSelection()
+      if (element.current && selection) {
+        const range = document.createRange()
+        range.selectNodeContents(element.current)
+        selection.removeAllRanges()
+        selection.addRange(range)
+      }
+      setCopied('Code selected. Press Ctrl+C or Command+C to copy it.')
+    }
+  }
+  return (
+    <p className="device-code-row">
+      <code ref={element} className="device-code">
+        {code}
+      </code>
+      <button type="button" onClick={() => void copy()}>
+        Copy code
+      </button>
+      <span role="status">{copied}</span>
+    </p>
+  )
+}
 const failureCopy: Readonly<Record<string, string>> = {
   invalid_key: 'OpenRouter rejected this key. Replace it and validate again.',
   quota_exhausted: 'OpenRouter credits are exhausted. Add credits, then retry the status test.',
@@ -277,20 +309,16 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 Device sign-in: {reviewerStateLabels[device?.state ?? view.codex.state]}.
               </p>
               {device?.verification_url ? (
-                <p>
-                  Open{' '}
-                  <a href={device.verification_url} rel="noreferrer">
-                    the device sign-in page
-                  </a>
-                  {device.user_code ? (
-                    <>
-                      {' '}
-                      and enter <strong>{device.user_code}</strong>.
-                    </>
-                  ) : (
-                    '.'
-                  )}
-                </p>
+                <>
+                  <p>
+                    Open{' '}
+                    <a href={device.verification_url} target="_blank" rel="noreferrer">
+                      the device sign-in page
+                    </a>{' '}
+                    in a new tab{device.user_code ? ' and enter this code:' : '.'}
+                  </p>
+                  {device.user_code ? <DeviceCode code={device.user_code} /> : null}
+                </>
               ) : null}
               <button
                 type="button"

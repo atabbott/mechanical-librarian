@@ -1,6 +1,6 @@
-import { act, cleanup, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -913,8 +913,20 @@ describe('owner settings route', () => {
       expires_in_seconds: 900,
     }))
 
+    const writeText = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    onTestFinished(() => {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    })
     const { router } = renderRoute('/settings?group=reviewer', http)
     expect(await screen.findByText('ABCD-EFGH')).toBeVisible()
+    expect(screen.getByRole('link', { name: 'the device sign-in page' })).toHaveAttribute(
+      'target',
+      '_blank',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
+    expect(await screen.findByText('Copied.')).toBeVisible()
+    expect(writeText).toHaveBeenCalledWith('ABCD-EFGH')
     expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
     await act(async () => router.navigate({ to: '/library', search: { lens: 'all' } }))
     expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument()

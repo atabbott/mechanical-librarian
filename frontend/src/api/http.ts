@@ -2250,7 +2250,8 @@ export const mapCodexDevice = (value: unknown): CodexDeviceAuthState => {
     ) ||
     !(
       value.user_code === null ||
-      (typeof value.user_code === 'string' && /^[A-Z0-9]{4}-[A-Z0-9]{4}$/u.test(value.user_code))
+      (typeof value.user_code === 'string' &&
+        /^[A-Z0-9]{4,8}-[A-Z0-9]{4,8}$/u.test(value.user_code))
     ) ||
     !(value.expires_in_seconds === null || value.expires_in_seconds === 900) ||
     !(
