@@ -75,8 +75,7 @@ brackets are GitHub issues.
   rounded field with a × inside to clear it (#1520).
 - Library names one current page: the current lens is marked current within
   it. Choosing an Attention item on a phone keeps Back to works in view, and at
-  200% text work titles in the Attention rail and on a decision's choices no
-  longer break mid-word (#1530).
+  enlarged text Attention's work titles no longer break mid-word (#1530).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
