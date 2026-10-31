@@ -257,6 +257,14 @@ with the claims read from it, so a v62 report cannot state what a v63 report
 records. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
 
+Issue #1497 also takes the clean-rebuild branch. A Library of Congress
+control number in opening matter is no longer an ISBN-10 (extractor
+`epub-opening-v5`), Hardcover author names arrive in display order, and an
+Open Library title or description that contradicts the work's language is no
+longer an alternative, so report contents change and the proposal policy moves
+to `fixed-conservative-v43`. The report schema is unchanged; no adoption is
+supplied.
+
 Issue #1496 also takes the clean-rebuild branch. Titles that differ only by a
 leading article form one alternative, a bracketed ISBN suffix is the explicit
 identifier decoration, a packaged generic subtitle is not observed, and a

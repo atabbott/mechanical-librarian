@@ -83,7 +83,7 @@ refused.
 | --- | --- |
 | `metadata-report-v64` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
-| `fixed-conservative-v42` | The proposal policy |
+| `fixed-conservative-v43` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
 | `review-case-v2` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
