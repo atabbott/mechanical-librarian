@@ -74,8 +74,11 @@ def _edition(edition_id: int, seconds: int, *narrators: str) -> ProviderCandidat
     )
 
 
-def _product(minutes: int, *narrators: str) -> ProviderCandidate:
+def _product(minutes: int | None, *narrators: str) -> ProviderCandidate:
     identity = "audible-product-B0PRODUCT1"
+    runtime = (
+        () if minutes is None else ((ClaimKind.DURATION, f"{minutes * 60}.000", None),)
+    )
     return ProviderCandidate(
         identity,
         "unresolved",
@@ -83,7 +86,7 @@ def _product(minutes: int, *narrators: str) -> ProviderCandidate:
             "audible",
             identity,
             (
-                (ClaimKind.DURATION, f"{minutes * 60}.000", None),
+                *runtime,
                 *((ClaimKind.CONTRIBUTOR, name, "narrator") for name in narrators),
             ),
         ),
@@ -174,6 +177,11 @@ def test_a_match_inside_the_band_after_its_minute_floor_agrees() -> None:
 
 def test_a_match_with_no_narrator_is_never_challenged() -> None:
     report = _report((_edition(3, _LOCAL, "Imra Vossel"),), _product(700))
+    assert HardcoverEditionWitness.AGREES is hardcover_edition_witness(report)
+
+
+def test_a_match_with_no_runtime_is_never_challenged() -> None:
+    report = _report((_edition(3, _LOCAL, "Imra Vossel"),), _product(None, "Other"))
     assert HardcoverEditionWitness.AGREES is hardcover_edition_witness(report)
 
 

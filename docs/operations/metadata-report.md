@@ -320,8 +320,8 @@ Further audiobook records grant nothing by themselves:
   compared with the file, never with Audible, and never count as a second
   source. `hardcover_edition_witness` reads them as `no_edition`,
   `editions_disagree`, `unmatched`, `agrees` or `challenged`. A match is
-  `challenged` only when every accepted recording is outside the tight band,
-  after minute floors, and credits only other narrators
+  `challenged` only when every accepted recording states a runtime outside
+  the tight band, after minute floors, and credits only other narrators
   ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
 - **`dispatch`**: each lane's `outcome` (`admitted`, `empty`, `refused`,
   `overflow`, `unavailable`, `starved`, `not_dispatched` or

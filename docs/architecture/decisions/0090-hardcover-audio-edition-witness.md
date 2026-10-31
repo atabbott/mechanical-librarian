@@ -58,7 +58,7 @@ from Audible.
    seconds and contributions. The fan-out is refused, keeping no edition, when:
    - a row names another book;
    - an edition id repeats;
-   - a page is malformed or fails, or both pages are full.
+   - a page is malformed or fails, or both pages of either book are full.
 
    The admitted work and its facts stand either way. A failed read never states
    that no edition exists.
@@ -77,10 +77,10 @@ from Audible.
    - **`agrees`:** an accepted recording is inside the tight band after
      whole-minute floors, or shares a narrator with the counted editions. The
      same narrator at a nearby runtime is the same recording with an offset in
-     the stated time. A recording whose narrators are unknown is never
-     challenged.
-   - **`challenged`:** every accepted recording is outside the band and
-     credits only narrators the counted editions do not.
+     the stated time. A recording that states no runtime or no narrator is
+     never challenged.
+   - **`challenged`:** every accepted recording states a runtime outside the
+     band and credits only narrators the counted editions do not.
 7. **Record.** The kept editions are persisted per provider as
    `audio_editions` in `metadata-report-v64`. They are never read for admission
    or as field evidence. The cold-start report counts each witness outcome per

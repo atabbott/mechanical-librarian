@@ -88,6 +88,7 @@ def _edition(
 def _observe(
     pages: Callable[[int, int], httpx.Response],
     plan: MetadataDiscoveryPlan | None = None,
+    books: tuple[int, ...] = (10,),
 ) -> tuple[ProviderObservation, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
@@ -97,7 +98,7 @@ def _observe(
         if body["operationName"] == "AudioEditions":
             variables = body["variables"]
             return pages(variables["book"], variables["offset"])
-        return httpx.Response(200, json=_work_response())
+        return httpx.Response(200, json=_work_response(books))
 
     observation = (
         HardcoverMetadataProvider(
@@ -215,4 +216,27 @@ def test_a_full_page_reads_the_next_and_two_full_pages_keep_nothing() -> None:
     observation, _sent = _observe(short_second)
     assert ["hardcover-edition-0000000101"] == [
         edition.identity for edition in observation.audio_editions
+    ]
+
+
+def test_one_book_overflowing_its_pages_drops_the_other_books_editions() -> None:
+    def pages(book: int, offset: int) -> httpx.Response:
+        if book == 20:
+            return _page(_edition(9, _LOCAL_SECONDS, book_id=20))
+        return _page(
+            *(
+                _edition(offset + index + 1, _LOCAL_SECONDS + 3_600, book_id=book)
+                for index in range(100)
+            )
+        )
+
+    observation, sent = _observe(pages, books=(10, 20))
+
+    assert ProviderStatus.CANDIDATES is observation.status
+    assert 2 == len(observation.candidates)
+    assert () == observation.audio_editions
+    assert [(10, 0), (10, 100)] == [
+        (body["variables"]["book"], body["variables"]["offset"])
+        for body in sent
+        if body["operationName"] == "AudioEditions"
     ]

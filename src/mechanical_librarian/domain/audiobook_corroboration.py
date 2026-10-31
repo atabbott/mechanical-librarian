@@ -1886,10 +1886,11 @@ class HardcoverEditionWitness(StrEnum):
       recording forward; the edition can later fill a gap or lead a lookup.
     - `agrees`: an accepted recording is inside the tight band, or shares a
       narrator with the counted editions. Same narrator and a close runtime
-      is the same recording with an offset in the stated time.
-    - `challenged`: every accepted recording is outside the tight band, after
-      whole-minute floors, and credits only narrators the counted editions do
-      not. The match is the wrong recording and goes to the owner.
+      is the same recording with an offset in the stated time. A recording
+      that states no runtime or no narrator is never challenged.
+    - `challenged`: every accepted recording states a runtime outside the
+      tight band, after whole-minute floors, and credits only narrators the
+      counted editions do not. The match is the wrong recording and goes to the owner.
     """
 
     NO_EDITION = "no_edition"
@@ -1961,7 +1962,8 @@ def hardcover_edition_witness(report: MetadataReport) -> HardcoverEditionWitness
         runtime_agreement(
             local, candidate_runtime_seconds(candidate), provider_minutes=True
         ).outcome
-        is CorroborationOutcome.CORROBORATED
+        # An unstated runtime is no evidence of another recording.
+        in {CorroborationOutcome.CORROBORATED, CorroborationOutcome.NOT_COMPARABLE}
         or not all(
             narrator_cast_disjoint(_candidate_narrators(candidate), cast)
             for cast in casts

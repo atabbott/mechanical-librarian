@@ -688,9 +688,9 @@ class HardcoverMetadataProvider:
             for page in range(_AUDIO_EDITION_PAGES + 1):
                 if page == _AUDIO_EDITION_PAGES:
                     # More rows than the bounded pages hold: no prefix is a
-                    # fair sample, so this book contributes nothing.
-                    rows = []
-                    break
+                    # fair sample, and a witness over only the other book
+                    # would judge a recording this one may contradict.
+                    return ()
                 offset = page * _AUDIO_EDITION_PAGE
 
                 def execute(
