@@ -1899,7 +1899,6 @@ def test_openapi_is_deterministic_and_secret_free(
                 "title_layout:title_and_subtitle",
                 "date_precision:year",
                 "date_precision:full_date",
-                "language_rendering:preserve",
                 "language_rendering:display_name",
                 "contributor_names:preserve",
                 "contributor_names:canonical",
