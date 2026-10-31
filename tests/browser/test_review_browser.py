@@ -95,6 +95,7 @@ from mechanical_librarian.domain.setup_state import (
 from mechanical_librarian.infrastructure.settings_authority import BootstrapMount
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
+from tests.browser.text_size import set_root_text
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asin_lane_observation,
@@ -2631,9 +2632,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                         == []
                     )
 
-                page.locator("html").evaluate(
-                    "node => { node.style.fontSize = '200%'; }"
-                )
+                set_root_text(page, "200%")
                 assert_text_zoom_policy_layout(390)
                 assert (
                     page.locator(".cm-policy-sidebar nav").evaluate(
@@ -2664,17 +2663,15 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.get_by_role("button", name="Use light mode").click()
                 page.get_by_role("button", name="Use dark mode").wait_for()
                 page.set_viewport_size({"width": 390, "height": 844})
-                page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
+                set_root_text(page, "")
                 page.get_by_role("button", name="Validate and preview").click()
                 page.get_by_text(
                     "Impact preview is current. The active policy is unchanged."
                 ).wait_for()
                 review_activation = page.get_by_role("button", name="Review activation")
-                page.locator("html").evaluate(
-                    "node => { node.style.fontSize = '200%'; }"
-                )
+                set_root_text(page, "200%")
                 assert_text_zoom_policy_layout(430)
-                page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
+                set_root_text(page, "")
                 review_activation.click()
                 page.get_by_text("Activate this reviewed draft?").wait_for()
                 assert page.get_by_role("dialog").count() == 0
@@ -2683,11 +2680,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 page.get_by_text(
                     "No library has write permission, and activating grants none."
                 ).wait_for()
-                page.locator("html").evaluate(
-                    "node => { node.style.fontSize = '200%'; }"
-                )
+                set_root_text(page, "200%")
                 assert_text_zoom_policy_layout(430)
-                page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
+                set_root_text(page, "")
                 page.get_by_role("button", name="Back to preview").click()
                 review_activation.wait_for()
                 back_to_editing = page.get_by_role("button", name="Back to editing")
@@ -3982,6 +3977,90 @@ def test_load_more_attention_keeps_focus_on_the_first_row_it_added(
             browser.close()
 
 
+_CHOSEN_HEADER_IN_VIEW = """() => {
+  const active = document.activeElement
+  if (!active?.matches('.selected-work-header')) return null
+  const header = active.getBoundingClientRect()
+  const masthead = document.querySelector('.masthead').getBoundingClientRect()
+  const clear = Math.max(0, masthead.bottom)
+  return {
+    top: header.top,
+    bottom: header.bottom,
+    clear,
+    height: innerHeight,
+    inView: header.top >= clear - 0.5 && header.bottom <= innerHeight + 0.5,
+  }
+}"""
+
+
+def test_choosing_an_attention_item_keeps_the_focused_work_header_in_view() -> None:
+    """Choosing the rail's last queue item by keyboard leaves the focused
+    selected-work header fully in view and clear of the masthead at 100, 150
+    and 200% text, from the widest window to the narrowest phone (#1487).
+
+    With enlarged text the header used to take focus below the fold: the page
+    returned to its top while the header sat further down.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    provider_recovery=True,
+                    cohort=24,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                for width, height in ((1440, 900), (1200, 900), (390, 844), (320, 640)):
+                    for size in ("100%", "150%", "200%"):
+                        where = f"{size} text at {width}x{height}"
+                        page.set_viewport_size({"width": width, "height": height})
+                        page.goto(f"{origin}/library?lens=all&attention=open")
+                        set_root_text(page, size)
+                        rows = page.get_by_label("Attention queue", exact=True).locator(
+                            "button.attention-queue-item"
+                        )
+                        expect(rows.first).to_be_visible()
+                        chosen = rows.last
+                        work = chosen.get_attribute("data-attention-row")
+                        chosen.focus()
+                        page.keyboard.press("Enter")
+                        assert work is not None, where
+                        expect(page).to_have_url(
+                            re.compile(f"preview={re.escape(work.split(':')[0])}")
+                        )
+                        try:
+                            page.wait_for_function(
+                                f"() => ({_CHOSEN_HEADER_IN_VIEW})()?.inView === true",
+                                timeout=5_000,
+                            )
+                        except PlaywrightTimeoutError:
+                            pytest.fail(
+                                f"{where}: {page.evaluate(_CHOSEN_HEADER_IN_VIEW)}"
+                            )
+                        # It stays there once the page settles.
+                        page.evaluate(_TWO_FRAMES)
+                        page.evaluate(_TWO_FRAMES)
+                        settled = page.evaluate(_CHOSEN_HEADER_IN_VIEW)
+                        assert settled and settled["inView"], (where, settled)
+                context.close()
+            browser.close()
+
+
 @pytest.mark.parametrize("identity", [False, True])
 @pytest.mark.parametrize("dark", [False, True])
 def test_library_description_controls_preserve_words_at_enlarged_text(
@@ -4038,9 +4117,7 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                     (320, "200%"),
                 ):
                     page.set_viewport_size({"width": width, "height": 900})
-                    page.evaluate(
-                        "size => document.documentElement.style.fontSize = size", size
-                    )
+                    set_root_text(page, size)
                     page.evaluate(
                         "() => new Promise(resolve => requestAnimationFrame(() => "
                         "requestAnimationFrame(resolve)))"
@@ -4369,9 +4446,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
 
                 for width, size in ((390, "100%"), (390, "200%"), (320, "200%")):
                     page.set_viewport_size({"width": width, "height": 844})
-                    page.evaluate(
-                        "size => document.documentElement.style.fontSize = size", size
-                    )
+                    set_root_text(page, size)
                     track.evaluate("node => { node.scrollLeft = 0 }")
                     # Unconfirmed choices remain visible but correctly disabled.
                     # Reach the last actual disclosure, not a disabled choice button.
@@ -4457,7 +4532,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     assert (
                         page.evaluate("document.documentElement.scrollWidth") <= width
                     )
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 page.set_viewport_size({"width": 390, "height": 844})
 
                 assert errors == []
@@ -6527,7 +6602,7 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 # the fold unless it is brought into view (#1291).
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.goto(origin)
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 expect(
                     page.get_by_role("heading", name="Create your owner password")
                 ).to_be_visible()
@@ -6568,7 +6643,7 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 ):
                     page.set_viewport_size({"width": width, "height": height})
                     page.goto(origin)
-                    page.evaluate(f"document.documentElement.style.fontSize = '{size}'")
+                    set_root_text(page, size)
                     page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
                     page.get_by_label("Confirm owner password", exact=True).fill(
                         _PASSWORD
@@ -6932,13 +7007,13 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                     "document.documentElement.scrollWidth <= innerWidth"
                 )
                 # Doubled text never pushes a provider card past a phone width.
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 for width in (375, 320):
                     page.set_viewport_size({"width": width, "height": 812})
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     ), width
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 page.set_viewport_size({"width": 375, "height": 812})
                 page.get_by_role("button", name="Skip providers").click()
 
@@ -7047,6 +7122,14 @@ _SPLIT_SETUP_WORDS = """() => {
     found.push('the mark spills its letters');
   return found;
 }"""
+# Each step-list button that reaches past either side of the step list.
+_STEP_BUTTONS_PAST_ASIDE = """() => {
+  const aside = document.querySelector('aside').getBoundingClientRect();
+  return [...document.querySelectorAll('aside button')]
+    .map((node) => [node, node.getBoundingClientRect()])
+    .filter(([, box]) => box.left < aside.left - 0.5 || box.right > aside.right + 0.5)
+    .map(([node]) => `${node.getAttribute('aria-label')} reaches past the step list`);
+}"""
 # Each step-list button that, once focused, lies outside the viewport.
 _OFF_SCREEN_STEP_BUTTONS = """() => [...document.querySelectorAll('aside button')]
   .map((node) => { node.focus(); return [node, node.getBoundingClientRect()]; })
@@ -7058,11 +7141,12 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
     """On the providers step, the "ML" mark stands 3:1 off the masthead and its
     letters 4.5:1 off the mark in dark mode, set or followed from the system
     (#1490); every step-list Change button is a 2.75rem target at every width
-    and text size; and with 200% text at 375 and 320px no word breaks in the
-    step list, the mark, a provider's name or its access link, such as
-    Hardcover, and the mark holds its letters; and at 200% text on a wide
-    screen, root or browser font, the step list never holds a focused button
-    off screen (#1491)."""
+    and text size; with 200% text, in both themes and from 1440 to 320px, no
+    word breaks in the step list, such as Audiobookshelf beside its Change
+    button, the mark, a provider's name or its access link, such as Hardcover,
+    the mark holds its letters and every Change button stays inside the step
+    list (#1491, #1508); and at 200% text on a wide screen, root or browser
+    font, the step list never holds a focused button off screen (#1491)."""
     with tempfile.TemporaryDirectory() as directory:
         with (
             real_setup_server(Path(directory)) as (origin, token_file, _cert),
@@ -7104,28 +7188,36 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
                             f"dark ({'set' if theme else 'system'}): the mark is "
                             f"{mark:.2f}:1 off the masthead, its letters {letters:.2f}:1"
                         )
-                for text in ("", "200%"):
-                    page.evaluate(
-                        "size => document.documentElement.style.fontSize = size", text
-                    )
-                    for width in (1440, 760, 390, 375, 320):
+                schemes: tuple[tuple[Literal["light", "dark"], str], ...] = (
+                    ("dark", ""),
+                    ("dark", "200%"),
+                    ("light", "200%"),
+                )
+                for scheme, text in schemes:
+                    page.emulate_media(color_scheme=scheme)
+                    set_root_text(page, text)
+                    for width in (1440, 1200, 760, 390, 375, 320):
                         page.set_viewport_size({"width": width, "height": 812})
-                        where = f"{text or '100%'} text at {width}px"
+                        where = f"{scheme}, {text or '100%'} text at {width}px"
                         failures += [
                             f"{where}: {short}"
                             for short in page.evaluate(_SHORT_STEP_BUTTONS)
                         ]
-                        if text and width <= 375:
+                        if text:
                             failures += [
                                 f"{where}: {split}"
                                 for split in page.evaluate(_SPLIT_SETUP_WORDS)
+                            ]
+                            failures += [
+                                f"{where}: {spill}"
+                                for spill in page.evaluate(_STEP_BUTTONS_PAST_ASIDE)
                             ]
                         if text and width == 1440:
                             failures += [
                                 f"{where}: {off}"
                                 for off in page.evaluate(_OFF_SCREEN_STEP_BUTTONS)
                             ]
-                page.evaluate("() => document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 # A real 32px browser font moves the page's rem breakpoints too,
                 # so its two columns need a wider screen.
                 session = context.new_cdp_session(page)
@@ -7913,7 +8005,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 # With 200% text on the narrowest phone, a key and its Show
                 # button share the row or wrap inside it, never past it.
                 page.set_viewport_size({"width": 320, "height": 800})
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 overflowing = page.evaluate(
                     """() => [...document.querySelectorAll('.reveal-row')].filter(row => {
                       const edge = row.getBoundingClientRect().right;
@@ -7922,7 +8014,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     }).length"""
                 )
                 assert overflowing == 0
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 page.set_viewport_size({"width": 1440, "height": 900})
                 expect(
                     page.get_by_text(
@@ -7961,11 +8053,11 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         selected_libraries.extend(request.post_data_json["libraries"])
 
                 page.on("request", record_library_selection)
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 page.get_by_role("button", name="Continue").click()
                 expect(
                     page.get_by_role("heading", name="Check read-only mounts")
@@ -8003,7 +8095,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         )
                 page.emulate_media(color_scheme="dark")
                 page.set_viewport_size({"width": 320, "height": 800})
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
@@ -8011,7 +8103,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 # text moves it and the step card keeps a usable width at
                 # every protected viewport instead of collapsing beside the
                 # aside.
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 for width, height in protected_viewports:
                     page.set_viewport_size({"width": width, "height": height})
                     assert page.evaluate(
@@ -8023,7 +8115,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     )
                     assert card >= width * 0.55, (width, card)
                 page.set_viewport_size({"width": 1440, "height": 900})
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 for field in page.get_by_label("service path", exact=False).all():
                     expect(field).not_to_have_value("")
                 expect(
@@ -8099,7 +8191,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     expect(page.get_by_role("button", name=action)).to_be_visible()
                 # The summary value keeps a floor at 200% text, and the Change
                 # control moves onto its own row instead of starving it.
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 for width, height in protected_viewports:
                     page.set_viewport_size({"width": width, "height": height})
                     assert page.evaluate(
@@ -8114,7 +8206,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         widths,
                     )
                 page.set_viewport_size({"width": 1440, "height": 900})
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 for action in (
                     "Change the Audiobookshelf address",
                     "Change the metadata providers",
@@ -8235,16 +8327,7 @@ def test_settings_language_picker_and_tray_fit_a_phone_at_200_percent_text() -> 
             page.goto(f"{origin}/settings?group=libraries")
             picker = page.get_by_role("combobox", name=re.compile("^Add a language to"))
             picker.wait_for()
-            page.evaluate(
-                "() => { const sheet = new CSSStyleSheet(); "
-                "sheet.replaceSync('html { font-size: 200% }'); "
-                "document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet] }"
-            )
-            page.wait_for_function(
-                "() => getComputedStyle(document.documentElement).fontSize === '32px'",
-                timeout=5_000,
-            )
-            page.evaluate(_TWO_FRAMES)
+            set_root_text(page, "200%")
             where = f"200% text at {width}x{height}"
             if page.evaluate(_SETTINGS_LANGUAGE_FIT)["picker"]:
                 failures.append(f"{where}: the picker's label is cut off")
@@ -8584,7 +8667,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                             assert_settings_layout(sidebar_visible=width > 760)
 
                 page.set_viewport_size({"width": 884, "height": 1000})
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 for label in group_labels.values():
                     page.locator(".settings-sidebar button", has_text=label).click()
                     expect(
@@ -8594,7 +8677,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         "document.documentElement.scrollWidth <= window.innerWidth"
                     )
                     assert_settings_layout(sidebar_visible=True, zoomed=True)
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
 
                 for theme in ("light", "dark"):
                     requested = "Use dark mode" if theme == "dark" else "Use light mode"
@@ -8604,9 +8687,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     for width, height in ((390, 844), (320, 800)):
                         page.set_viewport_size({"width": width, "height": height})
                         choose_section("Libraries")
-                        page.evaluate(
-                            "document.documentElement.style.fontSize = '200%'"
-                        )
+                        set_root_text(page, "200%")
                         expect(
                             page.get_by_role("heading", name="Libraries", exact=True)
                         ).to_be_visible()
@@ -8617,7 +8698,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         expect(
                             page.get_by_role("combobox", name="Settings section")
                         ).to_be_visible()
-                        page.evaluate("document.documentElement.style.fontSize = ''")
+                        set_root_text(page, "")
 
                 page.set_viewport_size({"width": 320, "height": 800})
                 choose_section("Metadata sources")
@@ -8706,7 +8787,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     ("200%", 390, 844),
                     ("200%", 1100, 700),
                 ):
-                    page.evaluate(f"document.documentElement.style.fontSize = '{size}'")
+                    set_root_text(page, size)
                     page.set_viewport_size({"width": width, "height": height})
                     page.evaluate("scrollTo(0, 0); document.activeElement?.blur()")
                     for _ in range(120):
@@ -8717,7 +8798,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         if under:
                             hidden.append(f"{size or '100%'} at {width}px: {under}")
                 assert hidden == [], "\n".join(hidden)
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 page.set_viewport_size({"width": 320, "height": 800})
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[
                     "document"
@@ -10331,25 +10412,9 @@ def _owner_layout_holds(page: Page) -> None:
         )
         assert all(height >= 44 for height in heights), (width, heights)
     # At 320 px with 200% text, nothing in the controls passes the canvas edge.
-    # The page's CSP ignores a style attribute, so the text is enlarged by a
-    # constructed stylesheet, and the root size proves it applied.
     page.set_viewport_size({"width": 320, "height": 900})
-    page.evaluate(
-        "() => { const sheet = new CSSStyleSheet(); "
-        "sheet.replaceSync('html { font-size: 200% }'); "
-        "document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet] }"
-    )
+    set_root_text(page, "200%")
     try:
-        # The reduced-motion rule leaves every property a transition, so the
-        # root size settles after it rather than at once; the wait is the proof.
-        page.wait_for_function(
-            "() => getComputedStyle(document.documentElement).fontSize === '32px'",
-            timeout=5_000,
-        )
-        page.evaluate(
-            "() => new Promise(resolve => requestAnimationFrame(() => "
-            "requestAnimationFrame(resolve)))"
-        )
         past = page.evaluate(
             """() => {
               const edge = document.querySelector('.decision-canvas')
@@ -10362,10 +10427,7 @@ def _owner_layout_holds(page: Page) -> None:
         )
         assert past == [], past
     finally:
-        page.evaluate(
-            "() => { document.adoptedStyleSheets = "
-            "document.adoptedStyleSheets.slice(0, -1) }"
-        )
+        set_root_text(page, "")
 
 
 def _attention_destinations(page: Page, case_id: str) -> list[str]:
@@ -11348,9 +11410,7 @@ def test_review_complete_comes_into_view_and_fits_its_card() -> None:
                 for width, height, text in sizes:
                     where = f"{theme} {width}x{height} {text or '100%'}"
                     page.set_viewport_size({"width": width, "height": height})
-                    page.evaluate(
-                        "size => document.documentElement.style.fontSize = size", text
-                    )
+                    set_root_text(page, text)
                     page.locator(".review-complete li button").last.click()
                     choice.first.wait_for()
                     page.evaluate(_TWO_FRAMES)
@@ -11682,7 +11742,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                         page.get_by_role("button", name="Review activation", exact=True)
                     ).to_be_visible()
             page.emulate_media(reduced_motion="reduce")
-            page.locator("html").evaluate("node => node.style.fontSize = '200%'")
+            set_root_text(page, "200%")
             page.set_viewport_size({"width": 320, "height": 900})
             result.get_by_role("button", name=re.compile(r"Show .* more")).click()
             last = page.locator(".cm-policy-preview-list > div").last
@@ -12397,13 +12457,13 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                 # Enlarged on a narrow screen, the counts wrap between words and
                 # never split one (#1013, #1366).
                 page.set_viewport_size({"width": 320, "height": 900})
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 for selector in (
                     ".preparation-run-state",
                     ".preparation-outcomes strong",
                 ):
                     assert page.locator(selector).evaluate(_SPLIT_WORDS) == [], selector
-                page.evaluate("document.documentElement.style.fontSize = ''")
+                set_root_text(page, "")
                 page.set_viewport_size({"width": 1440, "height": 1000})
 
                 # A prepared work fails after its cycle completed, as a policy
@@ -12442,7 +12502,7 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                 # next line together when they fit there, break at their space
                 # only when they do not, and no number or word splits (#1366).
                 page.set_viewport_size({"width": 320, "height": 900})
-                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                set_root_text(page, "200%")
                 font = Path(__file__).parent / "fonts/DejaVuSans-Bold-subset.ttf"
                 assert page.evaluate(
                     _WIDE_BOLD_FONT, base64.b64encode(font.read_bytes()).decode()

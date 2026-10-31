@@ -120,11 +120,16 @@ SETUP_CSS += (
     "@media(max-width:47.5rem){.summary dt,.summary-row dd{flex-basis:100%}}"
     "@media(prefers-reduced-motion:reduce){.masthead,#setup-ledger,.step-card{view-transition-name:none}::view-transition-group(*),::view-transition-image-pair(*),::view-transition-old(*),::view-transition-new(*){animation-duration:0s!important;animation-delay:0s!important}}"
     # A phone with enlarged text, measured in the shell's rem: insets give words
-    # their line, and a step's Change button drops under its name (#1491).
+    # their line (#1491).
     ".setup-shell{container:setup-shell/inline-size}"
     "@container setup-shell (max-width:12rem){.step-card{padding:.5rem}"
-    ".provider-cards .option{padding-inline:.5rem}"
-    ".ledger-row{grid-template-columns:minmax(0,1.5rem) minmax(0,1fr)}.ledger-row button{grid-column:2}}"
+    ".provider-cards .option{padding-inline:.5rem}}"
+    # A step list too narrow to hold its longest word beside a Change button, as
+    # enlarged text makes it beside the step or on a phone, drops the button
+    # under the step's name (#1491, #1508).
+    "#setup-ledger{container:setup-ledger/inline-size}"
+    "@container setup-ledger (max-width:15rem){"
+    ".ledger-row{grid-template-columns:minmax(0,1.5rem) minmax(0,1fr)}.ledger-row button{grid-column:2;justify-self:start}}"
 )
 
 SETUP_HANDOFF_CSS = "@view-transition{navigation:auto}"

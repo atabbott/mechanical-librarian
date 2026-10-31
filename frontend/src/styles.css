@@ -802,7 +802,8 @@ html { scroll-padding-bottom:calc(var(--finish-tray-height,0px) + 1rem); }
    below the page's last control to scroll that far. */
 html:has(.settings-saved) { scroll-padding-bottom:calc(var(--finish-tray-height,0px) + var(--settings-saved-height,0px) + 2rem); }
 main:has(.settings-saved) { padding-bottom:calc(clamp(1rem,3vw,2.6rem) + var(--settings-saved-height,0px) + 1rem); }
-html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; animation-duration:.001ms!important; animation-iteration-count:1!important; transition-duration:.001ms!important; }
+/* Reduced motion applies every change at once: no property transitions, so a change such as enlarged text is final as soon as it is set. */
+html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; animation-duration:.001ms!important; animation-iteration-count:1!important; transition-property:none!important; transition-duration:.001ms!important; }
 @media (max-width:1024px) {
   /* The index takes at most 30% beside the sheet, so enlarged text leaves the sheet room for its headings. */
   .settings-editor { grid-template-columns:minmax(12rem,min(13rem,30%)) minmax(0,1fr); }
@@ -827,7 +828,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   .settings-field-row { grid-template-columns:minmax(0,1fr); }
   .settings-field-row,.settings-sheet > header,.settings-record > h3,.settings-record-meta,.settings-immediate { padding-inline:.85rem; }
 }
-@media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
+@media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-property:none!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
 /* Variant M workspace: regular widths keep work, decision and attention in one operating surface. */
 .variant-m-workspace .library-header { container-type:inline-size; display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:1rem; max-width:1480px; margin-inline:auto; }
 .library-header .cm-library-handoff { flex:1 1 32rem; grid-template-columns:minmax(0,1fr) auto; margin:0; }
