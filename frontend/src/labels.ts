@@ -314,7 +314,9 @@ export const writeStateLabels = {
   reconciling: 'Checking',
   retryable: 'Waiting safely',
   verified: 'Verified',
-  stale: 'Stale',
+  // A guarded write that closed for one of several reasons, each named beside
+  // it; "stale" is the store's word, not the owner's (#1542).
+  stale: 'Closed safely',
   superseded: 'Superseded',
   abandoned: 'Stopped safely',
   no_change_required: 'No change required',

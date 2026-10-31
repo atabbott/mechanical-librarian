@@ -121,6 +121,10 @@ brackets are GitHub issues.
   (the proposed values only shorten or extend the current one), instead of
   also showing a note that the sources disagree or that a change needs you
   (#1450).
+- Activity's advice for finding a stopped change also says to clear filters
+  when a search or event type is active. A write that stopped because the item
+  changed reads "Item changed; nothing written", and other closed writes read
+  "Closed safely", instead of "Stale" (#1542).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

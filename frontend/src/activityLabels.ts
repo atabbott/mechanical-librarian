@@ -17,13 +17,18 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
   unavailable: 'Unavailable',
 }
 // A change stopped only by a lost connection is still waiting to be prepared
-// again, so it reads as waiting rather than as a stopped stale (#1402).
+// again, so it reads as waiting rather than as a stopped stale (#1402). One
+// that closed because the item changed before the write says so (#1542).
+const staleLabels: Readonly<Record<string, string>> = {
+  connection: 'Waiting safely',
+  target_changed: 'Item changed; nothing written',
+}
 export const stateLabel = (
   state: string,
   advice?: 'description' | 'cover',
   failure?: string | null,
 ) =>
-  (state === 'stale' && failure === 'connection' ? 'Waiting safely' : undefined) ??
+  (state === 'stale' && failure ? staleLabels[failure] : undefined) ??
   (advice === 'description'
     ? {
         completed: 'Description advice completed',

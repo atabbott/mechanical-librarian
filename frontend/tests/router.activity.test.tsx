@@ -677,7 +677,15 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
         events: [{ work_label: 'Stale work', state: 'stale' }],
       },
-      'Stale',
+      'Closed safely',
+    ],
+    [
+      'item changed',
+      {
+        enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
+        events: [{ work_label: 'Changed work', state: 'stale', failure: 'target_changed' }],
+      },
+      'Item changed; nothing written',
     ],
     [
       'connection-waiting',
@@ -693,7 +701,7 @@ describe('Activity route', () => {
         enabled_libraries: [{ connection: 'primary', library: 'fiction' }],
         events: [{ work_label: 'Exhausted work', state: 'stale', failure: 'connection_exhausted' }],
       },
-      'Stale',
+      'Closed safely',
     ],
     [
       'stopped',
@@ -836,6 +844,21 @@ describe('Activity route', () => {
       expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
     },
   )
+
+  it.each([
+    ['no filter', '/activity', 'widen the range.'],
+    ['a search', '/activity?q=title', 'widen the range or clear filters.'],
+    ['an event type', '/activity?eventType=safety', 'widen the range or clear filters.'],
+  ])('says how to find a stopped change hidden by %s (#1542)', async (_name, path, ending) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity({ owner_action_required: 1 })),
+    }
+    renderRoute(path, http)
+
+    const detail = await screen.findByText(/^Its “Prepared change closed” entry/u)
+    expect(detail.textContent.endsWith(`If it isn’t listed, ${ending}`)).toBe(true)
+  })
 
   it('stays calm when nothing waits on the owner', async () => {
     const http: ReviewHttp = {
@@ -1442,7 +1465,8 @@ describe('Activity route', () => {
 
   it.each([
     ['connection', 'Waiting safely'],
-    ['connection_exhausted', 'Stale'],
+    ['connection_exhausted', 'Closed safely'],
+    ['target_changed', 'Item changed; nothing written'],
   ])('labels each lifecycle stale from its own %s failure', async (failure, latest) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
