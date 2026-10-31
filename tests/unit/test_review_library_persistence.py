@@ -2161,6 +2161,7 @@ def test_sqlite_library_excludes_epub_conflicting_narrators_from_attention() -> 
             "needs_attention": 1,
             "no_attention_needed": 1,
             "not_matched": 0,
+            "preparation_failed": 0,
         }
         assert [item["title"] for item in first["items"]] == ["Mistborn Secret History"]
         assert first["next_cursor"] is not None
@@ -2823,6 +2824,7 @@ def test_retained_component_ask_agrees_across_detail_library_and_attention(
                 "needs_attention": 1,
                 "no_attention_needed": 0,
                 "not_matched": 0,
+                "preparation_failed": 0,
             }
         )
         assert {"title", component} <= {
@@ -3506,11 +3508,13 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             tick += 2
         browser = BrowseReviewLibrary(repository)
         first = browser.library(lens="all", search="100%_", limit=2, cursor=None)
+        # Failed works are counted as failed, never as needing no attention (#1413).
         assert first["counts"] == {
             "all": 3,
             "needs_attention": 0,
-            "no_attention_needed": 3,
+            "no_attention_needed": 0,
             "not_matched": 0,
+            "preparation_failed": 3,
         }
         items = cast(list[dict[str, object]], first["items"])
         assert [item["title"] for item in items] == ["Shared 100%_ title"] * 2
@@ -3844,7 +3848,7 @@ def test_combined_browse_validates_empty_marker_and_totals(
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != (12 if surface == "library" else 10):
+        if len(cursor.description) != (13 if surface == "library" else 10):
             return row
         reached = True
         values = list(row)
@@ -3948,15 +3952,22 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
 
         browser = BrowseReviewLibrary(repository)
         # The settled work has no provider evidence, so it is not matched; the
-        # stopped one is a terminal failure and stays clear (#1413).
+        # stopped one is a terminal failure, counted as failed (#1413).
         summary = {
             "all": 3,
             "needs_attention": 1,
-            "no_attention_needed": 1,
+            "no_attention_needed": 0,
             "not_matched": 1,
+            "preparation_failed": 1,
         }
         observed = []
-        for lens in ("all", "needs_attention", "no_attention_needed", "not_matched"):
+        for lens in (
+            "all",
+            "needs_attention",
+            "no_attention_needed",
+            "not_matched",
+            "preparation_failed",
+        ):
             for limit in (1, 25):
                 first = browser.library(
                     lens=lens, search=None, limit=limit, cursor=None
@@ -3987,6 +3998,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "needs_attention": 1,
                     "no_attention_needed": 0,
                     "not_matched": 0,
+                    "preparation_failed": 0,
                 },
             ),
             (
@@ -3994,8 +4006,9 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                 {
                     "all": 1,
                     "needs_attention": 0,
-                    "no_attention_needed": 1,
+                    "no_attention_needed": 0,
                     "not_matched": 0,
+                    "preparation_failed": 1,
                 },
             ),
             (
@@ -4005,6 +4018,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "needs_attention": 0,
                     "no_attention_needed": 0,
                     "not_matched": 1,
+                    "preparation_failed": 0,
                 },
             ),
             (
@@ -4014,6 +4028,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "needs_attention": 0,
                     "no_attention_needed": 0,
                     "not_matched": 0,
+                    "preparation_failed": 0,
                 },
             ),
         ):

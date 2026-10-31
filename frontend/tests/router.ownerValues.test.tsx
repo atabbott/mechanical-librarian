@@ -80,7 +80,7 @@ const enteredTitle: Field = {
 }
 const quietLibrary = {
   ...library,
-  counts: { all: 1, attention: 0, clear: 1, notMatched: 0 },
+  counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
   works: library.works.map((work) => ({ ...work, attentionCount: 0 })),
 }
 

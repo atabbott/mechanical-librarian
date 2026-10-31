@@ -102,6 +102,10 @@ brackets are GitHub issues.
   empty sections, idle library cards and "No recommendation retained" are
   gone. Reminders that writes are protected remain only in the guided first
   review and Activity's permission control (#1519).
+- A work whose preparation could not finish is no longer counted under "No
+  attention needed". Library gives such works their own Could not finish lens,
+  lists them after the works needing a decision, and names their count beside
+  Works. No clean rebuild is needed (#1413).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

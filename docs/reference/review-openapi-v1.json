@@ -6335,7 +6335,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v3",
+            "const": "review-library-v4",
             "title": "Schema Version",
             "type": "string"
           }
@@ -6364,7 +6364,8 @@
             "enum": [
               "needs_attention",
               "no_attention_needed",
-              "not_matched"
+              "not_matched",
+              "preparation_failed"
             ],
             "title": "Attention State",
             "type": "string"
@@ -8985,13 +8986,18 @@
           "not_matched": {
             "title": "Not Matched",
             "type": "integer"
+          },
+          "preparation_failed": {
+            "title": "Preparation Failed",
+            "type": "integer"
           }
         },
         "required": [
           "all",
           "needs_attention",
           "no_attention_needed",
-          "not_matched"
+          "not_matched",
+          "preparation_failed"
         ],
         "title": "_ReviewCounts",
         "type": "object"

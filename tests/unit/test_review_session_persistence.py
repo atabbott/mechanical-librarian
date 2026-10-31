@@ -574,6 +574,7 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
                 "needs_attention": 0,
                 "no_attention_needed": 1,
                 "not_matched": 0,
+                "preparation_failed": 0,
             }
             assert len(library.json()["items"]) == 1
             assert (

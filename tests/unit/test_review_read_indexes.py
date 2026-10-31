@@ -1114,6 +1114,7 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
         "needs_attention": 0,
         "no_attention_needed": 0,
         "not_matched": 1,
+        "preparation_failed": 0,
     }
     assert report_page["items"][0]["review_case_id"] is None
 
@@ -1126,6 +1127,7 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
         "needs_attention": 1,
         "no_attention_needed": 0,
         "not_matched": 0,
+        "preparation_failed": 0,
     }
     item = case_page["items"][0]
     assert item["review_case_id"] is not None

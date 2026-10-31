@@ -299,14 +299,21 @@ _ATTENTION_FACTS_JOIN_SQL = (
 # count and the masthead's preparation buckets read it alike. A work whose
 # latest preparation failed terminally is that failure rather than unmatched,
 # so it stays where it was: the same latest-work rule Library's row reads.
-_NOT_MATCHED_PACKAGE_SQL = (
-    "(ml.review_case_id IS NULL AND (ml.outcome='evidence_only' "
-    "OR facts.provider_match_state<>'matched') AND COALESCE(("
+# Whether a current package's latest preparation failed for good: the failure
+# its Library row carries and outranks the package's own outcome (#1407, #1413).
+_LATEST_PREPARATION_FAILED_SQL = (
+    "COALESCE(("
     "SELECT latest.state='failed' AND latest.failure_code IS NOT NULL "
     "FROM review_preparation_work latest "
     "WHERE latest.connection_name=ml.connection_name "
     "AND latest.library_name=ml.library_name AND latest.item_id=ml.item_id "
-    "ORDER BY latest.updated_at DESC,latest.work_id DESC LIMIT 1),0)=0)"
+    "ORDER BY latest.updated_at DESC,latest.work_id DESC LIMIT 1),0)"
+)
+_NOT_MATCHED_PACKAGE_SQL = (
+    "(ml.review_case_id IS NULL AND (ml.outcome='evidence_only' "
+    "OR facts.provider_match_state<>'matched') AND "
+    + _LATEST_PREPARATION_FAILED_SQL
+    + "=0)"
 )
 # Its one reason, NULL for any other package. Candidates on an unmatched
 # package are an audiobook's that no work identity admitted: found, but refused.
@@ -352,6 +359,7 @@ __all__ = [
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
+    "_LATEST_PREPARATION_FAILED_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_POLICY_ASK_ATTENTION_SQL",
     "_REPORT_BROWSE_FACTS_JOIN_SQL",
