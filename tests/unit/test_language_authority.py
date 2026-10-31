@@ -83,7 +83,11 @@ def test_language_authority_survives_real_publication(tmp_path, audio, current, 
         language_decisions = [
             value for value in decisions if value["destination"] == "language"
         ]
-        assert bool(language_decisions) is supported
+        # Dropping a region on an audiobook is a replace F46 never measured,
+        # so that respelling stays the owner's (#1496).
+        assert bool(language_decisions) is (
+            supported and not (audio and current == "en-US")
+        )
 
 
 @pytest.mark.parametrize("audio", (False, True))

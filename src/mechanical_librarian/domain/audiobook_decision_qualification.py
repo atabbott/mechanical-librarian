@@ -13,7 +13,6 @@ from types import MappingProxyType
 from typing import Final, Mapping, Sequence, cast
 
 from mechanical_librarian.domain.field_outcomes import (
-    language_canonical_name,
     language_identity,
     language_is_unknown,
 )
@@ -249,11 +248,9 @@ def _language_effect_equivalent(current: object, desired: object) -> bool:
         return True
     left = language_identity(current)
     right = language_identity(desired)
-    # Writing a current value's own display name only respells it, even when
-    # the current tag carries a region the name does not write (#1496).
-    return (left is not None and left == right) or language_canonical_name(
-        current
-    ) == desired
+    # A regional tag written as its display name drops the region: that is a
+    # replace F46 never measured, so it stays the owner's (#1496).
+    return left is not None and left == right
 
 
 F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(

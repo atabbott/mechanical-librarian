@@ -413,7 +413,9 @@ ISBN, and the election grammar reads that suffix as `explicit_identifier`
 before any parenthesized family. An invalid checksum, an ASIN, other words in
 the bracket or text after it stay unmatched. The provider-consensus and
 decoration-equivalence guards are unchanged, so one provider alone still
-tidies nothing. The proposal policy moves to `fixed-conservative-v42`.
+tidies nothing. The same step shapes the work lookup, so such a title is
+looked up as its bare title, with no empty bracket left behind. The proposal
+policy moves to `fixed-conservative-v42`.
 **Clean rebuild required** under ADR-0013.
 
 ## Consequences

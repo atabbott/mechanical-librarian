@@ -102,7 +102,17 @@ def title_article_key(value: str) -> str:
 
 def title_has_leading_article(value: str) -> bool:
     """Whether a title opens with an article that `title_article_key` folds."""
-    return title_article_key(value) != title_identity_key(value)
+    return title_leading_article(value) is not None
+
+
+def title_leading_article(value: str) -> str | None:
+    """Name the one leading article `title_article_key` folds, if any.
+
+    Only a dropped article names the same title: two titles that lead with
+    different articles stay different titles.
+    """
+    first, _, rest = title_identity_key(value).partition(" ")
+    return first if first in _LEADING_TITLE_ARTICLES and rest else None
 
 
 def values_match(

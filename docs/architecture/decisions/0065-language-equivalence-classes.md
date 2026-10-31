@@ -92,10 +92,12 @@ reversed rule 4's manual decision on 2026-10-31.
 1. A `language_display_name` proposal is an ordinary automatic candidate: the
    decision policy gives it the same eligible action as a fill, on both media.
    The F46 `language_rendering:display_name:audiobook_language_normalize`
-   operation is permitted again, and writing the display name of a current
-   value's own class is that operation even when the current tag carries a
-   region. `replace` stays unpermitted, so a different language is never
-   written automatically.
+   operation is permitted again; the original F46 measurement covered it
+   before #1502 narrowed it, so no new measurement is needed. On an audiobook
+   a regional tag such as `en-GB` written as "English" drops the region, which
+   F46 measured as `replace`; `replace` stays unpermitted, so that respelling
+   and any different language stay the owner's. Ebooks respell regional tags
+   automatically.
 2. Beside an alternative of another language, an alternative of the current
    value's class only respells it, so it is dropped and the owner chooses
    between the current value and the other language.

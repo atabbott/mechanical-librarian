@@ -93,7 +93,7 @@ AI.
   states the class's display name, such as `English`. `bh` resolves to `bih`,
   and `und` gives no authority. A current value of that class spelled another
   way gets a `language_display_name` proposal, which Automatic decides like a
-  fill. Beside another language, an alternative of the current value's class
+  fill, except an audiobook's regional tag, which stays the owner's. Beside another language, an alternative of the current value's class
   is dropped, so only the other language is offered
   ([ADR-0065](../architecture/decisions/0065-language-equivalence-classes.md)).
 - **Publisher** and imprint observations bound to the edition are separate
@@ -117,8 +117,10 @@ AI.
 
 Titles that differ only by a dropped leading `The`, `A` or `An` form one
 alternative, which states a form with the article. When only the current title
-has the article, the bare form preserves it. Every election below compares
-titles the same way.
+has the article, the bare form preserves it. Two different articles are two
+titles, and a bare form beside both joins neither. Apostrophes and other
+spelling stay as they are when alternatives are formed. Every election below
+compares titles the same way.
 
 A title may be elected by any of these, each with its own reason:
 

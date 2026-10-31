@@ -46,6 +46,7 @@ from mechanical_librarian.domain.field_value_comparison import (
     title_article_key,
     title_has_leading_article,
     title_identity_key,
+    title_leading_article,
     values_match,
 )
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
@@ -2175,6 +2176,8 @@ def _evidence_led_title_election(
     isbn_bound = False
     conflict = False
     titles: set[str] = set()
+    # Only a dropped article is the same title; two articles disagree (#1496).
+    articles: set[str] = set()
     variant_claims = {
         role: {values}
         for role, values in _title_variant_identities(
@@ -2199,6 +2202,13 @@ def _evidence_led_title_election(
                 title_article_key(c.value)
                 for c in claims
                 if c.kind is ClaimKind.TITLE and type(c.value) is str
+            )
+            articles.update(
+                article
+                for c in claims
+                if c.kind is ClaimKind.TITLE
+                and type(c.value) is str
+                and (article := title_leading_article(c.value)) is not None
             )
             author_claims = tuple(
                 c
@@ -2271,9 +2281,20 @@ def _evidence_led_title_election(
         conflict = conflict or len(works) > 1
     if not isbn_bound or not titles:
         return result
+    articles.update(
+        article
+        for c in report.local_claims
+        if c.kind is ClaimKind.TITLE
+        and c.state is FieldState.VALID
+        and c.basis == "opening_matter"
+        and c.canonical
+        and title_article_key(c.canonical) in titles
+        and (article := title_leading_article(c.canonical)) is not None
+    )
     conflict = (
         conflict
         or len(titles) > 1
+        or len(articles) > 1
         or any(
             first.isdisjoint(second)
             for values in variant_claims.values()
@@ -4799,6 +4820,8 @@ def _alternatives(
             ),
             [],
         ).append(value)
+    if destination is TargetDestination.TITLE:
+        grouped = _merge_dropped_article_groups(grouped)
     entries: list[tuple[ProposalValue, ProposalAssessment, list[_Observed], bool]] = []
     for key in sorted(
         grouped,
@@ -4897,7 +4920,7 @@ def _alternatives(
             # Every grouped form names one class, so the alternative states
             # the class's canonical display name (#1314). Only that exact
             # spelling preserves a current value; another spelling of the
-            # same class is a respelling the owner is offered.
+            # same class is a respelling, decided like a fill (#1496).
             proposal_value = ProposalValue(ProposalValueKind.TEXT, name)
             preserves = target.state is TargetFieldState.VALUE and target.value == name
         else:
@@ -4995,6 +5018,63 @@ def _comparison(destination: TargetDestination, value: str) -> str:
     return canonical_text(destination, value)
 
 
+def _title_article_fold(value: ProposalValue) -> tuple[str, str | None] | None:
+    """Split one title's comparison form into its article-free rest and article."""
+    if type(value.value) is not str:
+        return None
+    first, _, rest = _comparison(TargetDestination.TITLE, value.value).partition(" ")
+    if first in {"the", "a", "an"} and rest:
+        return rest, first
+    return _comparison(TargetDestination.TITLE, value.value), None
+
+
+_GroupKey = tuple[str, "ProposalScope", "DateEvent | None", "DatePrecision | None"]
+
+
+def _dropped_article_alternative(
+    alternatives: tuple[ProposalAlternative, ...], observation: _Observed
+) -> ProposalAlternative | None:
+    """Find the one article-form alternative a bare title observation joined."""
+    fold = _title_article_fold(observation.value)
+    if fold is None or fold[1] is not None:
+        return None
+    matches = [
+        alternative
+        for alternative in alternatives
+        if alternative.scope is observation.scope
+        and (other := _title_article_fold(alternative.value)) is not None
+        and other[0] == fold[0]
+        and other[1] is not None
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _merge_dropped_article_groups(
+    grouped: dict[_GroupKey, list[_Observed]],
+) -> dict[_GroupKey, list[_Observed]]:
+    """Join a bare title's group to the one article form it drops (#1496).
+
+    A title that leads with a different article is a different title, so a
+    bare form beside two article forms stays its own value.
+    """
+    folds: dict[tuple[object, ...], dict[str | None, list[_GroupKey]]] = {}
+    for key, values in grouped.items():
+        fold = _title_article_fold(values[0].value)
+        if fold is not None:
+            folds.setdefault((fold[0], *key[1:]), {}).setdefault(fold[1], []).append(
+                key
+            )
+    merged = dict(grouped)
+    for forms in folds.values():
+        articles = [article for article in forms if article is not None]
+        if None not in forms or len(articles) != 1 or len(forms[articles[0]]) != 1:
+            continue
+        (article_key,) = forms[articles[0]]
+        for bare_key in forms[None]:
+            merged[article_key] = [*merged[article_key], *merged.pop(bare_key)]
+    return merged
+
+
 def _observation_key(destination: TargetDestination, value: ProposalValue) -> str:
     # `ProposalValue.__post_init__` binds each kind to its value shape: a tuple
     # value is TargetSeries for the SERIES destination and str everywhere else.
@@ -5014,9 +5094,6 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
         normalized = value.value
     elif destination is TargetDestination.ISBN and type(value.value) is str:
         normalized = isbn_family(value.value) or value.value
-    elif destination is TargetDestination.TITLE and type(value.value) is str:
-        # A dropped leading article names the same title (#1496).
-        normalized = title_article_key(value.value)
     elif type(value.value) is str:
         normalized = _comparison(destination, value.value)
     else:
@@ -5658,6 +5735,10 @@ def _bibliographic_combinations(
                     observation.scope,
                 )
             )
+            if alternative is None and destination is TargetDestination.TITLE:
+                alternative = _dropped_article_alternative(
+                    results[destination].alternatives, observation
+                )
             direct = alternative is not None
             if alternative is None and destination is TargetDestination.TITLE:
                 associated_id = title_associations.get(observation.representation)

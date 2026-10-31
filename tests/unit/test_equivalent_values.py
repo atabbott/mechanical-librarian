@@ -110,8 +110,14 @@ def test_an_isbn_election_elects_the_form_with_the_article():
 
 @pytest.mark.parametrize(
     "other",
-    ("Example Titles", "Example Title Two", "The Other Title", "Example"),
-    ids=("plural", "extra_word", "other_title", "missing_word"),
+    (
+        "Example Titles",
+        "Example Title Two",
+        "The Other Title",
+        "Example",
+        "A Example Title",
+    ),
+    ids=("plural", "extra_word", "other_title", "missing_word", "other_article"),
 )
 def test_a_title_differing_in_anything_else_still_conflicts(other):
     result = _isbn_title("The Example Title", ("The Example Title", other))
@@ -141,6 +147,54 @@ def test_the_bare_form_is_never_offered_as_a_replacement_for_the_article():
         kept.value.value,
         kept.assessment,
     )
+
+
+def test_a_bare_form_beside_two_articles_joins_neither():
+    result = _isbn_title(
+        "Example Series 03 - The Example Title",
+        ("The Example Title", "Example Title", "A Example Title"),
+    )
+
+    assert (ProposalOutcome.UNRESOLVED_CHOICE, ("isbn_title_material_conflict",)) == (
+        result.outcome,
+        result.reasons,
+    )
+    assert {"The Example Title", "Example Title", "A Example Title"} <= {
+        value.value.value for value in result.alternatives
+    }
+
+
+def test_another_article_never_replaces_the_current_one():
+    result = _title_result(
+        current="The Plain Work",
+        providers=(
+            consensus_provider_title("open_library", "A Plain Work"),
+            consensus_provider_title("hardcover", "A Plain Work"),
+        ),
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE is not result.outcome
+    assert "The Plain Work" in {value.value.value for value in result.alternatives}
+
+
+@pytest.mark.parametrize(
+    "providers",
+    (("Plain’s Work", "Plain's Work"), ("Plain's Work", "Plain's Work")),
+    ids=("one_each", "both_straight"),
+)
+def test_a_curly_apostrophe_is_still_its_own_title(providers):
+    result = _title_result(
+        current="Plain’s Work",
+        providers=tuple(
+            consensus_provider_title(name, value)
+            for name, value in zip(
+                ("open_library", "hardcover"), providers, strict=True
+            )
+        ),
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE is not result.outcome
+    assert "Plain’s Work" in {value.value.value for value in result.alternatives}
 
 
 def test_a_current_title_without_the_article_is_given_it():
@@ -256,6 +310,15 @@ def test_a_respelling_beside_another_language_is_no_choice_of_its_own():
     assert ["English"] == [value.value.value for value in result.alternatives]
 
 
+def test_a_respelling_beside_another_language_leaves_only_the_other():
+    result = _result(
+        language_report(("English", "French"), "en"), TargetDestination.LANGUAGE
+    )
+
+    assert ProposalOutcome.UNRESOLVED_CHOICE is result.outcome
+    assert ["French"] == [value.value.value for value in result.alternatives]
+
+
 def test_two_other_languages_both_stay_beside_the_current_one():
     result = _result(
         language_report(("English", "French"), "nl"), TargetDestination.LANGUAGE
@@ -297,10 +360,24 @@ def test_a_respelling_is_written_automatically_and_another_language_is_not(
             for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
             if value["destination"] == "language"
         )
-    if automatic:
+    # Dropping a region on an audiobook is a replace F46 never measured.
+    if automatic and not (audio and "-" in current):
         assert field["automatic_decision"]["selected_value"] == {
             "kind": "text",
             "value": "English",
         }
     else:
         assert field["automatic_decision"] is None
+
+
+@pytest.mark.parametrize(
+    "decorated",
+    ("Plain Work [ISBN 9780306406157]", "Plain Work (ISBN 9780306406157)"),
+    ids=("square", "round"),
+)
+def test_a_bracketed_isbn_leaves_no_empty_bracket_in_the_lookup(decorated):
+    from mechanical_librarian.domain.work_identity import work_query_ladder
+
+    assert ["Plain Work"] == [
+        query.title for query in work_query_ladder(decorated, ("Ada Author",))
+    ]

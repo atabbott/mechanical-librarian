@@ -288,6 +288,52 @@ describe('Policy route', () => {
     )
   })
 
+  it('says Language fills and respells the same language on both media (#1496)', async () => {
+    renderRoute('/policy?section=identity', {
+      ...createHttp(),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+        schema_version: 'metadata-policy-notebook-v1',
+        policy_id: 'policy-1',
+        profile: {
+          schema_version: 'metadata-policy-profile-v3',
+          name: 'Default',
+          options: {},
+          destinations: {},
+        },
+        rich_qualification: [
+          {
+            automatic_available: true,
+            candidate_sha256: 'a'.repeat(64),
+            disposition: 'pass',
+            field: 'language_rendering',
+            option: 'display_name',
+            operation_scope: 'fill_or_respell',
+          },
+        ],
+        audiobook_qualification: [
+          ...(['fill', 'preserve', 'normalize'] as const).map((operation) => ({
+            automatic_available: true,
+            destination: 'language' as const,
+            field: 'language_rendering' as const,
+            identity: `language_rendering:display_name:audiobook_language_${operation}`,
+            operation,
+            option: 'display_name' as const,
+            record_sha256: 'c'.repeat(64),
+          })),
+          ...inertAudiobookQualification.filter((entry) => entry.field !== 'language_rendering'),
+        ],
+      })),
+    })
+    const language = await screen.findByRole('region', { name: 'Language' })
+    const scope = language.querySelector('.cm-policy-media-scope')
+    expect(scope).not.toBeNull()
+    expect(scope).toHaveTextContent(
+      'Automatic eligibility if selected: Fill empty or respell the same language',
+    )
+    expect(scope?.textContent.match(/Fill empty or respell the same language/gu)).toHaveLength(2)
+    expect(scope).not.toHaveTextContent('Fill empty only')
+  })
+
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
     const user = userEvent.setup()
     const options = {

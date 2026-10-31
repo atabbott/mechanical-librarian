@@ -214,7 +214,7 @@ in the [ProposalSet](../operations/proposal-set.md#titles). File, package and
 service titles are observations whose disagreement alone cannot veto stronger
 evidence. A title that differs only by a dropped leading `The`, `A` or `An` is
 the same title: the form with the article is kept or elected, and the bare form
-is never offered. Subtitle and series are decided in their own fields. Material
+is never offered; "The" and "A" are still different titles. Subtitle and series are decided in their own fields. Material
 competing works, authors or titles go to the owner.
 
 Ebook automatic title replacement has three qualified operations:
@@ -337,7 +337,9 @@ language is written as one display name, such as "English" or "Chinese
 (Simplified)", whatever spelling the evidence used. A current value already
 spelled that way stays unchanged. A current value of the same language spelled
 another way, such as `en`, `eng` or `en-GB`, is respelled to its display name
-automatically, as a fill is, and is never an owner question. Beside a different
+automatically, as a fill is, and is never an owner question; on an audiobook a
+regional tag such as `en-GB` still asks, because dropping its region is a
+replace audiobook qualification never measured. Beside a different
 language, a value that only respells the current one is not offered. Region is
 not written; base or script disagreements stay manual. No language is
 inferred.
