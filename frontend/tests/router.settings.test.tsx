@@ -2229,6 +2229,9 @@ describe('library languages in Settings (#1466)', () => {
 
     const picker = await screen.findByRole('combobox', { name: `Add a language to ${title}` })
     expect(picker).toBeDisabled()
+    expect(picker).toHaveAccessibleDescription(
+      'A library declares at most 8 languages. Remove one to add another.',
+    )
     expect(
       screen.getByText('A library declares at most 8 languages. Remove one to add another.'),
     ).toBeVisible()
@@ -2246,6 +2249,14 @@ describe('library languages in Settings (#1466)', () => {
     await user.click(await screen.findByRole('combobox', { name: `Add a language to ${title}` }))
     expect(screen.queryByRole('option', { name: 'German (de)' })).toBeNull()
     expect(screen.getByRole('option', { name: 'Chinese (zh)' })).toBeInTheDocument()
+    cleanup()
+    // An offered code withholds only itself: the browser's alias of `tl` to
+    // `fil` does not hide one the server accepts beside the other.
+    http.getSettings = vi.fn(async () => withLanguages(['fil']))
+    renderRoute('/settings?group=libraries', http)
+    await user.click(await screen.findByRole('combobox', { name: `Add a language to ${title}` }))
+    expect(screen.getByRole('option', { name: 'Filipino (tl)' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Filipino (fil)' })).toBeNull()
     expect(screen.queryByRole('option', { name: /\((und|mul|mis|zxx)\)$/ })).toBeNull()
   })
 

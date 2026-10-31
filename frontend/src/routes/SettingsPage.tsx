@@ -237,6 +237,7 @@ const LibraryLanguages = ({
       <div id={controlId(`${fieldId}.add`)}>
         <Dropdown
           ariaLabel={`Add a language to ${title}`}
+          describedBy={full ? controlId(`${fieldId}.limit`) : undefined}
           value=""
           disabled={full}
           options={[{ value: '', label: 'Add a language' }, ...languageChoices(languages)]}
@@ -249,7 +250,7 @@ const LibraryLanguages = ({
         />
       </div>
       {full ? (
-        <p className="settings-empty-associations">
+        <p className="settings-empty-associations" id={controlId(`${fieldId}.limit`)}>
           A library declares at most {libraryLanguageLimit} languages. Remove one to add another.
         </p>
       ) : null}

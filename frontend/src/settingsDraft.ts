@@ -294,9 +294,13 @@ const offeredLanguages = settingsVocabulary.library_languages.codes
   .map((code) => ({ value: code, label: languageName(code) }))
   .filter((option) => option.label !== option.value)
   .sort((left, right) => left.label.localeCompare(right.label))
-// The server refuses two entries of one language and script, so a listed
-// `deu` or `de-CH` withholds `de` as well as a listed `de` does.
+// The server refuses two entries of one language and script. An offered code
+// is its own group, since the browser's aliases join languages the server
+// keeps apart (`tl` and `fil`); any other tag, such as `deu` or `de-CH` from
+// the file or the API, is grouped as the browser reads it, so it withholds `de`.
+const offeredCodes: ReadonlySet<string> = new Set(settingsVocabulary.library_languages.codes)
 const languageClass = (tag: string) => {
+  if (offeredCodes.has(tag)) return `${tag}-`
   try {
     const locale = new Intl.Locale(tag)
     return `${locale.language}-${locale.script ?? ''}`

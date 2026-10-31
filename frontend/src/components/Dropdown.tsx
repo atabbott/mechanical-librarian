@@ -25,6 +25,7 @@ interface DropdownPosition {
 
 export function Dropdown(props: {
   ariaLabel: string
+  describedBy?: string | undefined
   value: string
   options: readonly DropdownOption[]
   onChange: (value: string) => void
@@ -199,6 +200,7 @@ export function Dropdown(props: {
         className="cm-dropdown-trigger"
         role="combobox"
         aria-label={props.ariaLabel}
+        aria-describedby={props.describedBy}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listboxId}
