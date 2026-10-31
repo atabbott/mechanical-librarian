@@ -125,7 +125,7 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
         ("reconciling", "Checking"),
         ("retryable", "Waiting safely"),
         ("verified", "Verified"),
-        ("stale", "Stale"),
+        ("stale", "Closed safely"),
         ("superseded", "Superseded"),
         ("abandoned", "Stopped safely"),
         ("unrecognized durable state", "Recorded"),
@@ -143,8 +143,9 @@ def test_each_durable_state_has_one_closed_owner_visible_result(
     ("failure", "result"),
     (
         ("connection", "Waiting safely"),
-        ("connection_exhausted", "Stale"),
-        ("capability", "Stale"),
+        ("connection_exhausted", "Closed safely"),
+        ("capability", "Closed safely"),
+        ("target_changed", "Item changed; nothing written"),
     ),
 )
 def test_only_a_connection_stale_reads_as_waiting(failure: str, result: str) -> None:
