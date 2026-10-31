@@ -708,13 +708,11 @@ const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
       ? 'Different source descriptions'
       : materialReasonLabel(notice)
 // A notice that says again what the reason under the question already says is
-// left out: the language respelling reason, or the condition that is that
-// line (#1519).
+// left out: the condition that is that line (#1519).
 const restatesReason = (field: ReviewField, notice: string) =>
   notice === questionNotice(field) ||
   (field.automaticWithheldReason !== null &&
-    (notice === 'language_display_name' ||
-      `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason))
+    `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason)
 // Under an actionable field's question, one line gives its own reason: why it
 // was withheld, else its first comparison condition, else its disposition. The
 // classification sentence, the same on every field, is only the last fallback
