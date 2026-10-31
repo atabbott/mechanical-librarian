@@ -60,6 +60,9 @@ brackets are GitHub issues.
 - The masthead names only the Library link as the current page on Library,
   a review and Attention; the Mechanical Librarian brand link no longer
   claims it too (#1488).
+- Choosing an item from the Attention queue keeps the chosen work's header,
+  which takes focus, fully on screen and clear of the masthead at enlarged
+  text (#1487).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
