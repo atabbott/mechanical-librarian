@@ -101,11 +101,11 @@ describe('Application shell', () => {
     expect(http.getAutomaticSafety).toHaveBeenCalled()
   })
 
-  it('marks Library current on review and attention routes', async () => {
+  it('marks Library current on review routes and with the attention rail open', async () => {
     for (const [entry, current] of [
       ['/library?lens=all', 'Library'],
       ['/review/case-1', 'Library'],
-      ['/attention', 'Library'],
+      ['/library?lens=all&attention=open', 'Library'],
       ['/policy?section=identity', 'Policy'],
     ] as const) {
       renderRoute(entry)
@@ -129,6 +129,19 @@ describe('Application shell', () => {
       )
       cleanup()
     }
+  })
+
+  it('routes only the shell destinations, with a review inside Library', async () => {
+    const { router } = renderRoute('/library?lens=all')
+    const nav = await screen.findByRole('navigation', { name: 'Primary workspace' })
+    const destinations = within(nav)
+      .getAllByRole('link')
+      .map((link) => new URL(link.getAttribute('href') ?? '', 'http://shell.test').pathname)
+    const routed = Object.keys(router.routesByPath).filter(
+      (path) => path !== '/' && !path.startsWith('/review/'),
+    )
+    expect([...routed].sort()).toEqual([...destinations].sort())
+    expect(routed).not.toContain('/attention')
   })
 
   it('hands the setup run into the selectable Library preparation summary', async () => {

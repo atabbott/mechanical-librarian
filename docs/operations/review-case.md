@@ -176,7 +176,7 @@ body is refused before parsing.
   `unavailable` if readback failed after commit. Unavailable is still
   recorded; the browser offers a reload and never resubmits.
 
-Library and Attention pages hold at most 50 works, with query-bound cursors.
+Library and Attention reads hold at most 50 works, with query-bound cursors.
 Each response comes from one database snapshot, so a concurrent decision shows
 throughout or not at all. A decision cannot create automatic authority, plan,
 write or widen into a bulk operation.

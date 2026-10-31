@@ -1944,7 +1944,6 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(
     assert automatic_case.review_case_id not in json.dumps(queue.json())
 
     assert web.client.get("/library").status_code == 200
-    assert web.client.get("/attention").status_code == 200
 
 
 def test_complete_library_includes_current_report_without_review_lineage(

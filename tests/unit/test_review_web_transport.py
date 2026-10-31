@@ -1519,7 +1519,6 @@ def test_authenticated_page_preserves_csrf_rotation_persistence_failure(
     web.repository.rotate_failure = True
     for path in (
         "/library",
-        "/attention",
         f"/review/{web.case.review_case_id}",
     ):
         unavailable = web.client.get(path)
@@ -1534,7 +1533,6 @@ def test_authenticated_page_preserves_expired_rotation_as_unauthorized(
     web.repository.rotate_result = "unauthorized"
     for path in (
         "/library",
-        "/attention",
         f"/review/{web.case.review_case_id}",
     ):
         denied = web.client.get(path)
@@ -1553,6 +1551,28 @@ def test_expired_session_redirects_html_shell_while_api_remains_json(
     api = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert api.status_code == 401
     assert api.json()["error"]["code"] == "unauthorized"
+
+
+@pytest.mark.parametrize("signed_in", [False, True], ids=["signed_out", "signed_in"])
+@pytest.mark.parametrize(
+    "query", ["", "?q=x&cursor=c&next=//evil.invalid"], ids=["bare", "with_query"]
+)
+def test_retired_attention_page_opens_library_with_the_attention_rail(
+    web: ReviewWebContext[FakeReviewRepository], signed_in: bool, query: str
+) -> None:
+    if signed_in:
+        web.login()
+    bookmark = web.client.get("/attention" + query, follow_redirects=False)
+    assert bookmark.status_code == 308
+    assert bookmark.headers["location"] == "/library?lens=all&attention=open"
+    landed = web.client.get(bookmark.headers["location"], follow_redirects=False)
+    if signed_in:
+        assert landed.status_code == 200
+    else:
+        assert landed.status_code == 303
+        assert landed.headers["location"] == (
+            "/login?next=%2Flibrary%3Flens%3Dall%26attention%3Dopen"
+        )
 
 
 def test_root_opens_library_only_with_a_valid_session(
@@ -1575,7 +1595,6 @@ def test_root_opens_library_only_with_a_valid_session(
     [
         ("/library", "/login"),
         ("/library?lens=all", "/login?next=%2Flibrary%3Flens%3Dall"),
-        ("/attention", "/login?next=%2Fattention"),
         (
             "/review/case-1?field=title",
             "/login?next=%2Freview%2Fcase-1%3Ffield%3Dtitle",
@@ -1588,7 +1607,6 @@ def test_root_opens_library_only_with_a_valid_session(
     ids=[
         "library_plain",
         "library_query",
-        "attention",
         "review_query",
         "settings",
         "policy",
@@ -1607,14 +1625,14 @@ def test_signed_out_workspace_page_signs_in_with_its_return_path(
 @pytest.mark.parametrize(
     "next_path",
     [
-        "/attention",
+        "/library?lens=all&attention=open",
         "/library?lens=all&page=2",
         "/review/review_case_" + "a" * 64,
         "/review/case-1?field=title",
         "/activity?filter=stopped",
     ],
     ids=[
-        "attention",
+        "library_attention_rail",
         "library_query",
         "review_case_id",
         "review_query",
@@ -1642,6 +1660,7 @@ def test_sign_in_page_carries_a_workspace_return_path(
         "/library/x",
         "/login",
         "/api/v1/library",
+        "/attention",
         "/unknown",
         "/library#top",
         "/library?q=a b",
@@ -1663,6 +1682,7 @@ def test_sign_in_page_carries_a_workspace_return_path(
         "nested_path",
         "login",
         "api",
+        "retired_attention",
         "unknown_page",
         "fragment",
         "space",

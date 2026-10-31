@@ -96,3 +96,12 @@ architecture or authority boundary. Its protected surface ownership and
 cumulative source, wheel, container, responsive, accessibility, and interaction
 qualification are recorded in the
 [0.14.1 interface-fidelity reconciliation](https://github.com/atabbott/mechanical-librarian/blob/858789a80217ccfc69c279ad42efe25cf286a9f4/docs/development/0-14-1-interface-fidelity.md).
+
+## Amendment: Attention lives in Library (2026-10-31, #700)
+
+The shell no longer routes `/attention`. Attention is the rail inside Library,
+which reads the same `/api/v1/attention` query, so the router's routes match
+the shell's navigation. FastAPI answers a direct `/attention` entry with a
+permanent redirect to the fixed same-origin `/library?lens=all&attention=open`,
+whatever its query, and sign-in no longer accepts `/attention` as a return
+path.

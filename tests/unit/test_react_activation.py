@@ -154,7 +154,6 @@ def test_authenticated_routes_share_shell_and_rotate_csrf(case: _Case) -> None:
     login = _login(case)
     paths = (
         "/library",
-        "/attention",
         f"/review/{case.case_id}",
         "/policy",
         "/activity",
