@@ -963,6 +963,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             == (1,)
             and self._review_case_accepts_authority(authority.review_case_id)
+            # An owner decision from before its case was admitted again
+            # authorizes nothing in the new episode (#1358).
+            and self._connection.execute(
+                "SELECT 1 FROM human_decisions WHERE decision_id=? AND NOT "
+                + _episode_decision_sql("human_decisions"),
+                (authority.decision_id,),
+            ).fetchone()
+            is None
         )
         description = self._connection.execute(
             "SELECT document FROM description_decisions WHERE decision_id=?",

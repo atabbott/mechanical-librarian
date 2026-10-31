@@ -646,6 +646,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 self._revoke_field_effect_authority_in_transaction(
                     previous[0], decision.occurred_at, required=False
                 )
+            # An earlier episode's decisions authorize nothing now; their
+            # plans close with this one (#1358).
+            for (earlier,) in self._connection.execute(
+                "SELECT decision_id FROM human_decisions WHERE review_case_id=? "
+                "AND destination=? AND decision_id<>? AND NOT "
+                + _episode_decision_sql("human_decisions"),
+                (decision.review_case_id, decision.destination, decision.decision_id),
+            ).fetchall():
+                self._revoke_field_effect_authority_in_transaction(
+                    earlier, decision.occurred_at, required=False
+                )
             if automatic is None:
                 # A case admitted again can carry a release made on a later
                 # case, and a released row excludes its human decisions from

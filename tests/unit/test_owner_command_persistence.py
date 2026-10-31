@@ -969,3 +969,29 @@ def test_a_later_successor_that_recurs_is_a_new_episode_too(
     assert _decision_ids(store) == set()
     assert _field(store, "title")["human_decision"] is None
     assert first != second
+
+
+def test_a_plan_from_the_earlier_episode_never_writes(store: OwnerStore) -> None:
+    """A plan made on A before the work left it and came back authorizes
+    nothing once A is a new episode, whether or not the owner decides again."""
+    first = store.case.review_case_id
+    earlier = store.plan(store.decide("owner_entered", ORCHARD))
+    _successor(store, publisher="Changed Elsewhere")
+    assert store.publish(genre_report()).review_case_id == first
+    assert store.service.apply(earlier.plan.plan_id).state != "verified"
+    assert earlier.plan.plan_id not in store.patches
+    # The owner's choice in this episode is the one that writes.
+    another = {"kind": "text", "value": "Another Orchard"}
+    written = store.write(store.decide("owner_entered", another))
+    assert written.plan.desired_value == "Another Orchard"
+    assert store.patches == [written.plan.plan_id]
+
+
+def test_deciding_again_closes_the_earlier_episodes_plan(store: OwnerStore) -> None:
+    first = store.case.review_case_id
+    earlier = store.plan(store.decide("owner_entered", ORCHARD))
+    _successor(store, publisher="Changed Elsewhere")
+    assert store.publish(genre_report()).review_case_id == first
+    store.decide("owner_entered", {"kind": "text", "value": "Another Orchard"})
+    closed = store.repository.get_field_effect(earlier.plan.plan_id)
+    assert (closed.state, closed.failure) == ("superseded", "authority_superseded")

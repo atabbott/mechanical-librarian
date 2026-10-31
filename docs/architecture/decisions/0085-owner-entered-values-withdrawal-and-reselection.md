@@ -108,8 +108,9 @@ event, so the value a write replaced is durable.
 - A case id is a content hash, so a work that returns to exactly the content of
   an earlier case re-admits that case, and the re-admission starts a new
   episode of it. Its earlier owner decisions are append-only and stay as
-  history, but they settle, word, withdraw and plan nothing in the new episode,
-  and a write planned before it is not its pre-image: the case reads as
+  history, but they settle, word, withdraw, plan and authorize nothing in the
+  new episode (a plan made for one never applies, and the next owner decision
+  supersedes it), and a write planned before it is not its pre-image: the case reads as
   undecided until the owner decides again. Choosing the previous value again
   therefore leaves the earlier case reading as new, not as "You entered X"
   marked written. An earlier episode's decision still keeps a new automatic
