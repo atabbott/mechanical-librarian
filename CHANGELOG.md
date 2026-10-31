@@ -94,6 +94,11 @@ brackets are GitHub issues.
 - A work's collapsed list of fields with nothing to decide is headed "No
   change:" and their names, counts waiting or unavailable fields separately,
   and says no source offered a different value (#1514).
+- A field decision shows the question, one line with the field's own reason,
+  and the values: a proposed value names its sources, and generic lines,
+  empty sections, idle library cards and "No recommendation retained" are
+  gone. Reminders that writes are protected remain only in the guided first
+  review and Activity's permission control (#1519).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

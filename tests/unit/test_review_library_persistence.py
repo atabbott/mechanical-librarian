@@ -1843,7 +1843,7 @@ def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() ->
             value for value in suspended["fields"] if value["destination"] == "series"
         )
         assert (
-            "This field is waiting for an external service recovery."
+            "This field is waiting for an outside service to recover."
             == field["classification_reason"]
         )
         assert [
@@ -2951,7 +2951,7 @@ def test_provider_withheld_reason_requires_exact_contributing_automatic_evidence
     assert (series["automatic_withheld_reason"] is not None) is expected
     if expected:
         assert series["needs_attention"] is True
-        assert "contributing ISBN lookup" in series["automatic_withheld_reason"]
+        assert "An ISBN lookup" in series["automatic_withheld_reason"]
     assert tuple(repository._connection.iterdump()) == before
     assert repository._connection.total_changes == changes
     repository.close()
@@ -3054,7 +3054,7 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
             assert "series" not in reasons
             assert (
                 reasons["description"]
-                == "No eligible value was found in the retained evidence."
+                == "No source offered a value that can be used here."
             )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
         if mode == "human":
@@ -3177,13 +3177,9 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
             for f in detail["fields"]
             if f["automatic_withheld_reason"] is not None
         }
+        assert reasons["series"] == "An ISBN lookup did not return a usable answer."
         assert (
-            reasons["series"]
-            == "A contributing ISBN lookup did not supply usable evidence."
-        )
-        assert (
-            reasons["description"]
-            == "No eligible value was found in the retained evidence."
+            reasons["description"] == "No source offered a value that can be used here."
         )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
         writer_thread.join(timeout=5)
@@ -3210,8 +3206,7 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
         }
         assert "series" not in reasons
         assert (
-            reasons["description"]
-            == "No eligible value was found in the retained evidence."
+            reasons["description"] == "No source offered a value that can be used here."
         )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
     finally:
@@ -3315,8 +3310,7 @@ def test_non_provider_abstention_keeps_review_without_provider_claim(tmp_path):
     )
     assert field["needs_attention"] is True
     assert (
-        field["automatic_withheld_reason"]
-        == "The retained evidence does not resolve series membership for automatic handling."
+        field["automatic_withheld_reason"] == "The sources disagree about the series."
     )
     repository.close()
 
@@ -3444,7 +3438,7 @@ def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, susp
         )
         assert (
             series["automatic_withheld_reason"]
-            == "A contributing ISBN lookup did not supply usable evidence."
+            == "An ISBN lookup did not return a usable answer."
         )
         successor = InspectCurrentReviewCase(reader).run(case_id)
         series = next(
@@ -3452,7 +3446,7 @@ def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, susp
         )
         assert (
             series["automatic_withheld_reason"]
-            == "Automatic handling is currently suspended. Recorded evaluation: A contributing ISBN lookup did not supply usable evidence."
+            == "Automatic handling is currently suspended. Recorded evaluation: An ISBN lookup did not return a usable answer."
         )
         assert (
             reader.read_current_review_case(case_id, None).final_outcome_document

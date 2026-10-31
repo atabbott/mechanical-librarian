@@ -659,7 +659,7 @@ const fieldStatus = (field: ReviewField) =>
 // so the two reasons for an unchanged field are named here (#1514).
 const unchangedReasons = new Set([
   '',
-  'There is no owner decision available for this field.',
+  'There is nothing to decide for this field.',
   'There is no other value to choose from. You can enter your own.',
 ])
 const contextKind = (field: ReviewField) =>
@@ -730,8 +730,7 @@ const effectSummary = (field: ReviewField) => {
     return field.effectCapability === 'allowed'
       ? {
           state: 'Choice recorded',
-          detail:
-            "Activity shows this change's progress; safety checks run before any update is sent.",
+          detail: "Activity shows this change's progress.",
         }
       : field.effectCapability === 'unavailable'
         ? {
@@ -744,20 +743,23 @@ const effectSummary = (field: ReviewField) => {
             detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}. Activity shows any recorded application progress.`,
           }
   }
+  // Only a change the owner recorded for the library has an effect to report;
+  // a field that is merely eligible, unavailable or guarded has none (#1519).
+  const decision = field.humanDecision
+  if (
+    decision?.application !== 'apply' ||
+    (decision.outcome !== 'accept' && decision.outcome !== 'owner_entered')
+  )
+    return undefined
   return field.effectCapability === 'allowed'
-    ? {
-        state: 'Eligible for a library update',
-        detail:
-          'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
-      }
+    ? { state: 'Change recorded', detail: "Activity shows this change's progress." }
     : field.effectCapability === 'unavailable'
       ? {
-          state: 'External update unavailable',
-          detail:
-            'The decision can still be recorded; no external update capability is configured.',
+          state: 'Change recorded · External update unavailable',
+          detail: 'No external update capability is configured.',
         }
       : {
-          state: 'Guarded from external update',
+          state: 'Change recorded · External update guarded',
           detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}.`,
         }
 }
@@ -827,7 +829,15 @@ const comparisonNotices = (field: ReviewField) =>
     context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
   )
     ? []
-    : field.notices.filter((notice) => materialReasonLabel(notice) !== undefined)
+    : field.notices.filter(
+        (notice) => materialReasonLabel(notice) !== undefined && !restatesReason(field, notice),
+      )
+// A notice that says again what the reason under the question already says is
+// left out: the language respelling reason is that line (#1519).
+const restatesReason = (field: ReviewField, notice: string) =>
+  field.automaticWithheldReason !== null &&
+  (notice === 'language_display_name' ||
+    `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason)
 
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
 const limitingProviderStatuses = new Set([
@@ -1074,7 +1084,6 @@ function ChoiceEvidencePanel({
   ).size
   return (
     <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
-      <p>{context?.rationale ?? 'Retained evidence is unavailable for this choice.'}</p>
       {corroboratingSources ? (
         <p>
           {corroboratingSources}{' '}
@@ -1182,10 +1191,13 @@ function RecordedFieldObservations({
           linked.observation === item.observation,
       ),
   )
+  const missing = evidence.data?.pages[0]?.missingLineageCount ?? 0
+  // The section is there only when this field has observations to show, more
+  // may be loaded, or they could not be read (#1519).
+  if (!observations.length && !evidence.isError && !evidence.hasNextPage && !missing) return null
   return (
     <section className="recorded-field-observations" aria-label="Recorded observations">
       <h3>Recorded observations</h3>
-      <p>These retained facts are read-only. They do not offer additional choices.</p>
       {observations.length ? (
         <ul className="evidence-values">
           {observations.map((item, index) => (
@@ -1197,20 +1209,8 @@ function RecordedFieldObservations({
             </li>
           ))}
         </ul>
-      ) : evidence.isPending ? (
-        <p role="status">Loading recorded observations…</p>
-      ) : (
-        <p>
-          {evidence.hasNextPage
-            ? 'No additional facts for this field on the loaded pages.'
-            : evidence.isError
-              ? 'Recorded observations are unavailable.'
-              : 'No additional facts were recorded for this field.'}
-        </p>
-      )}
-      {evidence.data?.pages[0]?.missingLineageCount ? (
-        <p>Some referenced observations are unavailable.</p>
       ) : null}
+      {missing ? <p>Some referenced observations are unavailable.</p> : null}
       {evidence.isError ? (
         <p role="alert">
           The observations could not be loaded.{' '}
@@ -1246,6 +1246,7 @@ function MetadataChoice({
   context,
   current,
   disabled,
+  evidenceName,
   expanded,
   label,
   longDescription,
@@ -1261,6 +1262,8 @@ function MetadataChoice({
   context: ChoiceContextView | undefined
   current: boolean
   disabled: boolean
+  // The Evidence control's name when the card has no visible label (#1519).
+  evidenceName?: string
   expanded: boolean
   label: string
   longDescription: boolean
@@ -1274,9 +1277,19 @@ function MetadataChoice({
   const adviceSource =
     retainedAdvice && advice?.selected_advice ? advice.selected_advice.candidate : advice
   const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
-  const evidenceLabel = longDescription
-    ? `Evidence for ${label} description`
-    : `Evidence for ${label}: ${value}`
+  const evidenceLabel =
+    evidenceName ??
+    (longDescription ? `Evidence for ${label} description` : `Evidence for ${label}: ${value}`)
+  const rationale = adviceSource
+    ? `${adviceSource.engine} · ${adviceSource.model}`
+    : context?.rationale
+  const recommendation = recording
+    ? 'Recording…'
+    : advice
+      ? descriptionAdviceStatus(advice, retainedAdvice)
+      : context?.recommendation === 'recommended'
+        ? context.recommendationReason
+        : ''
   const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
   return (
     <article
@@ -1284,7 +1297,7 @@ function MetadataChoice({
     >
       {longDescription ? (
         <div className="description-choice-content">
-          <small>{label}</small>
+          {label ? <small>{label}</small> : null}
           <DescriptionText key={value} value={value} />
         </div>
       ) : null}
@@ -1298,7 +1311,7 @@ function MetadataChoice({
       >
         <small>
           {label}
-          {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
+          {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
           {selected ? <b className="choice-chosen">Your choice</b> : null}
         </small>
         <strong>
@@ -1306,20 +1319,8 @@ function MetadataChoice({
             ? `Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} description`
             : value}
         </strong>
-        <span>
-          {adviceSource
-            ? `${adviceSource.engine} · ${adviceSource.model}`
-            : (context?.rationale ?? 'Retained for this owner comparison.')}
-        </span>
-        <span className="choice-recommendation">
-          {recording
-            ? 'Recording…'
-            : advice
-              ? descriptionAdviceStatus(advice, retainedAdvice)
-              : context?.recommendation === 'recommended'
-                ? context.recommendationReason
-                : 'No recommendation retained'}
-        </span>
+        {rationale ? <span>{rationale}</span> : null}
+        {recommendation ? <span className="choice-recommendation">{recommendation}</span> : null}
       </button>
       {hasEvidence ? (
         <button
@@ -1968,20 +1969,6 @@ function RecordedOutcome({
   )
 }
 
-// What a tap will do, said before the tap and in the present tense of this
-// work's actual write state. The same words after the fact are what the
-// completion summary says, so the promise made here is the one kept there
-// (#639). A cover tap makes the same promise as any other field (#1290).
-function WriteStateLine({ active }: { active: boolean }) {
-  return (
-    <p className={`cm-write-state is-${active ? 'on' : 'off'}`}>
-      {active
-        ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
-        : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
-    </p>
-  )
-}
-
 function LibraryCoverChoices(props: {
   reviewCaseId: string
   mediaKind: string
@@ -1994,7 +1981,6 @@ function LibraryCoverChoices(props: {
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
-  writesActive: boolean
 }) {
   return (
     <LibraryCoverChoicesContent
@@ -2161,7 +2147,6 @@ function LibraryCoverChoicesContent({
   progress,
   revealEvidence,
   choose,
-  writesActive,
 }: {
   reviewCaseId: string
   mediaKind: string
@@ -2174,7 +2159,6 @@ function LibraryCoverChoicesContent({
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
-  writesActive: boolean
 }) {
   const { http } = useReviewContext()
   const access = useQuery({
@@ -2376,13 +2360,11 @@ function LibraryCoverChoicesContent({
               {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
             </span>
             {context?.rationale ? <em>{context.rationale}</em> : null}
-            <span className="choice-recommendation">
-              {!eligibleCandidate || candidate.matchState === 'match_not_confirmed'
-                ? excludedReason(candidate)
-                : recommended
-                  ? (context?.recommendationReason ?? 'Deterministic recommendation retained')
-                  : 'No recommendation retained'}
-            </span>
+            {!eligibleCandidate || candidate.matchState === 'match_not_confirmed' ? (
+              <span className="choice-recommendation">{excludedReason(candidate)}</span>
+            ) : recommended && context?.recommendationReason ? (
+              <span className="choice-recommendation">{context.recommendationReason}</span>
+            ) : null}
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
           </span>
         </button>
@@ -2473,7 +2455,6 @@ function LibraryCoverChoicesContent({
           Automatically selected. Only a strictly better confirmed cover can update this choice.
         </p>
       ) : null}
-      <WriteStateLine active={writesActive} />
       <p className="cover-track-hint">
         Every cover is shown whole in one row. Scroll the row, or move between covers with the arrow
         keys, to compare them.
@@ -2552,11 +2533,12 @@ function LibraryCoverChoicesContent({
                   <em>
                     {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
                   </em>
-                  <span className="choice-recommendation">
-                    {currentContext?.recommendation === 'recommended'
-                      ? currentContext.recommendationReason
-                      : 'No recommendation retained'}
-                  </span>
+                  {currentContext?.recommendation === 'recommended' &&
+                  currentContext.recommendationReason ? (
+                    <span className="choice-recommendation">
+                      {currentContext.recommendationReason}
+                    </span>
+                  ) : null}
                   {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
                   progress?.phase === 'recording' ? (
                     <b>Recording…</b>
@@ -4362,8 +4344,12 @@ export default function LibraryPage({
             context,
             current: false,
             disabled: false,
+            // A proposed card is named by its value, never "Alternative N" (#1519).
+            evidenceName: isLongDescription(selected.destination, displayValue(value.value))
+              ? `Evidence for proposed description ${String(index + 1)}`
+              : `Evidence for proposed value: ${valueText(selected.destination, displayValue(value.value))}`,
             expanded: expandedChoices.has(key),
-            label: `Alternative ${String(index + 1)}`,
+            label: '',
             longDescription: isLongDescription(selected.destination, displayValue(value.value)),
             onChoose: () => choose(selected, 'accept', value),
             recording:
@@ -5044,9 +5030,7 @@ export default function LibraryPage({
                     <span>
                       {String(complete.fields.length)} recorded field outcome
                       {complete.fields.length === 1 ? '' : 's'}
-                      {writesActive
-                        ? ' — each began applying the moment you decided it.'
-                        : '. No library data changed.'}
+                      {writesActive ? ' — each began applying the moment you decided it.' : '.'}
                     </span>
                   </div>
                   <ol>
@@ -5072,11 +5056,7 @@ export default function LibraryPage({
                       </li>
                     ))}
                   </ol>
-                  <p>
-                    {writesActive
-                      ? 'Every write is logged in Activity, and read-back verification remains a separate guarded stage.'
-                      : 'Nothing is written yet — applying happens separately, behind your consent.'}
-                  </p>
+                  {writesActive ? <p>Every write is logged in Activity.</p> : null}
                   <footer>
                     {nextWork ? (
                       <Button
@@ -5139,9 +5119,16 @@ export default function LibraryPage({
                           : destinationLabel(selected.destination)}
                       </h3>
                       {selectedActionable ? (
-                        <>
-                          <p>{`${destinationLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
-                        </>
+                        // One line under the question: this field's own reason (#1519).
+                        <p
+                          className={
+                            selected.automaticWithheldReason
+                              ? 'automatic-withheld-reason'
+                              : undefined
+                          }
+                        >
+                          {selected.automaticWithheldReason ?? fieldReason(selected)}
+                        </p>
                       ) : selectedRevisitable ? (
                         <p>
                           {selected.humanDecision === null && selected.manualHold
@@ -5152,7 +5139,7 @@ export default function LibraryPage({
                       ) : selectedOptional ? (
                         <p>{fieldReason(selected)}</p>
                       ) : null}
-                      {selected.automaticWithheldReason ? (
+                      {selected.automaticWithheldReason && !selectedActionable ? (
                         <p className="automatic-withheld-reason">
                           {selected.automaticWithheldReason}
                         </p>
@@ -5186,7 +5173,6 @@ export default function LibraryPage({
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
                         revealEvidence={toggleChoiceEvidence}
-                        writesActive={writesActive}
                       />
                     ) : (
                       <section
@@ -5221,7 +5207,6 @@ export default function LibraryPage({
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}
-                        <WriteStateLine active={writesActive} />
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
                           role="radiogroup"

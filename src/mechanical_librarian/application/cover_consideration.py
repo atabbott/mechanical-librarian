@@ -1808,9 +1808,9 @@ def _cover_choice_contexts(
             "recommendation": "recommended"
             if current_recommended
             else "no_recommendation",
-            "recommendation_reason": "Authoritative cover policy recommends this retained cover."
+            "recommendation_reason": "Your cover settings choose this cover."
             if current_recommended
-            else "No recommendation retained.",
+            else "",
         }
     ]
     for candidate in candidates:
@@ -1832,9 +1832,9 @@ def _cover_choice_contexts(
                 "recommendation": "recommended"
                 if is_recommended
                 else "no_recommendation",
-                "recommendation_reason": "Authoritative cover policy recommends this retained cover."
+                "recommendation_reason": "Your cover settings choose this cover."
                 if is_recommended
-                else "No recommendation retained.",
+                else "",
             }
         )
     return contexts

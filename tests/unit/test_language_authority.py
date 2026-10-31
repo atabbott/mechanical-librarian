@@ -1003,5 +1003,5 @@ def test_respelling_a_current_language_says_why_it_waits_for_the_owner(tmp_path,
         assert field["proposed_values"] == [{"kind": "text", "value": "English"}]
         assert field["automatic_withheld_reason"] == (
             "The current value names the same language in another spelling. "
-            "Writing its display name is always your choice, never automatic."
+            "Only you can choose to write it the other way."
         )

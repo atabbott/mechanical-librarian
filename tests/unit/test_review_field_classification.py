@@ -193,23 +193,23 @@ def test_owner_choosable_is_an_uncounted_inspectable_choice() -> None:
     (
         (
             "unsupported",
-            "This field is unavailable for the current service capability.",
+            "Your library service cannot change this field.",
         ),
         (
             "automatic_safety_suspended",
-            "Automatic handling is suspended pending a safety recovery.",
+            "Changes made for you are waiting for a safety recovery.",
         ),
         (
             "external_field_failure",
-            "This field is waiting for an external service recovery.",
+            "This field is waiting for an outside service to recover.",
         ),
         (
             "external_connection_failure",
-            "This connection is waiting for an external service recovery.",
+            "This connection is waiting for an outside service to recover.",
         ),
         (
             "external_recovered",
-            "External recovery completed; this field can be reviewed again.",
+            "The outside service recovered; you can review this field again.",
         ),
     ),
 )
@@ -291,7 +291,7 @@ def test_advanced_automatic_effect_is_inspect_only() -> None:
     assert not value.editable
     # A verified automatic effect is inspect-only while its authority is still
     # being resolved; it may become replaceable again once that state settles.
-    assert "cannot be overridden yet" in value.reason
+    assert "cannot be changed yet" in value.reason
 
 
 def test_attention_continues_after_two_contradictory_batches(

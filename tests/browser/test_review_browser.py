@@ -9328,7 +9328,9 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                     "radio", name="Choose proposed value", exact=False
                 ).first
                 evidence = page.get_by_role(
-                    "button", name=f"Evidence for Alternative 1: {expected}", exact=True
+                    "button",
+                    name=f"Evidence for proposed value: {expected}",
+                    exact=True,
                 )
                 for width, height in ((1280, 800), (390, 844)):
                     page.set_viewport_size({"width": width, "height": height})
@@ -9556,7 +9558,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 )
                 row.click()
                 page.get_by_role("button", name=re.compile("^Series ")).click()
-                reason = "A contributing ISBN lookup did not supply usable evidence."
+                reason = "An ISBN lookup did not return a usable answer."
                 expect(page.get_by_text(reason)).to_be_visible()
                 expect(
                     page.get_by_role(
@@ -11719,7 +11721,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
             expect(
                 page.get_by_text(
-                    "No eligible value was found in the retained evidence.", exact=True
+                    "No source offered a value that can be used here.", exact=True
                 )
             ).to_be_visible()
             # Language is a rule the preview does not evaluate, ISBN one it

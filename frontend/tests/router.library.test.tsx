@@ -3058,10 +3058,9 @@ describe('Library route', () => {
               {
                 alternativeId: null,
                 selection: 'current',
-                rationale: 'Keep the value currently held by the local library.',
+                rationale: '',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for the current value.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -3076,8 +3075,7 @@ describe('Library route', () => {
                 selection: 'proposed',
                 rationale: 'This retained alternative is eligible for owner selection.',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for this alternative.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -3092,8 +3090,7 @@ describe('Library route', () => {
                 selection: 'proposed',
                 rationale: 'This retained alternative preserves the local value.',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for this alternative.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -3114,14 +3111,16 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('radio', { name: 'Choose current value: Old title' }),
     ).toBeVisible()
-    expect(screen.getByText('Eligible for a library update')).toBeVisible()
+    // A field that is merely eligible has no external-library card (#1519).
+    expect(screen.queryByLabelText('External update status')).toBeNull()
+    expect(screen.queryByText('Eligible for a library update')).toBeNull()
     const evidenceButtons = screen.getAllByRole('button', { name: /Evidence for/u })
     const currentEvidence = evidenceButtons[0]
     const proposedEvidence = evidenceButtons[1]
     if (!currentEvidence || !proposedEvidence)
       throw new Error('choice evidence controls are missing')
     expect(currentEvidence).toHaveAccessibleName('Evidence for Current value: Old title')
-    expect(proposedEvidence).toHaveAccessibleName('Evidence for Alternative 1: New title')
+    expect(proposedEvidence).toHaveAccessibleName('Evidence for proposed value: New title')
     await user.click(currentEvidence)
     expect(
       screen.getByRole('button', { name: 'Evidence for Current value: Old title' }),
@@ -3132,7 +3131,7 @@ describe('Library route', () => {
     expect(await screen.findByText('Local library record')).toBeVisible()
     expect(screen.getByText('Title: Old title')).toBeVisible()
     expect(screen.getByText('Local presence')).toBeVisible()
-    expect(screen.getAllByText('No recommendation retained').length).toBeGreaterThan(0)
+    expect(screen.queryByText('No recommendation retained')).toBeNull()
     expect(screen.queryByText('Source ledger')).not.toBeInTheDocument()
     await user.click(proposedEvidence)
     expect(await screen.findByText('Open Library')).toBeVisible()
@@ -3255,7 +3254,7 @@ describe('Library route', () => {
       if (!editable) expect(screen.queryByText('Current value')).toBeNull()
       await userEvent.setup().click(
         screen.getByRole('button', {
-          name: editable ? /Evidence for Alternative 1/u : 'Evidence',
+          name: editable ? /Evidence for proposed value: New series/u : 'Evidence',
         }),
       )
       expect(await screen.findByText('Candidate source')).toBeVisible()
@@ -4121,7 +4120,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Keep the local cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: reference(2),
@@ -4136,7 +4135,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Selectable retained cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: reference(3),
@@ -4154,7 +4153,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Selectable retained cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: reference(5),
@@ -4169,7 +4168,7 @@ describe('Library route', () => {
           limitations: ['insufficient_identity_evidence'],
           rationale: 'This retained candidate requires explicit owner confirmation.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
       ],
       current: true,
@@ -4687,11 +4686,7 @@ describe('Library route', () => {
           coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
         }),
       )
-      expect(
-        within(screen.getByRole('region', { name: 'Choose a cover' })).getByText(
-          'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.',
-        ),
-      ).toBeVisible()
+      expect(screen.queryByText(/^Selecting an outcome records/u)).toBeNull()
     })
   })
 
@@ -4724,7 +4719,7 @@ describe('Library route', () => {
             limitations: ['Preview unavailable for this retained cover.'],
             rationale: 'Keep the retained local cover.',
             recommendation: 'no_recommendation',
-            recommendationReason: 'No recommendation retained.',
+            recommendationReason: '',
           },
           {
             alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
@@ -4733,7 +4728,7 @@ describe('Library route', () => {
             limitations: [],
             rationale: 'Selectable retained cover.',
             recommendation: 'no_recommendation',
-            recommendationReason: 'No recommendation retained.',
+            recommendationReason: '',
           },
         ],
         current: true,
@@ -5129,7 +5124,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Keep the local cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
         {
           alternativeId: `cover_transport_ref_${'a'.repeat(64)}`,
@@ -5138,7 +5133,7 @@ describe('Library route', () => {
           limitations: [],
           rationale: 'Selectable retained cover.',
           recommendation: 'no_recommendation',
-          recommendationReason: 'No recommendation retained.',
+          recommendationReason: '',
         },
       ],
       candidates: [
@@ -5297,10 +5292,9 @@ describe('Library route', () => {
               {
                 alternativeId: null,
                 selection: 'current',
-                rationale: 'Keep the value currently held by the local library.',
+                rationale: '',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for the current value.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -5315,8 +5309,7 @@ describe('Library route', () => {
                 selection: 'proposed',
                 rationale: 'This retained alternative is eligible for owner selection.',
                 recommendation: 'no_recommendation',
-                recommendationReason:
-                  'No deterministic recommendation is retained for this alternative.',
+                recommendationReason: '',
                 limitations: [],
                 evidence: [
                   {
@@ -5509,7 +5502,8 @@ describe('Library route', () => {
     await screen.findByRole('heading', { name: 'Review complete' })
     // The preserved title is inspectable, but no decision was recorded for it.
     expect(screen.getByText('1 recorded · work complete')).toBeVisible()
-    expect(screen.getByText('1 recorded field outcome. No library data changed.')).toBeVisible()
+    expect(screen.getByText('1 recorded field outcome.')).toBeVisible()
+    expect(screen.queryByText(/No library data changed/u)).toBeNull()
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
     await user.click(within(rail).getByRole('button', { name: /^Title/u }))
     expect(await screen.findByRole('heading', { name: 'Title' })).toBeVisible()
@@ -6063,11 +6057,11 @@ describe('Library route', () => {
       // button stays in its own card, in reading order (#1290).
       await user.tab()
       expect(
-        screen.getByRole('button', { name: 'Evidence for Alternative 1: New title' }),
+        screen.getByRole('button', { name: 'Evidence for proposed value: New title' }),
       ).toHaveFocus()
       await user.tab()
       expect(
-        screen.getByRole('button', { name: 'Evidence for Alternative 2: Newer title' }),
+        screen.getByRole('button', { name: 'Evidence for proposed value: Newer title' }),
       ).toHaveFocus()
       await user.tab({ shift: true })
       await user.tab({ shift: true })
@@ -6095,7 +6089,7 @@ describe('Library route', () => {
     const contextualField = {
       ...contextOnly,
       classification: 'unsupported' as const,
-      classificationReason: 'There is no owner decision available for this field.',
+      classificationReason: 'There is nothing to decide for this field.',
       destination: 'authors' as const,
       inventoryRole: 'contextual' as const,
       proposalId: 'proposal-authors',
@@ -6134,12 +6128,16 @@ describe('Library route', () => {
     expect(screen.getByLabelText('Title current value')).toHaveTextContent('Current valueOld title')
     const evidence = screen.getByRole('button', { name: 'Evidence' })
     await user.click(evidence)
-    expect(screen.getByText('Retained evidence is unavailable for this choice.')).toBeVisible()
+    expect(
+      screen.getByText('No owner-readable source observation is retained for this choice.'),
+    ).toBeVisible()
     const hideEvidence = screen.getByRole('button', { name: 'Hide evidence' })
     expect(hideEvidence).toHaveFocus()
     await user.click(hideEvidence)
     expect(screen.getByRole('button', { name: 'Evidence' })).toHaveFocus()
-    expect(screen.queryByText('Retained evidence is unavailable for this choice.')).toBeNull()
+    expect(
+      screen.queryByText('No owner-readable source observation is retained for this choice.'),
+    ).toBeNull()
     expect(screen.queryByText('Which title should this work use?')).toBeNull()
     expect(screen.queryByText('Queue position')).toBeNull()
     expect(screen.queryByText('Choices')).toBeNull()
@@ -6171,15 +6169,16 @@ describe('Library route', () => {
     expect(screen.getByText('Sources')).toBeVisible()
   })
 
-  it('keeps needs-review and recordability wording for an actionable field', async () => {
+  it('says only the field reason under the question, without the generic lines (#1519)', async () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', createHttp())
 
-    expect(await screen.findByText(/This field needs your review\./u)).toBeVisible()
-    expect(
-      screen.getByText(
-        'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.',
-      ),
-    ).toBeVisible()
+    expect(await screen.findByText('This field needs your review.')).toBeVisible()
+    expect(screen.queryByText(/Title · /u)).toBeNull()
+    expect(screen.queryByText(/Automatic handling abstained/u)).toBeNull()
+    expect(screen.queryByText(/^Selecting an outcome records/u)).toBeNull()
+    expect(screen.queryByText(/until writes are enabled/u)).toBeNull()
+    expect(screen.queryByText('No recommendation retained')).toBeNull()
+    expect(screen.queryByText(/^Alternative \d/u)).toBeNull()
   })
 
   it.each([
@@ -8934,12 +8933,10 @@ describe('Library route', () => {
         },
       ],
     })
+    // Without consent nothing reminds the owner that nothing was written (#1519).
     for (const [writesConsented, expected] of [
-      [false, 'Nothing is written yet — applying happens separately, behind your consent.'],
-      [
-        true,
-        'Every write is logged in Activity, and read-back verification remains a separate guarded stage.',
-      ],
+      [false, '1 recorded field outcome.'],
+      [true, 'Every write is logged in Activity.'],
     ] as const) {
       const user = userEvent.setup()
       let current: CaseDetailView = { ...detail, writesConsented }
@@ -8973,13 +8970,9 @@ describe('Library route', () => {
       if (!latest) throw new Error('the current route rendered no choice')
       await user.click(latest)
       expect(await screen.findByText(expected)).toBeVisible()
-      expect(
-        screen.queryByText(
-          writesConsented
-            ? 'Nothing is written yet — applying happens separately, behind your consent.'
-            : 'Every write is logged in Activity, and read-back verification remains a separate guarded stage.',
-        ),
-      ).toBeNull()
+      expect(screen.queryByText(/Nothing is written yet|No library data changed/u)).toBeNull()
+      if (!writesConsented)
+        expect(screen.queryByText('Every write is logged in Activity.')).toBeNull()
       cleanup()
     }
   })
@@ -9330,8 +9323,8 @@ describe('Library route', () => {
       proposedValues: [],
       targetFingerprint: `fingerprint-${destination}`,
     })
-    const unchanged = 'There is no owner decision available for this field.'
-    const waiting = 'This field is waiting for an external service recovery.'
+    const unchanged = 'There is nothing to decide for this field.'
+    const waiting = 'This field is waiting for an outside service to recover.'
     const open = async (fields: CaseDetailView['fields'][number][]) => {
       renderRoute('/library?lens=all&preview=case-1&field=title', {
         ...createHttp(),
@@ -9357,7 +9350,7 @@ describe('Library route', () => {
       await userEvent.setup().click(within(details).getByText('Show why'))
       const row = rowOf(details, 'Subtitle')
       expect(row).toHaveTextContent('No source offered a different value.')
-      expect(row).not.toHaveTextContent(/✓|No eligible change|no owner decision/u)
+      expect(row).not.toHaveTextContent(/✓|No eligible change|nothing to decide/u)
       expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
     })
 
@@ -10698,14 +10691,11 @@ it('retries an advised selection through the ordinary controller with the same a
   option.focus()
   await user.keyboard('{Enter}')
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
-  expect(screen.getByLabelText('External update status')).not.toHaveTextContent('Choice recorded')
-  expect(screen.getByLabelText('External update status')).not.toHaveTextContent(
-    'Applied and verified',
-  )
+  expect(screen.queryByLabelText('External update status')).toBeNull()
   if (!release) throw new Error('pending decision fixture requires release')
   release()
   const retry = await screen.findByRole('button', { name: 'Try the same decision again' })
-  expect(screen.getByLabelText('External update status')).not.toHaveTextContent('Choice recorded')
+  expect(screen.queryByLabelText('External update status')).toBeNull()
   await user.click(retry)
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
   const calls = vi.mocked(http.recordDecision).mock.calls
@@ -10846,8 +10836,7 @@ it.each(['human', 'automatic_policy'] as const)(
         outcome: null,
         capability: 'allowed',
         heading: 'Choice recorded',
-        detail:
-          "Activity shows this change's progress; safety checks run before any update is sent.",
+        detail: "Activity shows this change's progress.",
       },
       {
         current: true,
@@ -10974,13 +10963,15 @@ it.each([true, false])(
       })),
     })
     const choices = await screen.findAllByRole('radio', { name: /^Choose advised value:/ })
-    const panel = screen.getByLabelText('External update status')
+    // A held choice has no change under way, so there is no library card (#1519).
+    const panel = screen.queryByLabelText('External update status')
     const [choice] = choices
     expect(choices).toHaveLength(1)
     expect(choice).toHaveAttribute('aria-checked', String(!held))
     expect(choice?.closest('article')?.classList.contains('is-selected')).toBe(!held)
     expect(Boolean(screen.queryByText(/^Selected\. Activity shows/))).toBe(!held)
-    expect(panel.textContent.includes('Choice recorded')).toBe(!held)
+    expect(Boolean(panel?.textContent.includes('Choice recorded'))).toBe(!held)
+    if (held) expect(panel).toBeNull()
     expect(Boolean(screen.queryByRole('button', { name: 'Resume automatic handling' }))).toBe(held)
     if (held)
       expect(
@@ -11019,14 +11010,12 @@ it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
         fields: [field],
       })),
     })
-    const panel = await screen.findByLabelText('External update status')
-    expect(panel).toHaveTextContent('Eligible for a library update')
-    expect(panel).toHaveTextContent(
-      'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
-    )
-    expect(panel).not.toHaveTextContent('queues nothing')
-    expect(panel).not.toHaveTextContent('Choice recorded')
-    expect(panel).not.toHaveTextContent('Applied and verified')
+    // An eligible field with no recorded change has no library card (#1519).
+    await screen.findByRole('heading', { name: /description/iu })
+    expect(screen.queryByLabelText('External update status')).toBeNull()
+    expect(
+      screen.queryByText(/Eligible for a library update|Being eligible sends nothing/u),
+    ).toBeNull()
   },
 )
 
@@ -12749,5 +12738,198 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         total === 1 ? 'field across current works' : 'fields across current works',
       ),
     ).toBeVisible()
+  })
+})
+
+// A field decision shows the question, the values and what is specific to
+// that question, nothing else (#1519).
+describe('a focused field decision (#1519)', () => {
+  const base = detail.fields[0]
+  if (!base) throw new Error('workspace fixture requires a title field')
+  const local = {
+    source: 'Local library record',
+    observation: 'Title: Old title',
+    role: 'local_presence',
+  } as const
+  const focused = (overrides: Partial<typeof base> = {}): typeof base => ({
+    ...base,
+    proposedValues: [
+      { kind: 'text', value: 'New title' },
+      { kind: 'text', value: 'Newer title' },
+    ],
+    choiceContexts: [
+      {
+        alternativeId: null,
+        selection: 'current',
+        rationale: '',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+        limitations: [],
+        evidence: [local],
+      },
+      {
+        alternativeId: 'alternative-new',
+        selection: 'proposed',
+        rationale: 'Hardcover, Open Library',
+        recommendation: 'recommended',
+        recommendationReason: 'Your settings choose this value.',
+        limitations: [],
+        evidence: [
+          { source: 'Hardcover', observation: 'Title: New title', role: 'external_corroboration' },
+          {
+            source: 'Open Library',
+            observation: 'Title: New title',
+            role: 'external_corroboration',
+          },
+        ],
+      },
+      {
+        alternativeId: 'alternative-newer',
+        selection: 'proposed',
+        rationale: '',
+        recommendation: 'no_recommendation',
+        recommendationReason: '',
+        limitations: [],
+        evidence: [],
+      },
+    ],
+    ...overrides,
+  })
+  const open = (field: typeof base, http: Partial<ReviewHttp> = {}) => {
+    const routeHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        fields: [field],
+      })),
+      ...http,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', routeHttp)
+    return routeHttp
+  }
+
+  it('shows each value with its known sources and nothing generic', async () => {
+    open(focused())
+    const current = await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    const sourced = screen.getByRole('radio', { name: 'Choose proposed value: New title' })
+    const unsourced = screen.getByRole('radio', { name: 'Choose proposed value: Newer title' })
+    expect(current).toHaveTextContent(/^Current valueOld title$/u)
+    expect(sourced).toHaveTextContent(
+      /^RecommendedNew titleHardcover, Open LibraryYour settings choose this value\.$/u,
+    )
+    expect(unsourced).toHaveTextContent(/^Newer title$/u)
+    expect(screen.queryByText(/^Alternative \d/u)).toBeNull()
+    expect(screen.queryByText(/This alternative|retained evidence|No recommendation/iu)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Evidence for proposed value: New title' })).toBe(
+      sourced.parentElement?.querySelector('.choice-evidence-toggle'),
+    )
+  })
+
+  it('states only the specific reason under the question', async () => {
+    open(
+      focused({
+        classification: 'manual_fallback',
+        classificationReason: 'This field needs your review.',
+        automaticWithheldReason: 'The sources disagree about the series.',
+      }),
+    )
+    const heading = await screen.findByRole('heading', {
+      name: 'Which title should this work use?',
+    })
+    const header = heading.closest('header')
+    if (!header) throw new Error('the decision header is missing')
+    expect(header.querySelectorAll('p')).toHaveLength(1)
+    expect(within(header).getByText('The sources disagree about the series.')).toBeVisible()
+    expect(within(header).queryByText('This field needs your review.')).toBeNull()
+    expect(screen.queryByText(/Automatic handling abstained|^Selecting an outcome/u)).toBeNull()
+  })
+
+  it('does not restate the language respelling reason in a notice', async () => {
+    const reason =
+      'The current value names the same language in another spelling. Only you can choose to write it the other way.'
+    open(focused({ notices: ['language_display_name'], automaticWithheldReason: reason }))
+    expect(await screen.findByText(reason)).toBeVisible()
+    expect(screen.queryByLabelText('Comparison condition')).toBeNull()
+    expect(screen.queryByText(/accepting only changes how it is written/u)).toBeNull()
+  })
+
+  it('leaves out Recorded observations when the field has none', async () => {
+    const http = open(focused())
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
+    await act(() => Promise.resolve())
+    expect(screen.queryByRole('region', { name: 'Recorded observations' })).toBeNull()
+    expect(screen.queryByText(/No additional facts|These retained facts/u)).toBeNull()
+  })
+
+  it('shows Recorded observations when the field has some', async () => {
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => ({
+        items: [
+          {
+            destinations: ['title'],
+            observation: 'Title: Another title',
+            role: 'external_observation',
+            source: 'Open Library',
+          },
+        ],
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
+    })
+    const region = await screen.findByRole('region', { name: 'Recorded observations' })
+    expect(within(region).getByText('Title: Another title')).toBeVisible()
+    expect(within(region).queryByText(/These retained facts/u)).toBeNull()
+  })
+
+  it('shows Recorded observations when they could not be read', async () => {
+    open(focused(), {
+      getEvidence: vi.fn<ReviewHttp['getEvidence']>(async () => {
+        throw new Error('observations unavailable')
+      }),
+    })
+    const region = await screen.findByRole('region', { name: 'Recorded observations' })
+    expect(within(region).getByRole('button', { name: 'Retry observations' })).toBeVisible()
+  })
+
+  it('shows the external-library card only for a recorded change', async () => {
+    open(focused({ effectCapability: 'allowed' }))
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    expect(screen.queryByLabelText('External update status')).toBeNull()
+    cleanup()
+    const decided = focused({
+      classification: 'human_recorded',
+      classificationReason: 'You decided this field. You can change it here.',
+      effectCapability: 'allowed',
+      needsAttention: false,
+      humanDecision: {
+        actor: 'owner',
+        application: 'apply',
+        decision_id: 'decision-title',
+        destination: 'title',
+        occurred_at: 1,
+        outcome: 'accept',
+        proposal_id: base.proposalId,
+        review_case_id: 'case-1',
+        selected_value: { kind: 'text', value: 'New title' },
+        target_fingerprint: base.targetFingerprint,
+      },
+    })
+    open(decided)
+    const card = await screen.findByLabelText('External update status')
+    expect(card).toHaveTextContent(
+      "External libraryChange recordedActivity shows this change's progress.",
+    )
+    cleanup()
+    open({
+      ...decided,
+      humanDecision: decided.humanDecision && {
+        ...decided.humanDecision,
+        outcome: 'keep_current',
+        selected_value: null,
+      },
+    })
+    await screen.findByRole('radio', { name: 'Choose current value: Old title' })
+    expect(screen.queryByLabelText('External update status')).toBeNull()
   })
 })

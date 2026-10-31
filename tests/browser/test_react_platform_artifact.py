@@ -1488,10 +1488,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             exact=True,
         ).wait_for()
         evidence = recorded_isbn.get_by_role(
-            "button", name="Evidence for Alternative 1: 9780306406157"
+            "button", name="Evidence for proposed value: 9780306406157"
         )
         evidence.click()
-        recorded_isbn.get_by_text("Open Library", exact=True).wait_for()
+        recorded_isbn.locator(".choice-evidence").get_by_text(
+            "Open Library", exact=True
+        ).wait_for()
 
         stage[0] = "cover-library:cached-work-reset"
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -1623,10 +1625,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Local presence" in workspace_evidence
         assert (
             "No recommendation retained"
-            in page.locator(".metadata-choice.is-current").inner_text()
+            not in page.locator(".metadata-choice.is-current").inner_text()
         )
         proposed_evidence = page.get_by_role(
-            "button", name="Evidence for Alternative 1: The Clockmaker's Cartography"
+            "button",
+            name="Evidence for proposed value: The Clockmaker's Cartography",
+            exact=True,
         )
         proposed_evidence.focus()
         page.keyboard.press("Enter")
@@ -1635,10 +1639,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-2")
         expect(page.locator(".choice-evidence")).to_have_count(0)
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-1")
-        assert (
-            "Guarded from external update"
-            in page.locator(".field-apply-context").inner_text()
-        )
+        # A guarded field with no recorded change has no library card (#1519).
+        expect(page.locator(".field-apply-context")).to_have_count(0)
         # The workspace never grows a field stepper. The Library pager is a
         # separate, list-scoped control and is asserted where the list is.
         detail_workspace = page.locator(".workspace-detail")
@@ -2089,10 +2091,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert compact_evidence.bounding_box()["height"] >= 44
         compact_evidence.click()
         expect(page.locator("#choice-evidence-current")).to_be_visible()
-        assert (
-            "Guarded from external update"
-            in page.locator(".field-apply-context").inner_text()
-        )
+        # A guarded field with no recorded change has no library card (#1519).
+        expect(page.locator(".field-apply-context")).to_have_count(0)
         assert page.get_by_role("button", name="Previous").count() == 0
         assert page.get_by_role("button", name="Next").count() == 0
         # One toolbar in both states; Back to works leads the workspace (#1284).
