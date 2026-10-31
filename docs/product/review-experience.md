@@ -415,6 +415,10 @@ provider keeps its key, turns off its cover evidence and removes it from its
 libraries. Turning it back on does not restore those libraries; add them
 again.
 
+Each library lists its languages by name, the first marked Preferred, with
+buttons to move or remove each and a picker to add one, up to eight. Typing a
+name in the open picker moves to it. In file mode the list is read only.
+
 Reviewer sign-in, validation and tests take effect at once and are not part of
 Save. Each reviewer task has a model picker with an example cost per 1,000
 books. Replacing the shared OpenRouter key invalidates access for both tasks.

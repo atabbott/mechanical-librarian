@@ -734,6 +734,12 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-choice label { display:flex; align-items:center; gap:.5rem; min-height:44px; }
 .settings-choice input { flex:none; min-height:auto; }
 .settings-choice input[type='checkbox'] { flex:0 0 auto; width:1rem; height:1rem; min-width:1rem; min-height:1rem; margin:0; padding:0; accent-color:var(--accent-strong); }
+.settings-language-editor { display:grid; gap:.5rem; min-width:0; }
+.settings-languages { display:grid; gap:.35rem; min-width:0; margin:0; padding:0; list-style:none; }
+.settings-languages li { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .6rem; min-height:44px; padding:.35rem .7rem; border:1px solid var(--line-strong); border-radius:.45rem; }
+.settings-languages li > span:first-child { flex:1 1 10rem; min-width:0; font-weight:650; }
+.settings-language-actions { display:flex; flex-wrap:wrap; gap:.35rem; }
+.settings-language-actions button { min-height:44px; padding:.45rem .65rem; }
 .settings-advanced { border-bottom:1px solid var(--line); }
 .settings-advanced > summary { display:flex; align-items:center; min-height:44px; padding:.8rem 1.25rem; color:var(--accent-strong); font-weight:700; cursor:pointer; list-style:none; }
 .settings-advanced > summary::-webkit-details-marker { display:none; }

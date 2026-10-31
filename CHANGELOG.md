@@ -37,6 +37,8 @@ brackets are GitHub issues.
   longer a failed request (#1308).
 - Setup lists iTunes with the book and ebook providers and suggests it only for
   libraries with ebooks (#1458).
+- Settings edits a store-managed library's languages: add by name, reorder,
+  remove, first preferred. A file-managed deployment shows its list (#1466).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

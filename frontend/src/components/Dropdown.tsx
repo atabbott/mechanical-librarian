@@ -36,6 +36,7 @@ export function Dropdown(props: {
   const triggerRef = useRef<HTMLButtonElement>(null)
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
   const returnFocusOnCloseRef = useRef(false)
+  const typedRef = useRef({ prefix: '', at: 0 })
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [position, setPosition] = useState<DropdownPosition | null>(null)
@@ -77,6 +78,7 @@ export function Dropdown(props: {
     if (props.disabled || props.options.length === 0) return
     updatePosition()
     setActiveIndex(selectedIndex)
+    typedRef.current = { prefix: '', at: 0 }
     setOpen(true)
   }, [props.disabled, props.options.length, selectedIndex, updatePosition])
 
@@ -145,6 +147,26 @@ export function Dropdown(props: {
     if (event.key === 'End') {
       event.preventDefault()
       focusOption(props.options.length - 1)
+    }
+    // Type-to-select: a printable key moves to the first option whose label
+    // starts with what was typed within the last half second, so a long list
+    // is reachable without walking it by arrow (#1466). A space continues a
+    // prefix already typed and otherwise chooses the option.
+    const typed = typedRef.current
+    if (
+      event.key.length === 1 &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      (event.key !== ' ' || (typed.prefix && event.timeStamp - typed.at < 500))
+    ) {
+      event.preventDefault()
+      const prefix = (event.timeStamp - typed.at < 500 ? typed.prefix : '') + event.key
+      typedRef.current = { prefix, at: event.timeStamp }
+      const match = props.options.findIndex((option) =>
+        option.label.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase()),
+      )
+      if (match >= 0) focusOption(match)
     }
     // Tab closes like Escape: the menu is portaled to the end of the page, so
     // focus goes back to the trigger rather than past everything else.

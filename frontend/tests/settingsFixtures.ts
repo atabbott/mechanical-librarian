@@ -30,6 +30,7 @@ export const document: SettingsView['document'] = {
       display_name: 'Ebooks & Audiobooks: Collected Editions',
       policy_override: null,
       provider_connections: ['hardcover'],
+      languages: [],
     },
   ],
   limits: {

@@ -15,9 +15,15 @@ from mechanical_librarian.application.cover_consideration import (
     _COVER_EVIDENCE_STATEMENTS,
     _UNNAMED_COVER_EVIDENCE_STATEMENT,
 )
+from mechanical_librarian.application.owner_settings import file_settings_projection
 from mechanical_librarian.application.review_web import (
     _choice_source_label,
     _provider_label,
+)
+from mechanical_librarian.domain.field_outcomes import (
+    _ISO_639_ALIASES,
+    MAX_LIBRARY_LANGUAGES,
+    library_languages_valid,
 )
 from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.owner_settings import (
@@ -99,6 +105,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
                     "media_kind": "ebook",
                     "mount": "books",
                     "provider_connections": ["google", "hardcover"],
+                    "languages": ["de", "en"],
                 }
             ],
         }
@@ -146,6 +153,13 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
     assert configuration.mounts[0].container_path == "/media/books"
     assert configuration.review is not None
     assert configuration.review.canonical_origin == "https://review.example.invalid"
+    # Matching reads the store's list exactly as it reads the file's, and a
+    # file-managed deployment shows its own list back read-only.
+    assert configuration.libraries[0].languages == ("de", "en")
+    assert file_settings_projection(configuration).document.libraries[0].languages == [
+        "de",
+        "en",
+    ]
 
 
 def test_settings_projects_absent_fixed_provider_capabilities() -> None:
@@ -516,6 +530,20 @@ def test_the_settings_marketplace_vocabulary_stays_one_closed_set() -> None:
     assert not set(vocabulary["keyless_provider_adapters"]) & set(
         vocabulary["required_provider_keys"]
     )
+
+
+def test_the_settings_language_picker_offers_only_what_the_domain_accepts() -> None:
+    """Settings offers each favoured ISO 639 base the domain admits as a
+    library language and nothing else, so no offered choice is refused on
+    save (#1466); the limit is the domain's own."""
+
+    vocabulary = _settings_vocabulary()["library_languages"]
+
+    assert vocabulary["maximum"] == MAX_LIBRARY_LANGUAGES
+    assert vocabulary["codes"] == sorted(
+        set(_ISO_639_ALIASES.values()) - {"und", "mul", "mis", "zxx"}
+    )
+    assert all(library_languages_valid((code,)) for code in vocabulary["codes"])
 
 
 def test_the_first_run_vocabulary_states_owner_rules_and_every_contribution() -> None:

@@ -26,6 +26,7 @@ import {
   mapCodexDevice,
   mapReportDetail,
   mapReviewerAccess,
+  mapSettings,
 } from '../src/api/http'
 import type { PolicyStateView } from '../src/api/http'
 
@@ -2610,6 +2611,35 @@ describe('ReviewApiClient', () => {
       { ...throttling, extra: true },
     ])
       expect(() => mapPreparation({ ...base, provider_throttling: invalid })).toThrow(
+        expect.objectContaining({ status: 502 }),
+      )
+  })
+
+  it("accepts a library's languages only when absent or a list of strings", async () => {
+    const { view } = await import('./settingsFixtures')
+    const withLanguages = (languages: unknown) => {
+      const value = view()
+      return {
+        ...value,
+        document: {
+          ...value.document,
+          libraries: value.document.libraries.map((library) => ({ ...library, languages })),
+        },
+      }
+    }
+    const absent = Object.fromEntries(
+      Object.entries(view().document.libraries[0] ?? {}).filter(([key]) => key !== 'languages'),
+    )
+    expect(
+      mapSettings({ ...view(), document: { ...view().document, libraries: [absent] } }).document
+        .libraries[0]?.languages,
+    ).toEqual([])
+    expect(mapSettings(withLanguages(['de', 'en'])).document.libraries[0]?.languages).toEqual([
+      'de',
+      'en',
+    ])
+    for (const invalid of ['de', [1], [null], null, { de: true }])
+      expect(() => mapSettings(withLanguages(invalid))).toThrow(
         expect.objectContaining({ status: 502 }),
       )
   })

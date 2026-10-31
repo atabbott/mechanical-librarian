@@ -2348,7 +2348,10 @@ export const mapSettings = (value: unknown): SettingsView => {
         typeof item.name === 'string' &&
         typeof item.connection === 'string' &&
         typeof item.library_id === 'string' &&
-        Array.isArray(item.provider_connections),
+        Array.isArray(item.provider_connections) &&
+        (item.languages === undefined ||
+          (Array.isArray(item.languages) &&
+            item.languages.every((language) => typeof language === 'string'))),
     ) ||
     !value.fields.every(
       (item) =>
@@ -2369,7 +2372,18 @@ export const mapSettings = (value: unknown): SettingsView => {
     )
   )
     throw new ApiError(502, 'invalid_settings_response')
-  return value as unknown as SettingsView
+  // The server leaves an empty language list out, as the contract's default;
+  // the page reads it as that empty list.
+  return {
+    ...value,
+    document: {
+      ...value.document,
+      libraries: value.document.libraries.map((item: unknown) => ({
+        languages: [],
+        ...(item as Record<string, unknown>),
+      })),
+    },
+  } as unknown as SettingsView
 }
 // `tracks` is required by review-report-detail-v5. A missing or non-array
 // member is a malformed document, not an observation about the whole item:

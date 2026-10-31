@@ -146,6 +146,7 @@ def store_runtime_configuration(
                 mount=item.mount,
                 provider_connections=tuple(item.provider_connections),
                 policy_override=item.policy_override,
+                languages=tuple(item.languages),
             )
             for item in document.libraries
         ),

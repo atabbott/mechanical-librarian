@@ -772,6 +772,15 @@
             ],
             "title": "Display Name"
           },
+          "languages": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Languages",
+            "type": "array"
+          },
           "library_id": {
             "maxLength": 128,
             "minLength": 1,
