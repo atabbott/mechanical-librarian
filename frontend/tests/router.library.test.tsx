@@ -3139,7 +3139,7 @@ describe('Library route', () => {
     expect(screen.getByText('External corroboration')).toBeVisible()
     expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
     expect(
-      screen.getAllByText('The sources disagree; choose the value yourself').length,
+      screen.getAllByText(/^The sources disagree; choose the value yourself\.?$/u).length,
     ).toBeGreaterThan(0)
     expect(screen.queryByText('Different source tag lists')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
@@ -3311,18 +3311,19 @@ describe('Library route', () => {
         })),
       })
       const neutral = selected && ['m4b', 'm4a', 'mp3'].includes(mediaKind)
+      // The field's one condition is the line under the question (#1519).
       expect(
         await screen.findByText(
           neutral
-            ? 'Different source descriptions'
-            : 'The sources disagree; choose the value yourself',
+            ? 'Different source descriptions.'
+            : 'The sources disagree; choose the value yourself.',
         ),
       ).toBeVisible()
       expect(
         screen.queryByText(
           neutral
-            ? 'The sources disagree; choose the value yourself'
-            : 'Different source descriptions',
+            ? /^The sources disagree; choose the value yourself\.?$/u
+            : /^Different source descriptions\.?$/u,
         ),
       ).toBeNull()
     },
@@ -3589,12 +3590,15 @@ describe('Library route', () => {
       })),
     })
 
-    const notice = await screen.findByRole('complementary', {
-      name: 'Comparison condition',
-    })
-    expect(notice).toHaveTextContent(
-      'Another provider states a different subtitle; choose the subtitle yourself',
-    )
+    // The first condition is the line under the question; the box keeps the
+    // rest and never says it again (#1519).
+    expect(
+      await screen.findByText(
+        'Another provider states a different subtitle; choose the subtitle yourself.',
+      ),
+    ).toBeVisible()
+    const notice = screen.getByRole('complementary', { name: 'Comparison condition' })
+    expect(notice).not.toHaveTextContent('Another provider states a different subtitle')
     expect(notice).toHaveTextContent(
       'The colon segment reads as title text: no provider carries it, or no more providers state the plain title than carry the decorated form',
     )
@@ -4282,7 +4286,9 @@ describe('Library route', () => {
       defectHeading.compareDocumentPosition(preferenceHeading) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(within(cleanChecks).getByText('Small-preview title')).toBeVisible()
-    const singleFlagChecks = within(comparison).getByLabelText('Alternative 4 cover visual checks')
+    const singleFlagChecks = within(comparison).getByLabelText(
+      'Open Library cover, 800 × 1200 px (4) visual checks',
+    )
     const singleFlagSummary = singleFlagChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!singleFlagSummary) throw new Error('single-flag cover summary is missing')
     if (mediaKind === 'epub') {
@@ -4292,7 +4298,9 @@ describe('Library route', () => {
       expect(within(singleFlagSummary).getByText('No visual defects flagged')).toBeVisible()
       expect(within(singleFlagSummary).queryByText('Audiobook branding')).toBeNull()
     }
-    const flaggedChecks = within(comparison).getByLabelText('Alternative 5 cover visual checks')
+    const flaggedChecks = within(comparison).getByLabelText(
+      'Open Library cover, 800 × 1200 px (5) visual checks',
+    )
     const flaggedSummary = flaggedChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!flaggedSummary) throw new Error('flagged cover summary is missing')
     expect(
@@ -4347,14 +4355,16 @@ describe('Library route', () => {
     const mixedComparison = await screen.findByLabelText('Choose a cover')
     // The card itself says the match is not confirmed before any tap.
     expect(
-      within(mixedComparison).getByRole('radio', { name: /^Choose Alternative 4 cover/u }),
+      within(mixedComparison).getByRole('radio', {
+        name: /^Choose Open Library cover, 800 × 1200 px \(4\)/u,
+      }),
     ).toHaveTextContent('Match not confirmed')
     const pinnedTrack = mixedComparison.querySelector<HTMLElement>('.library-cover-pinned')
     const currentCard = within(mixedComparison).getByRole('radio', {
       name: 'Choose Current cover',
     })
     const forwardCard = within(mixedComparison).getByRole('radio', {
-      name: /Alternative 3 cover/u,
+      name: /Open Library cover, 800 × 1200 px \(3\)/u,
     })
     const forwardChoice = forwardCard.closest<HTMLElement>('.cover-choice')
     const currentChoice = currentCard.closest<HTMLElement>('.cover-choice')
@@ -4394,10 +4404,12 @@ describe('Library route', () => {
     expect(pinnedTrack.scrollLeft).toBe(190)
 
     await user.click(
-      within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 4 cover' }),
+      within(mixedComparison).getByRole('button', {
+        name: 'Evidence for Open Library cover, 800 × 1200 px (4)',
+      }),
     )
     const ineligibleEvidence = within(mixedComparison).getByLabelText(
-      'Alternative 4 cover evidence',
+      'Open Library cover, 800 × 1200 px (4) evidence',
     )
     await user.click(ineligibleEvidence)
     fireEvent.keyDown(ineligibleEvidence, { key: 'Enter' })
@@ -4405,13 +4417,17 @@ describe('Library route', () => {
     expect(recordDecision).not.toHaveBeenCalled()
 
     await user.click(
-      within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 1 cover' }),
+      within(mixedComparison).getByRole('button', {
+        name: 'Evidence for Open Library cover, 800 × 1200 px (1)',
+      }),
     )
-    await user.click(within(mixedComparison).getByLabelText('Alternative 1 cover evidence'))
+    await user.click(
+      within(mixedComparison).getByLabelText('Open Library cover, 800 × 1200 px (1) evidence'),
+    )
     expect(recordDecision).not.toHaveBeenCalled()
     // One tap records; there is no dialog to confirm or cancel (#1290).
     const firstAlternative = within(mixedComparison).getByRole('radio', {
-      name: /^Choose Alternative 1 cover/u,
+      name: /^Choose Open Library cover, 800 × 1200 px \(1\)/u,
     })
     await user.click(firstAlternative)
     expect(recordDecision).toHaveBeenCalledOnce()
@@ -4445,7 +4461,9 @@ describe('Library route', () => {
         ],
       })),
     })
-    await user.click(await screen.findByRole('radio', { name: 'Choose Alternative 4 cover' }))
+    await user.click(
+      await screen.findByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (4)' }),
+    )
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(revision).toHaveBeenCalledOnce()
     expect(revision.mock.calls[0]?.[1].coverConfirmation).toEqual({
@@ -4505,9 +4523,13 @@ describe('Library route', () => {
     })
     const recommendedComparison = await screen.findByLabelText('Choose a cover')
     expect(within(recommendedComparison).getByText('Recommended cover ready')).toBeVisible()
+    // A proposed cover card is named by its sources, never "Alternative N" (#1519).
     expect(
-      within(recommendedComparison).getByText('Alternative 2 cover · Recommended'),
-    ).toBeVisible()
+      within(recommendedComparison)
+        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
+        .querySelector('small'),
+    ).toHaveTextContent(/^Recommended$/u)
+    expect(within(recommendedComparison).queryByText(/Alternative \d cover/u)).toBeNull()
 
     for (const [reason, explanation] of [
       [
@@ -4604,7 +4626,9 @@ describe('Library route', () => {
         expect(image).toHaveAttribute('loading', 'lazy')
         expect(image).toHaveAttribute('decoding', 'async')
       }
-      const merged = within(group).getByRole('radio', { name: 'Choose Alternative 2 cover' })
+      const merged = within(group).getByRole('radio', {
+        name: 'Choose Hardcover and Open Library cover',
+      })
       expect(merged.querySelector('.cover-dimensions')).toHaveTextContent('305 × 480 px')
       expect(merged.querySelector('.cover-sources')).toHaveTextContent('Hardcover · Open Library')
       expect(within(merged).getByText('Selectable retained cover.')).toBeVisible()
@@ -4669,11 +4693,15 @@ describe('Library route', () => {
       await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
       current.focus()
       await user.keyboard('{ArrowRight}')
-      expect(within(group).getByRole('radio', { name: 'Choose Alternative 1 cover' })).toHaveFocus()
+      expect(
+        within(group).getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (1)' }),
+      ).toHaveFocus()
       expect(http.recordDecision).not.toHaveBeenCalled()
       // The card states the unconfirmed match before the tap; the tap itself
       // is the explicit choice.
-      const unconfirmed = within(group).getByRole('radio', { name: 'Choose Alternative 4 cover' })
+      const unconfirmed = within(group).getByRole('radio', {
+        name: 'Choose Open Library cover, 800 × 1200 px (4)',
+      })
       expect(unconfirmed).toHaveTextContent('Match not confirmed')
       await user.click(unconfirmed)
       expect(screen.queryByRole('dialog')).toBeNull()
@@ -4853,7 +4881,7 @@ describe('Library route', () => {
       )
       expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
       const compactTrack = currentCover.closest<HTMLElement>('.library-cover-layout')
-      const alternativeCover = screen.getByRole('radio', { name: /Alternative 1 cover/u })
+      const alternativeCover = screen.getByRole('radio', { name: /Open Library cover/u })
       const alternativeChoice = alternativeCover.closest<HTMLElement>('.cover-choice')
       const compactCurrentChoice = currentCover.closest<HTMLElement>('.cover-choice')
       if (!compactTrack || !alternativeChoice || !compactCurrentChoice) {
@@ -4896,7 +4924,7 @@ describe('Library route', () => {
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', acceptOnlyHttp)
       expect(await screen.findByRole('radio', { name: 'Keep current cover' })).toBeDisabled()
-      expect(screen.getByRole('radio', { name: /Alternative 1 cover/u })).toBeEnabled()
+      expect(screen.getByRole('radio', { name: /Open Library cover/u })).toBeEnabled()
       await user.click(screen.getByRole('button', { name: /Evidence for Current cover/u }))
       expect(screen.queryByRole('radio', { name: 'Choose Current cover' })).not.toBeInTheDocument()
       expect(acceptOnlyHttp.recordDecision).not.toHaveBeenCalled()
@@ -4959,7 +4987,7 @@ describe('Library route', () => {
             }),
           }
           renderRoute('/library?lens=all&preview=case-1&field=cover', capabilityHttp)
-          await screen.findByRole('radio', { name: /Alternative 1 cover/u })
+          await screen.findByRole('radio', { name: /Open Library cover/u })
           await waitFor(() => expect(capabilityHttp.getReviewerAccess).toHaveBeenCalledOnce())
           if (capability === 'configured') {
             await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
@@ -6172,7 +6200,11 @@ describe('Library route', () => {
   it('says only the field reason under the question, without the generic lines (#1519)', async () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', createHttp())
 
-    expect(await screen.findByText('This field needs your review.')).toBeVisible()
+    // With no withheld reason or condition, the disposition is the reason.
+    expect(
+      await screen.findByText('A change is proposed; compare it with the current value.'),
+    ).toBeVisible()
+    expect(screen.queryByText('This field needs your review.')).toBeNull()
     expect(screen.queryByText(/Title · /u)).toBeNull()
     expect(screen.queryByText(/Automatic handling abstained/u)).toBeNull()
     expect(screen.queryByText(/^Selecting an outcome records/u)).toBeNull()
@@ -6615,7 +6647,7 @@ describe('Library route', () => {
     }
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
-    await user.click(await screen.findByRole('radio', { name: /Alternative 1 cover/u }))
+    await user.click(await screen.findByRole('radio', { name: /Open Library cover/u }))
     if (retainSameConsideration) {
       await screen.findByText(
         'This cover comparison changed before your choice was recorded. No cover was changed.',
@@ -6623,7 +6655,7 @@ describe('Library route', () => {
       // The stale tap fails inline, beside the cover it came from; a stale
       // decision is not retried as it was (#1290).
       expect(recordDecision).toHaveBeenCalledOnce()
-      expect(screen.getByRole('radio', { name: /Alternative 1 cover/u })).toHaveFocus()
+      expect(screen.getByRole('radio', { name: /Open Library cover/u })).toHaveFocus()
       expect(screen.queryByRole('dialog')).toBeNull()
       expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
       retainSameConsideration = false
@@ -6654,7 +6686,7 @@ describe('Library route', () => {
 
     if (directChoice) {
       const currentAlternative = screen.getByRole('radio', {
-        name: /Alternative 1 cover/u,
+        name: /Open Library cover/u,
       })
       expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
         'src',
@@ -6674,7 +6706,7 @@ describe('Library route', () => {
             'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
           ),
         ).toBeVisible()
-        expect(screen.queryByRole('radio', { name: /Alternative 1 cover/u })).toBeNull()
+        expect(screen.queryByRole('radio', { name: /Open Library cover/u })).toBeNull()
         const reconciliation = queryClient.getQueryData<{
           destination: string
           message: string
@@ -6689,7 +6721,7 @@ describe('Library route', () => {
         expect(successfulDecisions).toBe(1)
         recordedRefreshAvailable = true
         await user.click(screen.getByRole('button', { name: 'Reload current case' }))
-        expect(await screen.findByRole('radio', { name: /Alternative 1 cover/u })).toBeVisible()
+        expect(await screen.findByRole('radio', { name: /Open Library cover/u })).toBeVisible()
         await waitFor(() =>
           expect(queryClient.getQueryData(reconciliationKey('case-1'))).toBeNull(),
         )
@@ -6705,7 +6737,7 @@ describe('Library route', () => {
 
     await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
     const currentAlternative = await screen.findByRole('radio', {
-      name: /Alternative 1 cover/u,
+      name: /Open Library cover/u,
     })
     expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
       'src',
@@ -12842,6 +12874,28 @@ describe('a focused field decision (#1519)', () => {
     expect(within(header).getByText('The sources disagree about the series.')).toBeVisible()
     expect(within(header).queryByText('This field needs your review.')).toBeNull()
     expect(screen.queryByText(/Automatic handling abstained|^Selecting an outcome/u)).toBeNull()
+  })
+
+  it('states a condition, not the generic review line, when nothing was withheld', async () => {
+    open(
+      focused({
+        notices: ['no_safe_bibliographic_combination', 'insufficient_independent_corroboration'],
+      }),
+    )
+    const heading = await screen.findByRole('heading', {
+      name: 'Which title should this work use?',
+    })
+    const header = heading.closest('header')
+    if (!header) throw new Error('the decision header is missing')
+    expect(header.querySelectorAll('p')).toHaveLength(1)
+    expect(
+      within(header).getByText('No combination of these details is safe to apply automatically.'),
+    ).toBeVisible()
+    expect(screen.queryByText('This field needs your review.')).toBeNull()
+    // The box keeps only the conditions the line does not already state.
+    const box = screen.getByRole('complementary', { name: 'Comparison condition' })
+    expect(box).not.toHaveTextContent('No combination of these details')
+    expect(box).toHaveTextContent('Not enough independent sources agree on this value')
   })
 
   it('does not restate the language respelling reason in a notice', async () => {

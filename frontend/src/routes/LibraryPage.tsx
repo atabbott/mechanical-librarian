@@ -630,12 +630,39 @@ const decisionValue = (field: ReviewField) => {
     return candidate?.incumbent || !selected
       ? 'Current cover'
       : candidate
-        ? `Alternative ${String(candidates.filter((item) => !item.incumbent).indexOf(candidate) + 1)} cover`
+        ? (coverNames(candidates).get(candidate.reference) ?? 'Selected cover')
         : 'Selected cover'
   }
   return valueText(
     field.destination,
     selected === null || selected === undefined ? field.currentValue : displayValue(selected.value),
+  )
+}
+// A proposed cover is named by its sources, never "Alternative N" (#1519).
+// Two covers from the same sources are told apart by their size, then by
+// their place in the comparison, so every name stays unique.
+const coverNames = (
+  candidates: readonly Pick<
+    CoverCandidateView,
+    'reference' | 'incumbent' | 'sourceKinds' | 'width' | 'height'
+  >[],
+) => {
+  const proposed = candidates.filter((item) => !item.incumbent)
+  const base = (item: (typeof proposed)[number]) =>
+    `${item.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' and ') || 'Proposed'} cover`
+  const sized = (item: (typeof proposed)[number]) =>
+    `${base(item)}, ${String(item.width)} × ${String(item.height)} px`
+  const count = (name: (item: (typeof proposed)[number]) => string, value: string) =>
+    proposed.filter((item) => name(item) === value).length
+  return new Map(
+    proposed.map((item, index) => [
+      item.reference,
+      count(base, base(item)) === 1
+        ? base(item)
+        : count(sized, sized(item)) === 1
+          ? sized(item)
+          : `${sized(item)} (${String(index + 1)})`,
+    ]),
   )
 }
 // A recording's settled fill stays choosable without asking for review (#1249).
@@ -832,12 +859,41 @@ const comparisonNotices = (field: ReviewField) =>
     : field.notices.filter(
         (notice) => materialReasonLabel(notice) !== undefined && !restatesReason(field, notice),
       )
+// A comparison condition in words; differing source tag lists or synopses are
+// named as such rather than as a disagreement.
+const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
+  notice === 'competing_evidence' && combinedAutomaticTags(field, mediaKind)
+    ? 'Different source tag lists'
+    : notice === 'competing_evidence' && selectedAutomaticSynopsis(field, mediaKind)
+      ? 'Different source descriptions'
+      : materialReasonLabel(notice)
 // A notice that says again what the reason under the question already says is
-// left out: the language respelling reason is that line (#1519).
+// left out: the language respelling reason, or the condition that is that
+// line (#1519).
 const restatesReason = (field: ReviewField, notice: string) =>
-  field.automaticWithheldReason !== null &&
-  (notice === 'language_display_name' ||
-    `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason)
+  notice === questionNotice(field) ||
+  (field.automaticWithheldReason !== null &&
+    (notice === 'language_display_name' ||
+      `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason))
+// Under an actionable field's question, one line gives its own reason: why it
+// was withheld, else its first comparison condition, else its disposition. The
+// classification sentence, the same on every field, is only the last fallback
+// (#1519).
+const questionNotice = (field: ReviewField) =>
+  actionable(field) && field.automaticWithheldReason === null
+    ? field.notices.find((notice) => materialReasonLabel(notice) !== undefined)
+    : undefined
+const questionReason = (field: ReviewField, mediaKind: string) => {
+  const notice = questionNotice(field)
+  const label = notice === undefined ? undefined : noticeText(field, notice, mediaKind)
+  return (
+    field.automaticWithheldReason ??
+    (label
+      ? `${label}.`
+      : ((dispositionReasons as Partial<Record<string, string>>)[field.disposition] ??
+        fieldReason(field)))
+  )
+}
 
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
 const limitingProviderStatuses = new Set([
@@ -2285,8 +2341,8 @@ function LibraryCoverChoicesContent({
       radio,
     ]),
   )
+  const names = coverNames(candidates)
   const card = (candidate: (typeof candidates)[number], index: number) => {
-    const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
     const source = cover.imageSource(consideration.id, candidate.reference)
     const {
       outcome,
@@ -2302,7 +2358,9 @@ function LibraryCoverChoicesContent({
       : coverContexts.find((item) => item.alternativeId === candidate.reference)
     const key = `${candidate.incumbent ? 'current' : 'alternative'}-${String(index)}`
     const evidenceId = `cover-evidence-${String(candidate.ordinal)}-${key}`
-    const label = candidate.incumbent ? 'Current cover' : `Alternative ${String(alternative)} cover`
+    const label = candidate.incumbent
+      ? 'Current cover'
+      : (names.get(candidate.reference) ?? 'Proposed cover')
     const evidenceKey = `cover:${key}`
     const open = expandedEvidence.has(evidenceKey)
     return (
@@ -2340,8 +2398,9 @@ function LibraryCoverChoicesContent({
           </span>
           <span>
             <small>
-              {label}
-              {recommended ? ' · Recommended' : ''}
+              {/* A proposed cover's sources show below, so only the current one is labelled. */}
+              {candidate.incumbent ? label : null}
+              {recommended ? `${candidate.incumbent ? ' · ' : ''}Recommended` : ''}
               {selected && actionableCandidate ? (
                 <b className="choice-chosen">Your choice</b>
               ) : null}
@@ -2530,9 +2589,7 @@ function LibraryCoverChoicesContent({
                     {keepSelected ? <b className="choice-chosen">Your choice</b> : null}
                   </small>
                   <strong>Unavailable</strong>
-                  <em>
-                    {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
-                  </em>
+                  {currentContext?.rationale ? <em>{currentContext.rationale}</em> : null}
                   {currentContext?.recommendation === 'recommended' &&
                   currentContext.recommendationReason ? (
                     <span className="choice-recommendation">
@@ -5127,7 +5184,7 @@ export default function LibraryPage({
                               : undefined
                           }
                         >
-                          {selected.automaticWithheldReason ?? fieldReason(selected)}
+                          {questionReason(selected, detail.data.target.mediaKind)}
                         </p>
                       ) : selectedRevisitable ? (
                         <p>
@@ -5385,13 +5442,7 @@ export default function LibraryPage({
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (
                         <p key={notice}>
-                          {notice === 'competing_evidence' &&
-                          combinedAutomaticTags(selected, detail.data.target.mediaKind)
-                            ? 'Different source tag lists'
-                            : notice === 'competing_evidence' &&
-                                selectedAutomaticSynopsis(selected, detail.data.target.mediaKind)
-                              ? 'Different source descriptions'
-                              : materialReasonLabel(notice)}
+                          {noticeText(selected, notice, detail.data.target.mediaKind)}
                         </p>
                       ))}
                     </aside>

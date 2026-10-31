@@ -3060,7 +3060,7 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
         if mode == "human":
             assert (
                 reasons["title"]
-                == "The recorded evaluation did not select an automatic action; no more specific reason was recorded."
+                == "No value was chosen for you, and no more specific reason is known."
             )
     repository.close()
 
@@ -3446,7 +3446,7 @@ def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, susp
         )
         assert (
             series["automatic_withheld_reason"]
-            == "Automatic handling is currently suspended. Recorded evaluation: An ISBN lookup did not return a usable answer."
+            == "Changes made for you are paused for this field. An ISBN lookup did not return a usable answer."
         )
         assert (
             reader.read_current_review_case(case_id, None).final_outcome_document

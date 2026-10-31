@@ -1175,7 +1175,7 @@ class InspectCurrentReviewCase:
                         else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
                     ) or _AUTOMATIC_REFUSAL_TEXT.get(
                         outcome.reason_code,
-                        "The recorded evaluation did not select an automatic action; no more specific reason was recorded.",
+                        "No value was chosen for you, and no more specific reason is known.",
                     )
                 else:
                     continue
@@ -1184,8 +1184,7 @@ class InspectCurrentReviewCase:
                     *snapshot.suspended_destinations,
                 ):
                     message = (
-                        "Automatic handling is currently suspended. Recorded evaluation: "
-                        + message
+                        "Changes made for you are paused for this field. " + message
                     )
                 field["automatic_withheld_reason"] = message
         except Exception as error:

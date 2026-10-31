@@ -913,7 +913,7 @@ def _case(case_id: str) -> dict[str, object]:
                             ]
                             if case_id == "case-3"
                             else [],
-                            "rationale": "Keep the cover currently held by the local library.",
+                            "rationale": "",
                             "recommendation": "no_recommendation",
                             "recommendation_reason": "",
                         },
@@ -928,7 +928,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 }
                             ],
                             "limitations": [],
-                            "rationale": "This retained cover candidate is selectable for owner review.",
+                            "rationale": "",
                             "recommendation": "recommended",
                             "recommendation_reason": "Deterministic confirmed-cover policy recommends this retained cover.",
                         },

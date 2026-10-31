@@ -3167,12 +3167,12 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.get_by_role("button", name="Prepare cover comparison").click()
                 page.get_by_role("region", name="Choose a cover").wait_for()
                 expect(page.get_by_alt_text("Current cover")).to_be_visible()
-                expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
+                expect(page.get_by_alt_text("EPUB file cover")).to_be_visible()
                 current_cover = page.locator(".library-cover-card").filter(
                     has_text="Current cover"
                 )
                 automatic_cover = page.locator(".library-cover-card").filter(
-                    has_text="Alternative 1 cover"
+                    has=page.get_by_alt_text("EPUB file cover")
                 )
                 expect(automatic_cover).to_have_attribute("aria-checked", "true")
                 assert automatic_cover.evaluate(
@@ -3187,12 +3187,12 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.reload()
                 expect(
                     page.locator(".library-cover-card").filter(
-                        has_text="Alternative 1 cover"
+                        has=page.get_by_alt_text("EPUB file cover")
                     )
                 ).to_have_attribute("aria-checked", "true")
                 assert (
                     page.locator(".library-cover-card")
-                    .filter(has_text="Alternative 1 cover")
+                    .filter(has=page.get_by_alt_text("EPUB file cover"))
                     .evaluate("node => node.classList.contains('is-selected')")
                 )
                 # A recorded automatic choice is already selected: choosing it
@@ -3213,7 +3213,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     ) as decision_response,
                 ):
                     page.locator(".library-cover-card").filter(
-                        has_text="Alternative 1 cover"
+                        has=page.get_by_alt_text("EPUB file cover")
                     ).click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
@@ -3296,13 +3296,13 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                 page.get_by_role("button", name="Prepare cover comparison").click()
                 comparison = page.get_by_role("region", name="Choose a cover")
                 comparison.wait_for()
-                expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
+                expect(page.get_by_alt_text("EPUB file cover")).to_be_visible()
                 comparison.get_by_text(
                     "1 unavailable candidate", exact=False
                 ).wait_for()
                 assert page.locator(".library-cover-card").count() == 1
                 candidate = page.locator(".library-cover-card").filter(
-                    has_text="Alternative 1 cover"
+                    has=page.get_by_alt_text("EPUB file cover")
                 )
                 expect(candidate).to_have_attribute("aria-checked", "false")
                 with page.expect_response(
@@ -3381,7 +3381,7 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                 comparison = page.get_by_role("region", name="Choose a cover")
                 comparison.wait_for()
                 comparison.locator(".library-cover-card").filter(
-                    has_text="Alternative 1 cover"
+                    has=page.get_by_alt_text("EPUB file cover")
                 ).click()
 
                 stale = page.get_by_text(
@@ -3404,10 +3404,10 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                 current_comparison = page.get_by_role("region", name="Choose a cover")
                 current_comparison.wait_for()
                 current_comparison.get_by_role(
-                    "button", name="Evidence for Alternative 1 cover"
+                    "button", name="Evidence for EPUB file cover"
                 ).click()
                 disclosure = current_comparison.get_by_role(
-                    "button", name="Evidence for Alternative 1 cover", exact=True
+                    "button", name="Evidence for EPUB file cover", exact=True
                 )
                 disclosure.focus()
                 assert disclosure.evaluate("node => document.activeElement === node")
@@ -3418,7 +3418,7 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                     page.get_by_role("heading", name="Review complete")
                 ).to_have_count(0)
                 current_comparison.get_by_role(
-                    "radio", name="Choose Alternative 1 cover", exact=True
+                    "radio", name="Choose EPUB file cover", exact=True
                 ).click()
                 page.get_by_role("heading", name="Review complete").wait_for()
                 assert decision_statuses == [409, 200]
@@ -3478,7 +3478,7 @@ def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() 
                 comparison = page.get_by_role("region", name="Choose a cover")
                 comparison.wait_for()
                 comparison.locator(".library-cover-card").filter(
-                    has_text="Alternative 1 cover"
+                    has=page.get_by_alt_text("EPUB file cover")
                 ).click()
 
                 stale = page.get_by_text(
@@ -3490,7 +3490,7 @@ def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() 
                 assert decision_statuses == [409]
 
                 current_choice = page.locator(".library-cover-card").filter(
-                    has_text="Alternative 1 cover"
+                    has=page.get_by_alt_text("EPUB file cover")
                 )
                 current_choice.focus()
                 page.keyboard.press("Enter")
@@ -4258,7 +4258,7 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 assert library["counts"]["needs_attention"] == 1, library
                 assert attention["total"] == 1, attention
                 page.get_by_role(
-                    "radio", name="Choose Alternative 1 cover", exact=True
+                    "radio", name="Choose EPUB file cover", exact=True
                 ).click()
                 expect(
                     page.get_by_role("heading", name="Review complete")

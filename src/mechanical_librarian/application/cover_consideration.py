@@ -1804,7 +1804,7 @@ def _cover_choice_contexts(
                 == "unavailable"
                 else []
             ),
-            "rationale": "Keep the cover currently held by the local library.",
+            "rationale": "",
             "recommendation": "recommended"
             if current_recommended
             else "no_recommendation",
@@ -1828,7 +1828,7 @@ def _cover_choice_contexts(
                 "selection": "proposed",
                 "evidence": evidence(reference, False),
                 "limitations": [],
-                "rationale": "This retained cover candidate is selectable for owner review.",
+                "rationale": "",
                 "recommendation": "recommended"
                 if is_recommended
                 else "no_recommendation",

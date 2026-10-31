@@ -1419,7 +1419,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     in unconfirmed.inner_text()
                 )
                 unconfirmed_choice = unconfirmed.get_by_role(
-                    "radio", name="Choose Alternative 2 cover", exact=True
+                    "radio", name="Choose Open Library cover", exact=True
                 )
                 # The card states the unconfirmed match before any tap, and a
                 # tap on it is the explicit choice; no dialog asks again (#1290).
@@ -1438,14 +1438,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     comparison.locator(".library-cover-card.is-current")
                 ).to_have_attribute("aria-checked", "false")
                 alternative_evidence = comparison.get_by_role(
-                    "button", name="Evidence for Alternative 1 cover"
+                    "button", name="Evidence for Hardcover cover"
                 )
                 alternative_evidence.focus()
                 page.keyboard.press("Enter")
                 expect(alternative_evidence).to_have_count(1)
                 expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
                 expect(alternative_evidence).to_have_text("Hide evidence")
-                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                comparison.get_by_label("Hardcover cover evidence").get_by_text(
                     "Open Library", exact=True
                 ).wait_for()
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
@@ -1458,11 +1458,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 expect(recommended).to_be_enabled()
                 recommended.get_by_text("Same book", exact=True).wait_for()
                 recommended_evidence = comparison.get_by_role(
-                    "button", name="Evidence for Alternative 1 cover"
+                    "button", name="Evidence for Hardcover cover"
                 )
                 recommended_evidence.click()
                 expect(recommended_evidence).to_have_attribute("aria-expanded", "true")
-                comparison.get_by_label("Alternative 1 cover evidence").get_by_text(
+                comparison.get_by_label("Hardcover cover evidence").get_by_text(
                     "Open Library", exact=True
                 ).wait_for()
                 unavailable_evidence = comparison.get_by_role(
