@@ -3977,6 +3977,90 @@ def test_load_more_attention_keeps_focus_on_the_first_row_it_added(
             browser.close()
 
 
+_CHOSEN_HEADER_IN_VIEW = """() => {
+  const active = document.activeElement
+  if (!active?.matches('.selected-work-header')) return null
+  const header = active.getBoundingClientRect()
+  const masthead = document.querySelector('.masthead').getBoundingClientRect()
+  const clear = Math.max(0, masthead.bottom)
+  return {
+    top: header.top,
+    bottom: header.bottom,
+    clear,
+    height: innerHeight,
+    inView: header.top >= clear - 0.5 && header.bottom <= innerHeight + 0.5,
+  }
+}"""
+
+
+def test_choosing_an_attention_item_keeps_the_focused_work_header_in_view() -> None:
+    """Choosing the rail's last queue item by keyboard leaves the focused
+    selected-work header fully in view and clear of the masthead at 100, 150
+    and 200% text, from the widest window to the narrowest phone (#1487).
+
+    With enlarged text the header used to take focus below the fold: the page
+    returned to its top while the header sat further down.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    provider_recovery=True,
+                    cohort=24,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                for width, height in ((1440, 900), (1200, 900), (390, 844), (320, 640)):
+                    for size in ("100%", "150%", "200%"):
+                        where = f"{size} text at {width}x{height}"
+                        page.set_viewport_size({"width": width, "height": height})
+                        page.goto(f"{origin}/library?lens=all&attention=open")
+                        set_root_text(page, size)
+                        rows = page.get_by_label("Attention queue", exact=True).locator(
+                            "button.attention-queue-item"
+                        )
+                        expect(rows.first).to_be_visible()
+                        chosen = rows.last
+                        work = chosen.get_attribute("data-attention-row")
+                        chosen.focus()
+                        page.keyboard.press("Enter")
+                        assert work is not None, where
+                        expect(page).to_have_url(
+                            re.compile(f"preview={re.escape(work.split(':')[0])}")
+                        )
+                        try:
+                            page.wait_for_function(
+                                f"() => ({_CHOSEN_HEADER_IN_VIEW})()?.inView === true",
+                                timeout=5_000,
+                            )
+                        except PlaywrightTimeoutError:
+                            pytest.fail(
+                                f"{where}: {page.evaluate(_CHOSEN_HEADER_IN_VIEW)}"
+                            )
+                        # It stays there once the page settles.
+                        page.evaluate(_TWO_FRAMES)
+                        page.evaluate(_TWO_FRAMES)
+                        settled = page.evaluate(_CHOSEN_HEADER_IN_VIEW)
+                        assert settled and settled["inView"], (where, settled)
+                context.close()
+            browser.close()
+
+
 @pytest.mark.parametrize("identity", [False, True])
 @pytest.mark.parametrize("dark", [False, True])
 def test_library_description_controls_preserve_words_at_enlarged_text(

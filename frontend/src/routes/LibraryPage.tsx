@@ -2809,6 +2809,7 @@ export default function LibraryPage({
   const returnToToggle = useRef(false)
   const returnToWork = useRef(false)
   const revealWorkspace = useRef(false)
+  const revealQueueChoice = useRef(false)
   const workSelectionGeneration = useRef(0)
   const selectedIdentityRef = useRef<{
     id: string
@@ -3681,6 +3682,26 @@ export default function LibraryPage({
     selectedDetailRetry.current = null
     if (selectedDetailReady) selectedDetailShown.current = search.preview ?? null
   }, [selectedReadError, search.preview, selectedDetailReady])
+  // A work chosen from the attention queue takes focus on its header without
+  // scrolling. With enlarged text the header can sit below the fold, or under
+  // the masthead, so once it holds focus it is brought fully into view; the
+  // page's scroll padding keeps it clear of the masthead (#1487).
+  useEffect(() => {
+    if (!revealQueueChoice.current || !(selectedDetailReady || selectedReadError)) return
+    revealQueueChoice.current = false
+    let revealFrame = 0
+    const focusFrame = requestAnimationFrame(() => {
+      revealFrame = requestAnimationFrame(() => {
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.closest('#main-content .workspace-detail'))
+          active.scrollIntoView({ block: 'nearest' })
+      })
+    })
+    return () => {
+      cancelAnimationFrame(focusFrame)
+      cancelAnimationFrame(revealFrame)
+    }
+  }, [search.preview, search.field, selectedDetailReady, selectedReadError])
   // A detail that was shown and then could not be read again, as after a
   // command whose follow-up reads fail, takes away the control that had focus;
   // its Try again takes focus rather than the page (#1288).
@@ -4126,6 +4147,7 @@ export default function LibraryPage({
   ) => {
     if (attention.isPlaceholderData) return
     revealWorkspace.current = compactWidth()
+    revealQueueChoice.current = true
     workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
