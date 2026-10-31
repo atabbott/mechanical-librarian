@@ -140,6 +140,11 @@ def test_hardcover_payload_author_names_arrive_in_display_order(names, local, ex
         ("Example, Ada, Bea", (), "Example, Ada, Bea"),
         ("Example,", (), "Example,"),
         ("Le Guin Ursula K.", ("Ursula K. Le Guin",), "Ursula K. Le Guin"),
+        ("Marvel Comics, Inc.", (), "Marvel Comics, Inc."),
+        ("Penguin Books, Ltd", (), "Penguin Books, Ltd"),
+        ("Example Press, LLC", (), "Example Press, LLC"),
+        ("Doe, John & Jane", (), "Doe, John & Jane"),
+        ("Smith, John", ("Smith, John",), "Smith, John"),
     ),
     ids=(
         "whitespace",
@@ -152,6 +157,11 @@ def test_hardcover_payload_author_names_arrive_in_display_order(names, local, ex
         "two_commas",
         "comma_alone",
         "rotation_of_three",
+        "organisation_inc",
+        "organisation_ltd",
+        "organisation_llc",
+        "joined_names",
+        "exact_package_match",
     ),
 )
 def test_an_author_name_is_reordered_only_when_marked_or_matched(

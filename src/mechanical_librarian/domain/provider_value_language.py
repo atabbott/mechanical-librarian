@@ -133,7 +133,6 @@ def _mostly_other_script(value: str) -> bool:
         if unicodedata.category(character).startswith("L")
     ]
     other = sum(
-        not unicodedata.name(character, "").startswith("LATIN ")
-        for character in letters
+        "LATIN " not in unicodedata.name(character, "") for character in letters
     )
     return bool(letters) and other * 2 > len(letters)

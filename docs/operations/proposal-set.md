@@ -58,8 +58,8 @@ It leaves with one of two closed reasons: `edition_language_contradicted`
 when its edition states only other languages, and `value_script_contradicted`
 when a work in Latin-script languages only gets a value written mostly in
 another script. With no established language nothing leaves, and the same
-value from any other provider stays. On the ISBN route a translated edition
-still vetoes the title election; its title is only no longer offered.
+value from any other provider stays. On the ISBN route such a title still
+counts against the title election; it is only no longer offered.
 
 ### Bibliographic combinations
 
@@ -173,10 +173,11 @@ only equivalent dissent; the local claims stay as provenance. A bracketed
 source suffix grants election authority only when it is exactly `[retail]`;
 any other bracketed suffix abstains.
 
-Hardcover author names collapse their whitespace runs. A name is put in
-display order only when Hardcover marks it inverted, as one `Family, Given`
-comma without a name suffix, or when rotating its words gives exactly one of
-the package's author names; so `Example  Ada` beside a package `Ada Example`
+Hardcover author names collapse their whitespace runs. A name equal to a
+package author name stays as it is; otherwise it is put in display order only
+when Hardcover marks it inverted, as one personal `Family, Given` comma (not an
+organisation, joined names or a name suffix), or when rotating its words gives
+exactly one of the package's author names; so `Example  Ada` beside a package `Ada Example`
 is the same author, not a competing value.
 
 ### Series

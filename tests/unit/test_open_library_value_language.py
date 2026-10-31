@@ -14,7 +14,6 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import (
-    EVIDENCE_LED_TITLE_REASON,
     ProposalOutcome,
     ProposalResult,
     evaluate_report,
@@ -46,18 +45,6 @@ def _title(**values: object) -> ProposalResult:
     )
 
 
-def _elected(result: ProposalResult) -> str:
-    assert (ProposalOutcome.PROPOSE_CHANGE, (EVIDENCE_LED_TITLE_REASON,)) == (
-        result.outcome,
-        result.reasons,
-    )
-    return next(
-        str(value.value.value)
-        for value in result.alternatives
-        if value.alternative_id == result.selected_alternative_id
-    )
-
-
 def _offered(result: ProposalResult) -> set[str]:
     return {str(value.value.value) for value in result.alternatives}
 
@@ -68,10 +55,16 @@ def _offered(result: ProposalResult) -> set[str]:
     ids=("cyrillic", "han", "mostly_cyrillic"),
 )
 def test_an_open_library_title_in_another_script_is_not_offered(other):
+    # The disagreeing ISBN-bound source still vetoes the election; its title
+    # is only no longer one of the choices.
     result = _title(titles=("Example Title", other), local_language="en")
 
-    assert "Example Title" == _elected(result)
+    assert (ProposalOutcome.UNRESOLVED_CHOICE, ("isbn_title_material_conflict",)) == (
+        result.outcome,
+        result.reasons,
+    )
     assert other not in _offered(result)
+    assert "Example Title" in _offered(result)
 
 
 def test_an_open_library_edition_in_another_language_is_not_offered():
@@ -348,6 +341,21 @@ def test_closed_reasons(value, stated, established, reason):
             TargetDestination.DESCRIPTION,
             value,
             frozenset(established),
+        )
+        is None
+    )
+
+
+def test_fullwidth_latin_is_latin():
+    assert (
+        open_library_value_exclusion(
+            "open_library",
+            isbn_title_report(titles=("Example Title", "Example Title"))
+            .providers[1]
+            .candidates[0],
+            TargetDestination.TITLE,
+            "Ｅｘａｍｐｌｅ",
+            frozenset({("en", None)}),
         )
         is None
     )

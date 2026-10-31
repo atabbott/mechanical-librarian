@@ -128,9 +128,10 @@ modification timestamp is never a publication date.
   and invalid ISBNs are kept as evidence but never sent as ebook inputs.
 - A UUID, DOI, ASIN, LCCN, URI, proprietary or package identifier never
   becomes an ISBN. A Library of Congress control number is recognised by its
-  label, with or without a colon, and an unlabelled ten-digit run inside a
-  Library of Congress Cataloging-in-Publication block is read as one; the
-  block's labelled ISBNs are still read.
+  label, with or without a colon, and a bare ten-digit run inside a Library of
+  Congress Cataloging-in-Publication block, with no ISBN, ebook or print label
+  before or beside it, is read as one; the block's labelled or hyphenated
+  ISBNs are still read.
 - The package's explicitly designated primary identifier, when it is a valid
   ISBN, applies to this EPUB. Other package ISBNs stay unlabelled unless other
   evidence establishes applicability.

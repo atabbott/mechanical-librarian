@@ -471,7 +471,7 @@ _NON_ISBN_IDENTIFIER = re.compile(
 # colon, owns the digits after it (#1497).
 _LCCN_LABELLED = re.compile(
     r"(?i)(?<![\w])(?:library\s+of\s+congress\s+control\s+(?:number|no\.?)"
-    r"|lc\s+control\s+(?:number|no\.?)|lccn)\s*[:#.]?\s*\d[\d\s-]{6,14}\d"
+    r"|lc\s+control\s+(?:number|no\.?)|lccn)\s*(?:[:#.]\s*)?\d[\d\s-]{6,14}\d"
     r"(?![\dXx])"
 )
 # The heading of a Library of Congress catalogue record (CIP data block), whose
@@ -2493,41 +2493,49 @@ def _non_isbn_identifier_spans(value: str) -> tuple[tuple[int, int], ...]:
 def _catalogue_record_starts(elements: list[_Element]) -> dict[int, int]:
     """Map each element inside a catalogue-record block to where it starts.
 
-    The block opens at its heading, read on the innermost element that states
-    it, and runs through every later element of that element's container, so
-    a heading element counts only from the heading on and every later member
-    from its start (#1497).
+    The block opens at its heading. The heading is read on the innermost
+    element that states it, widened through wrappers that hold only the same
+    text (a `<b>` inside a `<p>`), and the block runs through every later
+    element of the widened heading's container. A heading element counts only
+    from the heading on, and every later member from its start (#1497).
     """
+    by_ordinal = {element.ordinal: element for element in elements}
     headings = {
-        element.ordinal: heading.start()
+        element.ordinal
         for element in elements
-        if (heading := _CATALOGUE_RECORD_HEADING.search(element.exact_text)) is not None
+        if _CATALOGUE_RECORD_HEADING.search(element.exact_text) is not None
     }
     # A container's text holds its children's, so only the innermost element
     # stating the heading opens a block.
-    innermost = {
-        ordinal
-        for ordinal in headings
-        if not any(
-            ordinal in other.ancestors
-            for other in elements
-            if other.ordinal in headings
-        )
+    ancestors_of_headings = {
+        ancestor for ordinal in headings for ancestor in by_ordinal[ordinal].ancestors
     }
     starts: dict[int, int] = {}
-    containers: list[int | None] = []
+    blocks: list[tuple[int, int | None]] = []
+    for ordinal in sorted(headings - ancestors_of_headings):
+        node = by_ordinal[ordinal]
+        chain = [node]
+        while (
+            node.ancestors
+            and (parent := by_ordinal.get(node.ancestors[-1])) is not None
+            and parent.exact_text.strip() == node.exact_text.strip()
+        ):
+            node = parent
+            chain.append(node)
+        for member in chain:
+            heading = _CATALOGUE_RECORD_HEADING.search(member.exact_text)
+            if heading is not None:
+                starts[member.ordinal] = min(
+                    starts.get(member.ordinal, heading.start()), heading.start()
+                )
+        blocks.append((node.ordinal, node.ancestors[-1] if node.ancestors else None))
     for element in elements:
         if any(
-            container is None or container in element.ancestors
-            for container in containers
+            element.ordinal > head
+            and (container is None or container in element.ancestors)
+            for head, container in blocks
         ):
             starts.setdefault(element.ordinal, 0)
-        if element.ordinal in innermost:
-            starts[element.ordinal] = min(
-                starts.get(element.ordinal, headings[element.ordinal]),
-                headings[element.ordinal],
-            )
-            containers.append(element.ancestors[-1] if element.ancestors else None)
     return starts
 
 
@@ -3697,17 +3705,6 @@ def _recognize(
             left_vicinity = re.split(separator, lowered[left_boundary : match.start()])[
                 -1
             ]
-            catalogue_start = catalogue_record_starts.get(element.ordinal)
-            if (
-                catalogue_start is not None
-                and match.start() >= catalogue_start
-                and len(compact) == 10
-                and compact.isdigit()
-                and "isbn" not in left_vicinity
-            ):
-                # An unlabelled ten-digit run in a catalogue record is its
-                # control number; the record's ISBNs carry their label.
-                continue
             right_vicinity = re.split(separator, lowered[match.end() : right_boundary])[
                 0
             ]
@@ -3726,6 +3723,21 @@ def _recognize(
                 _EBOOK_LABEL.search(right_vicinity)
                 or _PRINT_LABEL.search(right_vicinity)
             )
+            catalogue_start = catalogue_record_starts.get(element.ordinal)
+            if (
+                catalogue_start is not None
+                and match.start() >= catalogue_start
+                and identifier.isdigit()
+                and len(identifier) == 10
+                and "isbn" not in lowered[catalogue_start : match.start()]
+                and "isbn" not in right_vicinity
+                and not left_has_labels
+                and not right_has_labels
+            ):
+                # A bare ten-digit run in a catalogue record, with no ISBN label
+                # before it in its line, is its control number; the record's
+                # ISBNs carry a label or hyphens.
+                continue
             if left_has_labels and right_has_labels:
                 left_ebook = bool(_EBOOK_LABEL.search(left_vicinity))
                 left_print = bool(_PRINT_LABEL.search(left_vicinity))

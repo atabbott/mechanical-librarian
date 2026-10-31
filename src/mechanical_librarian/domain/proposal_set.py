@@ -2187,7 +2187,6 @@ def _evidence_led_title_election(
     isbn_bound = False
     conflict = False
     titles: set[str] = set()
-    languages = established_work_languages(report)
     variant_claims = {
         role: {values}
         for role, values in _title_variant_identities(
@@ -2211,16 +2210,7 @@ def _evidence_led_title_election(
             titles.update(
                 title_identity_key(c.value)
                 for c in claims
-                if c.kind is ClaimKind.TITLE
-                and type(c.value) is str
-                and open_library_value_exclusion(
-                    provider.authority,
-                    candidate,
-                    TargetDestination.TITLE,
-                    c.value,
-                    languages,
-                )
-                is None
+                if c.kind is ClaimKind.TITLE and type(c.value) is str
             )
             author_claims = tuple(
                 c
