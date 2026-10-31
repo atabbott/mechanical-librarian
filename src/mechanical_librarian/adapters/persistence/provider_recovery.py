@@ -292,19 +292,20 @@ class SQLiteProviderRecoveryStore:
                     ).fetchone()
                     is not None
                 )
+                # With nothing outstanding the domain rule decides (#1375), so a
+                # later enrolment is always claimed: a dormant scope waits to be
+                # checked again, and a dropped lease ends as ``exhausted``
+                # exactly as ``complete_missing_jobs`` would record it.
                 successor = (
                     ProviderRecovery(
                         row[0], row[1], row[2], generation, "waiting", 0, now
                     )
                     if has_jobs
                     else ProviderRecovery(
-                        row[0], row[1], row[2], generation, "dormant", row[5], None
+                        row[0], row[1], row[2], generation, "exhausted", row[5], None
                     )
-                    if row[4] != "recovered"
-                    # Nothing deferred and nothing to correct (#1367).
-                    else ProviderRecovery(
-                        row[0], row[1], row[2], generation, "recovered", 0, None
-                    )
+                    if row[4] in {"checking", "fanout"}
+                    else ProviderRecovery(*row).with_generation(generation, now=now)
                 )
                 self._connection.execute(
                     "DELETE FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
