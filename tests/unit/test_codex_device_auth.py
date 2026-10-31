@@ -28,18 +28,19 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     _install_auth,
     _issued_state,
     _stop_process,
+    _validated_output_line,
 )
 from mechanical_librarian.bootstrap.composition import (
     _CodexAuthLeaseCoordinator,
     _LazyCodexAuth,
 )
 
-_PROMPT = (
-    b"Open this URL in your browser\n"
-    b"https://auth.openai.com/codex/device\n"
-    b"Enter this one-time code (expires in 15 minutes)\n"
-    b"ABCD-EFGH\n"
-)
+# Captured once from the pinned Codex CLI; a pin bump must recapture it.
+_CAPTURE_PATH = Path(__file__).parents[1] / "fixtures" / "codex-device-auth-prompt.json"
+_CAPTURE = json.loads(_CAPTURE_PATH.read_text(encoding="utf-8"))
+_PROMPT = _CAPTURE["device_prompt"].encode()
+_STATUS = _CAPTURE["login_status"].encode()
+_APPROVED = _PROMPT + _CAPTURE["device_success"].encode()
 
 
 def _auth_document() -> bytes:
@@ -92,7 +93,7 @@ class _BlockingStream:
 def _manager(
     tmp_path: Path,
     *,
-    output: bytes = _PROMPT,
+    output: bytes = _APPROVED,
     returncode: int = 0,
     status: subprocess.CompletedProcess[bytes] | None = None,
     lease_current: Callable[[], bool] = lambda: True,
@@ -132,7 +133,7 @@ def _manager(
         staging = Path(command[-1])
         if action == "status":
             completed = status or subprocess.CompletedProcess(
-                ("status",), 0, b"Logged in using ChatGPT\n", b""
+                ("status",), 0, _STATUS, b""
             )
             return _Process(completed.stdout + completed.stderr, completed.returncode)
         if returncode == 0:
@@ -215,13 +216,54 @@ def test_issued_prompt_validates_status_and_installs_private_auth_atomically(
     assert not list(tmp_path.glob("reviewer-auth-*"))
 
 
-def test_exact_prompt_enters_explicit_issued_state_before_waiting() -> None:
-    state = _issued_state(_PROMPT.decode().splitlines())
+def test_captured_prompt_enters_explicit_issued_state_before_waiting() -> None:
+    lines = [_validated_output_line(line) for line in _PROMPT.split(b"\n")]
+    state = _issued_state(lines)
     assert state is not None
     assert state.state == "issued"
     assert state.verification_url == "https://auth.openai.com/codex/device"
     assert state.user_code == "ABCD-EFGH"
     assert state.expires_in_seconds == 900
+
+
+def test_captured_prompt_publishes_issued_while_the_cli_waits() -> None:
+    published: list[CodexDeviceAuthState] = []
+    stream = _Chunked(_PROMPT)
+
+    def publish(lines: list[str]) -> None:
+        state = _issued_state(lines)
+        if state is not None and not published:
+            published.append(state)
+            assert stream.tell() < len(_PROMPT)
+
+    auth_module._bounded_output_lines(
+        cast("subprocess.Popen[bytes]", _Process(b"", 0)),
+        stream,
+        deadline=time.monotonic() + 5,
+        on_lines=publish,
+        stop_process=lambda: None,
+    )
+    assert published == [
+        CodexDeviceAuthState(
+            "issued",
+            verification_url="https://auth.openai.com/codex/device",
+            user_code="ABCD-EFGH",
+            expires_in_seconds=900,
+        )
+    ]
+
+
+def test_captured_prompt_comes_from_the_pinned_codex_cli() -> None:
+    dockerfile = (Path(__file__).parents[2] / "Dockerfile").read_text(encoding="utf-8")
+    pins = set(
+        re.findall(r'package_version="([0-9.]+)-linux-(?:x64|arm64)"', dockerfile)
+    )
+    assert pins == {_CAPTURE["codex_version"]}, "recapture the device prompt fixture"
+    assert f'= "codex-cli {_CAPTURE["codex_version"]}"' in dockerfile
+    assert (
+        f"Welcome to Codex [v\x1b[90m{_CAPTURE['codex_version']}"
+        in _CAPTURE["device_prompt"]
+    )
 
 
 def test_ordinary_credential_status_does_not_launch_cli(tmp_path: Path) -> None:
@@ -562,14 +604,82 @@ def test_cancel_cleanup_failure_is_failed_and_retains_exact_owner(
     assert cleanup_attempts == 1 + len(auth_module._CLEANUP_RETRY_DELAYS)
 
 
+def _sgr(text: bytes) -> bytes:
+    return b"\x1b[94m" + text + b"\x1b[0m"
+
+
+_URL = _sgr(b"https://auth.openai.com/codex/device")
+_CODE = _sgr(b"ABCD-EFGH")
+_EXPIRY = b"Enter this one-time code \x1b[90m(expires in 15 minutes)\x1b[0m"
+
+
 @pytest.mark.parametrize(
     "output",
     (
-        b"https://evil.test/device\nABCD-EFGH\n",
-        _PROMPT.replace(b"15 minutes", b"10 minutes"),
-        _PROMPT.replace(b"ABCD-EFGH", b"../../etc/passwd"),
-        _PROMPT + b"ABCD-EFGH\n",
-        b"\xff\n",
+        pytest.param(b"https://evil.test/device\nABCD-EFGH\n", id="foreign-url-only"),
+        pytest.param(
+            _PROMPT.replace(b"15 minutes", b"10 minutes"), id="different-expiry"
+        ),
+        pytest.param(
+            _PROMPT.replace(b"ABCD-EFGH", b"../../etc/passwd"), id="malformed-code"
+        ),
+        pytest.param(b"\xff\n", id="invalid-utf8"),
+        pytest.param(
+            _PROMPT.replace(b"\x1b[94mABCD", b"\x1b]8;;x\x07ABCD"),
+            id="non-sgr-escape",
+        ),
+        pytest.param(_PROMPT.replace(b"\x1b[0m]", b"\x1b[0]"), id="malformed-sgr"),
+        pytest.param(_PROMPT.replace(b"\x1b[90m", b"\x1b[1A", 1), id="cursor-escape"),
+        pytest.param(_PROMPT.replace(b"\x1b[94m", b"\x1b", 1), id="bare-escape"),
+        pytest.param(
+            _PROMPT.replace(b"   \x1b[94mABCD", b"\r\x1b[94mABCD"),
+            id="carriage-return",
+        ),
+        pytest.param(_PROMPT.replace(b"   \x1b[94mABCD", b"\t\x1b[94mABCD"), id="tab"),
+        pytest.param(_PROMPT.replace(b"Welcome", b"\x7fWelcome"), id="delete"),
+        pytest.param(
+            _PROMPT.replace(b"Welcome", "\u009bWelcome".encode()), id="c1-control"
+        ),
+        pytest.param(
+            _PROMPT.replace(b"\nWelcome", b"\n" + b"x" * 16_384 + b"\nWelcome"),
+            id="over-output-bound",
+        ),
+        pytest.param(_PROMPT + _URL + b"\n", id="second-url"),
+        pytest.param(_PROMPT + b"   ABCD-EFGH\n", id="second-code"),
+        pytest.param(_PROMPT + b"   WXYZ-2345\n", id="different-second-code"),
+        pytest.param(
+            _PROMPT.replace(b"Continue only", b"See https://evil.test/ Continue only"),
+            id="other-url-in-text",
+        ),
+        pytest.param(
+            _PROMPT.replace(b"codex/device", b"codex/device?next=x"),
+            id="device-url-with-query",
+        ),
+        pytest.param(
+            _PROMPT.replace(b"auth.openai.com", b"auth.openai.com.evil.test"),
+            id="lookalike-host",
+        ),
+        pytest.param(
+            _PROMPT.replace(
+                b"https://auth.openai.com/codex/device",
+                b"Open https://auth.openai.com/codex/device",
+            ),
+            id="url-with-extra-text",
+        ),
+        pytest.param(
+            _PROMPT.replace(b"ABCD-EFGH", b"ABCD-EFGH now"), id="code-with-extra-text"
+        ),
+        pytest.param(_PROMPT.replace(b"ABCD-EFGH", b"abcd-efgh"), id="lower-case-code"),
+        pytest.param(
+            _PROMPT.replace(b"2. Enter", b"2.Enter"), id="step-prefix-without-space"
+        ),
+        pytest.param(
+            _PROMPT.replace(b"2. Enter", b"2. 3. Enter"), id="two-step-prefixes"
+        ),
+        pytest.param(b"\n".join((_EXPIRY, _URL, _CODE, b"")), id="expiry-before-url"),
+        pytest.param(b"\n".join((_URL, _CODE, _EXPIRY, b"")), id="code-before-expiry"),
+        pytest.param(b"\n".join((_CODE, _URL, _EXPIRY, b"")), id="code-first"),
+        pytest.param(b"\n".join((_URL, _EXPIRY, b"")), id="no-code"),
     ),
 )
 def test_malformed_or_hostile_stdout_fails_without_install(
@@ -577,7 +687,9 @@ def test_malformed_or_hostile_stdout_fails_without_install(
 ) -> None:
     manager = _manager(tmp_path, output=output)
     _finish(manager)
-    assert manager.status().state == "failed"
+    assert manager.status() == CodexDeviceAuthState(
+        "failed", failure="protocol_or_process"
+    )
     assert not (tmp_path / "profile" / "auth.json").exists()
 
 

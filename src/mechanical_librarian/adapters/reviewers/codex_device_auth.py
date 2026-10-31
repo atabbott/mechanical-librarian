@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
@@ -24,6 +25,12 @@ from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthS
 
 _DEVICE_URL = "https://auth.openai.com/codex/device"
 _CODE = re.compile(r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
+_CODE_ANYWHERE = re.compile(r"[A-Z0-9]{4}-[A-Z0-9]{4}")
+_URL_ANYWHERE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
+# The pinned CLI colours its prompt even with stdout piped, NO_COLOR or
+# TERM=dumb. Only complete SGR sequences are removed; any other escape stays.
+_SGR = re.compile(r"\x1b\[[0-9;]*m")
+_STEP_PREFIX = re.compile(r"^[0-9]+\. ")
 _EXPIRY_LINE = "Enter this one-time code (expires in 15 minutes)"
 _TIMEOUT_LINE = "device auth timed out after 15 minutes"
 _MAX_OUTPUT_BYTES = 16_384
@@ -590,15 +597,23 @@ class CodexDeviceAuthManager:
 
 
 def _issued_state(lines: list[str]) -> CodexDeviceAuthState | None:
-    expiry = [index for index, line in enumerate(lines) if line == _EXPIRY_LINE]
-    urls = [index for index, line in enumerate(lines) if line == _DEVICE_URL]
-    codes = [(index, line) for index, line in enumerate(lines) if _CODE.fullmatch(line)]
+    prompt = [_prompt_text(line) for line in lines]
+    expiry = [index for index, line in enumerate(prompt) if line == _EXPIRY_LINE]
+    urls = [index for index, line in enumerate(prompt) if _URL_ANYWHERE.search(line)]
+    codes = [
+        (index, line)
+        for index, line in enumerate(prompt)
+        if _CODE_ANYWHERE.search(line)
+    ]
     if not expiry and not urls and not codes:
         return None
     if len(expiry) != 1 or len(urls) != 1 or len(codes) != 1:
         return None
+    url_index = urls[0]
     code_index, code = codes[0]
-    if not (urls[0] < expiry[0] < code_index):
+    if prompt[url_index] != _DEVICE_URL or not _CODE.fullmatch(code):
+        return None
+    if not (url_index < expiry[0] < code_index):
         return None
     return CodexDeviceAuthState(
         "issued",
@@ -606,6 +621,11 @@ def _issued_state(lines: list[str]) -> CodexDeviceAuthState | None:
         user_code=code,
         expires_in_seconds=900,
     )
+
+
+def _prompt_text(line: str) -> str:
+    """Remove only surrounding whitespace and one optional "N. " step prefix."""
+    return _STEP_PREFIX.sub("", line.strip(), count=1)
 
 
 def _remove_staging(path: Path) -> None:
@@ -828,7 +848,8 @@ def _validated_output_line(raw_line: bytes) -> str:
         line = raw_line.decode("utf-8", "strict")
     except UnicodeError as error:
         raise CodexDeviceAuthError("protocol") from error
-    if "\r" in line or any(ord(character) < 32 for character in line):
+    line = _SGR.sub("", line)
+    if any(unicodedata.category(character) == "Cc" for character in line):
         raise CodexDeviceAuthError("protocol")
     return line
 

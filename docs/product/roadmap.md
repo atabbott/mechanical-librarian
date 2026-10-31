@@ -31,13 +31,13 @@ The [changelog](../../CHANGELOG.md) lists each user-visible change.
 
 - **0.29.2 Delivery reliability and hygiene.** Test, tracking and
   documentation corrections that make every later change cheaper.
+- **0.29.3 Review fixes and hygiene.** Bounded fixes left over from the 0.29.x
+  reviews, across Library, Activity, Settings, tests and the Codex reviewer.
 - **0.30.0 Audiobook matching and editions.** Audiobooks match the edition the
   library holds, keep that match, and get better data.
 
 ## Next
 
-- **0.29.3 Review fixes and hygiene.** Bounded fixes left over from the 0.29.x
-  reviews, across Library, Activity, Settings, tests and the Codex reviewer.
 - **0.31.0 Coverage.** More of the evidence already retrieved is admitted
   safely, and covers are chosen by measured rules before any model helps.
 - **0.32.0 Series and structure.** One identity per series, and a read-only

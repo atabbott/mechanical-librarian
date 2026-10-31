@@ -52,6 +52,11 @@ brackets are GitHub issues.
   step list, the masthead's background-work popover and Activity's pager
   controls stay in view and full size (#1491, #1503).
 
+## 0.29.3 — Review fixes and hygiene (in progress)
+
+- Codex sign-in from Settings or setup shows the link and one-time code the
+  bundled Codex CLI prints, instead of failing at once (#1493).
+
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
 - **Clean rebuild required.** Automatic authority binds only the operations
