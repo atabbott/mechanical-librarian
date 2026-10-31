@@ -108,7 +108,7 @@ inherited from ebooks.
 | `title_layout` | `title_and_subtitle` (default) | fill or replace | title: fill, preserve, replace; title/subtitle pair |
 | `date_precision` | `year` (default) | fill or replace | none |
 | `date_precision` | `full_date` | fill or replace | publishedDate: fill |
-| `language_rendering` | `display_name` (default) | fill | language: fill, preserve |
+| `language_rendering` | `display_name` (default) | fill or respell | language: fill, normalize, preserve |
 | `contributor_names` | `preserve` | fill or replace | authors: add, fill, normalize, preserve, replace |
 | `contributor_names` | `canonical` (default) | fill or replace | authors and narrators: add, fill, normalize, preserve, replace |
 | `publisher_preference` | `publisher` (default) | fill or replace | publisher: fill, preserve |
@@ -212,7 +212,9 @@ material competes; one reliable provider can be enough
 A checksum alone does not link an ISBN to the work; how titles are elected is
 in the [ProposalSet](../operations/proposal-set.md#titles). File, package and
 service titles are observations whose disagreement alone cannot veto stronger
-evidence. Subtitle and series are decided in their own fields. Material
+evidence. A title that differs only by a dropped leading `The`, `A` or `An` is
+the same title: the form with the article is kept or elected, and the bare form
+is never offered. Subtitle and series are decided in their own fields. Material
 competing works, authors or titles go to the owner.
 
 Ebook automatic title replacement has three qualified operations:
@@ -222,8 +224,8 @@ Ebook automatic title replacement has three qualified operations:
 - `provider_consensus_noise`: one exact local noisy title with one reversible
   pattern, byte-identical clean titles from at least two independent
   authorities, and no dissent. A colon subtitle elects only when its suffix is
-  kept as the structured subtitle. Of bracketed suffixes, only `[retail]`
-  elects; others abstain.
+  kept as the structured subtitle. Of bracketed suffixes, only `[retail]` and a
+  bracketed valid ISBN, such as `[ISBN 978…]`, elect; others abstain.
 - `decoration_tidy`: two provider-backed alternatives equal up to one closed
   decoration, removed in exactly one exact grammar step. Every provider title
   must fall in that class, and at least as many authorities must state the plain
@@ -277,8 +279,9 @@ Ebook `subtitle:fill_empty` fills an empty subtitle only with a provider value
 corroborated by another source: the book's own packaged subtitle, or a colon
 segment stripped from another source's work title under the
 [segment rule](../operations/proposal-set.md#subtitles). A source never
-corroborates itself. For an empty subtitle, the provider labels `A Novel` and
-`Stories` are generic marketing and never become a proposal. When Subtitle is
+corroborates itself. For an empty subtitle, the labels `A Novel` and `Stories`
+are generic marketing and never become a proposal, whether a provider or the
+book's own package states them. When Subtitle is
 Automatic, the fill owns the subtitle destination unless an acting
 title-combination candidate already covers it.
 
@@ -333,9 +336,11 @@ Language names and codes are grouped before election on both media
 language is written as one display name, such as "English" or "Chinese
 (Simplified)", whatever spelling the evidence used. A current value already
 spelled that way stays unchanged. A current value of the same language spelled
-another way, such as `en`, `eng` or `en-GB`, is offered for review with its
-display name; Automatic never respells it. Region is not written; base or
-script disagreements stay manual. No language is inferred.
+another way, such as `en`, `eng` or `en-GB`, is respelled to its display name
+automatically, as a fill is, and is never an owner question. Beside a different
+language, a value that only respells the current one is not offered. Region is
+not written; base or script disagreements stay manual. No language is
+inferred.
 
 ### Description
 

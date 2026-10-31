@@ -40,15 +40,23 @@ def test_language_authority_survives_real_publication(tmp_path, audio, current, 
         None,
     )
     supported = values[0] == "English"
+    # Beside French, an "English" that only respells a current "en-US" is no
+    # choice of its own (#1496).
     assert len(result.alternatives) == (
-        1 if supported or values == ("qqq",) else 0 if values == ("und",) else 2
+        1
+        if supported
+        or values == ("qqq",)
+        or values == ("en", "fr")
+        and current == "en-US"
+        else 0
+        if values == ("und",)
+        else 2
     )
     assert all(value.value.value not in {"UND", "und"} for value in result.alternatives)
     # A current "en-US" names the class the evidence names, so its display
-    # name is the owner's to accept, never automatic (#1314).
-    respelled = supported and current == "en-US"
+    # name is written automatically like a fill (#1496).
     assert ("manual" if decision is None else decision.recommendation) == (
-        "recommend_candidate" if supported and not respelled else "manual"
+        "recommend_candidate" if supported else "manual"
     )
     assert report.to_json() == raw
     path = tmp_path / "language.sqlite"
@@ -75,7 +83,7 @@ def test_language_authority_survives_real_publication(tmp_path, audio, current, 
         language_decisions = [
             value for value in decisions if value["destination"] == "language"
         ]
-        assert bool(language_decisions) is (supported and not respelled)
+        assert bool(language_decisions) is supported
 
 
 @pytest.mark.parametrize("audio", (False, True))
@@ -106,10 +114,7 @@ def test_display_name_survives_restart(tmp_path, audio, values, current):
             for value in repository.get_review_case_decisions(case_id)
             if json.loads(value)["destination"] == "language"
         )
-        if current == "eng":
-            # Respelling a current language is offered, never automatic.
-            assert decisions == ()
-            return
+        # Respelling a current "eng" is automatic like a fill (#1496).
         (decision,) = decisions
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
@@ -137,7 +142,11 @@ def test_display_name_survives_restart(tmp_path, audio, values, current):
         )
         if audio:
             assert decision.policy_option.endswith(
-                "_preserve" if current == "English" else "_fill"
+                "_preserve"
+                if current == "English"
+                else "_normalize"
+                if current == "eng"
+                else "_fill"
             )
 
 
@@ -984,7 +993,8 @@ def test_language_display_name_label_in_persisted_automatic_activity(tmp_path, a
 
 
 @pytest.mark.parametrize("audio", (False, True))
-def test_respelling_a_current_language_says_why_it_waits_for_the_owner(tmp_path, audio):
+def test_respelling_a_current_language_is_decided_automatically(tmp_path, audio):
+    """A current code of the elected language is respelled like a fill (#1496)."""
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 
     report = language_report(("English", "en"), "eng", audio=audio)
@@ -998,10 +1008,9 @@ def test_respelling_a_current_language_says_why_it_waits_for_the_owner(tmp_path,
             for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
             if f["destination"] == "language"
         )
-        assert field["automatic_decision"] is None
         assert field["notices"] == ["language_display_name"]
-        assert field["proposed_values"] == [{"kind": "text", "value": "English"}]
-        assert field["automatic_withheld_reason"] == (
-            "The current value names the same language in another spelling. "
-            "Only you can choose to write it the other way."
-        )
+        assert field["automatic_decision"]["selected_value"] == {
+            "kind": "text",
+            "value": "English",
+        }
+        assert field["automatic_withheld_reason"] is None

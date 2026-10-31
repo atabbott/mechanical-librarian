@@ -10,6 +10,14 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.31.0 — Coverage (in progress)
+
+- **Clean rebuild required.** A title that only drops a leading "The", "A" or
+  "An", a bracketed ISBN suffix on a title-matched work, and a packaged "A
+  Novel" or "Stories" subtitle no longer reach you. A language spelled `en`,
+  `eng` or `en-GB` is respelled to its name, such as "English", automatically
+  (#1496).
+
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
 - **Clean rebuild required.** Hardcover's audio editions are read for every

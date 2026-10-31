@@ -43,6 +43,8 @@ from mechanical_librarian.domain.field_value_comparison import (
     creator_list_reordered,
     description_alternative_immaterial,
     genre_alternative_immaterial,
+    title_article_key,
+    title_has_leading_article,
     title_identity_key,
     values_match,
 )
@@ -114,7 +116,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v41"
+POLICY_VERSION = "fixed-conservative-v42"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -129,7 +131,7 @@ _EVIDENCE_REFERENCE = re.compile(
 )
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel", "stories"})
+_GENERIC_SUBTITLES = frozenset({"a novel", "stories"})
 
 
 class ProposalValueError(ValueError):
@@ -1742,6 +1744,9 @@ def _observations(
             and _eligible_identifier_reference(report, destination, claim.reference)
             and _eligible_description(destination, claim.canonical)
             and _eligible_field_value(destination, claim.canonical)
+            # The book's own package carries the same generic label a
+            # provider does, and it is no more a subtitle there (#1496).
+            and not _generic_subtitle(report, destination, claim.canonical)
             and (
                 destination is not TargetDestination.TITLE
                 or _local_title_is_unambiguous(report, claim)
@@ -1807,7 +1812,7 @@ def _observations(
                     and _eligible_provider_description(
                         destination, claim.value, candidate
                     )
-                    and not _generic_provider_subtitle(report, destination, claim.value)
+                    and not _generic_subtitle(report, destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
                     and (
                         destination is not TargetDestination.TITLE
@@ -1846,7 +1851,7 @@ def _observations(
     return tuple(values)
 
 
-def _generic_provider_subtitle(
+def _generic_subtitle(
     report: MetadataReport, destination: TargetDestination, value: str
 ) -> bool:
     return (
@@ -1861,7 +1866,7 @@ def _generic_provider_subtitle(
             for field in report.target.fields
             if field.destination is destination
         )
-        and _comparison(destination, value) in _GENERIC_PROVIDER_SUBTITLES
+        and _comparison(destination, value) in _GENERIC_SUBTITLES
     )
 
 
@@ -2191,7 +2196,7 @@ def _evidence_led_title_election(
             ).items():
                 variant_claims.setdefault(role, set()).add(identities)
             titles.update(
-                title_identity_key(c.value)
+                title_article_key(c.value)
                 for c in claims
                 if c.kind is ClaimKind.TITLE and type(c.value) is str
             )
@@ -2284,7 +2289,7 @@ def _evidence_led_title_election(
         and c.state is FieldState.VALID
         and c.basis == "opening_matter"
         and c.canonical
-        and title_identity_key(c.canonical) != title
+        and title_article_key(c.canonical) != title
         for c in report.local_claims
     )
     if conflict:
@@ -2302,7 +2307,7 @@ def _evidence_led_title_election(
         a
         for a in result.alternatives
         if type(a.value.value) is str
-        and title_identity_key(a.value.value) == title
+        and title_article_key(a.value.value) == title
         and supported.intersection(a.evidence_references)
         and a.assessment is ProposalAssessment.REPLACES_TARGET
     )
@@ -2934,7 +2939,7 @@ def _has_generic_provider_subtitle(report: MetadataReport) -> bool:
         and claim.state is FieldState.VALID
         and claim.value is not None
         and claim.applicability == "ebook"
-        and _generic_provider_subtitle(report, TargetDestination.SUBTITLE, claim.value)
+        and _generic_subtitle(report, TargetDestination.SUBTITLE, claim.value)
         for provider in report.providers
         for candidate in provider.candidates
         for claim in candidate.claims
@@ -4518,6 +4523,21 @@ def _evaluate(
     ):
         target = TargetField(destination, TargetFieldState.MISSING)
     alternatives = _alternatives(destination, target, observations, report)
+    if (
+        destination is TargetDestination.LANGUAGE
+        and target.state is TargetFieldState.VALUE
+        and type(target.value) is str
+        and len(alternatives) > 1
+    ):
+        # Beside another language, one that only respells the current value
+        # is no choice of its own (#1496).
+        alternatives = tuple(
+            value
+            for value in alternatives
+            if value.assessment is not ProposalAssessment.REPLACES_TARGET
+            or type(value.value.value) is not str
+            or not language_outcomes_compatible(target.value, value.value.value)
+        )
     if _language_respelling(destination, target, alternatives):
         return ProposalResult(
             destination,
@@ -4805,8 +4825,29 @@ def _alternatives(
                 proposal_values = isbn13_values
         proposal_value = min(
             proposal_values,
-            key=lambda value: canonical_json(value.to_data()),
+            # The article belongs to the title as read, so a grouped form
+            # that carries it is the title; the bare form is never offered
+            # (#1496).
+            key=lambda value: (
+                destination is TargetDestination.TITLE
+                and type(value.value) is str
+                and not title_has_leading_article(value.value),
+                canonical_json(value.to_data()),
+            ),
         )
+        if (
+            destination is TargetDestination.TITLE
+            and target.state is TargetFieldState.VALUE
+            and type(target.value) is str
+            and type(proposal_value.value) is str
+            and title_has_leading_article(target.value)
+            and not title_has_leading_article(proposal_value.value)
+            and title_article_key(target.value)
+            == title_article_key(proposal_value.value)
+        ):
+            # Only the current title carries the article: the bare form
+            # preserves it rather than replacing it (#1496).
+            proposal_value = _value(destination, target.value)
         respelled = False
         if (
             destination in {TargetDestination.AUTHORS, TargetDestination.NARRATORS}
@@ -4973,6 +5014,9 @@ def _observation_key(destination: TargetDestination, value: ProposalValue) -> st
         normalized = value.value
     elif destination is TargetDestination.ISBN and type(value.value) is str:
         normalized = isbn_family(value.value) or value.value
+    elif destination is TargetDestination.TITLE and type(value.value) is str:
+        # A dropped leading article names the same title (#1496).
+        normalized = title_article_key(value.value)
     elif type(value.value) is str:
         normalized = _comparison(destination, value.value)
     else:

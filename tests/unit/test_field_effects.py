@@ -7934,12 +7934,12 @@ def test_activity_witness_encoding_distinguishes_exact_sqlite_scalar_types():
 def test_owner_accepted_language_respelling_writes_the_display_name(
     effects, audio, current
 ):
-    """A respelling is the owner's choice; once accepted it writes the name (#1314)."""
+    """Under Ask, an owner-accepted respelling writes the name (#1314, #1496)."""
     from mechanical_librarian.domain.human_decision import HumanDecision
     from tests.support.language_reports import language_report, publish_language_case
 
     report = language_report(("English", "en"), current, audio=audio)
-    case_id, _ = publish_language_case(effects.repository, report)
+    case_id, _ = publish_language_case(effects.repository, report, destination="ask")
     effects.repository.persist_shadow_outcome(case_id, 4)
     assert not any(
         json.loads(value)["destination"] == "language"
