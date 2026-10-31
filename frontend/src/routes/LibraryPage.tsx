@@ -2640,7 +2640,6 @@ export default function LibraryPage({
   const lensTotal = summary.data?.counts[lensCount]
   const summaryAttention = summary.data?.counts.attention
   const summaryNotMatched = summary.data?.counts.notMatched
-  const attentionTitleId = useId()
   const preparationState = usePreparation()
   const presentation =
     preparationState.data?.presentation?.state === 'dismissed'
@@ -5515,13 +5514,12 @@ export default function LibraryPage({
                 {attentionGroups.map((group, index) => {
                   const work = group[0]
                   if (!work) return null
-                  const titleId = `${attentionTitleId}-${String(index)}`
                   return (
                     <div key={work.id} className="attention-work-group">
                       <div className="attention-work-identity">
                         <span className="attention-position">{String(index + 1)}</span>
                         <span>
-                          <strong id={titleId}>{work.title}</strong>
+                          <strong>{work.title}</strong>
                           <small>
                             {work.authors.length
                               ? work.authors.join(', ')
@@ -5537,30 +5535,32 @@ export default function LibraryPage({
                         </span>
                       </div>
                       <ul className="attention-field-rows">
-                        {group.map((item) => (
-                          <li key={item.destination}>
-                            <button
-                              className="attention-queue-item"
-                              aria-current={
-                                item.id === search.preview &&
-                                item.destination === selected?.destination
-                              }
-                              aria-describedby={titleId}
-                              aria-disabled={attention.isPlaceholderData || undefined}
-                              data-attention-row={`${item.id}:${item.destination}`}
-                              onClick={() =>
-                                selectFromQueue(item.id, item.destination, item.attentionCursor)
-                              }
-                            >
-                              <span className="attention-queue-copy">
-                                <b>
-                                  {destinationLabel(item.destination)} ·{' '}
-                                  {item.classificationReason ?? 'Needs your decision'}
-                                </b>
-                              </span>
-                            </button>
-                          </li>
-                        ))}
+                        {group.map((item) => {
+                          const line = `${destinationLabel(item.destination)} · ${item.classificationReason ?? 'Needs your decision'}`
+                          return (
+                            <li key={item.destination}>
+                              <button
+                                className="attention-queue-item"
+                                // The same field in two works would otherwise share a name in a
+                                // screen reader's list of buttons; the work is shown above (#1361).
+                                aria-label={`${line}, ${work.title}`}
+                                aria-current={
+                                  item.id === search.preview &&
+                                  item.destination === selected?.destination
+                                }
+                                aria-disabled={attention.isPlaceholderData || undefined}
+                                data-attention-row={`${item.id}:${item.destination}`}
+                                onClick={() =>
+                                  selectFromQueue(item.id, item.destination, item.attentionCursor)
+                                }
+                              >
+                                <span className="attention-queue-copy">
+                                  <b>{line}</b>
+                                </span>
+                              </button>
+                            </li>
+                          )
+                        })}
                       </ul>
                     </div>
                   )

@@ -3603,10 +3603,13 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
             expect(group.locator(".attention-work-count")).to_have_text(
                 f"{count} field" if count == 1 else f"{count} fields"
             )
-            described = group.locator("button.attention-queue-item").evaluate_all(
-                "rows => rows.map(row => document.getElementById(row.getAttribute('aria-describedby'))?.textContent)"
-            )
-            assert described == [titles[index]] * count, described
+            # Each row's name is its visible line followed by its work (#1361).
+            group_rows = group.locator("button.attention-queue-item")
+            for row in range(count):
+                line = group_rows.nth(row).locator("b").text_content() or ""
+                expect(group_rows.nth(row)).to_have_accessible_name(
+                    f"{line}, {titles[index]}"
+                )
         current = rail.locator("button.attention-queue-item[aria-current='true']")
         expect(current).to_have_count(1)
         # Keyboard: Tab reaches each row in order, and Enter selects the one focused.
@@ -3618,7 +3621,7 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
         assert visited == ["BUTTON.attention-queue-item"] * 6, visited
         rows.nth(1).focus()
         expected = rows.nth(1).evaluate(
-            "row => document.getElementById(row.getAttribute('aria-describedby')).textContent"
+            "row => row.getAttribute('aria-label').slice(row.querySelector('b').textContent.length + 2)"
         )
         page.keyboard.press("Enter")
         expect(page).not_to_have_url(re.compile(r"attention=open"))

@@ -344,9 +344,7 @@ it('keeps Attention in the Library search scope with its own cursor', async () =
     '/library?lens=all&q=needle&cursor=library-page&attention=open',
     http,
   )
-  expect(
-    await screen.findByRole('button', { name: /^Title/u, description: 'Scoped work' }),
-  ).toBeVisible()
+  expect(await screen.findByRole('button', { name: /^Title · .*, Scoped work$/u })).toBeVisible()
   expect(http.getAttention).toHaveBeenCalledWith(
     { q: 'needle', cursor: undefined },
     expect.any(AbortSignal),
@@ -354,7 +352,7 @@ it('keeps Attention in the Library search scope with its own cursor', async () =
   )
   await user.click(screen.getByRole('button', { name: 'Load more attention' }))
   expect(
-    await screen.findByRole('button', { name: /^Title/u, description: 'Later scoped work' }),
+    await screen.findByRole('button', { name: /^Title · .*, Later scoped work$/u }),
   ).toBeVisible()
   expect(http.getAttention).toHaveBeenCalledWith(
     { q: 'needle', cursor: 'attention-page-2' },
@@ -375,10 +373,8 @@ it('keeps Attention in the Library search scope with its own cursor', async () =
       'foreground',
     ),
   )
-  expect(screen.queryByRole('button', { name: /^Title/u, description: 'Scoped work' })).toBeNull()
-  expect(
-    screen.queryByRole('button', { name: /^Title/u, description: 'Later scoped work' }),
-  ).toBeNull()
+  expect(screen.queryByRole('button', { name: /^Title · .*, Scoped work$/u })).toBeNull()
+  expect(screen.queryByRole('button', { name: /^Title · .*, Later scoped work$/u })).toBeNull()
 })
 
 describe('Library route', () => {
@@ -647,7 +643,7 @@ describe('Library route', () => {
 
     await user.click(screen.getByRole('button', { name: 'Attention 1 work' }))
     const attentionRail = await screen.findByLabelText('Attention queue')
-    await user.click(within(attentionRail).getByRole('button', { description: 'A Book' }))
+    await user.click(within(attentionRail).getByRole('button', { name: /, A Book$/u }))
     const selectedHeading = await screen.findByRole('heading', { name: 'A Book' })
     await waitFor(() => expect(selectedHeading.closest('[data-route-focus]')).toHaveFocus())
     expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
@@ -2831,7 +2827,7 @@ describe('Library route', () => {
           : { total: 1, items: [item], nextCursor: 'later-page' },
       )
       const { router } = renderRoute('/library?lens=all&attention=open', http)
-      const row = await screen.findByRole('button', { description: 'Retained queue work' })
+      const row = await screen.findByRole('button', { name: /, Retained queue work$/u })
       await act(async () =>
         router.navigate({ to: '/library', search: { lens: 'all', attention: 'open', q: 'later' } }),
       )
@@ -2849,8 +2845,8 @@ describe('Library route', () => {
       await act(async () =>
         settle?.({ total: 1, items: [{ ...item, id: 'case-2', title: 'Later queue work' }] }),
       )
-      expect(await screen.findByRole('button', { description: 'Later queue work' })).toBeVisible()
-      expect(screen.queryByRole('button', { description: 'Retained queue work' })).toBeNull()
+      expect(await screen.findByRole('button', { name: /, Later queue work$/u })).toBeVisible()
+      expect(screen.queryByRole('button', { name: /, Retained queue work$/u })).toBeNull()
       expect(rail).not.toHaveAttribute('aria-busy')
       expect(announced).toHaveTextContent('Library loaded')
     })
@@ -7108,7 +7104,7 @@ describe('Library route', () => {
       const first = renderRoute(initial, http)
       await user.click(await screen.findByRole('button', { name: /^Attention/u }))
       await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
-      await user.click(await screen.findByRole('button', { description: 'Later attention target' }))
+      await user.click(await screen.findByRole('button', { name: /, Later attention target$/u }))
       await waitFor(() =>
         expect(first.router.state.location.search).toMatchObject({
           attentionCursor: 'later-page',
@@ -7184,7 +7180,7 @@ describe('Library route', () => {
         http,
       )
       await user.click(
-        await screen.findByRole('button', { name: /^Title/u, description: 'Split field work' }),
+        await screen.findByRole('button', { name: /^Title · .*, Split field work$/u }),
       )
       await waitFor(() => expect(router.state.location.search.attentionCursor).toBe(start))
       expect(router.state.location.search.attention).toBeUndefined()
@@ -7192,7 +7188,7 @@ describe('Library route', () => {
       expect(await screen.findByLabelText('Attention queue')).toBeVisible()
       await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
       await user.click(
-        await screen.findByRole('button', { name: /^Authors/u, description: 'Split field work' }),
+        await screen.findByRole('button', { name: /^Authors · .*, Split field work$/u }),
       )
       await waitFor(() =>
         expect(router.state.location.search).toMatchObject({
@@ -7258,7 +7254,7 @@ describe('Library route', () => {
       renderRoute('/library?lens=all&attention=open', http)
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Attention' })).toHaveFocus())
       await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
-      const row = await screen.findByRole('button', { description: 'Anchored target' })
+      const row = await screen.findByRole('button', { name: /, Anchored target$/u })
       row.focus()
       await user.keyboard('{Enter}')
       const loading = await screen.findByText('Loading selected work…')
@@ -7335,7 +7331,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&attention=open', http)
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Attention' })).toHaveFocus())
     await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
-    const row = await screen.findByRole('button', { description: 'Anchored target' })
+    const row = await screen.findByRole('button', { name: /, Anchored target$/u })
     row.focus()
     await user.keyboard('{Enter}')
     await screen.findByText('Loading selected work…')
@@ -7777,7 +7773,7 @@ describe('Library route', () => {
       http,
     )
     const choose = await screen.findByRole('radio', { name: 'Choose current value: Old title' })
-    await screen.findByRole('button', { description: 'Earlier queue work' })
+    await screen.findByRole('button', { name: /, Earlier queue work$/u })
     await act(async () =>
       router.navigate({
         to: '/library',
@@ -11953,11 +11949,16 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       'Title · Needs your decision',
       'Description · Needs your decision',
     ])
-    for (const row of rows) expect(row).toHaveAccessibleDescription('Work A')
+    // Each row's name says which work it belongs to, so the same field in two
+    // works is told apart in a screen reader's list of buttons (#1361).
+    expect(rows.map((row) => row.getAttribute('aria-describedby'))).toEqual([null, null])
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveAccessibleName('Title · Needs your decision, Work A')
+    expect(rows[1]).toHaveAccessibleName('Description · Needs your decision, Work A')
 
     await user.click(screen.getByRole('button', { name: 'Load more attention' }))
     await waitFor(() => expect(rail.querySelectorAll('.attention-work-group')).toHaveLength(3))
-    const workB = within(rail).getAllByRole('button', { description: 'Work B' })
+    const workB = within(rail).getAllByRole('button', { name: /, Work B$/u })
     expect(workB.map((row) => row.querySelector('b')?.textContent)).toEqual([
       'Title · Needs your decision',
       'Authors · Needs your decision',
@@ -12011,7 +12012,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     release()
     const added = await within(rail).findByRole('button', { name: /^Authors/u })
     await waitFor(() => expect(added).toHaveFocus())
-    expect(added).toHaveAccessibleDescription('Work B')
+    expect(added).toHaveAccessibleName('Authors · Needs your decision, Work B')
     expect(
       vi
         .mocked(http.getAttention)
@@ -12020,7 +12021,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await user.tab()
     expect(document.activeElement).not.toBe(document.body)
     expect(document.activeElement).toBe(
-      within(rail).getByRole('button', { name: /^Title/u, description: 'Work C' }),
+      within(rail).getByRole('button', { name: 'Title · Needs your decision, Work C' }),
     )
   })
 
@@ -12047,9 +12048,9 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       expect(within(rail).getByRole('heading', { name: 'Attention' })).toHaveFocus(),
     )
     await user.click(await within(rail).findByRole('button', { name: 'Load more attention' }))
-    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work B' })
+    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work B' })
     await user.click(within(rail).getByRole('button', { name: 'Load more attention' }))
-    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work C' })
+    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work C' })
     expect(vi.mocked(http.getAttention).mock.calls.map(([read]) => read.cursor)).toEqual([
       undefined,
       'attention-page-2',
@@ -12084,7 +12085,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await queryClient.invalidateQueries({ queryKey: ['attention'] })
     await waitFor(() => expect(more).not.toHaveAttribute('aria-disabled'))
     await user.click(more)
-    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work B' })
+    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work B' })
     expect(secondPages).toBe(2)
   })
 
@@ -12115,7 +12116,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     await user.click(search)
     await user.keyboard('Work')
     release()
-    await within(rail).findByRole('button', { name: /^Title/u, description: 'Work B' })
+    await within(rail).findByRole('button', { name: 'Title · Needs your decision, Work B' })
     expect(search).toHaveFocus()
   })
 
@@ -12131,17 +12132,17 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       ...(more ? { nextCursor: 'attention-page-2' } : {}),
     }))
     renderRoute('/library?lens=all&attention=open', http)
-    await user.click(await screen.findByRole('button', { name: /^Title/u, description: 'A Book' }))
+    await user.click(await screen.findByRole('button', { name: /^Title · .*, A Book$/u }))
     const label = await screen.findByText('Queue position')
     expect(label.nextElementSibling).toHaveTextContent(new RegExp(`^${position}$`, 'u'))
     await user.click(screen.getByRole('button', { name: /^Attention/u }))
-    expect(
-      await screen.findByRole('button', { name: /^Title/u, description: 'A Book' }),
-    ).toHaveAttribute('aria-current', 'true')
-    expect(screen.getByRole('button', { name: /^Title/u, description: 'Work B' })).toHaveAttribute(
+    expect(await screen.findByRole('button', { name: /^Title · .*, A Book$/u })).toHaveAttribute(
       'aria-current',
-      'false',
+      'true',
     )
+    expect(
+      screen.getByRole('button', { name: 'Title · Needs your decision, Work B' }),
+    ).toHaveAttribute('aria-current', 'false')
   })
 
   it('V3: no count reads zero before its source resolves', async () => {
