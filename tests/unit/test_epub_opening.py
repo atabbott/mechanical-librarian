@@ -4016,7 +4016,7 @@ def test_typed_credit_containers_preserve_roles_without_authors(
     assert not [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
 
 
-def _identifiers(body: str) -> list[str]:
+def _identifiers(body: str) -> list[str | None]:
     report = _extract(_single(_xhtml(body)))
     return [
         claim.normalized_value
