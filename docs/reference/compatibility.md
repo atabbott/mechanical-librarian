@@ -128,7 +128,7 @@ of their own and no separate version string.
 
 The owner API is served under `/api/v1`. Its exact response versions are
 defined in the generated [OpenAPI document](review-openapi-v1.json). The main
-ones are `review-session-v1`, `review-library-v3`, `review-preparation-v2`,
+ones are `review-session-v1`, `review-library-v4`, `review-preparation-v2`,
 `review-case-detail-v6`, `review-case-evidence-v4`, `review-report-detail-v5`,
 `review-case-history-v3`, `review-attention-v1` and
 `continuous-field-activity-v3`.

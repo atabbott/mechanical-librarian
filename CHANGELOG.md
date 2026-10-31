@@ -113,6 +113,10 @@ brackets are GitHub issues.
   longer shows its earlier decision as written while the library holds
   another value. Return to automatic also stops a field showing as held
   (#1358).
+- A work whose preparation could not finish is no longer counted under "No
+  attention needed". Library gives such works their own Could not finish lens,
+  lists them after the works needing a decision, and names their count beside
+  Works. No clean rebuild is needed (#1413).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

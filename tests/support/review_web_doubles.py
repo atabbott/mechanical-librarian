@@ -855,6 +855,8 @@ class FakeReviewRepository:
                 else self._match_reason(MetadataReport.from_json(report_document))
                 for _case_id, case_document, report_document in identified
             ),
+            # The double holds no terminal row of its own.
+            preparation_failed_total=0,
         )
 
     def list_current_attention_documents(

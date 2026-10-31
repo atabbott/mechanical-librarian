@@ -73,7 +73,13 @@ def _work(
         "media_kind": media_kind,
         "item": f"synthetic-item-{number}",
         "attention_count": attention,
-        "attention_state": ("needs_attention" if attention else "no_attention_needed"),
+        "attention_state": (
+            "needs_attention"
+            if attention
+            else "preparation_failed"
+            if preparation is not None
+            else "no_attention_needed"
+        ),
         "detail_url": f"/review/{case}" if case else None,
         # The row says what its address opens; every work in this cohort that
         # has one has a review case behind it.
@@ -1025,11 +1031,8 @@ def _case(case_id: str) -> dict[str, object]:
 
 
 def _clear(item: dict[str, object]) -> bool:
-    """Nothing to decide, and a provider matched it (#1407)."""
-    return (
-        int(cast(int, item["attention_count"])) == 0
-        and item["attention_state"] != "not_matched"
-    )
+    """Nothing to decide, a provider matched it (#1407), and it finished (#1413)."""
+    return item["attention_state"] == "no_attention_needed"
 
 
 def _library(query: dict[str, list[str]]) -> dict[str, object]:
@@ -1055,14 +1058,14 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
         works = [item for item in works if int(cast(int, item["attention_count"])) > 0]
     elif lens == "no_attention_needed":
         works = [item for item in works if _clear(item)]
-    elif lens == "not_matched":
-        works = [item for item in works if item["attention_state"] == "not_matched"]
+    elif lens in ("not_matched", "preparation_failed"):
+        works = [item for item in works if item["attention_state"] == lens]
     cursor = query.get("cursor", [""])[0]
     page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
     end = start + 6
     return {
-        "schema_version": "review-library-v3",
+        "schema_version": "review-library-v4",
         "lens": lens,
         "query": needle or None,
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
@@ -1076,6 +1079,9 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
             "no_attention_needed": sum(_clear(item) for item in matched),
             "not_matched": sum(
                 item["attention_state"] == "not_matched" for item in matched
+            ),
+            "preparation_failed": sum(
+                item["attention_state"] == "preparation_failed" for item in matched
             ),
         },
         "items": deepcopy(works[start:end]),
