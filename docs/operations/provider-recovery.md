@@ -75,7 +75,7 @@ fails there later is still retried.
 
 Nothing else wakes dormant recovery: no environment variable, file watcher or
 configuration hash. A dormant authentication or authorisation scope wakes only
-when a job proves the new generation works.
+through Retry now, and counts as recovered only once a job proves the fix.
 
 The preparation control in the workspace header offers **Scan now**, and
 **Retry** after a run with failures. Both start a new preparation cycle for a
