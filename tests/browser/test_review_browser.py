@@ -9977,7 +9977,8 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
     # A tag reads by name beside the tag itself, so it never reads like the
     # name the display-name option writes (#1286).
     "option,expected",
-    (("display_name", "English"), ("preserve", "English (en)")),
+    # The retired preserve option is refused, so only the name is written (#1314).
+    (("display_name", "English"),),
 )
 def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
     audio, option, expected
@@ -10009,11 +10010,7 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             _login(page, origin)
             page.goto(f"{origin}/library?lens=all&preview={case_id}&field=language")
             page.get_by_role("heading", name="Language", exact=True).wait_for()
-            if option == "preserve":
-                recorded = page.get_by_role("region", name="Language recorded outcome")
-                expect(recorded.locator("dd")).to_have_text(expected)
-            else:
-                expect(page.get_by_text("English", exact=True)).to_be_visible()
+            expect(page.get_by_text("English", exact=True)).to_be_visible()
             page.get_by_role("link", name="Evidence", exact=True).click()
             page.get_by_text(
                 "Undetermined language; not an eligible choice", exact=False
