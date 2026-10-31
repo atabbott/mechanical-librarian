@@ -998,6 +998,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     0,
   )
   const recoveryCount = suspensions.length + dormantRecovery + connectionRecovery
+  // Changes stopped until the owner acts on what their ledger entry says; the
+  // page never reads calm while one is waiting (#1430).
+  const ownerAction = data.owner_action_required
   const reasons = data.waiting
   const waitingEvent = data.current_waiting
   const needsConsent = data.configured_libraries.length > 0
@@ -1054,7 +1057,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const cardOffers = consentActionable && (consentState === 'off' || consentState === 'enabling')
   const statusEntry = needsConsent && !cardOffers
   const showOperationalSummary =
-    !permissionNeeded || Boolean(connection) || recoveryCount > 0 || throttled || data.paused
+    !permissionNeeded ||
+    Boolean(connection) ||
+    recoveryCount > 0 ||
+    ownerAction > 0 ||
+    throttled ||
+    data.paused
   const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
   // Pause, resume and revoke report beside the controls that issued them. The
   // authority and page lines both stay mounted, so a live region is never
@@ -1110,23 +1118,25 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ? 'Connection paused'
               : recoveryCount
                 ? 'Recovery available'
-                : throttleRemedy
+                : ownerAction
                   ? 'Action needed'
-                  : throttled
-                    ? 'A source is limited'
-                    : permissionNeeded
-                      ? 'Action needed'
-                      : consentState === 'enabling'
-                        ? 'Enabling writes'
-                        : consentState === 'enabled' || consentState === 'applying'
-                          ? 'Writes enabled'
-                          : data.paused
-                            ? 'New work paused'
-                            : !writesHeld
-                              ? 'Writes are off'
-                              : consent.lapsed
-                                ? 'Action needed'
-                                : 'No action required'}
+                  : throttleRemedy
+                    ? 'Action needed'
+                    : throttled
+                      ? 'A source is limited'
+                      : permissionNeeded
+                        ? 'Action needed'
+                        : consentState === 'enabling'
+                          ? 'Enabling writes'
+                          : consentState === 'enabled' || consentState === 'applying'
+                            ? 'Writes enabled'
+                            : data.paused
+                              ? 'New work paused'
+                              : !writesHeld
+                                ? 'Writes are off'
+                                : consent.lapsed
+                                  ? 'Action needed'
+                                  : 'No action required'}
         </StatusPill>
       </header>
       <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
@@ -1708,17 +1718,21 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   ? 'Library connection is paused'
                   : recoveryCount
                     ? 'Recovery needs attention'
-                    : throttleRemedy
-                      ? 'A metadata source needs attention'
-                      : throttled
-                        ? 'A metadata source is limiting lookups'
-                        : data.paused
-                          ? 'New work is paused'
-                          : !writesHeld
-                            ? 'Writes are off'
-                            : lapse
-                              ? 'Some writes are off'
-                              : 'No intervention needed'}
+                    : ownerAction
+                      ? ownerAction === 1
+                        ? 'A stopped change needs you'
+                        : `${String(ownerAction)} stopped changes need you`
+                      : throttleRemedy
+                        ? 'A metadata source needs attention'
+                        : throttled
+                          ? 'A metadata source is limiting lookups'
+                          : data.paused
+                            ? 'New work is paused'
+                            : !writesHeld
+                              ? 'Writes are off'
+                              : lapse
+                                ? 'Some writes are off'
+                                : 'No intervention needed'}
             </h2>
             <p>
               {connection?.state === 'checking'
@@ -1729,18 +1743,22 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
                     : recoveryCount
                       ? 'Affected work remains held until its current state can be reconciled safely.'
-                      : throttled
-                        ? `${throttleRemedy ? 'A source needs an API key added or checked; until then its lookups wait.' : 'Some lookups wait until the source allows them again; nothing is lost.'} Settings shows each source.`
-                        : data.paused
-                          ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                          : (lapse ??
-                            (writesHeld
-                              ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
-                              : cardLapse
-                                ? 'Nothing is written to your libraries until you give permission again.'
-                                : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
+                      : ownerAction
+                        ? ownerAction === 1
+                          ? 'Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, widen the range.'
+                          : 'Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, widen the range.'
+                        : throttled
+                          ? `${throttleRemedy ? 'A source needs an API key added or checked; until then its lookups wait.' : 'Some lookups wait until the source allows them again; nothing is lost.'} Settings shows each source.`
+                          : data.paused
+                            ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
+                            : (lapse ??
+                              (writesHeld
+                                ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
+                                : cardLapse
+                                  ? 'Nothing is written to your libraries until you give permission again.'
+                                  : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
             </p>
-            {throttled && !connection && !recoveryCount ? (
+            {throttled && !connection && !recoveryCount && !ownerAction ? (
               <Link to="/settings" search={{ group: 'providers' }}>
                 Review metadata sources in Settings
               </Link>

@@ -145,6 +145,7 @@ export const activity = (
   return {
     schema_version: 'continuous-field-activity-v3',
     backup_ready: null,
+    owner_action_required: 0,
     paused: false,
     configured_libraries: [],
     consented_libraries: [],

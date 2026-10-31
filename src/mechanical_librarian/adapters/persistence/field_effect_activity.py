@@ -203,6 +203,28 @@ _FIELD_EFFECT_HOLDS_DECISION_SQL = (
     "AND json_extract(document,'$.failure')='connection')"
 )
 
+# A change stopped on one of these waits for the owner: it keeps its decision,
+# so nothing plans it again.  Activity counts the ones whose authority is still
+# current and whose case is still the work's current case: a later decision
+# revokes the authority, and a later report admits a new case (#1430).
+_OWNER_ACTION_FAILURES = (
+    "target_currentness",
+    "third_value",
+    "readback",
+    "restore_unavailable",
+)
+_OWNER_ACTION_COUNT_SQL = (
+    "SELECT count(*) FROM field_effects effect JOIN field_effect_authorities authority "
+    "ON authority.decision_id=effect.decision_id AND authority.current=1 "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.connection_name=effect.connection_name "
+    "AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+    "AND lineage.review_case_id=json_extract(effect.document,'$.plan.authority.review_case_id') "
+    "WHERE effect.state='stale' AND json_extract(effect.document,'$.failure') IN ("
+    + ",".join(f"'{failure}'" for failure in _OWNER_ACTION_FAILURES)
+    + ")"
+)
+
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
     "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
@@ -1730,6 +1752,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "SELECT state,count(*) FROM field_effects GROUP BY state"
                 ).fetchall()
             }
+            owner_action = self._connection.execute(_OWNER_ACTION_COUNT_SQL).fetchone()
             cleanup = self._connection.execute(
                 "SELECT count(*),"
                 "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
@@ -1813,6 +1836,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     for connection, library, reason in sorted(lapsed)
                 ],
                 "counts": counts,
+                "owner_action_required": owner_action[0],
                 "cleanup": {"pending": cleanup[0], "exhausted": cleanup[1]},
                 "events": events,
                 "report_documents": report_documents,
@@ -4354,12 +4378,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             for connection, library, work_id, destination, state, document in rows:
                 operation = FieldEffectOperation.from_json(document)
                 failure = operation.failure
-                if failure in {
-                    "target_currentness",
-                    "third_value",
-                    "readback",
-                    "restore_unavailable",
-                }:
+                if failure in _OWNER_ACTION_FAILURES:
                     kind, cause = "owner_action_required", "currentness_conflict"
                     scope = "field"
                     signal_library, signal_work, signal_field = (

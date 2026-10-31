@@ -82,6 +82,9 @@ brackets are GitHub issues.
 - Opening Mechanical Librarian's address while signed in goes to Library, and
   a link opened while signed out returns to its page after sign-in. Sign-in
   returns only to a page of this workspace (#1371).
+- Activity's header and summary say how many stopped changes wait on you,
+  such as a description to restore in Audiobookshelf, instead of reading "No
+  action required" (#1430).
 - The Works panel's lenses sit in one row that scrolls sideways, the pager
   offers only the moves that exist (none for a single page), and search is a
   rounded field with a × inside to clear it (#1520).

@@ -945,6 +945,29 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
                 )
                 if signal.get("work_id") == "item-1"
             ] == [("owner_action_required", "description")]
+            # Activity counts it as waiting on the owner (#1430) until a later
+            # report, read after the owner restores it, admits a new case.
+            summary = repository.field_effect_activity_summary
+            assert summary()["owner_action_required"] == 1
+            later = MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    target_snapshot(
+                        {"title": "Restored title", "description": stored}
+                    ).fields,
+                ),
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=(),
+            )
+            repository.publish(later, lambda: True, expected_current=report.report_id)
+            later_proposal = evaluate_report(later)
+            repository.publish_proposal(later_proposal)
+            repository.admit_review_case(later_proposal)
+            assert summary()["owner_action_required"] == 0
         else:
             assert (restored.state, restored.failure) == ("verified", None)
             # The library holds the bytes it held before the first write.
