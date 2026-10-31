@@ -120,6 +120,8 @@ brackets are GitHub issues.
   (#1304).
 - Renovate moves Node, Python and uv pins together in one pull request; a new
   Node major or Python minor version waits for approval (#1448).
+- The standalone Attention page is gone; Attention lives in Library. An old
+  `/attention` bookmark opens Library with Attention open (#700).
 
 ## 0.29.1 — Clarity and accessibility
 

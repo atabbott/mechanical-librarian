@@ -99,7 +99,8 @@ Sign-in has Show password. It says whether the password was wrong or the device
 must wait five minutes after too many attempts. There is no reset in the app;
 see [Forgotten owner password](../operations/deployment.md#forgotten-owner-password).
 Signing in returns to the page you opened, or to Library, and opening the
-address while signed in goes straight to Library.
+address while signed in goes straight to Library. Attention has no page of its
+own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
 It is sticky only while it takes at most a quarter of the window; taller, it
