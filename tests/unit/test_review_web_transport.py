@@ -1582,6 +1582,8 @@ def test_root_opens_library_only_with_a_valid_session(
             "/login?next=%2Freview%2Fcase-1%3Ffield%3Dtitle",
         ),
         ("/settings", "/login?next=%2Fsettings"),
+        ("/policy", "/login?next=%2Fpolicy"),
+        ("/activity", "/login?next=%2Factivity"),
         ("/review/case%201", "/login"),
     ],
 )

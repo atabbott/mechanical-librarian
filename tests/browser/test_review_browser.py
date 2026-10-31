@@ -7473,6 +7473,10 @@ def test_sign_in_returns_to_the_requested_page_and_root_opens_library() -> None:
                     )
                     page.goto(f"{origin}/login?next={quote(refused, safe='')}")
                     assert page.locator("#login").get_attribute("data-next") is None
+                    # The page's own check holds even if a value got through.
+                    page.locator("#login").evaluate(
+                        "(form, next) => { form.dataset.next = next }", refused
+                    )
                     sign_in(page)
                     page.wait_for_url(f"{origin}/library")
 
