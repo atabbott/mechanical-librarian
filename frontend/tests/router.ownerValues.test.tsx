@@ -73,7 +73,7 @@ const decision = (
 const enteredTitle: Field = {
   ...contextTitle,
   classification: 'human_recorded',
-  classificationReason: 'Your recorded decision is retained. You can change it here.',
+  classificationReason: 'You decided this field. You can change it here.',
   editable: true,
   humanDecision: decision('owner_entered', { kind: 'text', value: 'The Silent Orchard' }),
   ownerControl: control({ ...entry, withdraw: 'available' }),

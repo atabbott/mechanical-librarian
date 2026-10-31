@@ -411,9 +411,9 @@ def _field(
     inferred_reason = (
         "This field needs your review."
         if needs_attention
-        else "Automatic handling recorded this field; you may inspect or override it."
+        else "This field was decided for you; you can inspect or change it."
         if automatic_decision is not None
-        else "There is no owner decision available for this field."
+        else "There is nothing to decide for this field."
     )
     return {
         "classification": resolved_classification,
@@ -460,9 +460,9 @@ def _field(
                     }
                 ],
                 "limitations": notices or [],
-                "rationale": "Keep the value currently held by the local library.",
+                "rationale": "",
                 "recommendation": "no_recommendation",
-                "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+                "recommendation_reason": "",
                 "selection": "current",
             },
             *[
@@ -476,9 +476,9 @@ def _field(
                         }
                     ],
                     "limitations": notices or [],
-                    "rationale": "This retained alternative is eligible for owner selection.",
+                    "rationale": "Open Library",
                     "recommendation": "no_recommendation",
-                    "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+                    "recommendation_reason": "",
                     "selection": "proposed",
                 }
                 for index, _ in enumerate(proposed, start=1)
@@ -688,9 +688,9 @@ def _case(case_id: str) -> dict[str, object]:
             ],
             classification="unsupported",
             classification_reason=(
-                "There is no owner decision available for this field."
+                "There is nothing to decide for this field."
                 if current_only
-                else "This field is unavailable for the current service capability."
+                else "Your library service cannot change this field."
             ),
             editable=False,
             navigation_role="inspect",
@@ -705,7 +705,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "No eligible proposed value is supported by the retained evidence."
             ],
             classification="unsupported",
-            classification_reason="This field is unavailable for the current service capability.",
+            classification_reason="Your library service cannot change this field.",
             editable=False,
             navigation_role="inspect",
             inventory_role="primary",
@@ -913,9 +913,9 @@ def _case(case_id: str) -> dict[str, object]:
                             ]
                             if case_id == "case-3"
                             else [],
-                            "rationale": "Keep the cover currently held by the local library.",
+                            "rationale": "",
                             "recommendation": "no_recommendation",
-                            "recommendation_reason": "No recommendation retained.",
+                            "recommendation_reason": "",
                         },
                         {
                             "alternative_id": "cover-ref-choice",
@@ -928,7 +928,7 @@ def _case(case_id: str) -> dict[str, object]:
                                 }
                             ],
                             "limitations": [],
-                            "rationale": "This retained cover candidate is selectable for owner review.",
+                            "rationale": "",
                             "recommendation": "recommended",
                             "recommendation_reason": "Deterministic confirmed-cover policy recommends this retained cover.",
                         },
