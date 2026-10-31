@@ -10223,8 +10223,8 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
                         )
                     ).to_have_count(0)
                     expect(
-                        page.get_by_text("No change: Authors", exact=True)
-                    ).to_be_visible()
+                        page.locator(".automatic-resolution-details summary")
+                    ).to_contain_text(re.compile(r"No change: (?:[^,]+, )*Authors\b"))
                     page.get_by_text("Show why", exact=True).click()
                     row = page.locator(".automatic-resolution-row").filter(
                         has_text="Authors"
