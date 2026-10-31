@@ -79,6 +79,9 @@ brackets are GitHub issues.
 - Resuming automatic handling, or lifting a title suspension, now also gives an
   automatic title decision to a work re-read while handling was paused; an
   owner's hold carried to it shows as held (#1364).
+- Opening Mechanical Librarian's address while signed in goes to Library, and
+  a link opened while signed out returns to its page after sign-in. Sign-in
+  returns only to a page of this workspace (#1371).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

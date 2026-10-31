@@ -103,6 +103,12 @@ only to compare with mount mappings, and those checks never read media.
   lookup keyed by the exact verifier, CSRF digests, expiry, revocation and
   throttle rows. Replacing the verifier invalidates every session. Logout
   deletes the cookie only after revocation is durable.
+- A workspace page opened without a session sends the browser to sign-in with
+  that page as `next`. Sign-in returns only to a workspace page on this
+  origin: the server matches `next` against the workspace routes and a
+  URL-safe query, and the page checks the origin again before it navigates.
+  Anything else, including a scheme, host, `//` or backslash, returns to
+  Library.
 
 Sign-in allows five attempts per client in any five minutes, under a global
 ceiling of 100; a refusal is `429 throttled`. A granted session clears only

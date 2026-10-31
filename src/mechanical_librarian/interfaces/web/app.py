@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, suppress
 from ipaddress import IPv6Address, IPv6Network, ip_address
 from pathlib import Path
 from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -112,6 +112,30 @@ from mechanical_librarian.interfaces.web.react_assets import (
 )
 
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
+# Sign-in returns only to a workspace page on this origin: a fixed first path
+# segment and a query of URL-safe characters, never a scheme, host or "//"
+# (#1371).
+_RETURN_PATH = re.compile(
+    r"/(?:library|attention|settings|policy|activity|review/[A-Za-z0-9_-]{1,128})"
+    r"(?:\?[A-Za-z0-9._~%!$&'()*+,;=:@/?-]{0,2048})?"
+)
+_DEFAULT_RETURN_PATH = "/library"
+
+
+def _return_path(value: str | None) -> str | None:
+    if value is None or _RETURN_PATH.fullmatch(value) is None:
+        return None
+    return value
+
+
+def _sign_in_location(request: Request) -> str:
+    query = request.url.query
+    requested = request.url.path + (f"?{query}" if query else "")
+    if _return_path(requested) in (None, _DEFAULT_RETURN_PATH):
+        return "/login"
+    return "/login?next=" + quote(requested, safe="")
+
+
 _COOKIE_NAME = "ml_session"
 _IMMUTABLE_CACHE = "private, max-age=31536000, immutable"
 _REACT_ASSET_MEDIA_TYPES = {
@@ -4254,12 +4278,12 @@ def _register_html_routes(
 ) -> None:
     sessions = application
 
-    def shell_response(ml_session: str | None) -> _ShellResponse:
+    def shell_response(request: Request, ml_session: str | None) -> _ShellResponse:
         try:
             _require_session(sessions, ml_session)
         except HTTPException as error:
             if error.status_code == 401:
-                return RedirectResponse(url="/login", status_code=303)
+                return RedirectResponse(url=_sign_in_location(request), status_code=303)
             raise
         assert ml_session is not None
         bundle = asset_loader.load()
@@ -4271,12 +4295,18 @@ def _register_html_routes(
             return _react_asset_recovery_response()
 
     @app.get("/", include_in_schema=False)
-    def root_page() -> RedirectResponse:
-        return RedirectResponse(url="/login", status_code=303)
+    def root_page(ml_session: str | None = Cookie(default=None)) -> RedirectResponse:
+        try:
+            _require_session(sessions, ml_session)
+        except HTTPException as error:
+            if error.status_code == 401:
+                return RedirectResponse(url="/login", status_code=303)
+            raise
+        return RedirectResponse(url=_DEFAULT_RETURN_PATH, status_code=303)
 
     @app.get("/login", include_in_schema=False)
-    def login_page() -> HTMLResponse:
-        return HTMLResponse(review_frontend.login_html())
+    def login_page(next: str | None = None) -> HTMLResponse:
+        return HTMLResponse(review_frontend.login_html(_return_path(next)))
 
     @app.get("/assets/login.css", include_in_schema=False)
     def login_css() -> Response:
@@ -4301,40 +4331,46 @@ def _register_html_routes(
 
     @app.get("/review/{review_case_id}", include_in_schema=False)
     def review_page(
+        request: Request,
         review_case_id: str,
         ml_session: str | None = Cookie(default=None),
     ) -> Response:
-        return shell_response(ml_session)
+        return shell_response(request, ml_session)
 
     @app.get("/library", include_in_schema=False)
     def library_page(
+        request: Request,
         ml_session: str | None = Cookie(default=None),
     ) -> Response:
-        return shell_response(ml_session)
+        return shell_response(request, ml_session)
 
     @app.get("/attention", include_in_schema=False)
     def attention_page(
+        request: Request,
         ml_session: str | None = Cookie(default=None),
     ) -> Response:
-        return shell_response(ml_session)
+        return shell_response(request, ml_session)
 
     @app.get("/settings", include_in_schema=False)
     def settings_page(
+        request: Request,
         ml_session: str | None = Cookie(default=None),
     ) -> Response:
-        return shell_response(ml_session)
+        return shell_response(request, ml_session)
 
     @app.get("/policy", include_in_schema=False)
     def policy_page(
+        request: Request,
         ml_session: str | None = Cookie(default=None),
     ) -> Response:
-        return shell_response(ml_session)
+        return shell_response(request, ml_session)
 
     @app.get("/activity", include_in_schema=False)
     def activity_page(
+        request: Request,
         ml_session: str | None = Cookie(default=None),
     ) -> Response:
-        return shell_response(ml_session)
+        return shell_response(request, ml_session)
 
     @app.get("/assets/review-app/{asset_path:path}", include_in_schema=False)
     def react_asset(asset_path: str, request: Request) -> Response:
