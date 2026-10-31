@@ -44,9 +44,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           },
           {
@@ -64,9 +64,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "This alternative fills an empty local value using edition-specific evidence with retained supporting evidence.",
+            "rationale": "Audible, Audnexus",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "recommendation_reason": "",
             "selection": "proposed"
           },
           {
@@ -84,9 +84,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "This alternative fills an empty local value using edition-specific evidence with retained supporting evidence.",
+            "rationale": "Audible, Audnexus",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "recommendation_reason": "",
             "selection": "proposed"
           }
         ],
@@ -145,9 +145,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           },
           {
@@ -160,9 +160,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "This alternative fills an empty local value using edition-specific evidence with retained supporting evidence.",
+            "rationale": "Audnexus",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "recommendation_reason": "",
             "selection": "proposed"
           },
           {
@@ -175,9 +175,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "This alternative fills an empty local value using edition-specific evidence with retained supporting evidence.",
+            "rationale": "Audnexus",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "recommendation_reason": "",
             "selection": "proposed"
           }
         ],
@@ -248,9 +248,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "Keep the value currently held by the local library.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           },
           {
@@ -268,9 +268,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "This alternative preserves the local value using work-level evidence with retained supporting evidence.",
+            "rationale": "Audnexus",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "recommendation_reason": "",
             "selection": "proposed"
           }
         ],
@@ -318,9 +318,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -381,9 +381,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "Keep the value currently held by the local library.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           },
           {
@@ -401,9 +401,9 @@
               }
             ],
             "limitations": [],
-            "rationale": "This alternative preserves the local value using work-level evidence with retained supporting evidence.",
+            "rationale": "Audnexus",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "recommendation_reason": "",
             "selection": "proposed"
           }
         ],
@@ -451,9 +451,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -470,7 +470,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "genres",
           "state": "missing",
@@ -498,9 +498,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -517,7 +517,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "publishedDate",
           "state": "missing",
@@ -545,9 +545,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -564,7 +564,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "publisher",
           "state": "missing",
@@ -592,9 +592,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -611,7 +611,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "description",
           "state": "missing",
@@ -639,9 +639,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -658,7 +658,7 @@
       },
       {
         "classification": "manual_fallback",
-        "classification_reason": "Automatic handling abstained, so this field needs your review.",
+        "classification_reason": "This field needs your choice.",
         "current": {
           "destination": "isbn",
           "state": "missing",
@@ -672,7 +672,7 @@
         "human_decision": null,
         "inventory_role": "primary",
         "automatic_decision": null,
-        "automatic_withheld_reason": "Conflicting ISBN values remain.",
+        "automatic_withheld_reason": "The sources give different ISBNs.",
         "automatic_selection_sources": [],
         "manual_hold": false,
         "manual_required": false,
@@ -686,9 +686,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -705,7 +705,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "language",
           "state": "missing",
@@ -733,9 +733,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -752,7 +752,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "explicit",
           "state": "missing",
@@ -780,9 +780,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -799,7 +799,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "tags",
           "state": "missing",
@@ -827,9 +827,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],
@@ -846,7 +846,7 @@
       },
       {
         "classification": "unsupported",
-        "classification_reason": "There is no owner decision available for this field.",
+        "classification_reason": "There is nothing to decide for this field.",
         "current": {
           "destination": "cover",
           "state": "missing",
@@ -874,9 +874,9 @@
             "alternative_id": null,
             "evidence": [],
             "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
+            "rationale": "",
             "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "recommendation_reason": "",
             "selection": "current"
           }
         ],

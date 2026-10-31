@@ -372,6 +372,6 @@ def test_current_authority_and_predecessor_refusal_without_history(
         )
         assert (
             field["automatic_withheld_reason"]
-            == "No eligible value was found in the retained evidence."
+            == "No source offered a value that can be used here."
         )
         assert repository._connection.total_changes == 0

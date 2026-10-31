@@ -921,7 +921,6 @@ const SettingsEditor = ({
                     aria-label="Available metadata sources"
                   >
                     <h3>Add a metadata source</h3>
-                    <p>Added sources start off until you turn them on and save.</p>
                     <div>
                       {availableProviderCapabilities.map((capability) => (
                         <button

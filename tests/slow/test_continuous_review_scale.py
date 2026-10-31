@@ -360,7 +360,7 @@ class _WorkspaceProbe:
             page.get_by_role("heading", name="Review complete").wait_for(
                 timeout=_FOREGROUND_RESPONSE_BUDGET_MS
             )
-            page.get_by_text("No library data changed.", exact=False).wait_for()
+            page.get_by_text("1 recorded field outcome.", exact=False).wait_for()
             assert elapsed_ms <= _FOREGROUND_RESPONSE_BUDGET_MS
         if phase == "late":
             assert self._case_id is not None
