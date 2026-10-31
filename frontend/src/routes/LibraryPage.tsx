@@ -2789,7 +2789,14 @@ export default function LibraryPage({
           const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
           const rowBox = row.getBoundingClientRect()
           const box = lens.getBoundingClientRect()
-          if (box.left < rowBox.left + fade) row.scrollLeft -= rowBox.left + fade - box.left
+          // A lens too wide to clear both fades is centred, or starts at the
+          // row's edge when even the row is narrower, so its label's start shows.
+          if (box.width > rowBox.width - 2 * fade)
+            row.scrollLeft +=
+              box.width > rowBox.width
+                ? box.left - rowBox.left
+                : box.left - rowBox.left - (rowBox.width - box.width) / 2
+          else if (box.left < rowBox.left + fade) row.scrollLeft -= rowBox.left + fade - box.left
           else if (box.right > rowBox.right - fade)
             row.scrollLeft += box.right - (rowBox.right - fade)
         }
