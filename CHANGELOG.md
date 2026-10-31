@@ -76,6 +76,9 @@ brackets are GitHub issues.
 - Retry now no longer parks a provider scope that has no outstanding lookups,
   so lookups that fail there later are retried and Activity stops asking for a
   correction nothing needs (#1375).
+- Opening Mechanical Librarian's address while signed in goes to Library, and
+  a link opened while signed out returns to its page after sign-in. Sign-in
+  returns only to a page of this workspace (#1371).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
