@@ -117,6 +117,10 @@ brackets are GitHub issues.
   attention needed". Library gives such works their own Could not finish lens,
   lists them after the works needing a decision, and names their count beside
   Works. No clean rebuild is needed (#1413).
+- An optional description or genre choice says once why no review is needed
+  (the proposed values only shorten or extend the current one), instead of
+  also showing a note that the sources disagree or that a change needs you
+  (#1450).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
