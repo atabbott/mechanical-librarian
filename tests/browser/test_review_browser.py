@@ -4744,7 +4744,7 @@ def test_cover_choice_records_in_one_tap(width: int, mode: str) -> None:
                           const edge = track.getBoundingClientRect().right
                           const cards = [...track.querySelectorAll(
                             '.library-cover-card:not(:disabled)')].filter(card =>
-                            card.getAttribute('aria-label').startsWith('Choose Alternative'))
+                            !card.getAttribute('aria-label').startsWith('Choose Current'))
                           const cut = cards.find(card => {
                             const box = card.getBoundingClientRect()
                             return box.left < edge - 24 && box.right > edge
@@ -5928,9 +5928,11 @@ def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -
                     ).first
                 ).to_be_visible()
                 page.get_by_role("button", name=re.compile("^Narrators")).first.click()
-                expect(page.locator(".decision-canvas")).to_contain_text(
-                    "needs your review"
-                )
+                expect(
+                    page.get_by_role(
+                        "radiogroup", name="Which narrators should this work use?"
+                    )
+                ).to_be_visible()
                 narrators = page.locator(".direct-choice").first
                 expect(narrators).to_be_visible()
                 expect(narrators).to_contain_text("Ilsa Brandt")
