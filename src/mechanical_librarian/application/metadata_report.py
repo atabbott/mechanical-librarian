@@ -19,7 +19,9 @@ from mechanical_librarian.application.configuration import (
     dispatch_adapters,
 )
 from mechanical_librarian.application.failure_diagnostics import (
+    ADAPTER_FAULT_DIAGNOSTIC,
     FailureDiagnostic,
+    adapter_fault_class,
     emit_provider_events,
     merge_provider_diagnostics,
     provider_attempt_diagnostics,
@@ -610,6 +612,7 @@ class ProviderLaneResult:
                 value.component is not FailureComponent.PROVIDER
                 or value.stage
                 not in {
+                    FailureStage.EXECUTION,
                     FailureStage.IDENTITY,
                     FailureStage.LOOKUP,
                     FailureStage.REQUEST,
@@ -1493,13 +1496,21 @@ def provider_observation(
         and not any(result.candidates for result in results)
         else None
     )
-    references = tuple(
-        sorted(
-            {
-                reference
-                for result in results
-                for reference in result.lane.input_references
-            }
+    # An inactive aggregate claims no inputs, even where each of its lanes
+    # names the claims it had too little to search with: an ebook's lone ISBN
+    # lane sent to an adapter that cannot search by ISBN otherwise failed to
+    # build at all (#1498).
+    references = (
+        ()
+        if aggregate_status is ProviderStatus.INSUFFICIENT_INPUT
+        else tuple(
+            sorted(
+                {
+                    reference
+                    for result in results
+                    for reference in result.lane.input_references
+                }
+            )
         )
     )
     kind = (
@@ -1920,12 +1931,17 @@ def observe_provider(
     try:
         result = provider.observe(plan, deadline=deadline)
     except Exception as error:
-        # Unexpected dispatch faults remain unavailable lanes in an initial report.
+        # Unexpected dispatch faults remain unavailable lanes in an initial
+        # report. One the adapter raised itself is named on each lane as an
+        # adapter fault, which recovery never retries: it fails the same way
+        # every time (#1498).
         snapshot = (
             error.snapshot
             if isinstance(error, ProviderObservationFailure)
             else ProviderFailureSnapshot()
         )
+        fault = adapter_fault_class(error)
+        fault_diagnostics = () if fault is None else (ADAPTER_FAULT_DIAGNOSTIC,)
         try:
             reading = snapshot.evidence.accessed_at
             accessed_at = (
@@ -1945,15 +1961,21 @@ def observe_provider(
             provider_name,
             tuple(
                 ProviderLaneResult(
-                    lane, ProviderStatus.UNAVAILABLE, accessed_at=accessed_at
+                    lane,
+                    ProviderStatus.UNAVAILABLE,
+                    accessed_at=accessed_at,
+                    diagnostics=fault_diagnostics,
                 )
                 for lane in plan.lanes
                 if lane.title_basis is None or alternative_sent
             ),
             authority=authority,
+            diagnostics=fault_diagnostics,
         )
         result = ProviderResult(
-            observation, snapshot.cover_descriptors, snapshot.evidence
+            observation,
+            snapshot.cover_descriptors,
+            replace(snapshot.evidence, adapter_fault=fault),
         )
     observation = result.observation
     if observation.provider != provider_name:

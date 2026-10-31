@@ -50,6 +50,7 @@ from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
     ItemInspectionError,
+    MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
     MetadataReportError,
@@ -78,6 +79,9 @@ from mechanical_librarian.application.provider_evidence import (
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
     provider_recovery_jobs,
+)
+from mechanical_librarian.application.provider_recovery_policy import (
+    provider_recovery_decision,
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.audio_inspection import (
@@ -128,6 +132,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -3335,6 +3340,152 @@ def test_a_disabled_excluded_binding_records_nothing_on_an_audiobook() -> None:
     assert [("hardcover", ProviderStatus.DISABLED)] == [
         (value.provider, value.status) for value in report.providers
     ]
+
+
+class _FaultingProvider:
+    """Raise one error from inside the adapter, as a fault in its own code does."""
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def observe(
+        self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
+    ) -> ProviderResult:
+        raise self._error
+
+
+@pytest.mark.parametrize(
+    "error,fault_class",
+    (
+        (ReportValueError("synthetic secret text"), "report_validation"),
+        (KeyError("synthetic secret text"), "programming"),
+        (RuntimeError("synthetic secret text"), None),
+    ),
+    ids=("report_validation", "programming", "not_a_fault"),
+)
+def test_an_adapter_fault_is_named_and_never_enrolled_for_recovery(
+    error: Exception,
+    fault_class: str | None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1498: an adapter's own fault is named, evented and never retried.
+
+    Hardcover beside it answers unavailable, as a provider-side outage does,
+    and is still enrolled. An exception that is not an adapter fault keeps
+    today's unavailable lane, unknown aggregate and recovery.
+    """
+    bindings = (
+        _dispatch_binding("hardcover", [], []),
+        ProviderBinding(
+            "inventaire", True, lambda: _FaultingProvider(error), "inventaire"
+        ),
+    )
+
+    report = MetadataReport.from_json(_mixed_service(bindings).run("ebook", 0))
+    err = capsys.readouterr().err
+
+    faulted = next(
+        value for value in report.providers if value.provider == "inventaire"
+    )
+    assert faulted.status is ProviderStatus.UNAVAILABLE
+    assert faulted.lanes
+    assert all(lane.status is ProviderStatus.UNAVAILABLE for lane in faulted.lanes)
+    categories = {value.category for value in faulted.diagnostics}
+    lane_categories = {
+        value.category for lane in faulted.lanes for value in lane.diagnostics
+    }
+    events = [
+        json.loads(line)
+        for line in err.splitlines()
+        if '"provider_adapter_fault"' in line
+    ]
+    assert "synthetic secret text" not in err
+    jobs = provider_recovery_jobs(
+        report,
+        package=(None, report.report_id, None, None, "report_only"),
+        configuration=_mixed_configuration(),
+        scope="mixed",
+    )
+    if fault_class is None:
+        assert {FailureCategory.UNKNOWN} == categories
+        assert set() == lane_categories
+        assert [] == events
+        assert ("transient", None) == provider_recovery_decision(faulted, now=0)
+        assert ["hardcover", "inventaire"] == [job.adapter for job in jobs]
+        return
+    assert {FailureCategory.ADAPTER_FAULT} == categories
+    assert {FailureCategory.ADAPTER_FAULT} == lane_categories
+    assert [
+        {
+            "adapter": "inventaire",
+            "count": 1,
+            "event": "provider_adapter_fault",
+            "fault_class": fault_class,
+            "level": "warning",
+            "outcome_class": "adapter_fault",
+            "phase": "discovery",
+            "provider": "inventaire",
+        }
+    ] == [
+        {
+            key: value
+            for key, value in event.items()
+            if key
+            in {
+                "adapter",
+                "count",
+                "event",
+                "fault_class",
+                "level",
+                "outcome_class",
+                "phase",
+                "provider",
+            }
+        }
+        for event in events
+    ]
+    assert provider_recovery_decision(faulted, now=0) is None
+    assert ["hardcover"] == [job.adapter for job in jobs]
+
+    cases = InspectCurrentReviewCase(Mock())
+    with patch.object(cases, "_read", return_value=({"fields": []}, report, ())):
+        ledger = cast(
+            "list[dict[str, object]]",
+            cases.evidence("review_case_" + "c" * 64)["source_ledger"],
+        )
+    assert {
+        str(row["reason"]) for row in ledger if row["provider"] == "Inventaire"
+    } == {
+        "Failed inside Mechanical Librarian while reading this source's answer, "
+        "so nothing was retained and it is not retried."
+    }
+
+
+def test_an_all_insufficient_plan_claims_no_inputs_on_its_aggregate() -> None:
+    """#1498: an ebook's lone ISBN lane, unsearchable by this adapter, still builds.
+
+    Each lane keeps the claims it had too little to search with; the inactive
+    aggregate claims none, which it may not.
+    """
+    lane = MetadataDiscoveryLane(
+        "lane_" + "1" * 64,
+        ProviderQueryKind.ISBN,
+        ("local_" + "a" * 64,),
+        matched_family="9780306406157",
+        canonical_isbns=("9780306406157",),
+    )
+
+    observation = provider_observation(
+        "audible",
+        (ProviderLaneResult(lane, ProviderStatus.INSUFFICIENT_INPUT),),
+        authority="audible_catalog",
+    )
+
+    assert observation.status is ProviderStatus.INSUFFICIENT_INPUT
+    assert () == observation.input_references
+    assert (("local_" + "a" * 64,),) == tuple(
+        value.input_references for value in observation.lanes
+    )
 
 
 def test_an_ebooks_source_ledger_names_only_its_dispatch_set() -> None:

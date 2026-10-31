@@ -255,13 +255,14 @@ def retained_report_as_current(document: str) -> MetadataReport:
     the copy is never written back. v63 added the `companion` ebook section,
     null here since an earlier producer prepared no item beside an EPUB as an
     audiobook. v64 added each provider's `audio_editions`: empty here, since
-    an earlier producer fetched no Hardcover audio edition.
+    an earlier producer fetched no Hardcover audio edition. v65 added the
+    `adapter_fault` diagnostic, which an earlier producer never wrote.
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
     data = json.loads(document)
     assert data["schema_version"] == "metadata-report-v49"
-    data["schema_version"] = "metadata-report-v64"
+    data["schema_version"] = "metadata-report-v65"
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
@@ -383,7 +384,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v64'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v65'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -402,10 +403,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v64'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v65'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v64'", f"= '{version}'"
+            "= 'metadata-report-v65'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

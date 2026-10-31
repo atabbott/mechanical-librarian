@@ -27,10 +27,22 @@ def provider_recovery_decision(
     now: int,
     google_burst_remaining: Callable[[], int | None] | None = None,
 ) -> tuple[str, int | None] | None:
-    """Return one closed failure and delay from durable provider evidence."""
+    """Return one closed failure and delay from durable provider evidence.
+
+    A lane the adapter's own fault failed is no evidence about the provider and
+    is never retried, since it fails the same way each time (#1498).
+    """
     if type(now) is not int or not 0 <= now <= MAX_TIMESTAMP:
         raise ValueError("provider recovery observation is invalid")
-    statuses = (observation.status, *(lane.status for lane in observation.lanes))
+    lanes = tuple(lane for lane in observation.lanes if not adapter_faulted(lane))
+    statuses = (
+        *(
+            ()
+            if observation.lanes and adapter_faulted(observation)
+            else (observation.status,)
+        ),
+        *(lane.status for lane in lanes),
+    )
     if ProviderStatus.AUTHENTICATION in statuses:
         return "authentication", None
     if ProviderStatus.AUTHORIZATION in statuses:
@@ -97,6 +109,14 @@ def provider_recovery_decision(
     return None
 
 
+def adapter_faulted(value: object) -> bool:
+    """Whether an observation or lane carries the adapter-fault diagnostic."""
+    return any(
+        diagnostic.category is FailureCategory.ADAPTER_FAULT
+        for diagnostic in getattr(value, "diagnostics", ())
+    )
+
+
 def _next_midnight(now: int, zone: timezone | ZoneInfo) -> int:
     local = datetime.fromtimestamp(now, tz=zone)
     reset = datetime.combine(local.date() + timedelta(days=1), time.min, tzinfo=zone)
@@ -106,4 +126,4 @@ def _next_midnight(now: int, zone: timezone | ZoneInfo) -> int:
     return delay
 
 
-__all__ = ["provider_recovery_decision"]
+__all__ = ["adapter_faulted", "provider_recovery_decision"]

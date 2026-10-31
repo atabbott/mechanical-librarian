@@ -20,6 +20,7 @@ from mechanical_librarian.application.configuration import (
     dispatch_adapters,
 )
 from mechanical_librarian.application.failure_diagnostics import (
+    adapter_fault_class,
     emit_provider_events,
     merge_provider_diagnostics,
     provider_dispatch_events,
@@ -619,10 +620,11 @@ class GenerateProviderRetrySuccessor:
             emit_provider_events(
                 lambda: events(
                     observation=None,
-                    evidence=(
+                    evidence=replace(
                         failure.snapshot.evidence
                         if isinstance(failure, ProviderObservationFailure)
-                        else ProviderOperationalEvidence()
+                        else ProviderOperationalEvidence(),
+                        adapter_fault=adapter_fault_class(failure),
                     ),
                     elapsed_seconds=elapsed,
                 )

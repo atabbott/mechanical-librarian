@@ -74,7 +74,7 @@ text, credential or path.
 | `preparation_claim_contended` | A preparation claim lost the write lock and will retry (WARNING, `code: contention`). |
 | `activity_projector` | The background Activity projector stopped. `code` is `stopped`, `released` or `admission_closed` (info), or `unexpected` (WARNING, with the exception type in `error`). Shutdown adds `join_timeout` (WARNING) if the projector's current step outlasts the join bound; closing still waits for that step. |
 | `provider_recovery_schedule` | The review library cannot read the recovery schedule, so it withdraws the retry promise (WARNING, `code: unavailable`). |
-| `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_recovery_job` | See [provider logs](#provider-logs). |
+| `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job` | See [provider logs](#provider-logs). |
 
 `preparation_unknown_failure` holds only validated code identities and
 application frame locations. Match its `reference` to the preparation reference
@@ -93,6 +93,7 @@ dispatch writes nothing.
 | `provider_request_failed` | A transport, unexpected-status or parse failure, or a malformed lane. `outcome_class` separates `malformed_response`, `oversized_response` and `candidate_limit_exceeded`. A provider's ordinary "not found" (`not_found`, or `http_404` or `region_unavailable` when every lane still answered) is not a failure. |
 | `provider_throttled` | `quota_rate_limit`, `burst_throttle`, `daily_quota_exhausted`, or `held` when the shared pacer held a lookup without sending it. |
 | `provider_deadline_stop` | `stop: before_dispatch` when the deadline left a request unsent; `stop: in_flight` when it ended a retry. |
+| `provider_adapter_fault` | The adapter itself failed the lookup (`outcome_class: adapter_fault`). `fault_class` is `report_validation` when the report refused what the adapter built from a response, or `programming` for an error in the adapter; never the exception's text. |
 | `provider_recovery_job` | A recovery job changed state; `transition` is below. |
 
 | `transition` | Written after |

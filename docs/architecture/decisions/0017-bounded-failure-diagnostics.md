@@ -34,8 +34,16 @@ The closed categories are `setup_configuration`, `authentication`,
 `quota_rate_limit`, `empty_no_match`, `malformed_over_bound_response`,
 `schema_construction`, `live_schema_rejection`, `spawn_runtime`, `transport`,
 `timeout`, `cancellation`, `malformed_output`, `citation_membership`,
-`identity`, `currentness`, `persistence`, and `unknown`. Unknown inputs always
-map to `unknown`; exception text is never used to classify them.
+`identity`, `currentness`, `persistence`, `adapter_fault`, and `unknown`.
+Unknown inputs always map to `unknown`; exception text is never used to
+classify them.
+
+`adapter_fault/provider/execution` (#1498) names a lookup the adapter itself
+failed: the exception's type alone shows a domain value refusing what the
+adapter built, or a programming error in the adapter. It is never retryable and
+never enrolled for recovery, because it fails the same way each time; any other
+raised exception, a transport library's own error included, stays an
+unavailable lane with an `unknown` aggregate and keeps its recovery.
 
 Provider adapters retain `ProviderAttemptRecord` only in process memory. The
 application maps its category and outcome to bounded deterministic aggregates
