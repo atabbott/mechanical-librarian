@@ -10,6 +10,12 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
+
+- An ebook is looked up only in Google Books, Hardcover, Inventaire, Open
+  Library and iTunes Search. Audible, Audnexus and AudioSilo get no ebook
+  request or retry and no longer appear in an ebook's lookups (#1486).
+
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
 - **Clean rebuild required.** Hardcover's audio editions are read for every
