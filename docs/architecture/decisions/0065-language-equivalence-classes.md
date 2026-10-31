@@ -85,10 +85,11 @@ option synthesizes a value.
    `language_rendering` option, so a profile or override that names
    `preserve` is refused.
 
-The proposal policy moves to `fixed-conservative-v41`, the decision policy to
-`deterministic-shadow-decision-policy-v25` and the metadata policy profile to
-`metadata-policy-profile-v4`. Under ADR-0013 earlier stores need a clean
-rebuild; no adoption is supplied.
+The proposal policy moves to `fixed-conservative-v41` and the decision policy
+to `deterministic-shadow-decision-policy-v25`. A policy profile keeps its
+document shape, so it is not relabelled; one naming `preserve` is refused as an
+unavailable option. Under ADR-0013 earlier stores need a clean rebuild; no
+adoption is supplied.
 
 ## Consequences
 

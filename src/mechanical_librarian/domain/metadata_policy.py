@@ -21,7 +21,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 
 
-POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v4"
+POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v3"
 DESTINATIONS: Final = ("ask", "ignore", "automatic", "unsupported")
 
 # The product catalogue is deliberately closed.  A destination is an owner

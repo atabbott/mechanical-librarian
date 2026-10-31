@@ -7189,8 +7189,8 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v4",
-            "default": "metadata-policy-profile-v4",
+            "const": "metadata-policy-profile-v3",
+            "default": "metadata-policy-profile-v3",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7443,7 +7443,7 @@
             "type": "object"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v4",
+            "const": "metadata-policy-profile-v3",
             "title": "Schema Version",
             "type": "string"
           }
