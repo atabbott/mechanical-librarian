@@ -4127,7 +4127,9 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                 page.goto(
                     f"{origin}/library?lens=all&preview={case_id}&field={'isbn' if identity else 'description'}"
                 )
-                page.locator(".recorded-field-observations").wait_for()
+                page.locator(
+                    ".recorded-field-observations, [role=radiogroup]"
+                ).first.wait_for()
                 if not identity:
                     page.get_by_role(
                         "button",
@@ -9260,12 +9262,18 @@ def test_isbn_title_reaches_real_library_with_retained_sources(mode):
                 expect(
                     page.get_by_text("Example Title", exact=True).first
                 ).to_be_visible()
+                # The field's own reason is the one line under the question (#1519).
                 expect(
                     page.get_by_text(
-                        "The sources disagree about the work or title; choose the title yourself"
-                        if mode == "conflict"
-                        else "ISBN and author evidence support this title",
-                        exact=True,
+                        re.compile(
+                            "^"
+                            + re.escape(
+                                "The sources disagree about the work or title; choose the title yourself"
+                                if mode == "conflict"
+                                else "ISBN and author evidence support this title"
+                            )
+                            + r"\.?$"
+                        )
                     ).first
                 ).to_be_visible()
                 for width in (1280, 390, 320):
