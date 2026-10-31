@@ -10319,9 +10319,20 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 )
                 expect(choice).to_be_enabled()
                 choice.focus()
-                choice.press("Space")
-                expect(choice).to_have_attribute("aria-checked", "true")
-                page.reload()
+                # The radio checks as soon as the decision is sent, while it is
+                # still recording, and once the server answers the completed
+                # work moves the page on. Neither is the recorded decision, and
+                # a reload before the answer can cancel it. So the test waits for
+                # the server's answer, then opens the field afresh (#1489).
+                with page.expect_response(
+                    lambda response: (
+                        response.request.method == "POST"
+                        and response.url.endswith(f"/review-cases/{case_id}/decisions")
+                    )
+                ) as recorded:
+                    choice.press("Space")
+                assert recorded.value.ok, recorded.value.status
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
                 expect(
                     page.get_by_role(
                         "radio", name="Choose proposed value: Fantasy", exact=True
