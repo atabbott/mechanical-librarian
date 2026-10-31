@@ -110,10 +110,6 @@ _CURRENT_VALUE_REFUSAL_TEXT = {
     "candidate_credit_prefixed": 'The current value starts with a credit label such as "Narrated by", so it is never confirmed for you.',
     "candidate_promotional_title": 'The current title carries an announcement such as "Now a Major Motion Picture", so it is never confirmed for you.',
 }
-_LANGUAGE_DISPLAY_NAME_TEXT = (
-    "The current value names the same language in another spelling. "
-    "Only you can choose to write it the other way."
-)
 _AUTOMATIC_REFUSAL_TEXT = {
     "isbn_title_material_conflict": "The sources disagree about the work or title; choose the title yourself.",
     "no_candidate": "No source offered a value that can be used here.",
@@ -268,6 +264,8 @@ class ReviewLibrarySnapshot:
     # `unavailable` or `no_match` -- or None for any other row.
     not_matched_total: int
     match_reasons: tuple[str | None, ...]
+    # #1413: the works with nothing open whose latest preparation failed.
+    preparation_failed_total: int
     # The scope each row's human decisions were validated in, when the store
     # projected one, so the row projection need not project the case again.
     decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
@@ -325,13 +323,17 @@ class CurrentReviewCaseStore(Protocol):
 LibraryLabels = tuple[tuple[str, str, str], ...]
 # The Library lenses a store filters by; None reads every work, the `all` lens.
 # A work no provider matched is neither needing attention nor needing none, so
-# it has a lens of its own (#1407).
-LibraryLensFilter = Literal["needs_attention", "no_attention_needed", "not_matched"]
+# it has a lens of its own (#1407), and so has a work with nothing open whose
+# latest preparation failed (#1413).
+LibraryLensFilter = Literal[
+    "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
+]
 _LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
     "all": None,
     "needs_attention": "needs_attention",
     "no_attention_needed": "no_attention_needed",
     "not_matched": "not_matched",
+    "preparation_failed": "preparation_failed",
 }
 
 _Validated = TypeVar("_Validated")
@@ -975,6 +977,7 @@ class InspectCurrentReviewCase:
                 # With no alternative to list, an unsupported field is a
                 # contextual row, which offers no controls (below).
                 owner_entry=owner_entry and bool(alternatives),
+                immaterial_alternatives="work_alternative_immaterial" in reasons,
             )
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
@@ -1170,12 +1173,7 @@ class InspectCurrentReviewCase:
                     "unsupported",
                 }:
                     message = (
-                        # Respelling a current language is never automatic
-                        # (#1314), so it says so rather than "no reason".
-                        _LANGUAGE_DISPLAY_NAME_TEXT
-                        if destination == "language"
-                        and "language_display_name" in field.get("notices", ())
-                        else None
+                        None
                         if field["proposed_values"]
                         else _CURRENT_VALUE_REFUSAL_TEXT.get(outcome.reason_code)
                     ) or _AUTOMATIC_REFUSAL_TEXT.get(
@@ -1759,8 +1757,10 @@ class BrowseReviewLibrary:
                 "needs_attention": snapshot.attention_total,
                 "no_attention_needed": snapshot.total
                 - snapshot.attention_total
-                - snapshot.not_matched_total,
+                - snapshot.not_matched_total
+                - snapshot.preparation_failed_total,
                 "not_matched": snapshot.not_matched_total,
+                "preparation_failed": snapshot.preparation_failed_total,
             },
             "items": items,
             "lens": lens,
@@ -1782,7 +1782,7 @@ class BrowseReviewLibrary:
             ),
             "page": offset // bounded_limit + 1,
             "query": normalized,
-            "schema_version": "review-library-v3",
+            "schema_version": "review-library-v4",
         }
 
     def attention(
@@ -3292,7 +3292,9 @@ def _library_item(
                 return {
                     "authors": authors,
                     "attention_count": 0,
-                    "attention_state": "no_attention_needed",
+                    # Failed is its own lens, never counted as needing no
+                    # attention (#1413).
+                    "attention_state": "preparation_failed",
                     # A work that stopped before a report has no retained cover.
                     "cover": None,
                     "detail_url": None,
@@ -3481,9 +3483,13 @@ def _library_item(
             ),
             "width": report.cover.width,
         },
+        # The lens this work is read under: a later failure outranks the
+        # retained report's own state unless a decision is still open (#1413).
         "attention_state": (
             "needs_attention"
             if current_attention_count
+            else "preparation_failed"
+            if terminal_document is not None
             else "not_matched"
             if match_state is not None
             else "no_attention_needed"

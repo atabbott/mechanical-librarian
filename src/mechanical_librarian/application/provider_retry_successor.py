@@ -15,9 +15,9 @@ from functools import partial
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
-    AUDIOBOOK_DISPATCH_ADAPTERS,
     MediaMountConfiguration,
     ReportLimits,
+    dispatch_adapters,
 )
 from mechanical_librarian.application.failure_diagnostics import (
     emit_provider_events,
@@ -246,12 +246,12 @@ class GenerateProviderRetrySuccessor:
         evidence = RecoveryAttemptEvidence("terminal_failure")
         try:
             source = self._source(repository, source_report_id)
-            # A job queued before ADR-0061 clause 9 can name an adapter that is
-            # no longer dispatched for audiobooks. It closes as stale -- that
-            # job alone, recording no failure evidence -- before any resolver,
-            # target read or factory call could spend egress on it.
-            if _is_audio(source) and adapter not in AUDIOBOOK_DISPATCH_ADAPTERS:
-                raise CurrentnessError("provider is not dispatched for audiobooks")
+            # A job queued before ADR-0061 clause 9 or #1486 can name an adapter
+            # that is no longer dispatched for its media kind. It closes as
+            # stale -- that job alone, recording no failure evidence -- before
+            # any resolver, target read or factory call could spend egress on it.
+            if adapter not in dispatch_adapters(audio=_is_audio(source)):
+                raise CurrentnessError("provider is not dispatched for this media")
             current = self._current_source(repository, source)
             # The provider and its retained observation are resolved before the
             # plan: which plan a per-ASIN provider was observed under is a fact

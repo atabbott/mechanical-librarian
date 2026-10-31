@@ -12,11 +12,11 @@ from typing import Never, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
-    AUDIOBOOK_DISPATCH_ADAPTERS,
     LibraryConfiguration,
     MediaMountConfiguration,
     ReportLimits,
     TargetConnectionConfiguration,
+    dispatch_adapters,
 )
 from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
@@ -3326,11 +3326,12 @@ class GenerateMetadataReport:
         (#1316). Every other binding is handed `plan`, so a per-ASIN provider
         still answers nothing in phase one and is fed the carried ASIN first.
 
-        An audiobook plan dispatches only to bindings whose authority is in
-        `AUDIOBOOK_DISPATCH_ADAPTERS` (ADR-0061 clause 9). Any other binding is
-        skipped before its enabled and overflow checks, so it is never built,
-        sent a request, or recorded, and neither the configured connections nor
-        `bindings` can widen the set. An ebook plan is not filtered here.
+        A plan dispatches only to bindings whose authority is in its media
+        kind's set: `AUDIOBOOK_DISPATCH_ADAPTERS` (ADR-0061 clause 9) or
+        `EBOOK_DISPATCH_ADAPTERS` (#1486). Any other binding is skipped before
+        its enabled and overflow checks, so it is never built, sent a request,
+        or recorded, and neither the configured connections nor `bindings` can
+        widen the set.
 
         Each dispatched binding's failures, throttles and deadline stops are
         written as value-free provider events once its observation returns,
@@ -3350,9 +3351,8 @@ class GenerateMetadataReport:
                 if catalogue_plan is not None and binding.authority == "audible_catalog"
                 else plan
             )
-            if (
-                binding_plan.audio is not None
-                and binding.authority not in AUDIOBOOK_DISPATCH_ADAPTERS
+            if binding.authority not in dispatch_adapters(
+                audio=binding_plan.audio is not None
             ):
                 continue
             if not binding.enabled:

@@ -77,15 +77,38 @@ option synthesizes a value.
 4. Only a current value spelled exactly as that name is preserved. A current
    value of the same class spelled any other way, such as `en`, `eng`, `en-GB`
    or `english`, becomes a `language_display_name` proposal that offers the
-   name. It is never automatic: the decision policy gives it no eligible
-   action, and the F46 `normalize` and `replace` language operations are no
-   longer permitted for Automatic. The owner accepts it through the ordinary
-   review and consent path, or keeps the current value.
+   name. Automatic decides it as it decides a fill (see the #1496 amendment
+   below).
 5. The `preserve` rendering option is retired; `display_name` is the only
    `language_rendering` option, so a profile or override that names
    `preserve` is refused.
 
-The proposal policy moves to `fixed-conservative-v41` and the decision policy
+### Automatic respelling
+
+Amended by #1496, because 14 respellings on one retained library each became
+an owner question that changed only how a language is written, and the owner
+reversed rule 4's manual decision on 2026-10-31.
+
+1. A `language_display_name` proposal is an ordinary automatic candidate: the
+   decision policy gives it the same eligible action as a fill, on both media.
+   The F46 `language_rendering:display_name:audiobook_language_normalize`
+   operation is permitted again; the original F46 measurement covered it
+   before #1502 narrowed it, so no new measurement is needed. On an audiobook
+   a regional tag such as `en-GB` written as "English" drops the region, which
+   F46 measured as `replace`; `replace` stays unpermitted, so that respelling
+   and any different language stay the owner's. Ebooks respell regional tags
+   automatically.
+2. Beside an alternative of another language, an alternative of the current
+   value's class only respells it, so it is dropped and the owner chooses
+   between the current value and the other language.
+3. Base or script disagreements stay manual, region is not written, and no
+   language is inferred.
+
+The proposal policy moves to `fixed-conservative-v42` and the decision policy
+to `deterministic-shadow-decision-policy-v26`; under ADR-0013 earlier stores
+need a clean rebuild.
+
+The #1314 proposal policy moved to `fixed-conservative-v41` and the decision policy
 to `deterministic-shadow-decision-policy-v25`. A policy profile keeps its
 document shape, so it is not relabelled; one naming `preserve` is refused as an
 unavailable option. Under ADR-0013 earlier stores need a clean rebuild; no

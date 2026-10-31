@@ -151,6 +151,7 @@ const lensLabels = {
   needs_attention: 'Needs attention',
   no_attention_needed: 'No attention needed',
   not_matched: 'Not matched',
+  preparation_failed: 'Could not finish',
 } satisfies Record<LibraryLens, string>
 // The masthead's Library link is the current page; the active lens is the
 // current item within it, so it says `true` rather than a second `page` (#1530).
@@ -298,6 +299,7 @@ const lensMatching = {
   needs_attention: ['attention', 'needing attention'],
   no_attention_needed: ['clear', 'needing no attention'],
   not_matched: ['notMatched', 'not matched'],
+  preparation_failed: ['failed', 'that could not finish'],
 } as const
 
 const PreparationSummary = ({
@@ -689,7 +691,11 @@ const completionOutcome = (field: ReviewField) =>
           : 'Recorded outcome'
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
+// An optional choice's reason is its one statement: a condition worded as
+// asking the owner would contradict "no review is needed", so none is shown
+// beside it (#1450).
 const comparisonNotices = (field: ReviewField) =>
+  field.classification === 'owner_choosable' ||
   field.choiceContexts.some((context) =>
     context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
   )
@@ -706,13 +712,11 @@ const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
       ? 'Different source descriptions'
       : materialReasonLabel(notice)
 // A notice that says again what the reason under the question already says is
-// left out: the language respelling reason, or the condition that is that
-// line (#1519).
+// left out: the condition that is that line (#1519).
 const restatesReason = (field: ReviewField, notice: string) =>
   notice === questionNotice(field) ||
   (field.automaticWithheldReason !== null &&
-    (notice === 'language_display_name' ||
-      `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason))
+    `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason)
 // Under an actionable field's question, one line gives its own reason: why it
 // was withheld, else its first comparison condition, else its disposition. The
 // classification sentence, the same on every field, is only the last fallback
@@ -752,9 +756,11 @@ const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
   not_matched_unavailable: 'Providers unavailable',
   not_matched_no_match: 'No provider matched',
 }
+// A failed preparation's group shares its lens's name, so a "needs attention"
+// heading never sits outside the Needs attention lens (#1413).
 const providerGroup = (work: LibraryWorkView) =>
   work.preparation
-    ? 'Preparation needs attention'
+    ? 'Could not finish'
     : work.attention === 'not_matched'
       ? 'Not matched'
       : work.attentionCount === 0
@@ -1626,6 +1632,7 @@ export default function LibraryPage({
   const lensTotal = summary.data?.counts[lensCount]
   const summaryAttention = summary.data?.counts.attention
   const summaryNotMatched = summary.data?.counts.notMatched
+  const summaryFailed = summary.data?.counts.failed
   const preparationState = usePreparation()
   const presentation =
     preparationState.data?.presentation?.state === 'dismissed'
@@ -3505,13 +3512,24 @@ export default function LibraryPage({
                   </>
                 ) : (
                   workCount(data.counts.all) +
-                  (summaryNotMatched === undefined
+                  // The works outside both decision lenses, named beside the
+                  // total in the masthead's words (#1407, #1413).
+                  // One placeholder while the summary loads, so the line
+                  // does not wrap and then jump when it arrives.
+                  (summaryNotMatched === undefined || summaryFailed === undefined
                     ? summary.isError
                       ? ''
-                      : ' · … not matched'
-                    : summaryNotMatched === 0
-                      ? ''
-                      : ` · ${String(summaryNotMatched)} not matched`)
+                      : ' · …'
+                    : (
+                        [
+                          [summaryNotMatched, 'not matched'],
+                          [summaryFailed, 'could not finish'],
+                        ] as const
+                      )
+                        .map(([count, words]) =>
+                          count === 0 ? '' : ` · ${String(count)} ${words}`,
+                        )
+                        .join(''))
                 )
               ) : failed ? (
                 'Count unavailable'
@@ -3521,28 +3539,34 @@ export default function LibraryPage({
             </span>
           </div>
           <nav className="lenses" aria-label="Library lenses" ref={lensRow}>
-            {(['all', 'needs_attention', 'no_attention_needed', 'not_matched'] as const).map(
-              (lens) => (
-                <LensLink
-                  key={lens}
-                  to="/library"
-                  search={{
-                    lens,
-                    ...(search.q ? { q: search.q } : {}),
-                    ...(search.preview ? { preview: search.preview } : {}),
-                    ...(search.work ? { work: search.work } : {}),
-                    ...(search.field ? { field: search.field } : {}),
-                    ...(search.preparation ? { preparation: search.preparation } : {}),
-                  }}
-                  preload="intent"
-                  onPointerEnter={() => lensIntent(lens)}
-                  onFocus={() => lensIntent(lens)}
-                  activeProps={{ 'aria-current': 'page' }}
-                >
-                  {lensLabels[lens]}
-                </LensLink>
-              ),
-            )}
+            {(
+              [
+                'all',
+                'needs_attention',
+                'no_attention_needed',
+                'not_matched',
+                'preparation_failed',
+              ] as const
+            ).map((lens) => (
+              <LensLink
+                key={lens}
+                to="/library"
+                search={{
+                  lens,
+                  ...(search.q ? { q: search.q } : {}),
+                  ...(search.preview ? { preview: search.preview } : {}),
+                  ...(search.work ? { work: search.work } : {}),
+                  ...(search.field ? { field: search.field } : {}),
+                  ...(search.preparation ? { preparation: search.preparation } : {}),
+                }}
+                preload="intent"
+                onPointerEnter={() => lensIntent(lens)}
+                onFocus={() => lensIntent(lens)}
+                activeProps={{ 'aria-current': 'page' }}
+              >
+                {lensLabels[lens]}
+              </LensLink>
+            ))}
           </nav>
           <form className="search library-search" role="search" onSubmit={submitSearch}>
             <label className="sr-only" htmlFor="library-query">
@@ -3643,6 +3667,7 @@ export default function LibraryPage({
                 const showGroup =
                   data.lens !== 'no_attention_needed' &&
                   data.lens !== 'not_matched' &&
+                  data.lens !== 'preparation_failed' &&
                   (!previousWork || providerGroup(previousWork) !== group)
                 const summary = providerSummary(work.preparationOutcomes)
                 const summaryId = summary ? `provider-summary-${work.id}` : undefined

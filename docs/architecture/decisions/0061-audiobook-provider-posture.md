@@ -189,9 +189,9 @@ them no failure evidence, even an older observation a retry successor carried
 forward. A recovery job already queued for one of them closes as `stale`,
 which closes that job alone and records no failure evidence; a recovery row
 whose remaining members all close as stale can still end through the runner's
-existing success path. Ebook dispatch is unchanged, and so are `config-v9`,
-the configuration schema and `metadata-report-v53`, so no clean rebuild is
-needed; a v53 report that holds an excluded observation stays valid.
+existing success path. `config-v9`, the configuration schema and
+`metadata-report-v53` are unchanged, so no clean rebuild is needed; a v53
+report that holds an excluded observation stays valid.
 
 **Clause 2 (#1254).** iTunes Search remains an admitted, configurable adapter,
 but it leaves the default audiobook dispatch set, saving 181 dispatches over
@@ -200,8 +200,8 @@ new admissions; the 2 selected alternatives iTunes backed today were both also
 backed by other providers, and under narrowing both overflow, leaving 0. #1246's
 measurement: 234 requests, all to Audible, with iTunes at 0 while held for
 #1254, and every alternative-title admission depended on Audible's alternative
-lane. Where a library connects iTunes, it still searches ebook work lanes,
-because ebook dispatch does not change.
+lane. Where a library connects iTunes, it still searches ebook work lanes:
+iTunes is in the ebook dispatch set below.
 
 **Clause 9 (#1247).** The set is the five named above. Open Library and
 Hardcover stay, so F46a's and F54's work facts keep their sources (#962).
@@ -212,6 +212,25 @@ from Inventaire) and no description or genre alternative, resolved none of the
 unavailable on 80 of 238 items. Excluding all three also removes the
 second audiobook cover authority; [ADR-0064](0064-audiobook-provider-evidence-vocabularies.md)
 records that consequence.
+
+## Ebook dispatch set (#1486)
+
+Ebook preparation dispatches only to the connected providers named in
+`EBOOK_DISPATCH_ADAPTERS`: Google Books, Hardcover, Inventaire, Open Library
+and iTunes Search, which keeps its ebook title-and-author corroboration lane.
+The rules are the audiobook set's: connections narrow it and never widen it, a
+binding with no authority is not dispatched, and an excluded binding gets no
+client construction, request, observation, recovery job, retry or failure
+evidence. A recovery job already queued for one closes as `stale`.
+
+Audible, Audnexus and AudioSilo are excluded: none has a documented ebook role.
+On a 24-work synthetic-mix test library (18 EPUBs), Audnexus and AudioSilo
+answered every EPUB `insufficient_input` without a request, and Audible's
+title-and-author search caused 6 or 7 of the field items in attention while
+making no title or author decision. The retained #744 ebook snapshot predates
+the audiobook providers, so the set removes none of its 6,078 dispatches or
+3,187 recovery jobs. No schema or report version changes, so no clean rebuild;
+a retained report keeps its recorded lanes until its work is prepared again.
 
 ## Carried admission (#1316)
 

@@ -102,7 +102,9 @@ AI.
   regional variants) form one alternative that keeps every reference and
   states the class's display name, such as `English`. `bh` resolves to `bih`,
   and `und` gives no authority. A current value of that class spelled another
-  way gets a `language_display_name` proposal, which is never automatic
+  way gets a `language_display_name` proposal, which Automatic decides like a
+  fill, except an audiobook's regional tag, which stays the owner's. Beside another language, an alternative of the current value's class
+  is dropped, so only the other language is offered
   ([ADR-0065](../architecture/decisions/0065-language-equivalence-classes.md)).
 - **Publisher** and imprint observations bound to the edition are separate
   acceptable alternatives. A provider observation also needs an `accepted`
@@ -123,6 +125,13 @@ AI.
 
 ### Titles
 
+Titles that differ only by a dropped leading `The`, `A` or `An` form one
+alternative, which states a form with the article. When only the current title
+has the article, the bare form preserves it. Two different articles are two
+titles, and a bare form beside both joins neither. Apostrophes and other
+spelling stay as they are when alternatives are formed. Every election below
+compares titles the same way.
+
 A title may be elected by any of these, each with its own reason:
 
 - **ISBN and creator** (`isbn_creator_supported_title`): a provider title from
@@ -131,7 +140,9 @@ A title may be elected by any of these, each with its own reason:
   author, title or variant evidence withholds it
   ([ADR-0075](../architecture/decisions/0075-independent-evidence-led-titles.md)).
 - **Provider consensus**: every provider title claim states the same clean
-  form. Its colon and series abstentions run after the agreement gate.
+  form. Its colon and series abstentions run after the agreement gate. A
+  bracketed valid ISBN, `[ISBN 978…]` or `(ISBN 978…)`, is the explicit
+  identifier decoration, not a series name.
 - **Decoration equivalence**: runs next, on a title held only by
   `competing_evidence`, when the decorated and plain forms both carry provider
   evidence and differ byte for byte only by the decoration, and the current
@@ -150,7 +161,8 @@ ProposalSet without new evidence
 ### Subtitles
 
 On the competing seam only the book's own explicit subtitle claim elects
-(`local_attested_subtitle`). A colon segment stripped from a title fills a
+(`local_attested_subtitle`). For an empty subtitle, `A Novel` and `Stories` are
+generic from any source, the package included, and are not observed. A colon segment stripped from a title fills a
 subtitle only through the automatic projection, and one rule,
 `segment_corroboration`, judges it on both seams. A generic segment is
 rejected. Otherwise a segment corroborates only if no provider states a

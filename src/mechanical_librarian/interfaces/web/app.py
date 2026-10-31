@@ -832,6 +832,7 @@ class _ReviewCounts(_ClosedModel):
     needs_attention: int
     no_attention_needed: int
     not_matched: int
+    preparation_failed: int
 
 
 class _MediaHealthObservation(_ClosedModel):
@@ -920,7 +921,9 @@ class _LibraryCover(_ClosedModel):
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
-    attention_state: Literal["needs_attention", "no_attention_needed", "not_matched"]
+    attention_state: Literal[
+        "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
+    ]
     cover: _LibraryCover | None = None
     detail_url: str | None
     # `case` opens a review case, `report` opens the recorded evidence of a
@@ -1028,7 +1031,7 @@ class _LibraryResponse(_ClosedModel):
     # how `review-library-v1` gained a required `media_health` member and stayed
     # v1; the literal makes the declared version and the served shape the same
     # statement, and publishes it in the OpenAPI a client is built from.
-    schema_version: Literal["review-library-v3"]
+    schema_version: Literal["review-library-v4"]
 
 
 class _AttentionItem(_ClosedModel):
@@ -1457,7 +1460,13 @@ class _PolicyProfile(_ClosedModel):
 
 class _RichQualificationBase(_ClosedModel):
     operation_scope: Literal[
-        "none", "fill", "fill_or_replace", "preserve", "add", "replace"
+        "none",
+        "fill",
+        "fill_or_replace",
+        "fill_or_respell",
+        "preserve",
+        "add",
+        "replace",
     ]
     candidate_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 

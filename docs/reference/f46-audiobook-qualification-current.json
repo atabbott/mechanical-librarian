@@ -48,6 +48,7 @@
       "isbn_form:preserve_exact:audiobook_isbn_fill",
       "isbn_form:preserve_exact:audiobook_isbn_preserve",
       "language_rendering:display_name:audiobook_language_fill",
+      "language_rendering:display_name:audiobook_language_normalize",
       "language_rendering:display_name:audiobook_language_preserve",
       "publisher_preference:publisher:audiobook_publisher_fill",
       "publisher_preference:publisher:audiobook_publisher_preserve",

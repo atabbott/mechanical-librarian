@@ -43,7 +43,10 @@ from mechanical_librarian.domain.field_value_comparison import (
     creator_list_reordered,
     description_alternative_immaterial,
     genre_alternative_immaterial,
+    title_article_key,
+    title_has_leading_article,
     title_identity_key,
+    title_leading_article,
     values_match,
 )
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
@@ -118,7 +121,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v41"
+POLICY_VERSION = "fixed-conservative-v42"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -133,7 +136,7 @@ _EVIDENCE_REFERENCE = re.compile(
 )
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel", "stories"})
+_GENERIC_SUBTITLES = frozenset({"a novel", "stories"})
 
 
 class ProposalValueError(ValueError):
@@ -1746,6 +1749,9 @@ def _observations(
             and _eligible_identifier_reference(report, destination, claim.reference)
             and _eligible_description(destination, claim.canonical)
             and _eligible_field_value(destination, claim.canonical)
+            # The book's own package carries the same generic label a
+            # provider does, and it is no more a subtitle there (#1496).
+            and not _generic_subtitle(report, destination, claim.canonical)
             and (
                 destination is not TargetDestination.TITLE
                 or _local_title_is_unambiguous(report, claim)
@@ -1816,7 +1822,7 @@ def _observations(
                     and _eligible_provider_description(
                         destination, claim.value, candidate
                     )
-                    and not _generic_provider_subtitle(report, destination, claim.value)
+                    and not _generic_subtitle(report, destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
                     and open_library_value_exclusion(
                         provider.authority,
@@ -1863,7 +1869,7 @@ def _observations(
     return tuple(values)
 
 
-def _generic_provider_subtitle(
+def _generic_subtitle(
     report: MetadataReport, destination: TargetDestination, value: str
 ) -> bool:
     return (
@@ -1878,7 +1884,7 @@ def _generic_provider_subtitle(
             for field in report.target.fields
             if field.destination is destination
         )
-        and _comparison(destination, value) in _GENERIC_PROVIDER_SUBTITLES
+        and _comparison(destination, value) in _GENERIC_SUBTITLES
     )
 
 
@@ -2187,6 +2193,8 @@ def _evidence_led_title_election(
     isbn_bound = False
     conflict = False
     titles: set[str] = set()
+    # Only a dropped article is the same title; two articles disagree (#1496).
+    articles: set[str] = set()
     variant_claims = {
         role: {values}
         for role, values in _title_variant_identities(
@@ -2208,9 +2216,16 @@ def _evidence_led_title_election(
             ).items():
                 variant_claims.setdefault(role, set()).add(identities)
             titles.update(
-                title_identity_key(c.value)
+                title_article_key(c.value)
                 for c in claims
                 if c.kind is ClaimKind.TITLE and type(c.value) is str
+            )
+            articles.update(
+                article
+                for c in claims
+                if c.kind is ClaimKind.TITLE
+                and type(c.value) is str
+                and (article := title_leading_article(c.value)) is not None
             )
             author_claims = tuple(
                 c
@@ -2283,9 +2298,20 @@ def _evidence_led_title_election(
         conflict = conflict or len(works) > 1
     if not isbn_bound or not titles:
         return result
+    articles.update(
+        article
+        for c in report.local_claims
+        if c.kind is ClaimKind.TITLE
+        and c.state is FieldState.VALID
+        and c.basis == "opening_matter"
+        and c.canonical
+        and title_article_key(c.canonical) in titles
+        and (article := title_leading_article(c.canonical)) is not None
+    )
     conflict = (
         conflict
         or len(titles) > 1
+        or len(articles) > 1
         or any(
             first.isdisjoint(second)
             for values in variant_claims.values()
@@ -2301,7 +2327,7 @@ def _evidence_led_title_election(
         and c.state is FieldState.VALID
         and c.basis == "opening_matter"
         and c.canonical
-        and title_identity_key(c.canonical) != title
+        and title_article_key(c.canonical) != title
         for c in report.local_claims
     )
     if conflict:
@@ -2319,7 +2345,7 @@ def _evidence_led_title_election(
         a
         for a in result.alternatives
         if type(a.value.value) is str
-        and title_identity_key(a.value.value) == title
+        and title_article_key(a.value.value) == title
         and supported.intersection(a.evidence_references)
         and a.assessment is ProposalAssessment.REPLACES_TARGET
     )
@@ -2951,7 +2977,7 @@ def _has_generic_provider_subtitle(report: MetadataReport) -> bool:
         and claim.state is FieldState.VALID
         and claim.value is not None
         and claim.applicability == "ebook"
-        and _generic_provider_subtitle(report, TargetDestination.SUBTITLE, claim.value)
+        and _generic_subtitle(report, TargetDestination.SUBTITLE, claim.value)
         for provider in report.providers
         for candidate in provider.candidates
         for claim in candidate.claims
@@ -4535,6 +4561,21 @@ def _evaluate(
     ):
         target = TargetField(destination, TargetFieldState.MISSING)
     alternatives = _alternatives(destination, target, observations, report)
+    if (
+        destination is TargetDestination.LANGUAGE
+        and target.state is TargetFieldState.VALUE
+        and type(target.value) is str
+        and len(alternatives) > 1
+    ):
+        # Beside another language, one that only respells the current value
+        # is no choice of its own (#1496).
+        alternatives = tuple(
+            value
+            for value in alternatives
+            if value.assessment is not ProposalAssessment.REPLACES_TARGET
+            or type(value.value.value) is not str
+            or not language_outcomes_compatible(target.value, value.value.value)
+        )
     if _language_respelling(destination, target, alternatives):
         return ProposalResult(
             destination,
@@ -4796,6 +4837,8 @@ def _alternatives(
             ),
             [],
         ).append(value)
+    if destination is TargetDestination.TITLE:
+        grouped = _merge_dropped_article_groups(grouped)
     entries: list[tuple[ProposalValue, ProposalAssessment, list[_Observed], bool]] = []
     for key in sorted(
         grouped,
@@ -4822,8 +4865,29 @@ def _alternatives(
                 proposal_values = isbn13_values
         proposal_value = min(
             proposal_values,
-            key=lambda value: canonical_json(value.to_data()),
+            # The article belongs to the title as read, so a grouped form
+            # that carries it is the title; the bare form is never offered
+            # (#1496).
+            key=lambda value: (
+                destination is TargetDestination.TITLE
+                and type(value.value) is str
+                and not title_has_leading_article(value.value),
+                canonical_json(value.to_data()),
+            ),
         )
+        if (
+            destination is TargetDestination.TITLE
+            and target.state is TargetFieldState.VALUE
+            and type(target.value) is str
+            and type(proposal_value.value) is str
+            and (target_fold := _title_article_fold(_value(destination, target.value)))
+            is not None
+            and target_fold[1] is not None
+            and _title_article_fold(proposal_value) == (target_fold[0], None)
+        ):
+            # Only the current title carries the article: the bare form
+            # preserves it rather than replacing it (#1496).
+            proposal_value = _value(destination, target.value)
         respelled = False
         if (
             destination in {TargetDestination.AUTHORS, TargetDestination.NARRATORS}
@@ -4873,7 +4937,7 @@ def _alternatives(
             # Every grouped form names one class, so the alternative states
             # the class's canonical display name (#1314). Only that exact
             # spelling preserves a current value; another spelling of the
-            # same class is a respelling the owner is offered.
+            # same class is a respelling, decided like a fill (#1496).
             proposal_value = ProposalValue(ProposalValueKind.TEXT, name)
             preserves = target.state is TargetFieldState.VALUE and target.value == name
         else:
@@ -4969,6 +5033,63 @@ def _series_values_match(target: object, candidate: object) -> bool:
 
 def _comparison(destination: TargetDestination, value: str) -> str:
     return canonical_text(destination, value)
+
+
+def _title_article_fold(value: ProposalValue) -> tuple[str, str | None] | None:
+    """Split one title's comparison form into its article-free rest and article."""
+    if type(value.value) is not str:
+        return None
+    first, _, rest = _comparison(TargetDestination.TITLE, value.value).partition(" ")
+    if first in {"the", "a", "an"} and rest:
+        return rest, first
+    return _comparison(TargetDestination.TITLE, value.value), None
+
+
+_GroupKey = tuple[str, "ProposalScope", "DateEvent | None", "DatePrecision | None"]
+
+
+def _dropped_article_alternative(
+    alternatives: tuple[ProposalAlternative, ...], observation: _Observed
+) -> ProposalAlternative | None:
+    """Find the one article-form alternative a bare title observation joined."""
+    fold = _title_article_fold(observation.value)
+    if fold is None or fold[1] is not None:
+        return None
+    matches = [
+        alternative
+        for alternative in alternatives
+        if alternative.scope is observation.scope
+        and (other := _title_article_fold(alternative.value)) is not None
+        and other[0] == fold[0]
+        and other[1] is not None
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _merge_dropped_article_groups(
+    grouped: dict[_GroupKey, list[_Observed]],
+) -> dict[_GroupKey, list[_Observed]]:
+    """Join a bare title's group to the one article form it drops (#1496).
+
+    A title that leads with a different article is a different title, so a
+    bare form beside two article forms stays its own value.
+    """
+    folds: dict[tuple[object, ...], dict[str | None, list[_GroupKey]]] = {}
+    for key, values in grouped.items():
+        fold = _title_article_fold(values[0].value)
+        if fold is not None:
+            folds.setdefault((fold[0], *key[1:]), {}).setdefault(fold[1], []).append(
+                key
+            )
+    merged = dict(grouped)
+    for forms in folds.values():
+        articles = [article for article in forms if article is not None]
+        if None not in forms or len(articles) != 1 or len(forms[articles[0]]) != 1:
+            continue
+        (article_key,) = forms[articles[0]]
+        for bare_key in forms[None]:
+            merged[article_key] = [*merged[article_key], *merged.pop(bare_key)]
+    return merged
 
 
 def _observation_key(destination: TargetDestination, value: ProposalValue) -> str:
@@ -5631,6 +5752,10 @@ def _bibliographic_combinations(
                     observation.scope,
                 )
             )
+            if alternative is None and destination is TargetDestination.TITLE:
+                alternative = _dropped_article_alternative(
+                    results[destination].alternatives, observation
+                )
             direct = alternative is not None
             if alternative is None and destination is TargetDestination.TITLE:
                 associated_id = title_associations.get(observation.representation)

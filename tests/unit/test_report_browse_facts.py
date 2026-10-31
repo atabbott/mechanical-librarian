@@ -123,19 +123,28 @@ _LENSES: tuple[LibraryLensFilter | None, ...] = (
     "needs_attention",
     "no_attention_needed",
     "not_matched",
+    "preparation_failed",
 )
 _ORACLE_LENS_CONDITIONS = {
     None: "1",
     "needs_attention": "attention=1",
-    "no_attention_needed": "attention=0 AND match_reason IS NULL",
+    "no_attention_needed": "attention=0 AND match_reason IS NULL AND failed=0",
     "not_matched": "attention=0 AND match_reason IS NOT NULL",
+    "preparation_failed": "attention=0 AND failed=1",
 }
+# Whether the work's latest preparation failed for good (#1413).
+_ORACLE_FAILED_SQL = (
+    "CASE WHEN (SELECT w.state='failed' AND w.failure_code IS NOT NULL "
+    "FROM review_preparation_work w WHERE w.connection_name=ml.connection_name "
+    "AND w.library_name=ml.library_name AND w.item_id=ml.item_id "
+    "ORDER BY w.updated_at DESC,w.work_id DESC LIMIT 1) THEN 1 ELSE 0 END"
+)
 
 
 def _oracle_library_sql(attached: bool, condition: str) -> str:
     terminal_union = (
         " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-        "item_id,NULL,0,0,NULL,ml_casefold(display_title),'',work_id,attempt,"
+        "item_id,NULL,0,0,NULL,1,ml_casefold(display_title),'',work_id,attempt,"
         "stage,failure_root,recovery_attempt,failure_code,"
         "display_title,display_authors,display_format FROM terminal"
         + _TERMINAL_LIBRARY_SEARCH_SQL
@@ -167,6 +176,8 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_limited,"
         + _ORACLE_MATCH_REASON_SQL
         + " AS match_reason,"
+        + _ORACLE_FAILED_SQL
+        + " AS failed,"
         "ml_casefold(COALESCE(scalars.title,'')) AS title_order,"
         "COALESCE(rc.review_case_id,'') AS case_order,"
         "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
@@ -179,14 +190,17 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         + terminal_union
         + "),totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
         "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND match_reason "
-        "IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total FROM candidates),"
+        "IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
+        "COALESCE(sum(CASE WHEN attention=0 AND failed=1 THEN 1 ELSE 0 END),0) "
+        "AS failed_total FROM candidates),"
         "page AS MATERIALIZED (SELECT "
         "1 AS present,case_id,report_id,proposal_set_id,"
         "connection_name,library_name,item_id,outcome,"
         "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
         "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
-        "AS provider_order,CASE WHEN attention=0 AND match_reason IS NOT NULL "
-        "THEN 0 ELSE 1 END AS match_order,match_reason,title_order,case_order,"
+        "AS provider_order,CASE WHEN attention=0 AND failed=1 THEN 0 "
+        "WHEN attention=0 AND match_reason IS NOT NULL "
+        "THEN 1 ELSE 2 END AS match_order,match_reason,title_order,case_order,"
         "work_id,attempt,stage,"
         "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
         + condition
@@ -201,7 +215,7 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
         "page.connection_name,page.library_name,page.item_id,page.outcome, "
         "COALESCE(page.present,0),totals.total,totals.attention_total,"
-        "page.match_reason,totals.not_matched_total "
+        "page.match_reason,totals.not_matched_total,totals.failed_total "
         "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
         "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
         "ORDER BY page.attention_order,page.provider_order,page.match_order,"
@@ -307,7 +321,9 @@ def _oracle_library(
     offset: int,
     lens: LibraryLensFilter | None,
     labels: tuple[tuple[str, str, str], ...],
-) -> tuple[tuple[tuple[str | None, str], ...], int, int, int, tuple[str | None, ...]]:
+) -> tuple[
+    tuple[tuple[str | None, str], ...], int, int, int, tuple[str | None, ...], int
+]:
     condition = _ORACLE_LENS_CONDITIONS[lens]
     catalogue = _catalogue_parameters(repository)
     rows = repository._connection.execute(
@@ -333,7 +349,14 @@ def _oracle_library(
                 values.append((None, _canonical_json(terminal)))
                 continue
         values.append((row[0], row[1]))
-    return tuple(values), rows[0][8], rows[0][9], rows[0][11], tuple(reasons)
+    return (
+        tuple(values),
+        rows[0][8],
+        rows[0][9],
+        rows[0][11],
+        tuple(reasons),
+        rows[0][12],
+    )
 
 
 def _oracle_attention(
@@ -412,6 +435,7 @@ def _assert_equal_to_oracle(
                     page.attention_total,
                     page.not_matched_total,
                     page.match_reasons,
+                    page.preparation_failed_total,
                 ) == _oracle_library(repository, search, limit, offset, lens, labels), (
                     search,
                     limit,
@@ -675,7 +699,7 @@ def test_edge_library_pages_counts_and_searches_equal_the_document_statements(
             _assert_equal_to_oracle(repository, _EDGE_SEARCHES, _EDGE_PAGES, labels)
             for labels in ((), _LABELS)
         )
-        assert compared == 4 * len(_EDGE_SEARCHES) * len(_EDGE_PAGES) * 5
+        assert compared == 4 * len(_EDGE_SEARCHES) * len(_EDGE_PAGES) * 6
     finally:
         repository.close()
 

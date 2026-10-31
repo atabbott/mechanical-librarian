@@ -228,7 +228,8 @@ which enabling does not restore.
   never TLS, proxy or decoding failures, and never inspect exception text.
 - Reports keep a closed dispatch lineage, never queries, credentials or
   responses. [Dispatch](../reference/configuration.md#dispatch) sends
-  audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS`.
+  audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS` and ebooks only to
+  `EBOOK_DISPATCH_ADAPTERS`.
 
 Per provider, where *5xx* means 500, 502, 503 and 504:
 
