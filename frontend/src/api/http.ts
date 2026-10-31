@@ -1031,6 +1031,7 @@ export interface ActivityDisplayView {
   last_failure: string | null
   ledger: ActivityLedgerView
   current_waiting: ActivityWaitingView | null
+  owner_action_required: number
   paused: boolean
   prepared: ActivityPreparedView
   provider_recovery?: readonly ProviderRecoveryActivityView[]
@@ -3210,6 +3211,10 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
               ),
             }
           })(),
+    owner_action_required: integerValue(
+      value.owner_action_required,
+      'activity_owner_action_required',
+    ),
     paused:
       typeof value.paused === 'boolean'
         ? value.paused

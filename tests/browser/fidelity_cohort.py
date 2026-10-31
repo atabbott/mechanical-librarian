@@ -1362,6 +1362,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     return {
         "schema_version": "continuous-field-activity-v3",
         "current_waiting": None,
+        "owner_action_required": 0,
         "backup_ready": True,
         "paused": False,
         "configured_libraries": [

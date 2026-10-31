@@ -1846,6 +1846,7 @@ describe('ReviewApiClient', () => {
     const activity = mapActivity({
       schema_version: 'continuous-field-activity-v3',
       backup_ready: null,
+      owner_action_required: 2,
       paused: false,
       configured_libraries: [
         {
@@ -1996,6 +1997,9 @@ describe('ReviewApiClient', () => {
       dispatch_reasons: [],
     })
     expect(() => mapActivity({ ...activity, waiting: { applying: 1 } })).toThrow(ApiError)
+    expect(activity.owner_action_required).toBe(2)
+    for (const owner_action_required of [undefined, -1, 1.5, '1'])
+      expect(() => mapActivity({ ...activity, owner_action_required })).toThrow(ApiError)
     expect(activity.events[0]).toMatchObject({
       library: 'Fiction',
       state: 'verified',
