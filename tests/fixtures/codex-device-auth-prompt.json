@@ -3,5 +3,6 @@
   "captured_from": "codex login --device-auth with an empty CODEX_HOME, stdin closed and stdout and stderr piped together, from the pinned linux-x64 package; the one-time code is masked in the four-and-five shape the service issues",
   "device_prompt": "\nWelcome to Codex [v\u001b[90m0.147.0\u001b[0m]\n\u001b[90mOpenAI's command-line coding agent\u001b[0m\n\nFollow these steps to sign in with ChatGPT using device code authorization:\n\n1. Open this link in your browser and sign in to your account\n   \u001b[94mhttps://auth.openai.com/codex/device\u001b[0m\n\n2. Enter this one-time code \u001b[90m(expires in 15 minutes)\u001b[0m\n   \u001b[94mABCD-EFGHJ\u001b[0m\n\n\u001b[90mContinue only if you started this login in Codex. If a website or another person gave you this code, cancel.\u001b[0m\n\n",
   "device_success": "Successfully logged in\n",
-  "login_status": "Logged in using ChatGPT\n"
+  "login_status": "Logged in using ChatGPT\n",
+  "device_timeout": "Error logging in with device code: device auth timed out after 15 minutes\n"
 }
