@@ -88,6 +88,9 @@ brackets are GitHub issues.
 - Library names one current page: the current lens is marked current within
   it. Choosing an Attention item on a phone keeps Back to works in view, and at
   enlarged text Attention's work titles no longer break mid-word (#1530).
+- A work's collapsed list of fields with nothing to decide is headed "No
+  change:" and their names, counts waiting or unavailable fields separately,
+  and says no source offered a different value (#1514).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
