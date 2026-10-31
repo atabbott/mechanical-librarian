@@ -32,12 +32,19 @@ export const FinishTray = ({
     const root = document.documentElement
     const measure = () => {
       const settled = element?.hasAttribute('data-static')
-      element?.toggleAttribute('data-static', element.offsetHeight > window.innerHeight / 3)
-      // Settling into the page carries a focused command with it, so it is
-      // brought back into view.
+      // It floats again only once clearly shorter, so a phone's toolbar
+      // showing and hiding never flips it back and forth.
+      const limit = window.innerHeight / (settled ? 3.5 : 3)
+      element?.toggleAttribute('data-static', element.offsetHeight > limit)
+      // Settling into the page carries focus with it, so the tray, or the
+      // focused control when the tray is taller than the window, is brought
+      // back into view.
       const focused = document.activeElement
       if (!settled && element?.hasAttribute('data-static') && focused instanceof HTMLElement)
-        if (element.contains(focused)) focused.scrollIntoView({ block: 'nearest' })
+        if (element.contains(focused))
+          (element.offsetHeight <= window.innerHeight ? element : focused).scrollIntoView({
+            block: 'nearest',
+          })
       if (element && getComputedStyle(element).position === 'sticky')
         root.style.setProperty('--finish-tray-height', `${String(element.offsetHeight)}px`)
       else root.style.removeProperty('--finish-tray-height')

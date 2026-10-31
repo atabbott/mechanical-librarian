@@ -8208,9 +8208,28 @@ _SETTINGS_LANGUAGE_FIT = """() => {
 def test_settings_language_picker_and_tray_fit_a_phone_at_200_percent_text() -> None:
     """At 375 and 320px with 200% text the "Add a language" picker shows its
     whole label, "Review changes" stays inside its button, and the save tray
-    floats only while it takes at most a third of the screen (#1503)."""
+    floats only while it takes at most a third of the screen (#1503). Opening
+    its change list on a phone, which settles it into the page, keeps the
+    focused toggle and Save settings in view."""
+    in_view = "node => { const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight + 0.5; }"
     with _owner_page() as (page, origin, _case_id):
         failures = []
+        page.set_viewport_size({"width": 375, "height": 667})
+        page.goto(f"{origin}/settings?group=libraries")
+        page.get_by_role("combobox", name=re.compile("^Add a language to")).click()
+        page.get_by_role("option").nth(1).click()
+        # From the top of the page, where only the floating tray shows the toggle.
+        page.evaluate("() => window.scrollTo(0, 0)")
+        page.locator(".settings-review-toggle").focus()
+        page.keyboard.press("Enter")
+        expect(page.locator(".settings-change-review")).to_be_visible()
+        page.evaluate(_TWO_FRAMES)
+        for control in (
+            page.locator(".settings-review-toggle"),
+            page.get_by_role("button", name="Save settings"),
+        ):
+            if not control.evaluate(in_view):
+                failures.append(f"open change list at 375x667: {control} is off screen")
         for width, height in ((375, 812), (320, 640)):
             page.set_viewport_size({"width": width, "height": height})
             page.goto(f"{origin}/settings?group=libraries")

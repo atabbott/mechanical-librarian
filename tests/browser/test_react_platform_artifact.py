@@ -5283,7 +5283,9 @@ def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> 
     held: list[Route] = []
     with ExitStack() as stack:
         page = _enlarged_cohort(stack, 1440, 900)
-        page.route("**/api/v1/metadata-policy/validate", lambda route: held.append(route))
+        page.route(
+            "**/api/v1/metadata-policy/validate", lambda route: held.append(route)
+        )
         failures = []
         for width, height in ((1440, 900), (1200, 900), (1024, 768), (375, 812)):
             page.set_viewport_size({"width": width, "height": height})
