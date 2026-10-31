@@ -1586,6 +1586,16 @@ def test_root_opens_library_only_with_a_valid_session(
         ("/activity", "/login?next=%2Factivity"),
         ("/review/case%201", "/login"),
     ],
+    ids=[
+        "library_plain",
+        "library_query",
+        "attention",
+        "review_query",
+        "settings",
+        "policy",
+        "activity",
+        "undecodable_case",
+    ],
 )
 def test_signed_out_workspace_page_signs_in_with_its_return_path(
     web: ReviewWebContext[FakeReviewRepository], requested: str, location: str
@@ -1603,6 +1613,13 @@ def test_signed_out_workspace_page_signs_in_with_its_return_path(
         "/review/review_case_" + "a" * 64,
         "/review/case-1?field=title",
         "/activity?filter=stopped",
+    ],
+    ids=[
+        "attention",
+        "library_query",
+        "review_case_id",
+        "review_query",
+        "activity_query",
     ],
 )
 def test_sign_in_page_carries_a_workspace_return_path(
@@ -1635,6 +1652,27 @@ def test_sign_in_page_carries_a_workspace_return_path(
         "/review/" + "a" * 129,
         "/library?" + "a" * 2049,
         "",
+    ],
+    ids=[
+        "protocol_relative",
+        "triple_slash",
+        "backslash_host",
+        "absolute_url",
+        "javascript",
+        "bare_host",
+        "dot_segments",
+        "nested_path",
+        "login",
+        "api",
+        "unknown_page",
+        "fragment",
+        "space",
+        "markup",
+        "query_backslash",
+        "newline",
+        "long_case_id",
+        "long_query",
+        "empty",
     ],
 )
 def test_sign_in_page_refuses_any_other_return_path(
