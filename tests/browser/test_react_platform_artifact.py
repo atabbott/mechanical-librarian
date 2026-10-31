@@ -4720,11 +4720,20 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                             if region[1] < cover["bottom"] - 1
                         ]
                         assert under == [], f"{where}: under the masthead {cover}"
-        # The popover opens inside the viewport, however the status wraps.
-        for width in (1440, 1100, 884, 390, 320):
+        # The popover opens inside the viewport, however the status wraps or
+        # however tall the masthead grows, and each of its controls is in view
+        # when focused (#1491).
+        for width, height in (
+            (1440, 900),
+            (1100, 900),
+            (884, 900),
+            (390, 844),
+            (375, 812),
+            (320, 640),
+        ):
             for text in styles:
-                where = f"{text} text at {width}px"
-                page.set_viewport_size({"width": width, "height": 900})
+                where = f"{text} text at {width}x{height}"
+                page.set_viewport_size({"width": width, "height": height})
                 page.goto("https://react-platform.invalid/settings?group=connection")
                 trigger = page.locator(".masthead .preparation-activity > button")
                 trigger.click()
@@ -4735,6 +4744,16 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                 assert box["x"] >= 0 and box["x"] + box["width"] <= width, (
                     f"{where}: {box}"
                 )
+                assert box["y"] >= 0 and box["y"] + box["height"] <= height + 0.5, (
+                    f"{where}: {box}"
+                )
+                for control in popover.get_by_role("button").all():
+                    control.focus()
+                    place = control.bounding_box()
+                    assert place is not None
+                    assert place["y"] >= 0 and place["y"] + place["height"] <= height, (
+                        f"{where}: {control.text_content()} at {place}"
+                    )
                 page.keyboard.press("Escape")
                 expect(trigger).to_be_focused()
 
@@ -4903,7 +4922,8 @@ _PAGER_ROWS = """() => {
 _SHORT_LEDGER_TARGETS = """() => {
   const floor = 2.75 * parseFloat(getComputedStyle(document.documentElement).fontSize);
   return [...document.querySelectorAll(
-      '.cm-activity-filters button, .cm-activity-event-group article > button')]
+      '.cm-activity-filters button, .cm-activity-event-group article > button, '
+      + '.cm-activity-pagination button, .cm-activity-page-jump input')]
     .filter((node) => node.getClientRects().length)
     .map((node) => [node.textContent.trim().slice(0, 24), node.getBoundingClientRect().height])
     .filter(([, height]) => height < floor - 0.5)
@@ -4916,7 +4936,8 @@ def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
     check's members open -- keeps its promises and whole labels, with no cell
     clipped, past its row or over another, and no pagination or filter control
     cut short, from the widest window to the narrowest phone (#1291). Every
-    filter chip and Details button is a full 2.75rem target (#1491)."""
+    filter chip, Details button and pager control is a full 2.75rem target
+    (#1491)."""
     styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
     text = "100%"
     with ExitStack() as stack:
@@ -5256,9 +5277,15 @@ def test_write_permission_panel_fits_a_phone_at_200_percent_text() -> None:
 
 def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> None:
     """With root font-size 200%, the Policy finish tray's preview-stage steps
-    and actions stay inside the editor at 1440, 1200, 1024 and 375px (#1490)."""
+    and actions stay inside the editor at 1440, 1200, 1024 and 375px (#1490).
+    While it validates, the tray grows past a third of the window and scrolls
+    with the page, and the focused command stays in view (#1503)."""
+    held: list[Route] = []
     with ExitStack() as stack:
         page = _enlarged_cohort(stack, 1440, 900)
+        page.route(
+            "**/api/v1/metadata-policy/validate", lambda route: held.append(route)
+        )
         failures = []
         for width, height in ((1440, 900), (1200, 900), (1024, 768), (375, 812)):
             page.set_viewport_size({"width": width, "height": height})
@@ -5267,6 +5294,15 @@ def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> 
                 "button", name="Ignore"
             ).click()
             page.get_by_role("button", name="Validate and preview").click()
+            page.get_by_role("button", name="Validating…").wait_for()
+            page.evaluate(_TWO_FRAMES)
+            focus = page.evaluate(
+                "() => { const box = document.activeElement.getBoundingClientRect();"
+                " return [document.activeElement.textContent.trim(), box.top, box.bottom]; }"
+            )
+            if focus[1] < 0 or focus[2] > height + 0.5:
+                failures.append(f"validating at {width}px: {focus} is off screen")
+            held.pop().fallback()
             page.get_by_role("button", name="Review activation").wait_for()
             page.evaluate(_TWO_FRAMES)
             failures += [
