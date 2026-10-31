@@ -385,8 +385,20 @@ def test_generic_provider_subtitle_vocabulary_does_not_discard_legitimate_text(
     assert {value} == {candidate.value.value for candidate in result.alternatives}
 
 
-def test_generic_subtitle_rule_does_not_apply_to_local_evidence() -> None:
-    local = _local_subtitle("A Novel", ClaimScope.WORK)
+@pytest.mark.parametrize(
+    ("value", "proposed"),
+    (
+        ("A Novel", False),
+        ("Stories", False),
+        ("a novel", False),
+        ("A Novel of Manners", True),
+        ("Novel", True),
+    ),
+    ids=("a_novel", "stories", "lower_a_novel", "a_novel_of", "novel"),
+)
+def test_generic_subtitle_rule_applies_to_the_package(value, proposed) -> None:
+    """The book's own generic label never fills an empty subtitle (#1496)."""
+    local = _local_subtitle(value, ClaimScope.WORK)
     result = _result(
         evaluate_report(
             _report(
@@ -401,7 +413,34 @@ def test_generic_subtitle_rule_does_not_apply_to_local_evidence() -> None:
         TargetDestination.SUBTITLE,
     )
 
-    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    if proposed:
+        assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+        assert {value} == {candidate.value.value for candidate in result.alternatives}
+    else:
+        assert (ProposalOutcome.INELIGIBLE, ()) == (
+            result.outcome,
+            result.alternatives,
+        )
+
+
+def test_generic_package_subtitle_still_preserves_a_populated_subtitle() -> None:
+    local = _local_subtitle("A Novel", ClaimScope.WORK)
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    subtitle=TargetField(
+                        TargetDestination.SUBTITLE, TargetFieldState.VALUE, "A Novel"
+                    )
+                ),
+                local_claims=(local,),
+            )
+        ),
+        TargetDestination.SUBTITLE,
+    )
+
+    assert ProposalOutcome.KEEP is result.outcome
+    assert result.alternatives[0].assessment is ProposalAssessment.PRESERVES_TARGET
 
 
 def test_equal_subtitles_keep_local_and_provider_scopes_separate() -> None:

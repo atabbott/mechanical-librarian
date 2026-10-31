@@ -12943,13 +12943,15 @@ describe('a focused field decision (#1519)', () => {
     expect(box).toHaveTextContent('Not enough independent sources agree on this value')
   })
 
-  it('does not restate the language respelling reason in a notice', async () => {
-    const reason =
-      'The current value names the same language in another spelling. Only you can choose to write it the other way.'
+  it('keeps the language respelling notice beside another withheld reason', async () => {
+    // An audiobook's regional tag stays the owner's for its own reason, so the
+    // respelling notice is what says the choice only changes the spelling (#1496).
+    const reason = 'Automatic is not qualified for this change.'
     open(focused({ notices: ['language_display_name'], automaticWithheldReason: reason }))
     expect(await screen.findByText(reason)).toBeVisible()
-    expect(screen.queryByLabelText('Comparison condition')).toBeNull()
-    expect(screen.queryByText(/accepting only changes how it is written/u)).toBeNull()
+    expect(screen.getByLabelText('Comparison condition')).toHaveTextContent(
+      /accepting only changes how it is written/u,
+    )
   })
 
   it('leaves out Recorded observations when the field has none', async () => {

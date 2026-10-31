@@ -405,7 +405,7 @@ describe('policy impact projections', () => {
       'writes the display name of the language the evidence names, such as English; keeps a current value already spelled that way',
     )
     expect(language.effect).toBe(
-      'Automatic only fills an empty or undetermined language; respelling a current value is always offered for review',
+      'Automatic fills an empty or undetermined language and respells a current value of the same language to that name; a different language is never written',
     )
     expect(language.fallback).toBe(
       'keeps the recorded form when a language has no display name; an undetermined language is never written',

@@ -1460,7 +1460,13 @@ class _PolicyProfile(_ClosedModel):
 
 class _RichQualificationBase(_ClosedModel):
     operation_scope: Literal[
-        "none", "fill", "fill_or_replace", "preserve", "add", "replace"
+        "none",
+        "fill",
+        "fill_or_replace",
+        "fill_or_respell",
+        "preserve",
+        "add",
+        "replace",
     ]
     candidate_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 

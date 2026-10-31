@@ -204,7 +204,6 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "description_fill:safe_plain_text",
             "isbn_form:preserve_exact",
             "isbn_form:prefer_isbn13",
-            "language_rendering:display_name",
             "series:primary_narrative",
             "series:source_order",
             "series:all_qualified",
@@ -214,6 +213,10 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
         assert (
             entries["cover_order:fixed_source_order"]["operation_scope"]
             == "fill_or_replace"
+        )
+        assert (
+            entries["language_rendering:display_name"]["operation_scope"]
+            == "fill_or_respell"
         )
         assert entries["tags:add"]["operation_scope"] == "add"
         assert entries["tags:replace"]["operation_scope"] == "replace"
