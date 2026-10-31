@@ -1312,6 +1312,58 @@ def test_a_cover_waits_three_times_then_stops_and_is_cleaned_up(
     assert sent == []
 
 
+@pytest.mark.parametrize("withdrawal", ("supersede", "revoke_consent"))
+def test_a_withdrawn_waiting_cover_is_cleaned_up(
+    effects: _EffectEnvironment, withdrawal: str
+) -> None:
+    """A waiting cover that is withdrawn deletes its restore point."""
+    operation = _cover(effects)
+    plan_id = operation.plan.plan_id
+    _lose_connection_after_capture(effects)
+    assert effects.service.apply(plan_id).failure == "connection"
+    assert effects.recovery.exists(plan_id)
+    if withdrawal == "supersede":
+        assert effects.service.supersede(operation.plan.authority.decision_id) == 1
+        assert effects.service.status(plan_id).state == "superseded"
+    else:
+        assert effects.service.revoke_consent(operation.plan.consent.consent_id) == 1
+    assert _cleanup(effects, plan_id) == [("completed",)]
+    assert not effects.recovery.exists(plan_id)
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+
+
+def test_a_cover_whose_write_landed_waits_and_is_verified_without_a_second_write(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _cover(effects)
+    plan_id = operation.plan.plan_id
+    sent = _sent(effects)
+    effects.target.fail_read_after_apply_for.add(plan_id)
+    assert effects.service.apply(plan_id).state == "reconciling"
+    unknown = effects.service.reconcile(plan_id)
+    assert (unknown.state, unknown.failure) == ("retryable", "target_failure")
+    effects.target.fail_reads_for.clear()
+    effects.capabilities.category = "connection_unavailable"
+    assert effects.service.apply(plan_id).failure == "connection"
+    assert effects.recovery.exists(plan_id)
+    assert _cleanup(effects, plan_id) == []
+    effects.capabilities.category = "allowed"
+    revived = _cover_again(effects)
+    assert revived is not None
+    assert (revived.state, revived.failure, revived.attempt) == (
+        "retryable",
+        "target_failure",
+        unknown.attempt,
+    )
+    assert effects.service.apply(plan_id).state == "verified"
+    assert sent == [plan_id]
+    assert _cleanup(effects, plan_id) == [("completed",)]
+    assert not effects.recovery.exists(plan_id)
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+
+
 def test_only_a_waiting_cover_may_lack_its_cleanup(
     effects: _EffectEnvironment,
 ) -> None:
