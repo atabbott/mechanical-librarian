@@ -72,7 +72,13 @@ from tests.support.review_web_doubles import (
     review_web_context,
 )
 
-_LENSES = ("all", "needs_attention", "no_attention_needed", "not_matched")
+_LENSES = (
+    "all",
+    "needs_attention",
+    "no_attention_needed",
+    "not_matched",
+    "preparation_failed",
+)
 _RECOVERY = "fiction"
 
 
@@ -241,6 +247,7 @@ def test_each_not_matched_work_names_one_reason_in_precedence(tmp_path: Path) ->
             "needs_attention": 0,
             "no_attention_needed": 1,
             "not_matched": 6,
+            "preparation_failed": 0,
         }
         clear = browse.library(
             lens="no_attention_needed", search=None, limit=50, cursor=None
@@ -527,7 +534,7 @@ def test_the_served_lens_agrees_with_the_store_double(
     served = web.client.get("/api/v1/library?lens=not_matched")
     assert served.status_code == 200, served.text
     body = served.json()
-    assert body["schema_version"] == "review-library-v3"
+    assert body["schema_version"] == "review-library-v4"
     assert body["lens"] == "not_matched"
     assert body["counts"]["not_matched"] == 3
     assert {item["item"]: item["summary"]["state"] for item in body["items"]} == {
@@ -628,8 +635,8 @@ def test_preparation_counts_not_matched_by_the_library_predicate(
         repository.close()
 
 
-def test_a_terminal_preparation_failure_stays_where_it_was(tmp_path: Path) -> None:
-    """#1413 owns failed preparation; this lens does not move it."""
+def test_a_terminal_preparation_failure_is_counted_as_failed(tmp_path: Path) -> None:
+    """A work that failed before any report reads, and counts, as failed (#1413)."""
     (tmp_path / "catalogue").mkdir(mode=0o700)
     catalogue = open_catalogue(tmp_path / "catalogue" / "catalogue.sqlite", create=True)
     entry = CatalogueEntry(
@@ -666,17 +673,23 @@ def test_a_terminal_preparation_failure_stays_where_it_was(tmp_path: Path) -> No
         repository.fail_review_pipeline_action(
             action, "unreadable_media", False, 14, "track_1"
         )
-        page = BrowseReviewLibrary(repository).library(
-            lens="no_attention_needed", search=None, limit=50, cursor=None
+        browse = BrowseReviewLibrary(repository)
+        page = browse.library(
+            lens="preparation_failed", search=None, limit=50, cursor=None
         )
         assert page["counts"] == {
             "all": 1,
             "needs_attention": 0,
-            "no_attention_needed": 1,
+            "no_attention_needed": 0,
             "not_matched": 0,
+            "preparation_failed": 1,
         }
         (item,) = cast("list[dict[str, object]]", page["items"])
+        assert item["attention_state"] == "preparation_failed"
         assert item["summary"]["state"] == "preparation_failed"
+        assert not browse.library(
+            lens="no_attention_needed", search=None, limit=50, cursor=None
+        )["items"]
         progress = repository.review_pipeline_progress("primary", "fiction")
         assert progress is not None
         assert (progress.blocked, progress.not_matched) == (1, 0)
@@ -685,13 +698,13 @@ def test_a_terminal_preparation_failure_stays_where_it_was(tmp_path: Path) -> No
         catalogue.close()
 
 
-def test_a_later_terminal_failure_over_an_unmatched_report_stays_where_it_was(
+def test_a_later_terminal_failure_over_an_unmatched_report_is_counted_as_failed(
     tmp_path: Path,
 ) -> None:
     """The latest preparation failed, so the retained report is not Not matched.
 
     The row carries that failure, so it reads as the failure and is counted
-    where a failed preparation always was, never under Not matched (#1407).
+    as one (#1413), never under Not matched (#1407) or No attention needed.
     """
     repository = open_repository(tmp_path / "application.sqlite3")
     try:
@@ -735,21 +748,23 @@ def test_a_later_terminal_failure_over_an_unmatched_report_stays_where_it_was(
         )
 
         page = browse.library(
-            lens="no_attention_needed", search=None, limit=50, cursor=None
+            lens="preparation_failed", search=None, limit=50, cursor=None
         )
         assert page["counts"] == {
             "all": 1,
             "needs_attention": 0,
-            "no_attention_needed": 1,
+            "no_attention_needed": 0,
             "not_matched": 0,
+            "preparation_failed": 1,
         }
         (item,) = cast("list[dict[str, object]]", page["items"])
-        assert item["attention_state"] == "no_attention_needed"
+        assert item["attention_state"] == "preparation_failed"
         assert item["preparation"] is not None
         assert item["summary"]["state"] == "no_decision_recorded"
-        assert not browse.library(
-            lens="not_matched", search=None, limit=50, cursor=None
-        )["items"]
+        for lens in ("not_matched", "no_attention_needed"):
+            assert not browse.library(lens=lens, search=None, limit=50, cursor=None)[
+                "items"
+            ]
         progress = repository.review_pipeline_progress("primary", _RECOVERY)
         assert progress is not None
         assert (progress.blocked, progress.not_matched) == (1, 0)

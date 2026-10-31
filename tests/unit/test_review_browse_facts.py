@@ -234,6 +234,7 @@ def _pages(case_document: str, report_document: str) -> str:
         1,
         0,
         (None,) * len(library_rows),
+        0,
     )
     repository.read_review_attention.return_value = ReviewAttentionSnapshot(
         attention_rows,

@@ -175,8 +175,8 @@ badge counts works needing a decision. Under a search the status reads `Found m
 of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
-The lenses are All (the default), Needs attention, No attention needed and Not
-matched, in one row that scrolls sideways when the panel is narrow. Lens,
+The lenses are All (the default), Needs attention, No attention needed, Not
+matched and Could not finish, in one row that scrolls sideways when the panel is narrow. Lens,
 search, cursors, selected work and field live in the URL, so deep links and
 Back and Forward work. The pager offers only the moves that exist and is absent
 when the works fit on one page.
@@ -184,7 +184,9 @@ when the works fit on one page.
 Works needing a decision come first: those with complete provider evidence,
 then those with a limited lane, under **Provider evidence complete** and
 **Provider evidence limited**. Complete does not promise a match, and limited
-does not promise a retry. The other lenses are alphabetical.
+does not promise a retry. Works that could not finish follow under
+**Could not finish**, then Not matched, then the rest. The other
+lenses are alphabetical.
 
 A work with no case, nothing to decide and no admitted provider evidence is
 **Not matched**, counted beside Works as `7 works · 4 not matched`. Its status
@@ -194,10 +196,11 @@ only while a recovery job is scheduled), or **No provider matched**. If the
 recovery store cannot answer, Library drops only that promise and still loads
 the page and its counts.
 
-A work whose preparation could not finish stays a Preparation failed safely
-row, not Not matched, even if an earlier report was unmatched. An ebook whose
-candidates were found but not admitted as proposals stays in No attention
-needed.
+A work whose latest preparation could not finish is a **Preparation failed
+safely** row in **Could not finish**, counted beside Works as `2 could not
+finish`, even if an earlier report was retained or unmatched. A decision still
+open on a retained case keeps it in Needs attention. An ebook whose candidates
+were found but not admitted as proposals stays in No attention needed.
 
 ### Rows and selection
 

@@ -1912,6 +1912,7 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(
         "needs_attention": 1,
         "no_attention_needed": 1,
         "not_matched": 0,
+        "preparation_failed": 0,
     }
     assert len(body["items"]) == 1
     assert body["items"][0]["attention_state"] == "needs_attention"
@@ -1962,6 +1963,7 @@ def test_complete_library_includes_current_report_without_review_lineage(
         "needs_attention": 0,
         "no_attention_needed": 0,
         "not_matched": 1,
+        "preparation_failed": 0,
     }
     item = response.json()["items"][0]
     assert item["review_case_id"] is None
