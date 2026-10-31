@@ -1973,6 +1973,27 @@ def test_an_excluded_audiobook_retry_closes_stale_before_any_egress() -> None:
     assert {report.report_id} == set(repository.values)
 
 
+def test_an_excluded_ebook_retry_closes_stale_before_any_egress(
+    retry: _Retry,
+) -> None:
+    """A job queued before the ebook dispatch set (#1486) closes alone, as stale."""
+
+    def resolver(*_args: object) -> ConfiguredProviderRetry:
+        pytest.fail("the provider was resolved")
+
+    with pytest.raises(CurrentnessError) as raised:
+        retry.service(None, resolver=resolver).run(
+            retry.report.report_id,
+            (retry.failed.identity,),
+            provider_name="catalogue",
+            adapter="audible_catalog",
+            generation=2,
+        )
+
+    assert ("stale", None) == classify_provider_recovery_failure(raised.value)
+    assert {retry.report.report_id} == set(retry.repository.values)
+
+
 def _fed_audio_source(
     *, asserted: bool
 ) -> tuple[TargetSnapshot, tuple[LocalClaim, ...], MetadataDiscoveryPlan]:
