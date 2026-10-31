@@ -63,6 +63,9 @@ brackets are GitHub issues.
 - Choosing an item from the Attention queue keeps the chosen work's header,
   which takes focus, fully on screen and clear of the masthead at enlarged
   text (#1487).
+- Each Attention queue row's name for screen readers ends with its work's
+  title, so the same field in two works is no longer announced identically
+  (#1361).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 

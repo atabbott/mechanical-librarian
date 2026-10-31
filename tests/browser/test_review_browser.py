@@ -3954,9 +3954,12 @@ def test_load_more_attention_keeps_focus_on_the_first_row_it_added(
                     "() => document.activeElement?.dataset?.attentionRow ?? null"
                 )
                 assert focused == added[0], (focused, added)
+                # A row's name ends with its work's title (#1361).
                 work = page.evaluate(
-                    "() => document.getElementById(document.activeElement"
-                    ".getAttribute('aria-describedby')).textContent"
+                    "() => (row => "
+                    "row.getAttribute('aria-label')"
+                    ".slice(row.querySelector('b').textContent.length + 2))"
+                    "(document.activeElement)"
                 )
                 assert titles.all_text_contents().count(work) == 1
                 if cohort == 24:
@@ -9417,10 +9420,10 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 ).click()
                 later = queued.nth(initial_count)
                 expect(later).to_be_visible()
-                # A field row names its work through the group title (#1284).
+                # A field row's name ends with its work's title (#1284, #1361).
                 later_title = later.evaluate(
-                    "row => document.getElementById("
-                    "row.getAttribute('aria-describedby')).textContent"
+                    "row => "
+                    "row.getAttribute('aria-label').slice(row.querySelector('b').textContent.length + 2)"
                 )
                 assert later_title not in initial_titles
                 assert later_title not in first_library_titles
