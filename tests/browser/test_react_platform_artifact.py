@@ -34,6 +34,7 @@ from tests.browser.fidelity_cohort import (
 )
 from tests.browser.test_live_updates_browser import _ROW_PROMISES, _WIDER_TEXT
 from tests.browser.test_review_browser import _FOCUSED, _POLICY_MID_WORD, _TWO_FRAMES
+from tests.browser.text_size import set_root_text
 from tests.support.cover_images import synthetic_image
 
 # The outcome the review controller renders when a decision request is lost
@@ -689,13 +690,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     _fits_its_container(page, ".masthead", width)
                 for width in (1440, 900, 390):
                     page.set_viewport_size({"width": width, "height": 900})
-                    page.locator("html").evaluate(
-                        "node => { node.style.fontSize = '200%' }"
-                    )
+                    set_root_text(page, "200%")
                     _fits_its_container(page, ".connection-notice", width)
-                    page.locator("html").evaluate(
-                        "node => { node.style.fontSize = '' }"
-                    )
+                    set_root_text(page, "")
                 if path == "/library?lens=all":
                     check.click()
                     page.get_by_text(
@@ -705,13 +702,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     capture_visual_proof("connection-recovered")
                     for width in (1440, 900, 390):
                         page.set_viewport_size({"width": width, "height": 900})
-                        page.locator("html").evaluate(
-                            "node => { node.style.fontSize = '200%' }"
-                        )
+                        set_root_text(page, "200%")
                         _fits_its_container(page, ".connection-notice", width)
-                        page.locator("html").evaluate(
-                            "node => { node.style.fontSize = '' }"
-                        )
+                        set_root_text(page, "")
                     recovered.get_by_role("button", name="Dismiss").click()
                     expect(recovered).to_have_count(0)
 
@@ -2007,10 +2000,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 # boundary; return explicitly before measuring rail controls.
                 page.get_by_role("button", name="Back to works").click()
             page.locator(".library-work-row").first.wait_for()
-            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+            set_root_text(page, "200%")
             page.locator(".library-work-row").first.wait_for()
             assert overrunning_rail_controls() == [], zoom_width
-            page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+            set_root_text(page, "")
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto("https://react-platform.invalid/library?lens=all")
         page.locator(".library-work-row").first.wait_for()
@@ -2186,9 +2179,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         assert link.bounding_box()["height"] >= 44
                     assert_keyboard_path()
                 page.set_viewport_size({"width": 1440, "height": 900})
-                page.locator("html").evaluate(
-                    "node => { node.style.fontSize = '200%' }"
-                )
+                set_root_text(page, "200%")
                 assert page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
                 ), (active_page, scheme, "200%")
@@ -2196,7 +2187,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 for link in nav.get_by_role("link").all():
                     assert link.bounding_box()["height"] >= 44
                 assert_keyboard_path()
-                page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+                set_root_text(page, "")
                 if scheme == "dark":
                     page.get_by_role("button", name="Use light mode").click()
 
@@ -2363,9 +2354,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         for width, height in ((1440, 900), (900, 900), (390, 844)):
             page.set_viewport_size({"width": width, "height": height})
             assert page.evaluate("() => document.documentElement.scrollWidth") <= width
-        page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+        set_root_text(page, "200%")
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
-        page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+        set_root_text(page, "")
         before_description_choice = ambiguous_decisions
         summary.click()
         expect(
@@ -3393,7 +3384,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
             page.emulate_media(color_scheme="dark" if dark else "light")
             page.goto("https://react-platform.invalid/library?lens=all")
             expect(entries).to_have_count(3)
-            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+            set_root_text(page, "200%")
             for width in (390, 320):
                 page.set_viewport_size({"width": width, "height": 900})
                 where = f"{'dark' if dark else 'light'} 200% text at {width}px"
