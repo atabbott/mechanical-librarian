@@ -813,12 +813,12 @@ describe('Activity route', () => {
     [
       1,
       'A stopped change needs you',
-      'The ledger below says what it needs. Nothing retries it until you act.',
+      'Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, widen the range.',
     ],
     [
       2,
       '2 stopped changes need you',
-      'The ledger below says what each one needs. Nothing retries them until you act.',
+      'Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, widen the range.',
     ],
   ])(
     'never reads calm while %i changes wait on the owner',

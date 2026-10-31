@@ -204,8 +204,9 @@ _FIELD_EFFECT_HOLDS_DECISION_SQL = (
 )
 
 # A change stopped on one of these waits for the owner: it keeps its decision,
-# so nothing plans it again until a new decision or report replaces that
-# authority.  Activity counts the ones whose authority is still current (#1430).
+# so nothing plans it again.  Activity counts the ones whose authority is still
+# current and whose case is still the work's current case: a later decision
+# revokes the authority, and a later report admits a new case (#1430).
 _OWNER_ACTION_FAILURES = (
     "target_currentness",
     "third_value",
@@ -215,6 +216,10 @@ _OWNER_ACTION_FAILURES = (
 _OWNER_ACTION_COUNT_SQL = (
     "SELECT count(*) FROM field_effects effect JOIN field_effect_authorities authority "
     "ON authority.decision_id=effect.decision_id AND authority.current=1 "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.connection_name=effect.connection_name "
+    "AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+    "AND lineage.review_case_id=json_extract(effect.document,'$.plan.authority.review_case_id') "
     "WHERE effect.state='stale' AND json_extract(effect.document,'$.failure') IN ("
     + ",".join(f"'{failure}'" for failure in _OWNER_ACTION_FAILURES)
     + ")"

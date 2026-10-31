@@ -1744,7 +1744,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     : recoveryCount
                       ? 'Affected work remains held until its current state can be reconciled safely.'
                       : ownerAction
-                        ? `The ledger below says what ${ownerAction === 1 ? 'it needs' : 'each one needs'}. Nothing retries ${ownerAction === 1 ? 'it' : 'them'} until you act.`
+                        ? ownerAction === 1
+                          ? 'Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, widen the range.'
+                          : 'Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, widen the range.'
                         : throttled
                           ? `${throttleRemedy ? 'A source needs an API key added or checked; until then its lookups wait.' : 'Some lookups wait until the source allows them again; nothing is lost.'} Settings shows each source.`
                           : data.paused
@@ -1756,7 +1758,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                                   ? 'Nothing is written to your libraries until you give permission again.'
                                   : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
             </p>
-            {throttled && !connection && !recoveryCount ? (
+            {throttled && !connection && !recoveryCount && !ownerAction ? (
               <Link to="/settings" search={{ group: 'providers' }}>
                 Review metadata sources in Settings
               </Link>
