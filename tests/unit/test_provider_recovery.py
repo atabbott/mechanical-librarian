@@ -3341,8 +3341,9 @@ def test_shared_store_serializes_worker_observation_and_closes_after_shutdown() 
         worker.join()
         assert [] == failures
         store.reconcile_generation(generation=2, now=1)
-        assert store.claim_one(generation=2, now=1, token="owner") is None
-        assert "dormant" == store.snapshot()[0].state
+        # Retry now checks the dormant scope again even with nothing queued (#1375).
+        assert store.claim_one(generation=2, now=1, token="owner") is not None
+        assert "checking" == store.snapshot()[0].state
         store.close()
         with pytest.raises(ProviderRecoveryStoreError):
             store.activity_snapshot()
@@ -3800,11 +3801,11 @@ def test_startup_generation_reconciles_every_older_state_and_rejects_newer() -> 
         assert store.claim_one(generation=1, now=1, token="owner") is not None
         assert 3 == store.reconcile_generation(generation=2, now=9)
         rows = {item.connection: item for item in store.snapshot(limit=3)}
-        # None of the three has a job.  Only the credential failure stays
-        # dormant; the others keep a state a later enrolment reopens (#1375):
-        # the waiting scope keeps its schedule and the dropped lease ends
-        # exhausted, as complete_missing_jobs would have recorded it.
-        assert (2, "dormant", 0, None) == (
+        # None of the three has a job, so each keeps a state a later enrolment
+        # reopens (#1375): the dormant scope is checked again, the waiting one
+        # keeps its schedule and the dropped lease ends exhausted, as
+        # complete_missing_jobs would have recorded it.
+        assert (2, "waiting", 0, 9) == (
             rows["primary"].generation,
             rows["primary"].state,
             rows["primary"].attempt,
@@ -3825,7 +3826,7 @@ def test_startup_generation_reconciles_every_older_state_and_rejects_newer() -> 
         assert [
             ("aaa", 2, "exhausted", 1, None),
             ("other", 2, "waiting", 1, 1),
-            ("primary", 2, "dormant", 0, None),
+            ("primary", 2, "waiting", 0, 9),
         ] == store._connection.execute(
             "SELECT connection,generation,state,attempt,next_eligible_at FROM provider_recovery_events WHERE generation=2 ORDER BY connection"
         ).fetchall()
@@ -5522,14 +5523,29 @@ def test_throttling_reason_survives_exhaustion_reopen_and_same_generation_reconc
 
 @pytest.mark.parametrize(
     ("before", "after"),
-    [("exhausted", "exhausted"), ("waiting", "waiting"), ("checking", "exhausted")],
+    [
+        ("exhausted", "exhausted"),
+        ("waiting", "waiting"),
+        ("checking", "exhausted"),
+        ("dormant", "waiting"),
+    ],
 )
 def test_retry_now_keeps_a_jobless_scope_open_to_a_later_throttle(
     tmp_path: Path, before: str, after: str
 ) -> None:
     store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
-    _observe_burst(store)
-    if before != "waiting":
+    if before == "dormant":
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope="books",
+            generation=1,
+            failure="authentication",
+            now=0,
+        )
+    else:
+        _observe_burst(store)
+    if before in {"exhausted", "checking"}:
         claimed = store.claim_one(generation=1, now=100, token="owner")
         assert claimed is not None
         if before == "exhausted":

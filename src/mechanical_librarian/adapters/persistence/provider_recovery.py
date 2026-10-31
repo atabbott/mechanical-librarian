@@ -292,20 +292,15 @@ class SQLiteProviderRecoveryStore:
                     ).fetchone()
                     is not None
                 )
-                # With nothing outstanding the domain rule decides (#1375): a
-                # dormant credential scope waits for a job to prove the new
-                # generation, and a dropped lease ends as ``exhausted`` exactly
-                # as ``complete_missing_jobs`` would, so a later enrolment
-                # reopens it.  Every other state is kept as it was.
+                # With nothing outstanding the domain rule decides (#1375), so a
+                # later enrolment is always claimed: a dormant scope waits to be
+                # checked again, and a dropped lease ends as ``exhausted``
+                # exactly as ``complete_missing_jobs`` would record it.
                 successor = (
                     ProviderRecovery(
                         row[0], row[1], row[2], generation, "waiting", 0, now
                     )
                     if has_jobs
-                    else ProviderRecovery(
-                        row[0], row[1], row[2], generation, "dormant", row[5], None
-                    )
-                    if row[4] == "dormant"
                     else ProviderRecovery(
                         row[0], row[1], row[2], generation, "exhausted", row[5], None
                     )

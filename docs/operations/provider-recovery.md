@@ -68,9 +68,10 @@ by exactly one through an ordinary Settings save:
   fails, the service stops rather than run on old settings; restart it and the
   new generation takes effect.
 
-Retry now requeues every outstanding lookup at once. A scope with none keeps
-its state, so a lookup that fails there later is still retried. A dormant
-scope with none stays dormant until a later job proves the fix.
+Retry now requeues every outstanding lookup at once. A scope with none is
+never left dormant: a dormant one waits to be checked again, one caught
+mid-check ends as exhausted, and any other keeps its state. A lookup that
+fails there later is still retried.
 
 Nothing else wakes dormant recovery: no environment variable, file watcher or
 configuration hash. A dormant authentication or authorisation scope wakes only
