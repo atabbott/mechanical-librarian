@@ -12,7 +12,7 @@ import { MediaHealth } from '../components/MediaHealth'
 import { CountPhrases } from '../components/CountPhrases'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
-import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
+import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import {
   Fragment,
   useCallback,
@@ -23,7 +23,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
+import type { ComponentPropsWithRef, KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
 import {
@@ -177,6 +177,11 @@ const lensLabels = {
   no_attention_needed: 'No attention needed',
   not_matched: 'Not matched',
 } satisfies Record<LibraryLens, string>
+// The masthead's Library link is the current page; the active lens is the
+// current item within it, so it says `true` rather than a second `page` (#1530).
+const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
+  <a {...props} aria-current={props['aria-current'] ? 'true' : undefined} />
+))
 const reviewerUnavailableDetail = (reason: string | null) =>
   reason === 'profile contract requires memory_bytes=1073741824'
     ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
@@ -2759,6 +2764,53 @@ export default function LibraryPage({
   const observedSearchIdentity = useRef(librarySearchIdentity(search))
   const expectedSearchIdentity = useRef<string | null>(null)
   const searchInput = useRef<HTMLInputElement>(null)
+  const lensRow = useRef<HTMLElement>(null)
+  const pagerMoved = useRef(false)
+  const pager = useRef<HTMLDivElement>(null)
+  // The lenses scroll sideways in one row. An edge with more lenses beyond it
+  // fades, so a row that happens to end between two lenses still shows it
+  // continues. The current lens is brought into the row's view, clear of the
+  // fade, without moving the page: on load, on a lens change, and when the row
+  // or its lenses change size, as with enlarged text.
+  useLayoutEffect(() => {
+    const row = lensRow.current
+    if (!row) return
+    const mark = () => {
+      const start = row.scrollLeft > 1
+      const end = row.scrollLeft + row.clientWidth < row.scrollWidth - 1
+      if (start || end) row.dataset.more = start && end ? 'both' : start ? 'start' : 'end'
+      else delete row.dataset.more
+    }
+    const reveal = () => {
+      const current = row.querySelector<HTMLElement>('[aria-current]')
+      if (current) {
+        const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
+        const rowBox = row.getBoundingClientRect()
+        const box = current.getBoundingClientRect()
+        if (box.left < rowBox.left + fade) row.scrollLeft -= rowBox.left + fade - box.left
+        else if (box.right > rowBox.right - fade)
+          row.scrollLeft += box.right - (rowBox.right - fade)
+      }
+      mark()
+    }
+    reveal()
+    row.addEventListener('scroll', mark, { passive: true })
+    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(reveal) : null
+    for (const node of [row, ...row.children]) resized?.observe(node)
+    return () => {
+      row.removeEventListener('scroll', mark)
+      resized?.disconnect()
+    }
+  }, [search.lens])
+  // A move to the first or last page removes the button that was pressed, so
+  // focus goes to the move that remains rather than to the page.
+  const shownPage = data?.page
+  useEffect(() => {
+    if (!pagerMoved.current || retained) return
+    pagerMoved.current = false
+    if (document.activeElement === document.body)
+      pager.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true })
+  }, [shownPage, retained])
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -3684,7 +3736,9 @@ export default function LibraryPage({
   // A work chosen from the attention queue takes focus on its header without
   // scrolling. With enlarged text the header can sit below the fold, or under
   // the masthead, so once it holds focus it is brought fully into view; the
-  // page's scroll padding keeps it clear of the masthead (#1487).
+  // page's scroll padding keeps it clear of the masthead (#1487). Where Back to
+  // works leads the work, the reveal starts there instead, so it stays in view
+  // with the header beneath it, as much of it as the screen holds (#1530).
   useEffect(() => {
     if (!revealQueueChoice.current || !(selectedDetailReady || selectedReadError)) return
     revealQueueChoice.current = false
@@ -3692,8 +3746,18 @@ export default function LibraryPage({
     const focusFrame = requestAnimationFrame(() => {
       revealFrame = requestAnimationFrame(() => {
         const active = document.activeElement
-        if (active instanceof HTMLElement && active.closest('#main-content .workspace-detail'))
+        if (!(active instanceof HTMLElement && active.closest('#main-content .workspace-detail')))
+          return
+        const back = document.querySelector<HTMLElement>('.compact-workspace-back')
+        if (!back?.getClientRects().length) {
           active.scrollIntoView({ block: 'nearest' })
+          return
+        }
+        const masthead = document.querySelector<HTMLElement>('.masthead')?.getBoundingClientRect()
+        const clear = Math.max(0, masthead?.bottom ?? 0)
+        const top = back.getBoundingClientRect().top
+        if (top < clear || active.getBoundingClientRect().bottom > window.innerHeight)
+          window.scrollBy({ top: top - clear })
       })
     })
     return () => {
@@ -4059,6 +4123,7 @@ export default function LibraryPage({
   // A retained page's cursors belong to the key the URL just left.
   const movePage = (cursor: string | undefined) => {
     if (retained) return
+    pagerMoved.current = true
     void navigate({
       search: (current) => {
         const next = { ...current }
@@ -4459,10 +4524,10 @@ export default function LibraryPage({
               )}
             </span>
           </div>
-          <nav className="lenses" aria-label="Library lenses">
+          <nav className="lenses" aria-label="Library lenses" ref={lensRow}>
             {(['all', 'needs_attention', 'no_attention_needed', 'not_matched'] as const).map(
               (lens) => (
-                <Link
+                <LensLink
                   key={lens}
                   to="/library"
                   search={{
@@ -4479,7 +4544,7 @@ export default function LibraryPage({
                   activeProps={{ 'aria-current': 'page' }}
                 >
                   {lensLabels[lens]}
-                </Link>
+                </LensLink>
               ),
             )}
           </nav>
@@ -4498,16 +4563,18 @@ export default function LibraryPage({
                 placeholder="Search works…"
                 onChange={(event) => runSearch(event.target.value)}
               />
-              <button
-                type="button"
-                disabled={!queryText}
-                onClick={() => {
-                  runSearch('')
-                  searchInput.current?.focus()
-                }}
-              >
-                Clear
-              </button>
+              {queryText ? (
+                <button
+                  type="button"
+                  aria-label="Clear search text"
+                  onClick={() => {
+                    runSearch('')
+                    searchInput.current?.focus()
+                  }}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
+              ) : null}
             </div>
           </form>
           <div className="library-work-list" aria-busy={retained || undefined}>
@@ -4680,32 +4747,34 @@ export default function LibraryPage({
               })
             )}
           </div>
-          {data ? (
-            <div className="library-pager" aria-busy={retained || undefined}>
-              <button
-                type="button"
-                disabled={!data.previousCursor}
-                aria-disabled={retained || undefined}
-                onClick={() => movePage(data.previousCursor)}
-                onPointerEnter={() => pageIntent(data.previousCursor)}
-                onFocus={() => pageIntent(data.previousCursor)}
-              >
-                ← Previous
-              </button>
-              <span>
-                Page {String(data.page)}
-                {data.nextCursor ? '' : ' · Last page'}
-              </span>
-              <button
-                type="button"
-                disabled={!data.nextCursor}
-                aria-disabled={retained || undefined}
-                onClick={() => movePage(data.nextCursor)}
-                onPointerEnter={() => pageIntent(data.nextCursor)}
-                onFocus={() => pageIntent(data.nextCursor)}
-              >
-                Next →
-              </button>
+          {data && (data.previousCursor || data.nextCursor) ? (
+            // Only the moves that exist are offered; with one page there is no pager.
+            <div className="library-pager" aria-busy={retained || undefined} ref={pager}>
+              {data.previousCursor ? (
+                <button
+                  type="button"
+                  className="library-pager-previous"
+                  aria-disabled={retained || undefined}
+                  onClick={() => movePage(data.previousCursor)}
+                  onPointerEnter={() => pageIntent(data.previousCursor)}
+                  onFocus={() => pageIntent(data.previousCursor)}
+                >
+                  ← <span className="library-pager-word">Previous</span>
+                </button>
+              ) : null}
+              <span>Page {String(data.page)}</span>
+              {data.nextCursor ? (
+                <button
+                  type="button"
+                  className="library-pager-next"
+                  aria-disabled={retained || undefined}
+                  onClick={() => movePage(data.nextCursor)}
+                  onPointerEnter={() => pageIntent(data.nextCursor)}
+                  onFocus={() => pageIntent(data.nextCursor)}
+                >
+                  <span className="library-pager-word">Next</span> →
+                </button>
+              ) : null}
             </div>
           ) : null}
         </section>

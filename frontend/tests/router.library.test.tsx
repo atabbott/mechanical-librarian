@@ -70,7 +70,7 @@ it('keeps the active search caret through debounced Library URL changes', async 
   await user.clear(search)
   await user.type(search, 'replacement')
   await waitFor(() => expect(router.state.location.search.q).toBe('replacement'))
-  await user.click(screen.getByRole('button', { name: 'Clear' }))
+  await user.click(screen.getByRole('button', { name: 'Clear search text' }))
   expect(search).toHaveFocus()
   await waitFor(() => expect(router.state.location.search.q).toBeUndefined())
   expect(screen.getByText('1 work', { selector: '[role=status]' })).toHaveAttribute(
@@ -2229,7 +2229,7 @@ describe('Library route', () => {
     )
     expect(await screen.findByRole('link', { name: 'Not matched' })).toHaveAttribute(
       'aria-current',
-      'page',
+      'true',
     )
     // Inside its own lens the rows need no group heading.
     expect(screen.queryByRole('heading', { name: 'Not matched' })).toBeNull()
@@ -2652,13 +2652,83 @@ describe('Library route', () => {
     )
   })
 
-  it('closes the last page in plain words (#1286)', async () => {
-    // The fixture page has no next cursor, so it is the last page.
-    const last = { ...library, page: 3, previousCursor: 'page-2' }
-    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => last) }
-    renderRoute('/library?lens=all&cursor=page-3', http)
-    expect(await screen.findByText('Page 3 · Last page')).toBeVisible()
-    expect(screen.queryByText(/bounded current result/u)).toBeNull()
+  it.each([
+    ['first', { page: 1, nextCursor: 'page-2' }, false, true],
+    ['middle', { page: 2, nextCursor: 'page-3', previousCursor: 'page-1' }, true, true],
+    ['last', { page: 3, previousCursor: 'page-2' }, true, false],
+  ] as const)(
+    'offers only the moves the %s page has (#1520)',
+    async (_name, cursors, previous, next) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getLibrary: vi.fn(async () => ({ ...library, ...cursors })),
+      }
+      renderRoute('/library?lens=all', http)
+      expect(await screen.findByText(`Page ${String(cursors.page)}`)).toBeVisible()
+      expect(screen.queryAllByRole('button', { name: '← Previous' })).toHaveLength(previous ? 1 : 0)
+      expect(screen.queryAllByRole('button', { name: 'Next →' })).toHaveLength(next ? 1 : 0)
+      expect(screen.queryByText(/Last page|bounded current result/u)).toBeNull()
+    },
+  )
+
+  it('shows no pager when the works fit on one page (#1520)', async () => {
+    renderRoute('/library?lens=all')
+    await screen.findByRole('button', { name: /^A Book\./u })
+    expect(document.querySelector('.library-pager')).toBeNull()
+    expect(screen.queryByText(/^Page /u)).toBeNull()
+  })
+
+  it('moves focus to the remaining move when the pressed one goes (#1520)', async () => {
+    const user = userEvent.setup()
+    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+      search.cursor === 'page-2'
+        ? { ...library, page: 2, previousCursor: 'page-1' }
+        : { ...library, page: 1, nextCursor: 'page-2' },
+    )
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+    await user.click(await screen.findByRole('button', { name: 'Next →' }))
+    const previous = await screen.findByRole('button', { name: '← Previous' })
+    expect(screen.queryByRole('button', { name: 'Next →' })).toBeNull()
+    await waitFor(() => expect(previous).toHaveFocus())
+    await user.click(previous)
+    const next = await screen.findByRole('button', { name: 'Next →' })
+    await waitFor(() => expect(next).toHaveFocus())
+  })
+
+  it('clears the search from inside the field, only while it has text (#1520)', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all')
+    const box = await screen.findByRole('searchbox')
+    expect(box).toHaveAttribute('maxLength', '128')
+    expect(screen.queryByRole('button', { name: 'Clear search text' })).toBeNull()
+    await user.type(box, 'book')
+    await waitFor(() => expect(router.state.location.search.q).toBe('book'))
+    const clear = screen.getByRole('button', { name: 'Clear search text' })
+    expect(box.parentElement).toContainElement(clear)
+    await user.click(clear)
+    expect(box).toHaveFocus()
+    expect(box).toHaveValue('')
+    await waitFor(() => expect(router.state.location.search.q).toBeUndefined())
+    expect(screen.queryByRole('button', { name: 'Clear search text' })).toBeNull()
+  })
+
+  it('names one current page, with the current lens current within it (#1530)', async () => {
+    renderRoute('/library?lens=needs_attention')
+    const lenses = await screen.findByRole('navigation', { name: 'Library lenses' })
+    await waitFor(() =>
+      expect(within(lenses).getByRole('link', { name: 'Needs attention' })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
+    )
+    for (const link of within(lenses).getAllByRole('link'))
+      if (link.textContent !== 'Needs attention') expect(link).not.toHaveAttribute('aria-current')
+    expect(document.querySelectorAll('[aria-current="page"]')).toHaveLength(1)
+    expect(
+      within(screen.getByRole('navigation', { name: 'Primary workspace' })).getByRole('link', {
+        name: 'Library',
+      }),
+    ).toHaveAttribute('aria-current', 'page')
   })
 
   describe('retention and intent prefetch', () => {
@@ -2919,7 +2989,7 @@ describe('Library route', () => {
         q: 'clock',
       }),
     )
-    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    await user.click(screen.getByRole('button', { name: 'Clear search text' }))
     await waitFor(() =>
       expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1' }),
     )

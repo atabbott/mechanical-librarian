@@ -169,19 +169,27 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-works-heading { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:0 1rem; }
 .library-works-heading h2 { margin:0; font-family:Georgia,serif; font-size:1.45rem; overflow-wrap:normal; }
 .library-works-heading > span { color:var(--soft); font-size:.75rem; }
-.lenses { display:flex; flex-wrap:wrap; gap:.25rem; margin:1rem 0 .65rem; padding:.25rem 0; }
-.lenses a { display:inline-flex; flex:1 0 min-content; overflow-wrap:normal; max-width:100%; min-width:44px; min-height:44px; align-items:center; justify-content:center; padding:.45rem .55rem; border:1px solid var(--line); border-radius:999px; color:var(--soft); font-size:.75rem; font-weight:650; line-height:1.2; text-align:center; text-decoration:none; }
-.lenses a[aria-current='page'] { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); }
-/* Four lenses need about 16em of the works panel at any text size; narrower, two by two rather than one lone wide pill (#1407). */
-.library-works { container-type:inline-size; }
-@container (max-width:16.5em) { .lenses { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } }
+/* One row that scrolls sideways when the panel is narrow; lenses keep their width, so the next one is cut at the edge,
+   and an edge with more beyond it fades (LibraryPage marks data-more). The row's inset keeps each lens's focus ring
+   inside the scroller, its negative margin keeps lenses aligned, and its scroll padding keeps focus clear of a fade. */
+.lenses { display:flex; gap:.25rem; margin:.65rem -.35rem .3rem; padding:.35rem; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; scroll-padding-inline:2rem; }
+.lenses[data-more='end'] { mask-image:linear-gradient(to right,#000 calc(100% - 2rem),transparent); }
+.lenses[data-more='start'] { mask-image:linear-gradient(to left,#000 calc(100% - 2rem),transparent); }
+.lenses[data-more='both'] { mask-image:linear-gradient(to right,transparent,#000 2rem,#000 calc(100% - 2rem),transparent); }
+.lenses a { display:inline-flex; flex:none; overflow-wrap:normal; white-space:nowrap; min-width:44px; min-height:44px; align-items:center; justify-content:center; padding:.45rem .55rem; border:1px solid var(--line); border-radius:999px; color:var(--soft); font-size:.75rem; font-weight:650; line-height:1.2; text-align:center; text-decoration:none; }
+.lenses a[aria-current='true'] { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); }
 .search { margin-block:1rem; }
 .search label { display:block; margin-bottom:.3rem; font-size:.76rem; font-weight:700; }
 .search div { display:flex; width:min(100%,40rem); }
-.search input { min-width:0; flex:1; padding:.7rem; color:var(--ink); background:var(--surface-strong); border:1px solid var(--field-line); }
+.search input { min-width:0; flex:1; padding:.7rem; color:var(--ink); background:var(--surface-strong); border:1px solid var(--field-line); border-radius:.5rem; }
 .library-search { margin:.5rem 0; }
-.library-search div { width:100%; flex-wrap:wrap; }
-.library-search input { flex:1 1 10ch; }
+/* The clear control sits inside the field, at its end, only while there is text to clear. */
+.library-search div { position:relative; width:100%; }
+.library-search input { min-height:44px; }
+.library-search input:not(:placeholder-shown) { padding-inline-end:2.75rem; }
+.library-search input::-webkit-search-cancel-button { appearance:none; display:none; }
+.library-search button { position:absolute; inset-block:0; inset-inline-end:0; width:2.75rem; min-height:0; padding:0; border:0; border-radius:0 .5rem .5rem 0; color:var(--soft); background:transparent; font-size:1.1rem; line-height:1; }
+.library-search button:hover { color:var(--ink); }
 .library-work-list { display:grid; gap:.35rem; }
 /* Retained content stays in place, marked busy, while a newer read for another
    key is pending. The count is soft text, which keeps 4.8:1 in light theme only at .9. */
@@ -217,10 +225,14 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-work-status { display:flex; flex-wrap:wrap; gap:.3rem; margin-top:.5rem; overflow-wrap:anywhere; }
 .preview-button { min-height:44px; padding:.4rem .65rem; background:transparent; font-size:.75rem; }
 .library-pager, .attention-pager { display:flex; align-items:center; justify-content:flex-end; gap:1rem; margin-top:.85rem; padding-top:.85rem; border-top:1px solid var(--line); color:var(--soft); font-size:.75rem; }
-.library-pager { flex-wrap:wrap; justify-content:space-between; gap:.5rem; }
-.library-pager > span { flex:1 1 auto; text-align:center; }
-.library-pager button { min-height:44px; padding:.4rem .7rem; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--accent-strong); background:var(--surface); font-size:.75rem; line-height:1.25; overflow-wrap:normal; }
-.library-pager button:disabled { color:var(--soft); opacity:.5; }
+.library-pager { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); gap:.5rem; }
+.library-pager > span { grid-column:2; text-align:center; white-space:nowrap; }
+.library-pager-previous { grid-column:1; justify-self:start; }
+.library-pager-next { grid-column:3; justify-self:end; }
+/* Where the words would not fit on one line, as at 200% text on a phone, the moves keep their arrows and their names. */
+.library-pager { container-type:inline-size; }
+@container (max-width:19em) { .library-pager-word { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; } }
+.library-pager button { min-height:44px; padding:.4rem .7rem; white-space:nowrap; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--accent-strong); background:var(--surface); font-size:.75rem; line-height:1.25; overflow-wrap:normal; }
 .library-pager a { display:inline-flex; min-height:44px; align-items:center; padding-inline:.25rem; }
 /* Programmatic route focus stays useful to a screen reader, but these
    containers are never reachable by Tab, so Firefox's persistent section

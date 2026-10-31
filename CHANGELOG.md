@@ -70,6 +70,11 @@ brackets are GitHub issues.
   bundled Codex CLI prints, instead of failing at once. The link opens in a
   new tab, and the code stays still while you select it and has a Copy
   button (#1493).
+- The Works panel's lenses sit in one row that scrolls sideways, the pager
+  offers only the moves that exist (none for a single page), and search is a
+  rounded field with a × inside to clear it (#1520).
+- Library names one current page: the current lens is marked current within
+  it. Choosing an Attention item on a phone keeps Back to works in view (#1530).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
