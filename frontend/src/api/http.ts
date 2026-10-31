@@ -169,8 +169,8 @@ export const settingsAudibleMarketplaceOrder: readonly string[] =
 
 export const settingsValidationCopy = settingsVocabulary.errors
 
-// The lens a work belongs to; All lists every one of them (#1407). A work
-// whose preparation failed before it had a report has its own (#1413).
+// The lens a work belongs to; All lists every one of them (#1407). A work with
+// nothing open whose latest preparation failed has its own (#1413).
 export const attentionStates = [
   'needs_attention',
   'no_attention_needed',

@@ -4039,3 +4039,111 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     ]
                     == expected
                 ), (search, lens)
+
+
+def test_a_failed_preparation_leaves_an_open_decision_in_needs_attention(
+    tmp_path: Path,
+) -> None:
+    """A retained case's later failure moves it only once nothing is open (#1413).
+
+    Both works hold a case and then fail their latest preparation. The one with
+    a decision still open stays in Needs attention; the settled one is counted
+    as failed. Every item reads the lens it is listed under, and the counts
+    partition All.
+    """
+    from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+
+    def at_item(source: MetadataReport, item: str) -> MetadataReport:
+        return MetadataReport.create(
+            target=TargetFacts(
+                source.target.connection,
+                source.target.library,
+                item,
+                source.target.fields,
+            ),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            cover_sources=source.cover_sources,
+        )
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    catalogue = open_catalogue(tmp_path / "catalogue.sqlite", create=True)
+    try:
+        for report in (
+            at_item(_report("Attention work", actionable=True), "attention"),
+            at_item(_report("Settled work", "c", "d", actionable=False), "settled"),
+        ):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        entries = tuple(
+            CatalogueEntry(
+                "primary",
+                "ebooks",
+                "lib-1",
+                item,
+                1,
+                f"Title {item}",
+                ("Writer",),
+                True,
+                False,
+                "singular-supported",
+                digit * 64,
+                "/synthetic.epub",
+                "epub",
+                "/media",
+            )
+            for item, digit in (("attention", "1"), ("settled", "2"))
+        )
+        catalogue.acquire_refresh()
+        generation = catalogue.publish("a" * 64, entries)
+        repository.bind_library_catalogue(tmp_path / "catalogue.sqlite", "a" * 64)
+        repository.request_review_scan("primary", "ebooks", "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, generation, "a" * 64, entries, 12
+        )
+        tick = 13
+        while action := repository.claim_review_pipeline_action(tick):
+            repository.fail_review_pipeline_action(
+                action, "unreadable_media", False, tick + 1, "track_1"
+            )
+            tick += 2
+
+        browser = BrowseReviewLibrary(repository)
+        listed: dict[str, list[tuple[str, str]]] = {}
+        for lens in (
+            "all",
+            "needs_attention",
+            "no_attention_needed",
+            "not_matched",
+            "preparation_failed",
+        ):
+            page = browser.library(lens=lens, search=None, limit=25, cursor=None)
+            assert page["counts"] == {
+                "all": 2,
+                "needs_attention": 1,
+                "no_attention_needed": 0,
+                "not_matched": 0,
+                "preparation_failed": 1,
+            }
+            listed[lens] = [
+                (cast(str, item["item"]), cast(str, item["attention_state"]))
+                for item in cast(list[dict[str, object]], page["items"])
+            ]
+        assert listed["needs_attention"] == [("attention", "needs_attention")]
+        assert listed["preparation_failed"] == [("settled", "preparation_failed")]
+        assert listed["no_attention_needed"] == listed["not_matched"] == []
+        # All reads the open decision first, then the failure.
+        assert listed["all"] == [
+            ("attention", "needs_attention"),
+            ("settled", "preparation_failed"),
+        ]
+    finally:
+        repository.close()
+        catalogue.close()

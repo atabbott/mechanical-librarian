@@ -268,7 +268,7 @@ class ReviewLibrarySnapshot:
     # `unavailable` or `no_match` -- or None for any other row.
     not_matched_total: int
     match_reasons: tuple[str | None, ...]
-    # #1413: the works whose preparation failed before they had a report.
+    # #1413: the works with nothing open whose latest preparation failed.
     preparation_failed_total: int
     # The scope each row's human decisions were validated in, when the store
     # projected one, so the row projection need not project the case again.
@@ -327,8 +327,8 @@ class CurrentReviewCaseStore(Protocol):
 LibraryLabels = tuple[tuple[str, str, str], ...]
 # The Library lenses a store filters by; None reads every work, the `all` lens.
 # A work no provider matched is neither needing attention nor needing none, so
-# it has a lens of its own (#1407), and so has a work whose preparation failed
-# before it had a report (#1413).
+# it has a lens of its own (#1407), and so has a work with nothing open whose
+# latest preparation failed (#1413).
 LibraryLensFilter = Literal[
     "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
 ]

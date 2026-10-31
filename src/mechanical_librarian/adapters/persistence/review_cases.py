@@ -148,7 +148,7 @@ class ReviewLibraryPage:
     # matched, case or terminal row.
     not_matched_total: int
     match_reasons: tuple[str | None, ...]
-    # #1413: the works whose preparation failed before they had a report.
+    # #1413: the works with nothing open whose latest preparation failed.
     preparation_failed_total: int
     # Each row's case (with its identity) and report as this read validated
     # them, None for a terminal row, so a projection of the same read uses them
