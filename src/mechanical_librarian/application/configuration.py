@@ -50,6 +50,17 @@ AUDIOBOOK_COVER_PROVIDER_ADAPTERS = frozenset({"audible_catalog", "itunes_search
 AUDIOBOOK_DISPATCH_ADAPTERS = frozenset(
     {"audible_catalog", "audnexus", "audiosilo", "hardcover", "open_library"}
 )
+# ADR-0061 (#1486): the only adapters an ebook is ever dispatched to, under
+# the same narrowing rule. iTunes Search keeps its ebook title-and-author
+# corroboration lane; Audible, Audnexus and AudioSilo have no ebook role.
+EBOOK_DISPATCH_ADAPTERS = frozenset(
+    {"google_books", "hardcover", "inventaire", "itunes_search", "open_library"}
+)
+
+
+def dispatch_adapters(*, audio: bool) -> frozenset[str]:
+    """The adapters a work of this media kind may be dispatched to."""
+    return AUDIOBOOK_DISPATCH_ADAPTERS if audio else EBOOK_DISPATCH_ADAPTERS
 
 
 class ConfigurationError(ValueError):
@@ -446,6 +457,7 @@ class ApplicationConfiguration:
 __all__ = [
     "AUDIOBOOK_DISPATCH_ADAPTERS",
     "AUDIOBOOK_PROVIDER_ADAPTERS",
+    "EBOOK_DISPATCH_ADAPTERS",
     "EBOOK_PROVIDER_ADAPTERS",
     "ApplicationConfiguration",
     "ConfigurationError",
@@ -454,4 +466,5 @@ __all__ = [
     "ProviderConnectionConfiguration",
     "ReportLimits",
     "TargetConnectionConfiguration",
+    "dispatch_adapters",
 ]

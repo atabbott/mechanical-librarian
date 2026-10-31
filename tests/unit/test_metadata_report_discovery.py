@@ -2000,6 +2000,7 @@ def test_discovery_plan_reports_exact_family_overflow_without_subset() -> None:
                 "catalogue",
                 True,
                 lambda: pytest.fail("overflow must not construct a provider"),
+                authority="hardcover",
             ),
         ),
         connection=TargetConnectionConfiguration(
@@ -3003,6 +3004,7 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
                     "Callable[[], MetadataProvider]",
                     lambda name=name: Provider(name),
                 ),
+                authority=name,
             )
             for name in names
         ),
@@ -3082,8 +3084,11 @@ def _assert_timestamp_voting_report(
                     "Callable[[], MetadataProvider]",
                     lambda name=name: provider_type(name, lexical),
                 ),
+                authority=authority,
             )
-            for name in names
+            for name, authority in zip(
+                names, ("google_books", "hardcover", "open_library"), strict=False
+            )
         ),
         connection=TargetConnectionConfiguration(
             "primary",
@@ -3155,9 +3160,9 @@ def _assert_timestamp_voting_report(
         *(value.reference for value in provider_dates),
         *((retained_local[0].reference,) if local_present else ()),
     }
-    # Generated-report providers do not declare independent provider authority;
-    # timestamp parsing alone must never manufacture publication authority.
-    assert source_references.isdisjoint(publication_references)
+    # A timestamp that does not vote must never manufacture publication
+    # support, from the source or from a dispatched provider.
+    assert voting or source_references.isdisjoint(publication_references)
 
 
 def test_generate_report_uses_source_lexical_timestamp_voting_matrix() -> None:

@@ -119,11 +119,12 @@ You can also run one recovery claim by hand with
 database, catalogue and artifact paths. It uses the same claims and leases as
 the worker.
 
-## Audiobooks
+## Audiobooks and ebooks
 
 Audiobook lookups use only Audible, Audnexus, AudioSilo, Hardcover and Open
-Library. Recovery and failure evidence for audiobooks cover only those
-providers. A queued audiobook job for any other provider closes as `stale`
+Library; ebook lookups use only Google Books, Hardcover, Inventaire, iTunes
+Search and Open Library. Recovery and failure evidence cover only the providers
+of the work's media kind. A queued job for any other provider closes as `stale`
 without a request.
 
 ## What is not retried

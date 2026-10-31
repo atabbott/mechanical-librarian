@@ -6495,6 +6495,41 @@ describe('Library route', () => {
       expect(recordDecision.mock.calls[0]?.[1].destination).toBe('asin')
     })
 
+    it('states one reason beside conditions that would ask the owner (#1450)', async () => {
+      const user = userEvent.setup()
+      const reason =
+        'The proposed values only shorten or extend the current one, so no review is needed. You can still keep the current value or choose a proposed one.'
+      const description = {
+        ...asin,
+        destination: 'description' as const,
+        classificationReason: reason,
+        currentValue: 'A voyage reveals a hidden city. The crew must choose who returns home.',
+        proposedValues: [{ kind: 'text' as const, value: 'A voyage reveals a hidden city.' }],
+        notices: [
+          'competing_evidence',
+          'populated_subjective_field',
+          'work_alternative_immaterial',
+        ],
+      }
+      renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...recording,
+          fields: [title, description],
+        })),
+      })
+      await user.click(await screen.findByRole('button', { name: /^Description/u }))
+      const canvas = document.querySelector('.decision-canvas')
+      if (!(canvas instanceof HTMLElement)) throw new Error('decision canvas missing')
+      await waitFor(() => expect(within(canvas).getByText(reason)).toBeVisible())
+      expect(
+        within(canvas).queryByRole('complementary', { name: 'Comparison condition' }),
+      ).toBeNull()
+      expect(canvas.textContent).not.toContain('choose the value yourself')
+      expect(canvas.textContent).not.toContain('so a change needs you')
+      expect(canvas.textContent).not.toMatch(/needs (?:your )?review/iu)
+    })
+
     it('is skipped when the field that needed review is decided', async () => {
       const user = userEvent.setup()
       const { decision, settled } = settle(title, 'keep_current')

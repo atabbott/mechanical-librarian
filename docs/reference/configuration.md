@@ -361,7 +361,9 @@ Audible provider, accepts it.
 
 ### Dispatch
 
-An ebook is sent to every enabled provider its library references.
+An ebook is sent only to referenced providers in the ebook set:
+`google_books`, `hardcover`, `inventaire`, `itunes_search` and
+`open_library`. Audible, Audnexus and AudioSilo receive no ebook requests.
 
 An audiobook is sent only to referenced providers in the audiobook set:
 `audible_catalog`, `audnexus`, `audiosilo`, `hardcover` and `open_library`.
