@@ -2287,6 +2287,36 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
   ).toHaveLength(0)
 })
 
+it('keeps an issued code in place across polls and copies exactly the code', async () => {
+  const fetch = vi.fn(async (request: RequestInfo | URL) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device'))
+      return response({
+        state: 'issued',
+        verification_url: 'https://auth.openai.com/codex/device',
+        user_code: 'ABCD-EFGHJ',
+      })
+    if (url.endsWith('/reviewer-access')) return response(reviewerAccess('issued'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const link = await screen.findByRole('link', { name: 'Open the device sign-in page' })
+  expect(link).toHaveAttribute('target', '_blank')
+  expect(link).toHaveAttribute('rel', 'noreferrer')
+  const code = screen.getByText('ABCD-EFGHJ')
+  expect(code.tagName).toBe('CODE')
+  const polls = () =>
+    fetch.mock.calls.filter(([request]) => requestUrl(request).endsWith('/device')).length
+  const seen = polls()
+  await waitFor(() => expect(polls()).toBeGreaterThan(seen), { timeout: 3000 })
+  // A poll that returns the same code must not rebuild it under a selection.
+  expect(code.isConnected).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
+  expect(await screen.findByText(/Code selected\. Press Ctrl\+C/u)).toBeVisible()
+  expect(getSelection()?.toString()).toBe('ABCD-EFGHJ')
+})
+
 it('prevents duplicate starts and preserves the reviewer step after session expiry', async () => {
   let release: ((value: Response) => void) | undefined
   const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
