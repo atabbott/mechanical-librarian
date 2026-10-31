@@ -467,6 +467,18 @@ _HARDCOVER_LABEL = re.compile(r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I)
 _NON_ISBN_IDENTIFIER = re.compile(
     r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
 )
+# A Library of Congress control number named by its label, with or without a
+# colon, owns the digits after it (#1497).
+_LCCN_LABELLED = re.compile(
+    r"(?i)(?<![\w])(?:library\s+of\s+congress\s+control\s+(?:number|no\.?)"
+    r"|lc\s+control\s+(?:number|no\.?)|lccn)\s*[:#.]?\s*\d[\d\s-]{6,14}\d"
+    r"(?![\dXx])"
+)
+# The heading of a Library of Congress catalogue record (CIP data block), whose
+# bare ten-digit run is its control number, not an ISBN-10 (#1497).
+_CATALOGUE_RECORD_HEADING = re.compile(
+    r"(?i)(?<![\w])library\s+of\s+congress\s+cataloging[\s-]+in[\s-]+publication"
+)
 _INDICIA_PROMOTION_NOTICE = re.compile(
     r"^\s*(?:advertisement|preview(?:\s+of\b.*)?|"
     r"sample(?:\s+(?:chapter|excerpt|of)\b.*)?|"
@@ -2474,7 +2486,49 @@ def _non_isbn_identifier_spans(value: str) -> tuple[tuple[int, int], ...]:
         ):
             continue
         spans.append(owner.span())
+    spans.extend(owner.span() for owner in _LCCN_LABELLED.finditer(value))
     return tuple(spans)
+
+
+def _catalogue_record_starts(elements: list[_Element]) -> dict[int, int]:
+    """Map each element inside a catalogue-record block to where it starts.
+
+    The block opens at its heading, read on the innermost element that states
+    it, and runs through every later element of that element's container, so
+    a heading element counts only from the heading on and every later member
+    from its start (#1497).
+    """
+    headings = {
+        element.ordinal: heading.start()
+        for element in elements
+        if (heading := _CATALOGUE_RECORD_HEADING.search(element.exact_text)) is not None
+    }
+    # A container's text holds its children's, so only the innermost element
+    # stating the heading opens a block.
+    innermost = {
+        ordinal
+        for ordinal in headings
+        if not any(
+            ordinal in other.ancestors
+            for other in elements
+            if other.ordinal in headings
+        )
+    }
+    starts: dict[int, int] = {}
+    containers: list[int | None] = []
+    for element in elements:
+        if any(
+            container is None or container in element.ancestors
+            for container in containers
+        ):
+            starts.setdefault(element.ordinal, 0)
+        if element.ordinal in innermost:
+            starts[element.ordinal] = min(
+                starts.get(element.ordinal, headings[element.ordinal]),
+                headings[element.ordinal],
+            )
+            containers.append(element.ancestors[-1] if element.ancestors else None)
+    return starts
 
 
 def _isbn_owned_by_non_isbn_identifier(
@@ -3339,6 +3393,7 @@ def _recognize(
         projection.elements,
         eligible_ordinals,
     )
+    catalogue_record_starts = _catalogue_record_starts(projection.elements)
     for element in projection.elements:
         text = element.exact_text
         if element.active or not _is_html_namespace(element.namespace):
@@ -3642,6 +3697,17 @@ def _recognize(
             left_vicinity = re.split(separator, lowered[left_boundary : match.start()])[
                 -1
             ]
+            catalogue_start = catalogue_record_starts.get(element.ordinal)
+            if (
+                catalogue_start is not None
+                and match.start() >= catalogue_start
+                and len(compact) == 10
+                and compact.isdigit()
+                and "isbn" not in left_vicinity
+            ):
+                # An unlabelled ten-digit run in a catalogue record is its
+                # control number; the record's ISBNs carry their label.
+                continue
             right_vicinity = re.split(separator, lowered[match.end() : right_boundary])[
                 0
             ]

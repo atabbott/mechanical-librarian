@@ -32,7 +32,7 @@ from .identifiers import Fingerprint, SchemaVersion
 EPUB_OPENING_REPORT_SCHEMA = SchemaVersion("epub-opening-report-v2")
 EPUB_OPENING_CITATION_SCHEMA = SchemaVersion("epub-opening-citation-v1")
 EPUB_OPENING_LIMIT_PROFILE = "epub-opening-limits-v1"
-EPUB_OPENING_EXTRACTOR_VERSION = "epub-opening-v4"
+EPUB_OPENING_EXTRACTOR_VERSION = "epub-opening-v5"
 EPUB_OPENING_NORMALIZER_VERSION = "epub-opening-normalizer-v1"
 EPUB_OPENING_PARSER_VERSION = (
     f"cpython-{platform.python_version()}-expat-{expat.EXPAT_VERSION}-htmlparser-v1"

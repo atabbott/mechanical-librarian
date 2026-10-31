@@ -703,7 +703,7 @@ def test_identifier_owner_spans_are_computed_once_per_element() -> None:
 
 def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     report = _extract(opening_claims_complete())
-    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v4"
+    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v5"
     assert all(
         claim.citation.extractor_version == EPUB_OPENING_EXTRACTOR_VERSION
         for claim in report.claims
@@ -4014,3 +4014,54 @@ def test_typed_credit_containers_preserve_roles_without_authors(
         else []
     )
     assert not [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+
+
+def _identifiers(body: str) -> list[str]:
+    report = _extract(_single(_xhtml(body)))
+    return [
+        claim.normalized_value
+        for claim in report.claims
+        if claim.field is OpeningField.IDENTIFIER
+    ]
+
+
+@pytest.mark.parametrize(
+    "label",
+    (
+        "Library of Congress Control Number: ",
+        "Library of Congress Control No. ",
+        "LC control number ",
+        "LC Control No.: ",
+        "LCCN ",
+        "LCCN# ",
+    ),
+    ids=("full", "full_no", "lc", "lc_no", "lccn", "lccn_hash"),
+)
+def test_a_labelled_control_number_is_no_isbn_candidate(label: str) -> None:
+    # 2012345670 passes the ISBN-10 checksum (#1497).
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        f"<p>{label}2012345670</p><p>eBook ISBN 9780306406157</p></section>"
+    ) == ["9780306406157"]
+
+
+def test_a_catalogue_record_block_keeps_only_its_isbns() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page">'
+        "<p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>Example, Ada.</p><p>Synthetic voyage / Ada Example.</p>"
+        "<p>ISBN 0306406152 (hardcover)</p><p>2012345670</p>"
+        "<p>eBook ISBN 9780306406157</p></section>"
+    ) == ["0306406152", "9780306406157"]
+
+
+def test_an_isbn_10_outside_the_catalogue_record_is_still_read() -> None:
+    assert _identifiers(
+        '<section epub:type="copyright-page"><p>ISBN 2012345670</p>'
+        "<div><p>Library of Congress Cataloging-in-Publication Data</p>"
+        "<p>2012345670</p></div></section>"
+    ) == ["2012345670"]
+    assert _identifiers(
+        '<section epub:type="copyright-page"><p>2012345670</p>'
+        "<p>Library of Congress number on request</p></section>"
+    ) == ["2012345670"]

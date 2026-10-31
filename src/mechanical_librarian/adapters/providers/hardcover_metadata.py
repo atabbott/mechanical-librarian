@@ -1435,7 +1435,7 @@ def _parse_edition_enrichment_overflow(
             provider,
             work_identity,
             ClaimKind.CREATOR,
-            author["name"],
+            _author_name(author["name"], ()),
             ClaimScope.WORK,
             "not_applicable",
             "author",
@@ -2228,7 +2228,9 @@ def _contributions(
             provider,
             identity,
             kind,
-            author["name"],
+            _author_name(author["name"], local)
+            if kind is ClaimKind.CREATOR
+            else author["name"],
             scope,
             "not_applicable",
             role,
@@ -2266,6 +2268,50 @@ def _contributions(
             )
         )
     return claims
+
+
+# Name suffixes a comma also introduces, so "Family, Jr." is never reordered.
+_AUTHOR_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv", "phd", "md"})
+
+
+def _author_name(value: object, local: tuple[LocalClaim, ...]) -> object:
+    """Read one Hardcover author name in display order (#1497).
+
+    Whitespace runs collapse. An inverted name is reordered only when Hardcover
+    marks it inverted, as one `Family, Given` comma, or when moving its leading
+    words to the end gives exactly one of the book's own author names. Any
+    other value, and every value another source states, is left as it is.
+    """
+    if type(value) is not str or len(value) > MAX_SCALAR_CHARACTERS:
+        return value
+    name = " ".join(value.split())
+    family, comma, given = (part.strip() for part in name.partition(","))
+    if (
+        comma
+        and family
+        and given
+        and "," not in given
+        and given.casefold().rstrip(".") not in _AUTHOR_NAME_SUFFIXES
+    ):
+        return f"{given} {family}"
+    local_names = {
+        " ".join(claim.canonical.split()).casefold()
+        for claim in local
+        if claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+        and claim.state is FieldState.VALID
+        and type(claim.canonical) is str
+    }
+    if name.casefold() in local_names:
+        return name
+    words = name.split(" ")
+    reordered = {
+        candidate
+        for index in range(1, len(words))
+        if (candidate := " ".join((*words[index:], *words[:index]))).casefold()
+        in local_names
+    }
+    return reordered.pop() if len(reordered) == 1 else name
 
 
 def _field_local_author(

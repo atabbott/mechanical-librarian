@@ -97,6 +97,10 @@ from mechanical_librarian.domain.metadata_report import (
     target_work_identity_context,
     work_discovery_lane_payloads,
 )
+from mechanical_librarian.domain.provider_value_language import (
+    established_work_languages,
+    open_library_value_exclusion,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
@@ -1760,6 +1764,11 @@ def _observations(
     withheld = carried_asin_precedence(report) if edition_asins else frozenset()
     current_asin = target_current_asin(report) if edition_asins else None
     carried_asin = verified_carried_asin(report) if edition_asins else None
+    languages = (
+        established_work_languages(report)
+        if destination in {TargetDestination.TITLE, TargetDestination.DESCRIPTION}
+        else frozenset()
+    )
     for provider in report.providers:
         for candidate in provider.candidates:
             if work_only and not _supported_work_source(report, provider, candidate):
@@ -1809,6 +1818,14 @@ def _observations(
                     )
                     and not _generic_provider_subtitle(report, destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
+                    and open_library_value_exclusion(
+                        provider.authority,
+                        candidate,
+                        destination,
+                        claim.value,
+                        languages,
+                    )
+                    is None
                     and (
                         destination is not TargetDestination.TITLE
                         or _provider_title_is_unambiguous(
@@ -2170,6 +2187,7 @@ def _evidence_led_title_election(
     isbn_bound = False
     conflict = False
     titles: set[str] = set()
+    languages = established_work_languages(report)
     variant_claims = {
         role: {values}
         for role, values in _title_variant_identities(
@@ -2193,7 +2211,16 @@ def _evidence_led_title_election(
             titles.update(
                 title_identity_key(c.value)
                 for c in claims
-                if c.kind is ClaimKind.TITLE and type(c.value) is str
+                if c.kind is ClaimKind.TITLE
+                and type(c.value) is str
+                and open_library_value_exclusion(
+                    provider.authority,
+                    candidate,
+                    TargetDestination.TITLE,
+                    c.value,
+                    languages,
+                )
+                is None
             )
             author_claims = tuple(
                 c
