@@ -248,6 +248,10 @@ The server classifies every field, and the tab status follows from it:
   an eligible alternative exists. Unsupported fields show their value and a
   reason, never a selectable `Not set`.
 
+Fields with nothing to decide sit in one collapsed panel headed `No change:`
+and their names, with any field waiting for a recovery or unavailable counted
+separately; each row gives its value and why nothing changed.
+
 An Automatic field explains a withheld decision only when failed provider
 evidence contributed to it, and the explanation goes when its cause does. An
 unknown recorded reason reads as unknown. A hold from an earlier case says an

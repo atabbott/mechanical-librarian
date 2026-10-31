@@ -6094,6 +6094,8 @@ describe('Library route', () => {
     }
     const contextualField = {
       ...contextOnly,
+      classification: 'unsupported' as const,
+      classificationReason: 'There is no owner decision available for this field.',
       destination: 'authors' as const,
       inventoryRole: 'contextual' as const,
       proposalId: 'proposal-authors',
@@ -6155,8 +6157,8 @@ describe('Library route', () => {
     ).toBeNull()
     expect(screen.getByText('Sources')).toBeVisible()
     expect(screen.getByText('1 lookup recorded for this work')).toBeVisible()
-    expect(screen.getByText('1 field has context')).toBeVisible()
-    expect(screen.queryByText('field with contexts')).toBeNull()
+    expect(screen.getByText('No change: Authors')).toBeVisible()
+    expect(screen.queryByText(/fields? ha(?:s|ve) context/u)).toBeNull()
     await user.click(screen.getByRole('button', { name: /Subtitle.*No change/u }))
     expect(await screen.findByRole('heading', { name: 'Subtitle' })).toBeVisible()
     expect(screen.queryByText('This field needs your review.')).toBeNull()
@@ -9304,11 +9306,100 @@ describe('Library route', () => {
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
     expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Subtitle/u })).toBeNull()
-    expect(screen.getByText('1 field has context')).toBeVisible()
-    await userEvent.setup().click(screen.getByText('1 field has context'))
+    expect(screen.getByText('1 field unavailable')).toBeVisible()
+    expect(screen.queryByText(/^No change:/u)).toBeNull()
+    await userEvent.setup().click(screen.getByText('1 field unavailable'))
     expect(
       screen.getByText('This field is unavailable for the current service capability.'),
     ).toBeVisible()
+  })
+
+  describe('the fields with nothing to decide (#1514)', () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const context = (destination: 'subtitle' | 'publisher' | 'language', reason: string) => ({
+      ...titleField,
+      classification: 'unsupported' as const,
+      classificationReason: reason,
+      destination,
+      editable: false,
+      inventoryRole: 'contextual' as const,
+      needsAttention: false,
+      navigationRole: 'inspect' as const,
+      proposalId: `proposal-${destination}`,
+      proposedValues: [],
+      targetFingerprint: `fingerprint-${destination}`,
+    })
+    const unchanged = 'There is no owner decision available for this field.'
+    const waiting = 'This field is waiting for an external service recovery.'
+    const open = async (fields: CaseDetailView['fields'][number][]) => {
+      renderRoute('/library?lens=all&preview=case-1&field=title', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [titleField, ...fields],
+        })),
+      })
+      await screen.findByRole('navigation', { name: 'Review fields' })
+      const details = document.querySelector<HTMLDetailsElement>('.automatic-resolution-details')
+      if (!details) throw new Error('the panel is missing')
+      return details
+    }
+    const rowOf = (details: HTMLElement, name: string) => {
+      const row = within(details).getByText(name).closest('.automatic-resolution-row')
+      if (!(row instanceof HTMLElement)) throw new Error(`no row for ${name}`)
+      return row
+    }
+
+    it('names one unchanged field and why nothing changed', async () => {
+      const details = await open([context('subtitle', unchanged)])
+      expect(details.querySelector('summary')).toHaveTextContent(/^No change: SubtitleShow why$/u)
+      await userEvent.setup().click(within(details).getByText('Show why'))
+      const row = rowOf(details, 'Subtitle')
+      expect(row).toHaveTextContent('No source offered a different value.')
+      expect(row).not.toHaveTextContent(/✓|No eligible change|no owner decision/u)
+      expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
+    })
+
+    it('names every unchanged field in their order', async () => {
+      const details = await open([
+        context('subtitle', unchanged),
+        context('publisher', 'There is no other value to choose from. You can enter your own.'),
+      ])
+      expect(details.querySelector('summary')).toHaveTextContent(
+        /^No change: Subtitle, PublisherShow why$/u,
+      )
+    })
+
+    it('says a waiting field is waiting, apart from the unchanged ones', async () => {
+      const details = await open([context('publisher', waiting)])
+      expect(details.querySelector('summary')).toHaveTextContent(
+        /^1 field waiting for a recoveryShow why$/u,
+      )
+      await userEvent.setup().click(within(details).getByText('Show why'))
+      const row = rowOf(details, 'Publisher')
+      expect(row).toHaveClass('is-waiting')
+      expect(within(row).getByText('Waiting')).toBeVisible()
+      expect(row).toHaveTextContent(waiting)
+    })
+
+    it('names both kinds when the list holds both, keeping the field order', async () => {
+      const details = await open([
+        context('subtitle', unchanged),
+        context('publisher', waiting),
+        context('language', unchanged),
+      ])
+      expect(details.querySelector('summary')).toHaveTextContent(
+        /^No change: Subtitle, Language1 field waiting for a recoveryShow why$/u,
+      )
+      expect(
+        [...details.querySelectorAll('.automatic-resolution-row strong')].map(
+          (node) => node.firstChild?.textContent,
+        ),
+      ).toEqual(['Subtitle', 'Publisher', 'Language'])
+      expect(rowOf(details, 'Subtitle')).toHaveClass('is-unchanged')
+      expect(rowOf(details, 'Publisher')).toHaveClass('is-waiting')
+    })
   })
 
   it('presents a date and year as one publication field', async () => {

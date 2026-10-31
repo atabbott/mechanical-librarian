@@ -641,16 +641,6 @@ const decisionValue = (field: ReviewField) => {
 // A recording's settled fill stays choosable without asking for review (#1249).
 const optionalChoice = (field: ReviewField) =>
   field.classification === 'owner_choosable' && choiceAvailable(field)
-const fieldState = (field: ReviewField) =>
-  field.humanDecision || field.manualHold
-    ? 'Owner decision recorded'
-    : field.automaticDecision
-      ? 'Resolved automatically'
-      : actionable(field)
-        ? 'Needs review'
-        : optionalChoice(field)
-          ? 'Optional choice'
-          : 'No eligible change'
 // A field tab says where its field stands in words, never a glyph: an
 // undecided optional field and a decided one both drew a check (#1290).
 const fieldStatus = (field: ReviewField) =>
@@ -663,6 +653,23 @@ const fieldStatus = (field: ReviewField) =>
         : optionalChoice(field)
           ? (['optional', 'Optional'] as const)
           : (['unchanged', 'No change'] as const)
+// A field with nothing to decide is either unchanged, because no source
+// offered a different value, or held: unavailable to this service, or waiting
+// on a recovery. The server's reason is the only thing that tells them apart,
+// so the two reasons for an unchanged field are named here (#1514).
+const unchangedReasons = new Set([
+  '',
+  'There is no owner decision available for this field.',
+  'There is no other value to choose from. You can enter your own.',
+])
+const contextKind = (field: ReviewField) =>
+  field.manualHold || !unchangedReasons.has(field.classificationReason)
+    ? /waiting for|pending a/u.test(field.classificationReason)
+      ? ('waiting' as const)
+      : ('unavailable' as const)
+    : ('unchanged' as const)
+const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
+  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting for a recovery' : 'unavailable'}`
 // Why a field reads as it does when the server gives no reason of its own.
 const humanReasons = {
   accept: 'You chose a proposed value for this field.',
@@ -3484,6 +3491,11 @@ export default function LibraryPage({
   }, [ownerWriteInFlight, queryClient, shownCaseId, updates])
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
+  const contextualSummary = {
+    unchanged: contextualFields.filter((field) => contextKind(field) === 'unchanged'),
+    waiting: contextualFields.filter((field) => contextKind(field) === 'waiting').length,
+    unavailable: contextualFields.filter((field) => contextKind(field) === 'unavailable').length,
+  }
   const activeQueueIndex = selected
     ? attentionItems.findIndex(
         (item) => item.id === search.preview && item.destination === selected.destination,
@@ -5468,27 +5480,48 @@ export default function LibraryPage({
                 <details className="automatic-resolution-details">
                   <summary>
                     <span>
-                      {contextualFields.length === 1
-                        ? '1 field has context'
-                        : `${String(contextualFields.length)} fields have context`}
+                      {contextualSummary.unchanged.length ? (
+                        <span>
+                          No change:{' '}
+                          {contextualSummary.unchanged
+                            .map((field) => destinationLabel(field.destination))
+                            .join(', ')}
+                        </span>
+                      ) : null}
+                      {contextualSummary.waiting ? (
+                        <span>{heldPhrase(contextualSummary.waiting, 'waiting')}</span>
+                      ) : null}
+                      {contextualSummary.unavailable ? (
+                        <span>{heldPhrase(contextualSummary.unavailable, 'unavailable')}</span>
+                      ) : null}
                     </span>
-                    <small>Inspect context</small>
+                    <small>Show why</small>
                   </summary>
                   <div className="automatic-resolution-list">
-                    {contextualFields.map((field) => (
-                      <div className="automatic-resolution-row" key={field.destination}>
-                        <span className="automatic-state-mark" aria-hidden="true">
-                          ✓
-                        </span>
-                        <div>
-                          <strong>{destinationLabel(field.destination)}</strong>
+                    {contextualFields.map((field) => {
+                      const kind = contextKind(field)
+                      return (
+                        <div
+                          className={`automatic-resolution-row is-${kind}`}
+                          key={field.destination}
+                        >
+                          <strong>
+                            {destinationLabel(field.destination)}
+                            {kind === 'unchanged' ? null : (
+                              <StatusPill tone="notice">
+                                {kind === 'waiting' ? 'Waiting' : 'Unavailable'}
+                              </StatusPill>
+                            )}
+                          </strong>
+                          <small>{decisionValue(field)}</small>
                           <small>
-                            {fieldState(field)} · {decisionValue(field)}
+                            {kind === 'unchanged'
+                              ? 'No source offered a different value.'
+                              : fieldReason(field)}
                           </small>
-                          <small>{fieldReason(field)}</small>
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </details>
               ) : null}

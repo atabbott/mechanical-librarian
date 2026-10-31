@@ -10222,13 +10222,15 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
                             "radio", name="Choose proposed value: Ada Example"
                         )
                     ).to_have_count(0)
-                    page.get_by_text("Inspect context", exact=True).click()
-                    expect(page.get_by_text("Authors", exact=True)).to_be_visible()
                     expect(
-                        page.get_by_text(
-                            "No eligible change · Current Writer", exact=False
-                        )
+                        page.get_by_text("No change: Authors", exact=True)
                     ).to_be_visible()
+                    page.get_by_text("Show why", exact=True).click()
+                    row = page.locator(".automatic-resolution-row").filter(
+                        has_text="Authors"
+                    )
+                    expect(row).to_contain_text("Current Writer")
+                    expect(row).to_contain_text("No source offered a different value.")
                     context.close()
                     browser.close()
                     return
