@@ -208,7 +208,7 @@ _FIELD_EFFECT_HOLDS_DECISION_SQL = (
 # current and whose case is still the work's current case: a later decision
 # revokes the authority, and a later report admits a new case (#1430).
 _OWNER_ACTION_FAILURES = (
-    "target_currentness",
+    "target_changed",
     "third_value",
     "readback",
     "restore_unavailable",

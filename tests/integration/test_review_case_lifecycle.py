@@ -794,6 +794,10 @@ def test_multiline_incumbent_description_persists_and_applies(
             for value in repository.field_effect_event_documents(operation.plan.plan_id)
         ]
         assert not any(event["kind"] == "verified" for event in audit)
+        # A change stopped because the value moved waits on the owner (#1430).
+        assert repository.field_effect_activity_summary()["owner_action_required"] == (
+            1 if effect == "formatting_drift" else 0
+        )
         repository.close()
         return
     assert (verified.state, verified.failure) == ("verified", None)

@@ -1,8 +1,8 @@
 import { invalidateForegroundQueries } from '../queryWork'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
-import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   AmbiguousMutationError,
   ApiError,
@@ -12,31 +12,19 @@ import {
   sessionRefreshedCopy,
 } from '../api/http'
 import type {
-  ActivityCategory,
   ActivityEventView,
   ActivityLibraryView,
   ActivityPermissionReadinessView,
   ActivitySearch,
-  ActivityTransitionView,
   ActivityView,
   CapabilityState,
-  ProviderRecoveryDispatchReason,
-  ProviderRecoveryFailureReason,
 } from '../api/http'
 import { activityOutcome, ledgerRows } from '../activityState'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
-import { RecordedTime } from '../components/RecordedTime'
-import { formatDay, formatWhen } from '../dates'
-import {
-  destinationLabel,
-  destinationPhrase,
-  languageName,
-  writeHoldReasons,
-  writeStateLabels,
-} from '../labels'
+import { destinationLabel, destinationPhrase, writeHoldReasons } from '../labels'
 import { useLibraryName } from '../libraryNames'
 import {
   consentBasis,
@@ -54,6 +42,9 @@ import {
   usePreparation,
   useReviewContext,
 } from '../router'
+import { categoryLabel, dayHeading, stateLabel } from '../activityLabels'
+import { ActivityEventRow, PageJump, RowTime } from './ActivityLedgerRow'
+import { ActivityStatusCopy, ProviderRecoveryPanel } from './ActivityStatus'
 // The activity response is validated into `ActivityDisplayView` at the
 // transport boundary, so this route reads it as the typed view it already is
 // rather than re-deriving `unknown` shapes a second time (#636).
@@ -68,67 +59,6 @@ const capabilityLabel = (state: CapabilityState, consented: boolean) =>
         connection_unavailable: 'Connection needs checking',
         not_ready: 'Not ready yet',
       }[state]
-// The ledger's result words. A ledger state is open on the wire, since the
-// ledger also carries records of a type this build does not know, so a state
-// outside these reads as `Recorded`. A withdrawal reads `Recorded` beside the
-// server's own `Withdrawn` change, so the row does not say it twice (#1286).
-const ledgerStateLabels: Readonly<Record<string, string>> = {
-  ...writeStateLabels,
-  accept: 'Accepted',
-  keep_current: 'Kept current',
-  reject: 'Rejected',
-  owner_entered: 'Owner-entered',
-  withdraw: 'Recorded',
-  completed: 'Completed',
-  unavailable: 'Unavailable',
-}
-// A change stopped only by a lost connection is still waiting to be prepared
-// again, so it reads as waiting rather than as a stopped stale (#1402).
-const stateLabel = (state: string, advice?: 'description' | 'cover', failure?: string | null) =>
-  (state === 'stale' && failure === 'connection' ? 'Waiting safely' : undefined) ??
-  (advice === 'description'
-    ? {
-        completed: 'Description advice completed',
-        succeeded: 'Description advice completed',
-        failed: 'Description advice failed safely',
-      }[state]
-    : advice === 'cover'
-      ? {
-          completed: 'Cover advice completed',
-          unavailable: 'Cover advice unavailable',
-          failed: 'Cover advice failed safely',
-          selected: 'Owner cover choice recorded',
-          retry: 'Manual cover retry',
-        }[state]
-      : undefined) ??
-  ledgerStateLabels[state] ??
-  'Recorded'
-// What the owner calls a record, on the row and on the control that filters
-// for it, so a chip and the rows it selects never use different words. The
-// filter axis is still the durable event type the ledger is indexed by; only
-// the language is the owner's.
-const categoryLabel: Record<ActivityCategory, string> = {
-  owner: 'Owner choice',
-  automatic: 'Automatic choice',
-  policy: 'Policy change',
-  recovery: 'Recovery',
-}
-const recoveryFailureLabel: Record<ProviderRecoveryFailureReason, string> = {
-  authentication: 'Provider credentials need attention',
-  authorization: 'Provider access was denied',
-  configuration: 'Provider configuration needs attention',
-  rate_limited: 'Provider rate limit',
-  burst_throttled: 'Provider burst limit',
-  quota_exhausted: 'Provider quota exhausted',
-  transient: 'Provider temporarily unavailable',
-}
-
-const recoveryDispatchLabel: Record<ProviderRecoveryDispatchReason, string> = {
-  missing_corroboration: 'needs independent evidence',
-  zero_provider_evidence: 'no provider evidence yet',
-  settleable_disagreement: 'evidence disagreement',
-  blanket_scan: 'general recovery scan',
-}
 // A permission draft is the readiness check and the ticked libraries, kept
 // against the consent basis it was checked on (#1279).
 interface PermissionCheck extends ActivityPermissionReadinessView {
@@ -151,300 +81,6 @@ const typeOptions = [
 type ActivitySearchUpdate = Partial<Omit<ActivitySearch, 'q'>> & { q?: string | undefined }
 const locationIdentity = (location: { href: string; state: { __TSR_key?: string } }) =>
   `${location.href}\u0000${location.state.__TSR_key ?? ''}`
-// A row sits under its day's heading, so it states only its time.
-const dayHeading = (value: number | null) =>
-  value === null ? 'Date not recorded' : formatDay(value)
-const rowTime = (value: number | null) =>
-  value === null ? '—' : <RecordedTime seconds={value} dayShown />
-function PageJump({
-  page,
-  pageCount,
-  onCommit,
-  onEdit,
-}: {
-  page: number
-  pageCount: number
-  onCommit: (page: number, focusKey: string) => void
-  onEdit: () => void
-}) {
-  const [value, setValue] = useState(String(page))
-  const cancelCommit = useRef(false)
-  const commit = () => {
-    if (cancelCommit.current) {
-      cancelCommit.current = false
-      setValue(String(page))
-      return
-    }
-    const requested = Number.parseInt(value, 10)
-    if (!Number.isFinite(requested)) {
-      setValue(String(page))
-      return
-    }
-    const clamped = Math.max(1, Math.min(pageCount, requested))
-    setValue(String(clamped))
-    if (clamped !== page) onCommit(clamped, 'page-jump')
-  }
-  return (
-    <label className="cm-activity-page-jump">
-      <span>Page</span>
-      <input
-        data-activity-focus="page-jump"
-        aria-label="Activity page number"
-        inputMode="numeric"
-        type="number"
-        min="1"
-        max={pageCount}
-        value={value}
-        onChange={(event) => {
-          cancelCommit.current = false
-          onEdit()
-          setValue(event.target.value)
-        }}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') event.currentTarget.blur()
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            cancelCommit.current = true
-            setValue(String(page))
-          }
-        }}
-      />
-      <span>of {pageCount}</span>
-    </label>
-  )
-}
-function ActivityTransitions({
-  eventId,
-  advice,
-}: {
-  eventId: string
-  advice: 'description' | 'cover' | undefined
-}) {
-  const { http } = useReviewContext()
-  const [extraPages, setExtraPages] = useState<ActivityTransitionView[][]>([])
-  const [hasMore, setHasMore] = useState(false)
-  const query = useQuery({
-    queryKey: ['activity-transitions', eventId],
-    queryFn: (queryContext) =>
-      http.getActivityTransitions(
-        eventId,
-        undefined,
-        queryContext.signal,
-        queryWorkClass(queryContext),
-      ),
-    retry: false,
-  })
-  const more = useMutation({
-    mutationFn: (afterSequence: number) => http.getActivityTransitions(eventId, afterSequence),
-    onSuccess: (page) => {
-      setExtraPages((current) => [...current, [...page.events]])
-      setHasMore(page.has_more)
-    },
-  })
-  if (query.isLoading) return <p>Loading recorded transitions…</p>
-  if (query.isError)
-    return (
-      <p role="alert">
-        Recorded transitions could not be loaded.{' '}
-        <button type="button" onClick={() => void query.refetch()}>
-          Try again
-        </button>
-      </p>
-    )
-  const events = [...(query.data?.events ?? []), ...extraPages.flat()]
-  const moreAvailable = extraPages.length ? hasMore : Boolean(query.data?.has_more)
-  if (!events.length) return null
-  return (
-    <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
-      {events.map((transition) => (
-        // One flow; the no-break space keeps each separator off a line start.
-        <li key={transition.event_id}>
-          <time>
-            <RecordedTime seconds={transition.occurred_at} />
-          </time>
-          &nbsp;· {stateLabel(transition.state, advice, transition.failure)}
-        </li>
-      ))}
-      {moreAvailable ? (
-        <li>
-          <button
-            type="button"
-            onClick={() => more.mutate(events[events.length - 1]?.sequence ?? 1)}
-            disabled={more.isPending}
-          >
-            {more.isPending ? 'Loading transitions…' : 'Load more transitions'}
-          </button>
-          {more.isError ? (
-            <p role="alert">
-              More recorded transitions could not be loaded.{' '}
-              <button
-                type="button"
-                onClick={() => more.mutate(events[events.length - 1]?.sequence ?? 1)}
-              >
-                Try again
-              </button>
-            </p>
-          ) : null}
-        </li>
-      ) : null}
-    </ol>
-  )
-}
-// A language row's change and values come from the server as exact tags;
-// they read by name, as Library and Policy name them, `English (en)`, inside
-// the server's own words (#1490).
-const languages = (value: string) => value.split(', ').map(languageName).join(', ')
-const languageChange = (text: string) =>
-  text
-    .replace(
-      /^Set Language from (.+) to (.+)$/u,
-      (_, before: string, after: string) =>
-        `Set Language from ${languages(before)} to ${languages(after)}`,
-    )
-    .replace(
-      /^(Set language to |Kept Language as |Kept )(.+)$/u,
-      (_, words: string, value: string) => words + languages(value),
-    )
-    .replace(
-      /^(.+) → (.+)$/u,
-      (_, before: string, after: string) => `${languages(before)} → ${languages(after)}`,
-    )
-// One durable record's row. It stands on its own in the ledger, or as one
-// member of a preparation's checks row, with the same Details either way.
-function ActivityEventRow({
-  event,
-  expanded,
-  onToggle,
-  day,
-  library,
-  result,
-  children,
-}: {
-  event: ActivityEventView
-  expanded: boolean
-  onToggle: () => void
-  /** A member recorded on another day than its checks row says so. */
-  day?: string
-  /** The library as Settings names it. */
-  library: string
-  /** A result in place of the row's own state, for a decision its check confirmed. */
-  result?: string
-  /** Records shown inside this row's Details, after its own. */
-  children?: ReactNode
-}) {
-  const changeId = event.change_id || event.event_id
-  const language = event.destination === 'language'
-  const change = language ? languageChange(event.change) : event.change
-  const changeDetail = language ? languageChange(event.change_detail) : event.change_detail
-  const advice =
-    event.destination === 'description' && event.origin === 'adviser'
-      ? 'description'
-      : event.event_type !== 'policy' &&
-          event.destination === 'cover' &&
-          ['adviser', 'automatic_pipeline', 'owner_retry'].includes(event.origin)
-        ? 'cover'
-        : undefined
-  return (
-    <article className={expanded ? 'is-expanded' : ''}>
-      <time>
-        {day === undefined ? null : <span className="cm-activity-day">{day} </span>}
-        {rowTime(event.occurred_at)}
-      </time>
-      <span className={`cm-activity-category is-${event.category}`}>
-        {categoryLabel[event.category]}
-      </span>
-      <div className="cm-activity-work">
-        <strong title={event.work_label}>{event.work_label}</strong>
-        <span>
-          {event.field_label} · {library}
-        </span>
-      </div>
-      {/*
-      The arrow in `change` is a glyph most screen readers drop,
-      so the announced row carries the same change as a whole
-      sentence. Both come from the one projection, so they
-      cannot come to disagree. The sentence is text, not a label
-      on a plain div, which assistive technology may ignore (#1288).
-    */}
-      <div className="cm-activity-change">
-        {change === changeDetail ? (
-          <span>{change}</span>
-        ) : (
-          <>
-            {/* First, so the hidden sentence sits where the cell starts and
-                never past a clipped change. */}
-            <span className="sr-only">{changeDetail}</span>
-            <span aria-hidden="true">{change}</span>
-          </>
-        )}
-      </div>
-      <b>{result ?? stateLabel(event.state, advice, event.failure)}</b>
-      {/* Every disclosure names its row, so a screen reader hears which one (#1368). */}
-      <button
-        data-activity-focus={`details-${changeId}`}
-        aria-expanded={expanded}
-        aria-controls={`activity-evidence-${event.event_id}`}
-        // The row's time names it apart from another change to the same field.
-        aria-label={`${expanded ? 'Hide details' : 'Details'} for ${event.field_label}, ${event.work_label}${result ? `, ${result.toLowerCase()}` : ''}${event.occurred_at === null ? '' : `, ${formatWhen(event.occurred_at, new Date(), { dayShown: true })}`}`}
-        onClick={onToggle}
-      >
-        {expanded ? 'Hide details' : 'Details'}
-      </button>
-      {expanded ? (
-        <div
-          className={`cm-activity-evidence${
-            event.policy_changes.length ? ' has-policy-changes' : ''
-          }`}
-          id={`activity-evidence-${event.event_id}`}
-        >
-          {event.policy_changes.length ? (
-            <section
-              className="cm-activity-policy-changes"
-              aria-label={`${String(event.policy_changes.length)} exact policy changes`}
-            >
-              <header>
-                <strong>
-                  {event.policy_changes.length} exact{' '}
-                  {event.policy_changes.length === 1 ? 'change' : 'changes'}
-                </strong>
-                <span>Field and setting</span>
-                <span>From</span>
-                <span>To</span>
-              </header>
-              <ul>
-                {event.policy_changes.map((change) => (
-                  <li key={`${change.field}-${change.setting}`}>
-                    <span>
-                      <strong>{change.field}</strong>
-                      <small>{change.setting}</small>
-                    </span>
-                    <b>{change.previous}</b>
-                    <b>{change.next}</b>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-          <dl>
-            {event.evidence.map((item) => (
-              <div key={item.label}>
-                <dt>{item.label}</dt>
-                <dd>
-                  {language && item.label.endsWith(' value') ? languages(item.value) : item.value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          {event.transition_id ? (
-            <ActivityTransitions key={changeId} eventId={event.transition_id} advice={advice} />
-          ) : null}
-          {children}
-        </div>
-      ) : null}
-    </article>
-  )
-}
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const { http, queryClient } = useReviewContext()
   const router = useRouter()
@@ -1275,7 +911,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 <div className="cm-activity-event-group" key={`checks-${row.key}`}>
                   {heading}
                   <article className={`is-checks${open ? ' is-expanded' : ''}`}>
-                    <time>{rowTime(first.occurred_at)}</time>
+                    <time>
+                      <RowTime seconds={first.occurred_at} />
+                    </time>
                     <span className="cm-activity-category is-automatic">
                       {categoryLabel.automatic}
                     </span>
@@ -1711,58 +1349,18 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       >
         {showOperationalSummary ? (
           <div className="cm-activity-status-copy">
-            <h2 id="activity-status-title">
-              {connection?.state === 'checking'
-                ? 'Checking library connection'
-                : connection?.state === 'paused'
-                  ? 'Library connection is paused'
-                  : recoveryCount
-                    ? 'Recovery needs attention'
-                    : ownerAction
-                      ? ownerAction === 1
-                        ? 'A stopped change needs you'
-                        : `${String(ownerAction)} stopped changes need you`
-                      : throttleRemedy
-                        ? 'A metadata source needs attention'
-                        : throttled
-                          ? 'A metadata source is limiting lookups'
-                          : data.paused
-                            ? 'New work is paused'
-                            : !writesHeld
-                              ? 'Writes are off'
-                              : lapse
-                                ? 'Some writes are off'
-                                : 'No intervention needed'}
-            </h2>
-            <p>
-              {connection?.state === 'checking'
-                ? 'Preparation remains safely paused while the authoritative connection check settles.'
-                : connection?.state === 'paused'
-                  ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.`
-                  : dormantRecovery
-                    ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
-                    : recoveryCount
-                      ? 'Affected work remains held until its current state can be reconciled safely.'
-                      : ownerAction
-                        ? ownerAction === 1
-                          ? 'Its “Prepared change closed” entry in the ledger says why it stopped. Nothing retries it on its own: follow that advice or choose the field again. If it isn’t listed, widen the range.'
-                          : 'Each “Prepared change closed” entry in the ledger says why it stopped. Nothing retries them on their own: follow that advice or choose the field again. If one isn’t listed, widen the range.'
-                        : throttled
-                          ? `${throttleRemedy ? 'A source needs an API key added or checked; until then its lookups wait.' : 'Some lookups wait until the source allows them again; nothing is lost.'} Settings shows each source.`
-                          : data.paused
-                            ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                            : (lapse ??
-                              (writesHeld
-                                ? 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'
-                                : cardLapse
-                                  ? 'Nothing is written to your libraries until you give permission again.'
-                                  : 'No library has write permission, so nothing is written to your libraries until you give it.'))}
-            </p>
-            {throttled && !connection && !recoveryCount && !ownerAction ? (
-              <Link to="/settings" search={{ group: 'providers' }}>
-                Review metadata sources in Settings
-              </Link>
-            ) : null}
+            <ActivityStatusCopy
+              connection={connection}
+              recoveryCount={recoveryCount}
+              dormantRecovery={dormantRecovery}
+              ownerAction={ownerAction}
+              throttled={throttled}
+              throttleRemedy={throttleRemedy}
+              paused={data.paused}
+              writesHeld={writesHeld}
+              lapse={lapse}
+              cardLapse={cardLapse}
+            />
             {statusEntry ? (
               <button
                 type="button"
@@ -1819,55 +1417,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             </div>
           </div>
         ) : null}
-        {providerRecovery.length ? (
-          <section className="activity-recovery" aria-label="Provider recovery">
-            <h3>Provider recovery</h3>
-            {providerRecovery.map((item, index) => (
-              <p key={`${item.state}:${String(index)}`}>
-                <strong>
-                  {item.state === 'waiting'
-                    ? 'Waiting for a safe retry'
-                    : item.state === 'checking'
-                      ? 'Checking provider health'
-                      : item.state === 'dormant'
-                        ? 'Needs a configuration change'
-                        : item.state === 'fanout'
-                          ? 'Retrying affected work'
-                          : item.state === 'exhausted'
-                            ? 'No further retry scheduled'
-                            : 'Recovered'}
-                </strong>{' '}
-                · {item.affected_count} affected{' '}
-                {item.state === 'fanout'
-                  ? item.affected_count === 1
-                    ? 'work'
-                    : 'works'
-                  : item.affected_count === 1
-                    ? 'scope'
-                    : 'scopes'}
-                {item.next_eligible_at === null
-                  ? ''
-                  : ` · next eligible ${formatWhen(item.next_eligible_at, new Date())}`}
-                {item.failure_reasons?.length ? (
-                  <span>
-                    {' '}
-                    ·{' '}
-                    {item.failure_reasons.map((reason) => recoveryFailureLabel[reason]).join('; ')}
-                  </span>
-                ) : null}
-                {item.dispatch_reasons?.length ? (
-                  <span>
-                    {' '}
-                    · Priority:{' '}
-                    {item.dispatch_reasons
-                      .map((reason) => recoveryDispatchLabel[reason])
-                      .join(', ')}
-                  </span>
-                ) : null}
-              </p>
-            ))}
-          </section>
-        ) : null}
+        <ProviderRecoveryPanel recovery={providerRecovery} />
         {hasAuthority ? (
           <details className="cm-activity-authority">
             <summary>
