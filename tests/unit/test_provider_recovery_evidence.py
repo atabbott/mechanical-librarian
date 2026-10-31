@@ -699,20 +699,21 @@ _DISPATCH_SET_ADAPTERS = {
 @pytest.mark.parametrize(
     "audio,recorded",
     (
-        (None, ("books", "enrichment", "inventaire", "store")),
+        (None, ("books", "inventaire", "store")),
         (object(), ("enrichment",)),
     ),
     ids=("ebook", "audiobook"),
 )
-def test_an_audiobook_report_records_health_only_for_the_dispatch_set(
+def test_a_report_records_health_only_for_its_dispatch_set(
     audio: object, recorded: tuple[str, ...]
 ) -> None:
-    """A carried-forward excluded observation is no health evidence (#1247).
+    """A carried-forward excluded observation is no health evidence.
 
-    A retry successor copies its siblings forward, so an audiobook successor
-    over a report published before the dispatch set can still hold a failing
-    Google Books, Inventaire or iTunes observation. Recording it would reset
-    that provider's library-wide health and delay its ebook recovery.
+    A retry successor copies its siblings forward, so a successor over a
+    report published before its media kind's dispatch set can still hold a
+    failing excluded observation: Google Books, Inventaire or iTunes on an
+    audiobook (#1247), Audnexus on an ebook (#1486). Recording it would reset
+    that provider's library-wide health and delay its recovery elsewhere.
     """
     observer = _Observer()
     record_provider_recovery_observations(
@@ -911,19 +912,18 @@ def _dispatch_set_observations() -> tuple[object, ...]:
 @pytest.mark.parametrize(
     "audio,adapters",
     (
-        (None, ("google_books", "audnexus", "inventaire", "itunes_search")),
+        (None, ("google_books", "inventaire", "itunes_search")),
         (object(), ("audnexus",)),
     ),
     ids=("ebook", "audiobook"),
 )
-def test_an_audiobook_report_enrolls_only_the_dispatch_set(
+def test_a_report_enrolls_only_its_dispatch_set(
     audio: object, adapters: tuple[str, ...]
 ) -> None:
-    """A retained audiobook observation outside the set is never retried (#1247).
+    """A retained observation outside the set is never retried (#1247, #1486).
 
-    Such an observation comes from a report published before the set, or one a
-    successor carried forward from it. The same observations on an ebook report
-    still enroll every provider.
+    Such an observation comes from a report published before its media kind's
+    set, or one a successor carried forward from it.
     """
     jobs = provider_recovery_jobs(
         _report(*_dispatch_set_observations(), audio=audio),
