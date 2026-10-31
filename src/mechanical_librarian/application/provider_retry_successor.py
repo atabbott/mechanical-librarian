@@ -608,11 +608,12 @@ class GenerateProviderRetrySuccessor:
             deadline_seconds=max(0.0, deadline - started),
             deadline_kind="recovery_window",
         )
+        observing = False
         try:
             client: MetadataProvider = provider.binding.factory()
-            result = client.observe(
-                _retry_plan(plan, selected, original), deadline=deadline
-            )
+            retry_plan = _retry_plan(plan, selected, original)
+            observing = True
+            result = client.observe(retry_plan, deadline=deadline)
         except Exception as error:
             elapsed, failure = time.monotonic() - started, error
             # The partial evidence is read inside the event guard: a snapshot
@@ -624,7 +625,11 @@ class GenerateProviderRetrySuccessor:
                         failure.snapshot.evidence
                         if isinstance(failure, ProviderObservationFailure)
                         else ProviderOperationalEvidence(),
-                        adapter_fault=adapter_fault_class(failure),
+                        # Only the adapter's own observation can fault it:
+                        # construction and plan errors are not its fault.
+                        adapter_fault=adapter_fault_class(failure)
+                        if observing
+                        else None,
                     ),
                     elapsed_seconds=elapsed,
                 )

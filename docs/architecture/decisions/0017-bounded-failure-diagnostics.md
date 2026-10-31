@@ -41,7 +41,8 @@ classify them.
 `adapter_fault/provider/execution` (#1498) names a lookup the adapter itself
 failed: the exception's type alone shows a domain value refusing what the
 adapter built, or a programming error in the adapter. It is never retryable and
-never enrolled for recovery, because it fails the same way each time; any other
+never enrolled for recovery: the fault is in this build, so retrying would at
+best succeed by chance on an answer the adapter should have handled. Any other
 raised exception, a transport library's own error included, stays an
 unavailable lane with an `unknown` aggregate and keeps its recovery.
 
