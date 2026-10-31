@@ -5533,9 +5533,7 @@ def test_retry_now_keeps_a_jobless_scope_open_to_a_later_throttle(
         claimed = store.claim_one(generation=1, now=100, token="owner")
         assert claimed is not None
         if before == "exhausted":
-            assert store.complete_missing_jobs(
-                token="owner", recovery=claimed, now=100
-            )
+            assert store.complete_missing_jobs(token="owner", recovery=claimed, now=100)
     assert [before] == [item.state for item in store.snapshot()]
     # Retry now with nothing outstanding keeps what a later enrolment reopens.
     assert 1 == store.reconcile_generation(generation=2, now=200)
