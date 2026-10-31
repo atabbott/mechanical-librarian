@@ -387,7 +387,12 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         state: str,
         changed_at: int,
     ) -> None:
-        if state != "stale" or operation.plan.destination != "cover":
+        # A cover waiting for its connection keeps its consideration (#1415).
+        if (
+            state != "stale"
+            or operation.plan.destination != "cover"
+            or operation.failure == "connection"
+        ):
             return
         row = self._connection.execute(
             "SELECT event.consideration_id,event.review_case_id "

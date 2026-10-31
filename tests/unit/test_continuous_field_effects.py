@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
@@ -832,6 +833,70 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
         faulted.schedule()
     assert raised.value.code == "persistence"
     assert repository.retired == [(decision.decision_id, 102)]
+
+
+def test_a_cover_revive_refused_for_pending_cleanup_is_scheduled_once_it_completes() -> (
+    None
+):
+    """A superseded cover's revive waits for its own cleanup, and the lane plans
+    it again on the first pass after that cleanup completes (#1415)."""
+    pending = [True]
+
+    class Repository(_PagedRepository):
+        def current_field_effect_consent(self, *_context):
+            return object()
+
+        def field_effect_cleanup_pending(self, plan_id):
+            assert plan_id == "plan-cover"
+            return pending[0]
+
+        def pending_field_effect_action_plan_ids(self, _limit):
+            return ()
+
+        def next_field_effect_plan_id(self, _last_library):
+            return None
+
+    class CoverAuthority(_Authority):
+        def resolve(self, decision):
+            return replace(super().resolve(decision), destination="cover")
+
+    class RefusedRevive(_Planner):
+        def plan(self, decision, **values):
+            super().plan(decision, **values)
+            return SimpleNamespace(
+                state="superseded",
+                plan=SimpleNamespace(plan_id="plan-cover", destination="cover"),
+            )
+
+        def run_pending_cleanups(self, limit):
+            return 0
+
+    repository = Repository(_decisions(1))
+    planner = RefusedRevive()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): planner},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        CoverAuthority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+    decision_id = repository.decisions[0].decision_id
+    service._run_until_idle()
+    assert planner.planned == [decision_id]
+    for _ in range(3):
+        service._run_until_idle()
+    assert planner.planned == [decision_id]
+    pending[0] = False
+    service._run_until_idle()
+    assert planner.planned == [decision_id] * 2
+    for _ in range(3):
+        service._run_until_idle()
+    assert planner.planned == [decision_id] * 2
 
 
 def _bindable_f20_decision(occurred_at: int) -> AutomaticDecision:

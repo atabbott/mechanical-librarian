@@ -1044,10 +1044,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     if member is not None
                 ):
                     # A lost connection is not the decision's end, whatever its
-                    # origin (#1402). The plan returns to the state the stale
-                    # interrupted, with its attempt and claim token, so a retry
-                    # whose outcome is unknown is still that retry; its history
-                    # stays whole and every guard runs again before a claim.
+                    # origin (#1402) or destination: a cover kept its
+                    # consideration and recovery copy, with no cleanup (#1415).
+                    # The plan returns to the state the stale interrupted, with
+                    # its attempt and claim token, so a retry whose outcome is
+                    # unknown is still that retry; its history stays whole and
+                    # every guard runs again before a claim.
                     interrupted = json.loads(
                         self._connection.execute(
                             "SELECT document FROM field_effect_events WHERE plan_id=? "
@@ -1963,12 +1965,13 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
     def _schedule_field_effect_cleanup(
         self, operation: FieldEffectOperation, changed_at: int
     ) -> None:
-        if operation.plan.destination == "cover" and operation.state in {
-            "verified",
-            "stale",
-            "superseded",
-            "abandoned",
-        }:
+        # A cover waiting for its connection has nothing to clean up yet: its
+        # re-plan resumes it with the same recovery copy (#1415).
+        if (
+            operation.plan.destination == "cover"
+            and operation.state in {"verified", "stale", "superseded", "abandoned"}
+            and (operation.state, operation.failure) != ("stale", "connection")
+        ):
             self._upsert_field_effect_cleanup(
                 operation.plan.plan_id, "pending", 0, changed_at
             )
