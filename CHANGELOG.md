@@ -66,7 +66,6 @@ brackets are GitHub issues.
 - Each Attention queue row's name for screen readers ends with its work's
   title, so the same field in two works is no longer announced identically
   (#1361).
-
 - Codex sign-in from Settings or setup shows the link and one-time code the
   bundled Codex CLI prints, instead of failing at once. The link opens in a
   new tab, and the code stays still while you select it and has a Copy
