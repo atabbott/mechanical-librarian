@@ -6519,7 +6519,8 @@ describe('Library route', () => {
         })),
       })
       await user.click(await screen.findByRole('button', { name: /^Description/u }))
-      const canvas = document.querySelector('.decision-canvas') as HTMLElement
+      const canvas = document.querySelector('.decision-canvas')
+      if (!(canvas instanceof HTMLElement)) throw new Error('decision canvas missing')
       await waitFor(() => expect(within(canvas).getByText(reason)).toBeVisible())
       expect(
         within(canvas).queryByRole('complementary', { name: 'Comparison condition' }),
