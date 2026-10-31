@@ -6992,6 +6992,131 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
             browser.close()
 
 
+# The setup "ML" mark's contrast against the masthead it sits on, by its edge,
+# and its letters' against its fill, from the colours the page renders.
+_SETUP_MARK_CONTRAST = """() => {
+  const paint = (css) => {
+    const context = document.createElement('canvas').getContext('2d');
+    context.fillStyle = css;
+    context.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
+    return [r, g, b, a / 255];
+  };
+  const over = (top, ground) => [0, 1, 2].map((i) => top[i] * top[3] + ground[i] * (1 - top[3])).concat(1);
+  const luminance = (rgb) => [0.2126, 0.7152, 0.0722].reduce((sum, weight, i) => {
+    const c = rgb[i] / 255;
+    return sum + weight * (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  }, 0);
+  const contrast = (a, b) => {
+    const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    return (high + 0.05) / (low + 0.05);
+  };
+  const background = (selector) => paint(getComputedStyle(document.querySelector(selector)).backgroundColor);
+  const page = over(background('body'), [255, 255, 255, 1]);
+  const masthead = over(background('.masthead'), page);
+  const style = getComputedStyle(document.querySelector('.book-mark'));
+  const fill = over(paint(style.backgroundColor), masthead);
+  const edge = parseFloat(style.borderTopWidth) ? over(paint(style.borderTopColor), masthead) : fill;
+  return [contrast(edge, masthead), contrast(over(paint(style.color), fill), fill)];
+}"""
+# Each setup step-list button shorter than a 2.75rem target.
+_SHORT_STEP_BUTTONS = """() => {
+  const floor = 2.75 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return [...document.querySelectorAll('.ledger-row button')]
+    .filter((node) => node.getBoundingClientRect().height < floor - 0.5)
+    .map((node) => `${node.getAttribute('aria-label')} is ${Math.round(node.getBoundingClientRect().height)}px`);
+}"""
+# Each word split across lines, other than at a hyphen, in the step list, the "ML" mark, a provider's
+# checkbox label or its access link, and the mark's letters past its box.
+_SPLIT_SETUP_WORDS = """() => {
+  const found = [];
+  for (const node of document.querySelectorAll(
+      '.ledger-row > span, .book-mark, .option > label:first-child, .provider-access')) {
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    for (let text = walker.nextNode(); text; text = walker.nextNode())
+      for (const match of text.data.matchAll(/[^\\s\\u2010-\\u2014-]+/g)) {
+        const range = document.createRange();
+        range.setStart(text, match.index);
+        range.setEnd(text, match.index + match[0].length);
+        if (new Set([...range.getClientRects()].map((rect) => Math.round(rect.top))).size > 1)
+          found.push(`${match[0]} breaks mid-word`);
+      }
+  }
+  const mark = document.querySelector('.book-mark');
+  if (mark.scrollWidth > mark.clientWidth || mark.scrollHeight > mark.clientHeight)
+    found.push('the mark spills its letters');
+  return found;
+}"""
+
+
+def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() -> None:
+    """On the providers step, the "ML" mark stands 3:1 off the masthead and its
+    letters 4.5:1 off the mark in dark mode, set or followed from the system
+    (#1490); every step-list Change button is a 2.75rem target at every width
+    and text size; and with 200% text at 375 and 320px no word breaks in the
+    step list, the mark, a provider's name or its access link, such as
+    Hardcover, and the mark holds its letters (#1491)."""
+    with tempfile.TemporaryDirectory() as directory:
+        with (
+            real_setup_server(Path(directory)) as (origin, token_file, _cert),
+            _fake_audiobookshelf() as service,
+            sync_playwright() as playwright,
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1440, "height": 900}
+            )
+            with _closing_context(context):
+                page = context.new_page()
+                _claim_real_setup(page, origin, token_file.read_text().strip())
+                page.get_by_label("Audiobookshelf address", exact=True).fill(service)
+                page.get_by_label("Audiobookshelf API key", exact=True).fill(
+                    _FAKE_AUDIOBOOKSHELF_KEY
+                )
+                page.get_by_role("button", name="Verify and continue").click()
+                expect(
+                    page.get_by_role("heading", name="Choose metadata providers")
+                ).to_be_visible()
+                expect(page.locator(".ledger-row button")).not_to_have_count(0)
+                failures = []
+                # Dark set on the page over a light system, then followed from it.
+                themes: tuple[tuple[str | None, Literal["light", "dark"]], ...] = (
+                    ("dark", "light"),
+                    (None, "dark"),
+                )
+                for theme, system in themes:
+                    page.emulate_media(color_scheme=system)
+                    page.evaluate(
+                        "theme => theme ? document.documentElement.dataset.theme = theme"
+                        " : delete document.documentElement.dataset.theme",
+                        theme,
+                    )
+                    mark, letters = page.evaluate(_SETUP_MARK_CONTRAST)
+                    if mark < 3 or letters < 4.5:
+                        failures.append(
+                            f"dark ({'set' if theme else 'system'}): the mark is "
+                            f"{mark:.2f}:1 off the masthead, its letters {letters:.2f}:1"
+                        )
+                for text in ("", "200%"):
+                    page.evaluate(
+                        "size => document.documentElement.style.fontSize = size", text
+                    )
+                    for width in (1440, 760, 390, 375, 320):
+                        page.set_viewport_size({"width": width, "height": 812})
+                        where = f"{text or '100%'} text at {width}px"
+                        failures += [
+                            f"{where}: {short}"
+                            for short in page.evaluate(_SHORT_STEP_BUTTONS)
+                        ]
+                        if text and width <= 375:
+                            failures += [
+                                f"{where}: {split}"
+                                for split in page.evaluate(_SPLIT_SETUP_WORDS)
+                            ]
+                assert failures == [], "\n".join(failures)
+            browser.close()
+
+
 def test_setup_change_in_another_tab_is_named() -> None:
     """#1240 item 1: a token rotated by another tab reads as a change, not expiry."""
     with tempfile.TemporaryDirectory() as directory:
@@ -9904,13 +10029,17 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             page.get_by_role(
                 "heading", name="Activity and recovery", exact=True
             ).wait_for()
-            page.get_by_role("article").filter(has_text="Automatic choice").get_by_role(
-                "button", name="Details"
-            ).click()
-            # Activity's change text is the value as written (#1286).
+            row = page.get_by_role("article").filter(has_text="Automatic choice")
+            row.get_by_role("button", name="Details").click()
+            # Activity names the language as Library does, in the row's change,
+            # its announced sentence and its Details, never by a bare tag (#1490).
             expect(
-                page.get_by_text("en" if option == "preserve" else expected, exact=True)
+                row.get_by_text(f"Set language to {expected}", exact=True)
             ).to_be_visible()
+            expect(
+                row.get_by_text(f"Set Language from Not set to {expected}", exact=True)
+            ).to_have_count(1)
+            expect(row.locator("dd").filter(has_text=expected)).to_have_text(expected)
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
 
@@ -11038,6 +11167,125 @@ def test_ebook_synopsis_owner_journey(destination):
                 event.get_by_role("button", name="Details").click()
                 expect(event.get_by_text(selected, exact=True)).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
+# Where the Review complete heading lands against the masthead, and each of the
+# card's rows and values that runs past the card.
+_COMPLETION_GEOMETRY = """() => {
+  const card = document.querySelector('.review-complete').getBoundingClientRect();
+  const heading = document.querySelector('.review-complete h3').getBoundingClientRect();
+  const masthead = document.querySelector('.masthead').getBoundingClientRect();
+  return {
+    focused: document.activeElement?.matches('.review-complete') ?? false,
+    heading: [Math.round(heading.top), Math.round(heading.bottom)],
+    clear: Math.max(0, Math.round(masthead.bottom)),
+    height: innerHeight,
+    truncated: [...document.querySelectorAll('.review-complete li strong')]
+      .filter((node) => node.scrollWidth > node.clientWidth + 1)
+      .map((node) => `"${node.textContent}" is cut short`),
+    escaped: [...document.querySelectorAll('.review-complete li :is(button, small, strong)')]
+      .map((node) => [node.tagName, node.getBoundingClientRect()])
+      .filter(([, box]) => box.left < card.left - 1 || box.right > card.right + 1)
+      .map(([name, box]) => `${name} ${Math.round(box.left)}..${Math.round(box.right)}`
+        + ` past ${Math.round(card.left)}..${Math.round(card.right)}`),
+  };
+}"""
+
+
+def test_review_complete_comes_into_view_and_fits_its_card() -> None:
+    """After the last keyboard choice, the Review complete heading is wholly in
+    view and clear of the masthead at every ladder width in both themes, and
+    with 200% text on a phone the card's rows and values stay inside it,
+    whole (#1490). Each measured choice is the last field's, made again from the
+    card with the page scrolled to it, as it is at the end of a long review."""
+    sizes = [
+        (1440, 900, ""),
+        (1200, 900, ""),
+        (1024, 768, ""),
+        (760, 1024, ""),
+        (390, 844, ""),
+        (375, 812, ""),
+        (320, 640, ""),
+        (375, 812, "200%"),
+        (320, 640, "200%"),
+    ]
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash(_PASSWORD))
+        password.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 1440, "height": 900})
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "complete.sqlite",
+                hash_path=password,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                preparation=True,
+                genre_fixture=("Fantasy",),
+                genre_current=("Drama",),
+                genre_destination="ask",
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}")
+            heading = page.get_by_role("heading", name="Review complete", exact=True)
+            choice = page.locator(".decision-canvas [role=radio][aria-checked=false]")
+            while not heading.count():
+                choice.first.focus()
+                with page.expect_response(
+                    lambda response: response.url.endswith("/decisions")
+                ):
+                    page.keyboard.press("Space")
+                expect(heading.or_(choice.first)).to_be_visible()
+            failures = []
+            for theme in ("light", "dark"):
+                toggle = page.get_by_role("button", name=f"Use {theme} mode")
+                if toggle.count():
+                    toggle.click()
+                for width, height, text in sizes:
+                    where = f"{theme} {width}x{height} {text or '100%'}"
+                    page.set_viewport_size({"width": width, "height": height})
+                    page.evaluate(
+                        "size => document.documentElement.style.fontSize = size", text
+                    )
+                    page.locator(".review-complete li button").last.click()
+                    choice.first.wait_for()
+                    page.evaluate(_TWO_FRAMES)
+                    choice.first.evaluate(
+                        """node => {
+                          const masthead = document.querySelector('.masthead').getBoundingClientRect();
+                          scrollBy(0, node.getBoundingClientRect().top - Math.max(0, masthead.bottom) - 8);
+                          node.focus({preventScroll: true});
+                        }"""
+                    )
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ):
+                        page.keyboard.press("Space")
+                    expect(heading).to_be_visible()
+                    page.evaluate(_TWO_FRAMES)
+                    found = page.evaluate(_COMPLETION_GEOMETRY)
+                    top, bottom = found["heading"]
+                    if not found["focused"]:
+                        failures.append(f"{where}: the card does not have focus")
+                    if top < found["clear"] or bottom > found["height"]:
+                        failures.append(
+                            f"{where}: the heading spans {top}..{bottom}, the clear"
+                            f" view {found['clear']}..{found['height']}"
+                        )
+                    failures += [f"{where}: {item}" for item in found["escaped"]]
+                    if text:
+                        failures += [f"{where}: {item}" for item in found["truncated"]]
+            assert failures == [], "\n".join(failures)
         browser.close()
 
 

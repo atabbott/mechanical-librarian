@@ -1193,11 +1193,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     == "nowrap"
                 )
                 assert row_box["height"] <= 72
+                # A full 2.75rem target, no taller (#1491).
                 assert (
                     inspect.evaluate("node => getComputedStyle(node).minHeight")
-                    == "40px"
+                    == "44px"
                 )
-                assert inspect_box["height"] <= 40.5
+                assert inspect_box["height"] <= 44.5
                 page.set_viewport_size({"width": 390, "height": 844})
                 stage[0] = "activity:compact-media-state"
                 page.wait_for_function(
@@ -4898,11 +4899,24 @@ _PAGER_ROWS = """() => {
 }"""
 
 
+# Activity's filter chips and Details buttons shorter than a 2.75rem target.
+_SHORT_LEDGER_TARGETS = """() => {
+  const floor = 2.75 * parseFloat(getComputedStyle(document.documentElement).fontSize);
+  return [...document.querySelectorAll(
+      '.cm-activity-filters button, .cm-activity-event-group article > button')]
+    .filter((node) => node.getClientRects().length)
+    .map((node) => [node.textContent.trim().slice(0, 24), node.getBoundingClientRect().height])
+    .filter(([, height]) => height < floor - 0.5)
+    .map(([name, height]) => `"${name}" is ${Math.round(height)}px tall, under ${floor}px`);
+}"""
+
+
 def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
     """At ordinary text and with root font-size 200%, every Activity row -- a
     check's members open -- keeps its promises and whole labels, with no cell
     clipped, past its row or over another, and no pagination or filter control
-    cut short, from the widest window to the narrowest phone (#1291)."""
+    cut short, from the widest window to the narrowest phone (#1291). Every
+    filter chip and Details button is a full 2.75rem target (#1491)."""
     styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
     text = "100%"
     with ExitStack() as stack:
@@ -4947,6 +4961,8 @@ def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
                 assert clipped == [], f"{where}: {clipped}"
                 cut = page.evaluate(_CUT_CONTROLS)
                 assert cut == [], f"{where}: {cut}"
+                short = page.evaluate(_SHORT_LEDGER_TARGETS)
+                assert short == [], f"{where}: {short}"
 
 
 # Each Policy selected value cut short inside its control.
@@ -5156,6 +5172,176 @@ def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> No
                     f"{route} at {width}px: {failure}"
                     for failure in page.evaluate(_CUT_SECTION_PICKER)
                 ]
+        assert failures == [], "\n".join(failures)
+
+
+# Finish tray steps and actions that run past the editor holding them.
+_PAST_THE_EDITOR = """() => {
+  const editor = document.querySelector('.cm-policy-editor').getBoundingClientRect();
+  return [...document.querySelectorAll('.cm-finish-tray :is(button, ol > li)')]
+    .filter((node) => node.getClientRects().length)
+    .flatMap((node) => {
+      const box = node.getBoundingClientRect();
+      return box.left < editor.left - 1 || box.right > editor.right + 1
+        ? [`"${node.textContent.trim()}" spans ${Math.round(box.left)}..${Math.round(box.right)}`
+          + ` past the editor's ${Math.round(editor.left)}..${Math.round(editor.right)}`]
+        : [];
+    });
+}"""
+
+
+def _enlarged_cohort(
+    stack: ExitStack, width: int, height: int, *, writes_off_handoff: bool = False
+) -> Page:
+    """A page over the cohort with root font-size 200% and the stream held live."""
+    playwright = stack.enter_context(sync_playwright())
+    browser = playwright.chromium.launch(headless=True)
+    stack.callback(browser.close)
+    page = browser.new_page(viewport={"width": width, "height": height}, locale="en-US")
+    page.add_init_script(_LIVE_UPDATE_STREAM)
+    _serve_cohort(
+        page,
+        stylesheet=lambda: "html { font-size: 200% !important; }",
+        writes_off_handoff=writes_off_handoff,
+    )
+    return page
+
+
+def test_write_permission_panel_fits_a_phone_at_200_percent_text() -> None:
+    """With root font-size 200%, the writes-off card and the write-permission
+    panel it opens keep their heading, text and controls inside themselves and
+    the phone's viewport, and nothing scrolls sideways (#1490)."""
+
+    def writes_off(route: Route) -> None:
+        payload = cast("dict[str, Any]", rich_payload(route.request.url))
+        payload["waiting"]["applying"] = 0
+        route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+    with ExitStack() as stack:
+        page = _enlarged_cohort(stack, 390, 844, writes_off_handoff=True)
+        page.route("**/api/v1/activity?*", writes_off)
+        failures = []
+        page.goto("https://react-platform.invalid/activity")
+        entry = page.locator(".cm-write-consent").get_by_role(
+            "button", name="Review write permissions"
+        )
+        for surface in (".cm-write-consent", "#activity-consent"):
+            if surface == "#activity-consent":
+                page.set_viewport_size({"width": 390, "height": 844})
+                entry.click()
+                page.get_by_role("heading", name="Enable guarded writes").wait_for()
+            else:
+                entry.wait_for()
+            for width in (390, 375, 320):
+                page.set_viewport_size({"width": width, "height": 844})
+                page.evaluate(_TWO_FRAMES)
+                where = f"{surface} at {width}px"
+                failures += [
+                    f"{where}: {failure}"
+                    for failure in page.evaluate(
+                        _ESCAPED_CONTROLS,
+                        f"{surface} :is(h2, p, label, li, button, strong)",
+                    )
+                ]
+                past = page.evaluate(_CONTENT_OVERFLOW, surface)
+                if past > 0:
+                    failures.append(f"{where}: content runs {past}px past it")
+                sideways = page.evaluate(
+                    "() => document.documentElement.scrollWidth - innerWidth"
+                )
+                if sideways > 0:
+                    failures.append(f"{where}: the page scrolls {sideways}px sideways")
+        assert failures == [], "\n".join(failures)
+
+
+def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> None:
+    """With root font-size 200%, the Policy finish tray's preview-stage steps
+    and actions stay inside the editor at 1440, 1200, 1024 and 375px (#1490)."""
+    with ExitStack() as stack:
+        page = _enlarged_cohort(stack, 1440, 900)
+        failures = []
+        for width, height in ((1440, 900), (1200, 900), (1024, 768), (375, 812)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto("https://react-platform.invalid/policy?section=identity")
+            page.get_by_role("region", name="Title and subtitle").get_by_role(
+                "button", name="Ignore"
+            ).click()
+            page.get_by_role("button", name="Validate and preview").click()
+            page.get_by_role("button", name="Review activation").wait_for()
+            page.evaluate(_TWO_FRAMES)
+            failures += [
+                f"preview tray at {width}px: {failure}"
+                for failure in page.evaluate(_PAST_THE_EDITOR)
+                + page.evaluate(_ESCAPED_CONTROLS, ".cm-finish-tray button")
+            ]
+        assert failures == [], "\n".join(failures)
+
+
+def test_activity_paging_keeps_the_focused_control_in_view() -> None:
+    """Moving to the next Activity page or changing the page size from the
+    keyboard keeps the control that has focus in view, clear of the masthead,
+    once the new page's rows have rendered, on wide and short windows and
+    phones (#1490)."""
+
+    def three_pages(route: Route) -> None:
+        payload = cast("dict[str, Any]", rich_payload(route.request.url))
+        ledger = payload["ledger"]
+        ledger |= {"page_count": 3, "total": 3 * ledger["page_size"]}
+        # A full page, so a larger page size renders more rows.
+        events = payload["events"]
+        payload["events"] = (
+            events
+            + [
+                {**event, "event_id": f"{event['event_id']}-{copy}"}
+                for copy in range(ledger["page_size"])
+                for event in events
+                if not event["check_group"]
+            ]
+        )[: ledger["page_size"]]
+        route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+    in_view = """node => {
+      const box = node.getBoundingClientRect();
+      const masthead = document.querySelector('.masthead').getBoundingClientRect();
+      return box.top >= Math.max(0, masthead.bottom) - 1 && box.bottom <= innerHeight + 1;
+    }"""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        page.route("**/api/v1/activity?*", three_pages)
+        failures = []
+        for width, height in ((1440, 900), (1440, 600), (390, 844), (320, 640)):
+            where = f"{width}x{height}"
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(
+                "https://react-platform.invalid/activity"
+                "?eventType=all&rangeDays=30&page=1&pageSize=25"
+            )
+            following = page.get_by_role("button", name="Next", exact=True)
+            following.scroll_into_view_if_needed()
+            following.focus()
+            page.keyboard.press("Enter")
+            page.wait_for_url(re.compile(r"[?&]page=2(&|$)"))
+            expect(following).to_be_focused()
+            page.wait_for_timeout(300)
+            if not following.evaluate(in_view):
+                failures.append(f"{where}: Next is out of view")
+            size = page.get_by_role("combobox", name="Events per activity page")
+            size.scroll_into_view_if_needed()
+            size.focus()
+            page.keyboard.press("Enter")
+            page.get_by_role("option", name="50 per page").focus()
+            page.keyboard.press("Enter")
+            page.wait_for_url(re.compile(r"[?&]pageSize=50(&|$)"))
+            expect(page.locator(".cm-activity-event-group article")).to_have_count(48)
+            expect(size).to_be_focused()
+            page.wait_for_timeout(300)
+            if not size.evaluate(in_view):
+                failures.append(f"{where}: the page size is out of view")
         assert failures == [], "\n".join(failures)
 
 

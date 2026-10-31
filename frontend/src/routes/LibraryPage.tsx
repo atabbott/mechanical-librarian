@@ -3697,8 +3697,11 @@ export default function LibraryPage({
     if (controller.canRetry) retryButton.current?.focus()
   }, [controller.canRetry])
   useEffect(() => {
-    if (complete?.id === selectedReviewCaseId && completionInspection === null)
-      completionRegion.current?.focus({ preventScroll: true })
+    if (complete?.id !== selectedReviewCaseId || completionInspection !== null) return
+    completionRegion.current?.focus({ preventScroll: true })
+    // The card replaces the last choice where it stood, so its heading can
+    // start under the masthead; the page's scroll padding keeps it clear (#1490).
+    completionRegion.current?.querySelector('h3')?.scrollIntoView({ block: 'nearest' })
   }, [complete, completionInspection, selectedReviewCaseId])
   useLayoutEffect(() => {
     const presentation = advancePresentation.current

@@ -30,7 +30,13 @@ import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { RecordedTime } from '../components/RecordedTime'
 import { formatDay, formatWhen } from '../dates'
-import { destinationLabel, destinationPhrase, writeHoldReasons, writeStateLabels } from '../labels'
+import {
+  destinationLabel,
+  destinationPhrase,
+  languageName,
+  writeHoldReasons,
+  writeStateLabels,
+} from '../labels'
 import { useLibraryName } from '../libraryNames'
 import {
   consentBasis,
@@ -285,6 +291,25 @@ function ActivityTransitions({
     </ol>
   )
 }
+// A language row's change and values come from the server as exact tags;
+// they read by name, as Library and Policy name them, `English (en)`, inside
+// the server's own words (#1490).
+const languages = (value: string) => value.split(', ').map(languageName).join(', ')
+const languageChange = (text: string) =>
+  text
+    .replace(
+      /^Set Language from (.+) to (.+)$/u,
+      (_, before: string, after: string) =>
+        `Set Language from ${languages(before)} to ${languages(after)}`,
+    )
+    .replace(
+      /^(Set language to |Kept Language as |Kept )(.+)$/u,
+      (_, words: string, value: string) => words + languages(value),
+    )
+    .replace(
+      /^(.+) → (.+)$/u,
+      (_, before: string, after: string) => `${languages(before)} → ${languages(after)}`,
+    )
 // One durable record's row. It stands on its own in the ledger, or as one
 // member of a preparation's checks row, with the same Details either way.
 function ActivityEventRow({
@@ -309,6 +334,9 @@ function ActivityEventRow({
   children?: ReactNode
 }) {
   const changeId = event.change_id || event.event_id
+  const language = event.destination === 'language'
+  const change = language ? languageChange(event.change) : event.change
+  const changeDetail = language ? languageChange(event.change_detail) : event.change_detail
   const advice =
     event.destination === 'description' && event.origin === 'adviser'
       ? 'description'
@@ -340,14 +368,14 @@ function ActivityEventRow({
       on a plain div, which assistive technology may ignore (#1288).
     */}
       <div className="cm-activity-change">
-        {event.change === event.change_detail ? (
-          <span>{event.change}</span>
+        {change === changeDetail ? (
+          <span>{change}</span>
         ) : (
           <>
             {/* First, so the hidden sentence sits where the cell starts and
                 never past a clipped change. */}
-            <span className="sr-only">{event.change_detail}</span>
-            <span aria-hidden="true">{event.change}</span>
+            <span className="sr-only">{changeDetail}</span>
+            <span aria-hidden="true">{change}</span>
           </>
         )}
       </div>
@@ -402,7 +430,9 @@ function ActivityEventRow({
             {event.evidence.map((item) => (
               <div key={item.label}>
                 <dt>{item.label}</dt>
-                <dd>{item.value}</dd>
+                <dd>
+                  {language && item.label.endsWith(' value') ? languages(item.value) : item.value}
+                </dd>
               </div>
             ))}
           </dl>
@@ -523,10 +553,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       outer = null
       inner = requestAnimationFrame(() => {
         inner = null
-        if (active && focusVersion.current === focusRequest.version)
-          document
-            .querySelector<HTMLElement>(`[data-activity-focus="${focusRequest.key}"]`)
-            ?.focus({ preventScroll: true })
+        if (!active || focusVersion.current !== focusRequest.version) return
+        const control = document.querySelector<HTMLElement>(
+          `[data-activity-focus="${focusRequest.key}"]`,
+        )
+        control?.focus({ preventScroll: true })
+        // A shorter page can leave the control below the fold (#1490).
+        control?.scrollIntoView({ block: 'nearest' })
       })
     })
     return () => {
@@ -862,8 +895,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     setDraft({ ...draft, names: next })
   }
   const restoreFocus = (key: string, version: number) => {
-    if (focusVersion.current !== version) return
-    setFocusRequest({ key, version })
+    // A dropdown hands focus back to its own trigger, which counts as a later
+    // move; the request still stands, so that trigger comes into view (#1490).
+    const returned = document.activeElement?.getAttribute('data-activity-focus') === key
+    if (focusVersion.current !== version && !returned) return
+    setFocusRequest({ key, version: focusVersion.current })
   }
   const changeSearch = (next: ActivitySearchUpdate, focusKey?: string) => {
     setExpandedId(null)
@@ -889,7 +925,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       q: base.q ?? '',
       draftVersion: queryDraftVersion.current,
     })
-    void navigate({ search: base, replace: true }).then(() => {
+    // The page stays where it is, so the control with focus stays in view (#1490).
+    void navigate({ search: base, replace: true, resetScroll: false }).then(() => {
       if (key) restoreFocus(key, version)
     })
   }
@@ -941,7 +978,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       q: next.q ?? '',
       draftVersion: queryDraftVersion.current,
     })
-    void navigate({ search: () => next }).then(() => {
+    void navigate({ search: () => next, resetScroll: false }).then(() => {
       if (restoredKey) restoreFocus(restoredKey, version)
     })
   }
