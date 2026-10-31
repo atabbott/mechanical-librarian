@@ -2727,8 +2727,8 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             },
             "narrators",
             "contributor_names",
-            'The proposed value carries a credit label such as "Narrated by", so '
-            "automatic handling never writes it.",
+            'The proposed value starts with a credit label such as "Narrated by", so '
+            "it is never written for you.",
         ),
         (
             {
@@ -2738,7 +2738,7 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             "narrators",
             "contributor_names",
             "The proposed value drops accents from a name you already have, so "
-            "automatic handling never writes it.",
+            "it is never written for you.",
         ),
         (
             {
@@ -2749,7 +2749,7 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             "narrators",
             "contributor_names",
             "The proposed value drops accents from a name you already have, so "
-            "automatic handling never writes it.",
+            "it is never written for you.",
         ),
         (
             {
@@ -2759,15 +2759,14 @@ def test_a_cast_repeating_a_member_in_two_spellings_is_never_written(destination
             },
             "narrators",
             "contributor_names",
-            "The retained evidence is not strong enough for automatic handling to "
-            "choose a value.",
+            "Not enough sources agree to choose a value for you.",
         ),
         (
             _PROMOTIONAL["promotional_candidate"],
             "title",
             "title_layout",
             'The proposed title carries an announcement such as "Now a Major '
-            'Motion Picture", so automatic handling never writes it.',
+            'Motion Picture", so it is never written for you.',
         ),
     ),
     ids=(
@@ -2848,7 +2847,7 @@ def _confirmed_promotional_title_report():
             "title",
             "title_layout",
             'The current title carries an announcement such as "Now a Major '
-            'Motion Picture", so automatic handling never confirms it.',
+            'Motion Picture", so it is never confirmed for you.',
         ),
         (
             lambda: synthetic_audiobook_bibliographic_report(
@@ -2857,8 +2856,8 @@ def _confirmed_promotional_title_report():
             ),
             "narrators",
             "contributor_names",
-            'The current value carries a credit label such as "Narrated by", so '
-            "automatic handling never confirms it.",
+            'The current value starts with a credit label such as "Narrated by", so '
+            "it is never confirmed for you.",
         ),
     ),
     ids=("promotional_title", "credit_prefixed_cast"),

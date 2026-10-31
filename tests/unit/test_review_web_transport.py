@@ -955,10 +955,9 @@ def test_login_case_evidence_history_and_logout_round_trip(
     assert len(contexts) == len(title["proposed_values"]) + 1
     assert contexts[0]["selection"] == "current"
     assert contexts[0]["evidence"][0]["source"] == "Local library record"
-    assert (
-        contexts[0]["rationale"]
-        == "Keep the value currently held by the local library."
-    )
+    # The current value's card carries its value and nothing more (#1519).
+    assert contexts[0]["rationale"] == ""
+    assert all(context["recommendation_reason"] == "" for context in contexts)
     assert all(context["recommendation"] == "no_recommendation" for context in contexts)
     assert all(
         "{" not in observation["observation"]

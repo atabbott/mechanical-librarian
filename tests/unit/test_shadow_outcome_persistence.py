@@ -7559,7 +7559,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
             assert title["decision_actions"] == []
             assert not title["needs_attention"]
             assert (
-                "Automatic handling is suspended pending a safety recovery."
+                "Changes made for you are waiting for a safety recovery."
                 == title["classification_reason"]
             )
             library = repository.read_review_library(None, 50, 0, "needs_attention")
@@ -7586,7 +7586,7 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
             )
             assert attention.total == projected["total"]
             assert ["subtitle"] == [item["destination"] for item in projected["items"]]
-            assert "Automatic handling is suspended pending a safety recovery." == next(
+            assert "Changes made for you are waiting for a safety recovery." == next(
                 item["classification_reason"]
                 for item in projected["items"]
                 if item["destination"] == "subtitle"
@@ -9821,47 +9821,47 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
         (
             "absent",
             "no_candidate",
-            "No eligible value was found in the retained evidence.",
+            "No source offered a value that can be used here.",
         ),
         (
             "quality",
             "description_quality_floor_not_met",
-            "Retained source text does not meet the automatic synopsis rules.",
+            "No source description meets the rules for a synopsis.",
         ),
         (
             "unproved",
             "target_work_applicability_unproved",
-            "The retained evidence does not establish that this value describes this work.",
+            "The sources do not show that this value describes this work.",
         ),
         (
             "competition",
             "ambiguous_evidence",
-            "The retained evidence does not select one value for automatic handling.",
+            "The sources do not agree on one value.",
         ),
         (
             "unusable",
             "target_state_unusable",
-            "The current field value cannot be used safely for this automatic operation.",
+            "The current value cannot safely be changed for you.",
         ),
         (
             "unavailable",
             "series_provider_failure_isbn",
-            "A contributing ISBN lookup did not supply usable evidence.",
+            "An ISBN lookup did not return a usable answer.",
         ),
         (
             "edition",
             "manifestation_verification_required",
-            "The retained evidence does not verify the ISBN for this edition.",
+            "The sources do not confirm this ISBN for this edition.",
         ),
         (
             "unqualified",
             "automatic_unqualified",
-            "This policy option is not qualified for automatic handling.",
+            "Your settings leave this kind of change to you.",
         ),
         (
             "contradicted",
             "target_work_contradicted",
-            "The retained evidence contradicts applicability to this work.",
+            "The sources suggest this value belongs to a different work.",
         ),
     ],
 )

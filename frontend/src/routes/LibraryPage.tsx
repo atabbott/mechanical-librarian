@@ -10,7 +10,6 @@ import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
 import { CountPhrases } from '../components/CountPhrases'
-import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, createLink, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import {
@@ -26,22 +25,11 @@ import {
 import type { ComponentPropsWithRef, KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import {
-  ApiError,
-  CsrfRenewedError,
-  displayValue,
-  refusalCopy,
-  sessionRefreshedCopy,
-} from '../api/http'
+import { ApiError, CsrfRenewedError, displayValue, sessionRefreshedCopy } from '../api/http'
 import type {
-  CaseDetailView,
-  ChoiceContextView,
-  CoverObservationView,
   AutomaticOutcome,
-  CoverCandidateView,
   DecisionCommand,
   DecisionOutcome,
-  EvidenceView,
   LibraryLens,
   LibrarySearch,
   MediaKind,
@@ -55,21 +43,14 @@ import type {
   WorkSummaryState,
 } from '../api/http'
 import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
-import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import {
   audioSurfaceLabels,
   claimBasisLabels,
   claimKindLabels,
-  coverNoteLabel,
-  coverReviewerLabel,
-  coverSourceLabels,
   destinationLabel,
-  destinationPhrase,
-  evidenceRoleLabel,
   fieldStateLabels,
   languageName,
-  observationText,
   lookupLabels,
   materialReasonLabel,
   mediaKindLabels,
@@ -77,9 +58,7 @@ import {
   preparationOutcomes,
   preparationStageLabels,
   preparationStatusLabels,
-  reviewerFailureCopy,
   sourceStatusLabels,
-  writeHoldReasons,
 } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
@@ -103,26 +82,35 @@ import {
   useReviewDecisionController,
   writtenRefusal,
 } from '../reviewDecisionController'
-import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { emptyUnproposed, ownerChoiceCount, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
 import { formatRunningTime } from '../dates'
 
-type ReviewField = CaseDetailView['fields'][number]
+import {
+  shownAdvice,
+  coverNames,
+  effectSummary,
+  sameSelectedValue,
+  commandSelected,
+  choiceSelected,
+  isLongDescription,
+  decisionQuestion,
+  audioFileFormat,
+} from '../fieldDecision'
+import type { ReviewField } from '../fieldDecision'
+import {
+  ChoiceEvidencePanel,
+  DescriptionText,
+  RecordedFieldObservations,
+  MetadataChoice,
+} from './FieldDecisionChoices'
+import { LibraryCoverChoices } from './FieldDecisionCover'
 const authoredOwnerRecorded = (field: ReviewField) =>
   field.descriptionAdvice?.selection?.origin === 'human' &&
   Boolean(
     field.descriptionAdvice.selected_advice?.current === true ||
     field.descriptionAdvice.application_outcome,
   )
-// A carried hold pauses an automatic authored choice as it pauses a title's
-// automatic decision, so nothing reads as chosen until Resume (ADR-0085).
-const shownAdvice = (field: ReviewField) =>
-  field.manualHold &&
-  field.humanDecision === null &&
-  field.descriptionAdvice?.selection?.origin === 'automatic_policy'
-    ? { ...field.descriptionAdvice, selection: null, selected_advice: null }
-    : field.descriptionAdvice
 const searchNavigationDelay = 150
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
@@ -134,13 +122,6 @@ const prefetchIntentDelay = 50
 const maxCoalescedSuccessorCandidates = 50
 const librarySearchIdentity = (search: object) =>
   JSON.stringify(Object.entries(search).sort(([left], [right]) => left.localeCompare(right)))
-// What the owner has chosen for one field and how far that choice has got.
-// `null` means this field carries no choice of theirs in this session.
-type ChoiceProgress = {
-  command: DecisionCommand
-  phase: 'recording' | 'confirmed' | 'failed'
-} | null
-
 const authorLine = (work: LibraryWorkView) =>
   work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
 // A work with a review case opens that case; one with only a published report
@@ -165,12 +146,6 @@ const valueText = (destination: TargetDestination, value: string) =>
   destination === 'language' ? languageName(value) : value
 const claimRole = (role: string) =>
   /^(?:unsafe|oversized)-source-text-sha256:/u.test(role) ? 'role not shown' : role
-const coverStateLabels = {
-  acceptable: 'Acceptable',
-  available: 'Available',
-  excluded: 'Excluded',
-  recommended: 'Recommended',
-} satisfies Record<CoverCandidateView['state'], string>
 const lensLabels = {
   all: 'All',
   needs_attention: 'Needs attention',
@@ -182,12 +157,6 @@ const lensLabels = {
 const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
   <a {...props} aria-current={props['aria-current'] ? 'true' : undefined} />
 ))
-const reviewerUnavailableDetail = (reason: string | null) =>
-  reason === 'profile contract requires memory_bytes=1073741824'
-    ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
-    : reason === 'profile contract requires process_limit=32'
-      ? 'The reviewer profile must set process_limit to 32. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
-      : null
 // The first letter of each of the first two words that have one, so a
 // bracket or an ampersand never stands for a word (#1290).
 const initials = (title: string) =>
@@ -630,7 +599,7 @@ const decisionValue = (field: ReviewField) => {
     return candidate?.incumbent || !selected
       ? 'Current cover'
       : candidate
-        ? `Alternative ${String(candidates.filter((item) => !item.incumbent).indexOf(candidate) + 1)} cover`
+        ? (coverNames(candidates).get(candidate.reference) ?? 'Selected cover')
         : 'Selected cover'
   }
   return valueText(
@@ -659,7 +628,7 @@ const fieldStatus = (field: ReviewField) =>
 // so the two reasons for an unchanged field are named here (#1514).
 const unchangedReasons = new Set([
   '',
-  'There is no owner decision available for this field.',
+  'There is nothing to decide for this field.',
   'There is no other value to choose from. You can enter your own.',
 ])
 const contextKind = (field: ReviewField) =>
@@ -687,10 +656,10 @@ const dispositionReasons = {
   reject: 'The proposed change was set aside; compare the values yourself.',
   propose_change: 'A change is proposed; compare it with the current value.',
   acceptable_choice: 'More than one value is acceptable; choose the one this work should use.',
-  unresolved_choice: 'The evidence does not settle one value; compare the values yourself.',
+  unresolved_choice: 'The sources do not settle one value; compare the values yourself.',
   keep: 'The current value is proposed to stay; compare the alternatives.',
   defer: 'This field waits for your comparison of the values.',
-  ineligible: 'No value here can be applied automatically; compare the values yourself.',
+  ineligible: 'None of these values can be applied for you; compare them yourself.',
 } satisfies Record<ProposalOutcome, string>
 const fieldReason = (field: ReviewField) =>
   bounded(
@@ -706,61 +675,6 @@ const fieldReason = (field: ReviewField) =>
             : 'No eligible owner decision is available.',
     'Retained reviewer notice',
   )
-const effectSummary = (field: ReviewField) => {
-  const advice = field.destination === 'description' ? shownAdvice(field) : null
-  if (advice?.selection) {
-    if (advice.application_outcome === 'verified')
-      return {
-        state: 'Applied and verified',
-        detail:
-          'This authored description was applied and verified in the library. Its record is retained in History.',
-      }
-    if (advice.application_outcome === 'no_change_required')
-      return {
-        state: 'No change needed',
-        detail:
-          'The library already held the selected description. This authored choice is retained in History.',
-      }
-    if (!advice.selected_advice?.current)
-      return {
-        state: 'Earlier choice retained',
-        detail:
-          'This choice is no longer current. History retains the choice; Activity shows any recorded application progress.',
-      }
-    return field.effectCapability === 'allowed'
-      ? {
-          state: 'Choice recorded',
-          detail:
-            "Activity shows this change's progress; safety checks run before any update is sent.",
-        }
-      : field.effectCapability === 'unavailable'
-        ? {
-            state: 'Choice recorded · External update unavailable',
-            detail:
-              'No external update capability is configured. Activity shows any recorded application progress.',
-          }
-        : {
-            state: 'Choice recorded · External update guarded',
-            detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}. Activity shows any recorded application progress.`,
-          }
-  }
-  return field.effectCapability === 'allowed'
-    ? {
-        state: 'Eligible for a library update',
-        detail:
-          'Being eligible sends nothing. Activity checks any recorded change before it reaches the library.',
-      }
-    : field.effectCapability === 'unavailable'
-      ? {
-          state: 'External update unavailable',
-          detail:
-            'The decision can still be recorded; no external update capability is configured.',
-        }
-      : {
-          state: 'Guarded from external update',
-          detail: `Writes are held because ${writeHoldReasons[field.effectCapability]}.`,
-        }
-}
 const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
   outcome === 'owner_entered' || outcome === 'withdraw'
 const completionOutcome = (field: ReviewField) =>
@@ -773,53 +687,6 @@ const completionOutcome = (field: ReviewField) =>
         : field.humanDecision?.outcome === 'accept'
           ? 'Proposed value selected'
           : 'Recorded outcome'
-const sameSelectedValue = (
-  left: DecisionCommand['selectedValue'],
-  right: DecisionCommand['selectedValue'],
-) =>
-  left == null || right == null
-    ? left === right
-    : left.kind === right.kind && JSON.stringify(left.value) === JSON.stringify(right.value)
-const commandSelected = (
-  command: DecisionCommand | null,
-  destination: string,
-  outcome: DecisionCommand['outcome'],
-  selectedValue: DecisionCommand['selectedValue'] = null,
-) =>
-  command?.destination === destination &&
-  !command.authoredDescription &&
-  command.outcome === outcome &&
-  sameSelectedValue(command.selectedValue, selectedValue)
-// A recorded field is revisited with every option still shown, so which one
-// is the recorded answer has to be readable. The owner's own decision is the
-// answer whenever there is one; an automatic decision only speaks for a field
-// they have not decided themselves.
-const recordedSelected = (
-  field: ReviewField,
-  outcome: 'accept' | 'keep_current',
-  selectedValue: DecisionCommand['selectedValue'] = null,
-) =>
-  field.descriptionAdvice &&
-  (field.descriptionAdvice.selected_advice?.current === true ||
-    field.descriptionAdvice.application_outcome !== null) &&
-  field.descriptionAdvice.selection
-    ? false
-    : field.humanDecision !== null
-      ? humanChoiceSelected(field.humanDecision, outcome, selectedValue)
-      : // A carried hold pauses the automatic decision, so it chose nothing.
-        !field.manualHold &&
-        field.automaticDecision !== null &&
-        automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
-const choiceSelected = (
-  field: ReviewField,
-  progress: ChoiceProgress,
-  outcome: 'accept' | 'keep_current',
-  selectedValue: DecisionCommand['selectedValue'] = null,
-) =>
-  (progress?.phase !== 'failed' &&
-    commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue)) ||
-  ((progress === null || progress.phase === 'failed') &&
-    recordedSelected(field, outcome, selectedValue))
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
 const comparisonNotices = (field: ReviewField) =>
@@ -827,7 +694,44 @@ const comparisonNotices = (field: ReviewField) =>
     context.limitations.some((limitation) => materialReasonLabel(limitation) !== undefined),
   )
     ? []
-    : field.notices.filter((notice) => materialReasonLabel(notice) !== undefined)
+    : field.notices.filter(
+        (notice) => materialReasonLabel(notice) !== undefined && !restatesReason(field, notice),
+      )
+// A comparison condition in words; differing source tag lists or synopses are
+// named as such rather than as a disagreement.
+const noticeText = (field: ReviewField, notice: string, mediaKind: string) =>
+  notice === 'competing_evidence' && combinedAutomaticTags(field, mediaKind)
+    ? 'Different source tag lists'
+    : notice === 'competing_evidence' && selectedAutomaticSynopsis(field, mediaKind)
+      ? 'Different source descriptions'
+      : materialReasonLabel(notice)
+// A notice that says again what the reason under the question already says is
+// left out: the language respelling reason, or the condition that is that
+// line (#1519).
+const restatesReason = (field: ReviewField, notice: string) =>
+  notice === questionNotice(field) ||
+  (field.automaticWithheldReason !== null &&
+    (notice === 'language_display_name' ||
+      `${materialReasonLabel(notice) ?? ''}.` === field.automaticWithheldReason))
+// Under an actionable field's question, one line gives its own reason: why it
+// was withheld, else its first comparison condition, else its disposition. The
+// classification sentence, the same on every field, is only the last fallback
+// (#1519).
+const questionNotice = (field: ReviewField) =>
+  actionable(field) && field.automaticWithheldReason === null
+    ? field.notices.find((notice) => materialReasonLabel(notice) !== undefined)
+    : undefined
+const questionReason = (field: ReviewField, mediaKind: string) => {
+  const notice = questionNotice(field)
+  const label = notice === undefined ? undefined : noticeText(field, notice, mediaKind)
+  return (
+    field.automaticWithheldReason ??
+    (label
+      ? `${label}.`
+      : ((dispositionReasons as Partial<Record<string, string>>)[field.disposition] ??
+        fieldReason(field)))
+  )
+}
 
 // Match the persisted Library ordering; recovery eligibility is a separate contract.
 const limitingProviderStatuses = new Set([
@@ -1058,288 +962,6 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
   )
 }
 
-function ChoiceEvidencePanel({
-  context,
-  evidenceId,
-  label,
-}: {
-  context: ChoiceContextView | undefined
-  evidenceId: string
-  label: string
-}) {
-  const corroboratingSources = new Set(
-    context?.evidence
-      .filter((row) => row.role === 'external_corroboration')
-      .map((row) => row.source),
-  ).size
-  return (
-    <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
-      <p>{context?.rationale ?? 'Retained evidence is unavailable for this choice.'}</p>
-      {corroboratingSources ? (
-        <p>
-          {corroboratingSources}{' '}
-          {corroboratingSources === 1 ? 'source corroborates' : 'sources corroborate'} this choice.
-        </p>
-      ) : null}
-      {context?.evidence.length ? (
-        <ul>
-          {context.evidence.map((row, index) => (
-            <li key={`${row.source}:${row.observation}:${String(index)}`}>
-              <strong>{row.source}</strong>
-              <span>{evidenceRoleLabel(row.role)}</span>
-              <p>{observationText(row.observation)}</p>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p>No owner-readable source observation is retained for this choice.</p>
-      )}
-      {context?.limitations.length ? (
-        <aside>
-          <strong>Limitation</strong>
-          {context.limitations.map((limitation) => (
-            <p key={limitation}>
-              {materialReasonLabel(limitation) ??
-                // A limitation is a comparison condition or the server's own
-                // sentence; an unnamed condition code is never shown.
-                (/^[a-z0-9_]+$/u.test(limitation)
-                  ? 'Another comparison condition applies'
-                  : limitation)}
-            </p>
-          ))}
-        </aside>
-      ) : null}
-    </section>
-  )
-}
-
-// Only keyboard focus reveals a card. Focus from a pointer arrives on
-// mousedown, so scrolling then moved the card from under the press and lost
-// the tap at compact widths (#1290).
-const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
-  if (!(event.target instanceof Element) || !event.target.matches(':focus-visible')) return
-  const choice = event.currentTarget
-  const track = choice.closest<HTMLElement>('.library-cover-layout, .library-cover-pinned')
-  if (!track) return
-  const trackBounds = track.getBoundingClientRect()
-  const choiceBounds = choice.getBoundingClientRect()
-  // Match the track's start snap points so snapping cannot clip the focused card.
-  const delta =
-    choiceBounds.left < trackBounds.left
-      ? choiceBounds.left - trackBounds.left
-      : choiceBounds.right > trackBounds.right
-        ? choiceBounds.left - trackBounds.left
-        : 0
-  if (delta !== 0) track.scrollLeft += delta
-}
-
-const isLongDescription = (destination: string, value: string) =>
-  destination === 'description' && value.length > 280
-
-const decisionQuestion = (destination: TargetDestination) =>
-  `Which ${destinationPhrase(destination)} should this work use?`
-
-function DescriptionText({ value }: { value: string }) {
-  const [expanded, setExpanded] = useState(false)
-  const long = value.length > 280
-  return (
-    <div className="description-value">
-      <p>{long && !expanded ? `${value.slice(0, 240)}…` : value}</p>
-      {long ? (
-        <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-          {expanded ? 'Show less description' : 'Read full description'}
-        </button>
-      ) : null}
-    </div>
-  )
-}
-
-function RecordedFieldObservations({
-  reviewCaseId,
-  field,
-}: {
-  reviewCaseId: string
-  field: ReviewField
-}) {
-  const { http } = useReviewContext()
-  const evidence = useInfiniteQuery({
-    queryKey: ['review-case', reviewCaseId, 'evidence'],
-    initialPageParam: undefined as string | undefined,
-    queryFn: (context) =>
-      http.getEvidence(reviewCaseId, context.pageParam, context.signal, queryWorkClass(context)),
-    getNextPageParam: (page: EvidenceView) => page.nextCursor,
-    retry: false,
-    staleTime: 30_000,
-  })
-  const choiceEvidence = field.choiceContexts.flatMap((context) => context.evidence)
-  const observations = (evidence.data?.pages.flatMap((page) => page.items) ?? []).filter(
-    (item) =>
-      item.destinations.includes(field.destination) &&
-      !choiceEvidence.some(
-        (linked) =>
-          linked.source === item.source &&
-          linked.role === item.role &&
-          linked.observation === item.observation,
-      ),
-  )
-  return (
-    <section className="recorded-field-observations" aria-label="Recorded observations">
-      <h3>Recorded observations</h3>
-      <p>These retained facts are read-only. They do not offer additional choices.</p>
-      {observations.length ? (
-        <ul className="evidence-values">
-          {observations.map((item, index) => (
-            <li key={`${item.source}:${item.observation}:${String(index)}`}>
-              <p>{observationText(item.observation)}</p>
-              <small>
-                {item.source} · {evidenceRoleLabel(item.role)}
-              </small>
-            </li>
-          ))}
-        </ul>
-      ) : evidence.isPending ? (
-        <p role="status">Loading recorded observations…</p>
-      ) : (
-        <p>
-          {evidence.hasNextPage
-            ? 'No additional facts for this field on the loaded pages.'
-            : evidence.isError
-              ? 'Recorded observations are unavailable.'
-              : 'No additional facts were recorded for this field.'}
-        </p>
-      )}
-      {evidence.data?.pages[0]?.missingLineageCount ? (
-        <p>Some referenced observations are unavailable.</p>
-      ) : null}
-      {evidence.isError ? (
-        <p role="alert">
-          The observations could not be loaded.{' '}
-          <button
-            type="button"
-            onClick={() =>
-              void (evidence.isFetchNextPageError ? evidence.fetchNextPage() : evidence.refetch())
-            }
-          >
-            Retry observations
-          </button>
-        </p>
-      ) : null}
-      {evidence.hasNextPage ? (
-        <p>
-          More observations remain.{' '}
-          <button
-            type="button"
-            disabled={evidence.isFetchingNextPage}
-            onClick={() => void evidence.fetchNextPage()}
-          >
-            {evidence.isFetchingNextPage ? 'Loading observations…' : 'Load more observations'}
-          </button>
-        </p>
-      ) : null}
-    </section>
-  )
-}
-
-function MetadataChoice({
-  advice,
-  retainedAdvice = false,
-  context,
-  current,
-  disabled,
-  expanded,
-  label,
-  longDescription,
-  onChoose,
-  radio,
-  recording,
-  selected,
-  toggle,
-  value,
-}: {
-  advice?: ReviewField['descriptionAdvice']
-  retainedAdvice?: boolean
-  context: ChoiceContextView | undefined
-  current: boolean
-  disabled: boolean
-  expanded: boolean
-  label: string
-  longDescription: boolean
-  onChoose: () => void
-  radio: ReturnType<typeof choiceRadios>[number]['radio']
-  recording: boolean
-  selected: boolean
-  toggle: () => void
-  value: string
-}) {
-  const adviceSource =
-    retainedAdvice && advice?.selected_advice ? advice.selected_advice.candidate : advice
-  const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
-  const evidenceLabel = longDescription
-    ? `Evidence for ${label} description`
-    : `Evidence for ${label}: ${value}`
-  const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
-  return (
-    <article
-      className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
-    >
-      {longDescription ? (
-        <div className="description-choice-content">
-          <small>{label}</small>
-          <DescriptionText key={value} value={value} />
-        </div>
-      ) : null}
-      <button
-        type="button"
-        className="value-choice choice-select"
-        aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} ${longDescription ? 'description' : `value: ${value}`}`}
-        {...radio}
-        disabled={disabled}
-        onClick={onChoose}
-      >
-        <small>
-          {label}
-          {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
-          {selected ? <b className="choice-chosen">Your choice</b> : null}
-        </small>
-        <strong>
-          {longDescription
-            ? `Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} description`
-            : value}
-        </strong>
-        <span>
-          {adviceSource
-            ? `${adviceSource.engine} · ${adviceSource.model}`
-            : (context?.rationale ?? 'Retained for this owner comparison.')}
-        </span>
-        <span className="choice-recommendation">
-          {recording
-            ? 'Recording…'
-            : advice
-              ? descriptionAdviceStatus(advice, retainedAdvice)
-              : context?.recommendation === 'recommended'
-                ? context.recommendationReason
-                : 'No recommendation retained'}
-        </span>
-      </button>
-      {hasEvidence ? (
-        <button
-          type="button"
-          className="choice-evidence-toggle"
-          aria-controls={evidenceId}
-          aria-expanded={expanded}
-          aria-label={evidenceLabel}
-          onClick={toggle}
-        >
-          {expanded ? 'Hide evidence' : 'Evidence'}
-        </button>
-      ) : null}
-      {expanded ? (
-        <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
-      ) : null}
-    </article>
-  )
-}
-
 function ContextValue({
   field,
   expanded,
@@ -1506,8 +1128,6 @@ function AsinAutomaticStatement({ field }: { field: ReviewField }) {
     </p>
   )
 }
-
-const audioFileFormat = (format: string) => ['m4b', 'm4a', 'mp3'].includes(format)
 
 const combinedAutomaticTags = (field: ReviewField, mediaKind: string) =>
   audioFileFormat(mediaKind) &&
@@ -1963,652 +1583,6 @@ function RecordedOutcome({
             label={`${destinationLabel(field.destination)} recorded outcome`}
           />
         )
-      ) : null}
-    </section>
-  )
-}
-
-// What a tap will do, said before the tap and in the present tense of this
-// work's actual write state. The same words after the fact are what the
-// completion summary says, so the promise made here is the one kept there
-// (#639). A cover tap makes the same promise as any other field (#1290).
-function WriteStateLine({ active }: { active: boolean }) {
-  return (
-    <p className={`cm-write-state is-${active ? 'on' : 'off'}`}>
-      {active
-        ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
-        : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
-    </p>
-  )
-}
-
-function LibraryCoverChoices(props: {
-  reviewCaseId: string
-  mediaKind: string
-  field: ReviewField
-  disabled: boolean
-  progress: ChoiceProgress
-  expandedEvidence: { has: (key: string) => boolean }
-  revealEvidence: (key: string) => void
-  choose: (
-    outcome: DecisionCommand['outcome'],
-    selectedValue?: DecisionCommand['selectedValue'],
-  ) => void
-  writesActive: boolean
-}) {
-  return (
-    <LibraryCoverChoicesContent
-      key={`${props.reviewCaseId}:${props.field.coverConsideration?.id ?? 'absent'}`}
-      {...props}
-    />
-  )
-}
-
-type CoverObservationValue = CoverObservationView[Exclude<
-  keyof CoverObservationView,
-  'candidateReference' | 'previewSha256' | 'previewVariant'
->]
-const coverObservationLabel = (value: CoverObservationValue) =>
-  (
-    ({
-      dense: 'Dense',
-      absent: 'Absent',
-      audiobook: 'Audiobook branding',
-      clean: 'Clean reproduction',
-      degraded: 'Degraded reproduction',
-      english: 'English',
-      explicit: 'Explicit',
-      illustrated: 'Illustrated',
-      illegible: 'Illegible',
-      legible: 'Legible',
-      minimal: 'Minimal',
-      mixed: 'Mixed media',
-      multiple: 'Multiple languages',
-      no_visible_title: 'No visible title',
-      non_english: 'Non-English',
-      omnibus_or_set: 'Omnibus or set',
-      photographic: 'Photographic',
-      present: 'Present',
-      series_branded: 'Series branded',
-      standalone: 'Standalone',
-      suggestive: 'Suggestive',
-      text_edition: 'Text-edition branding',
-      typographic: 'Typographic',
-      unknown: 'Uncertain',
-    }) satisfies Record<CoverObservationValue, string>
-  )[value]
-
-function CoverObservationEvidence({
-  label,
-  mediaKind,
-  observation,
-}: {
-  label: string
-  mediaKind: string
-  observation: CoverObservationView | null
-}) {
-  if (observation === null)
-    return (
-      <section className="cover-observation is-unavailable" aria-label={`${label} visual checks`}>
-        <strong>Visual checks unavailable</strong>
-        <small>No complete reviewer evidence was recorded for this cover.</small>
-      </section>
-    )
-  const expectedBranding = audioFileFormat(mediaKind)
-    ? 'audiobook'
-    : mediaKind === 'epub' || mediaKind === 'ebook'
-      ? 'text_edition'
-      : null
-  const wrongFormatBranding =
-    expectedBranding !== null &&
-    observation.formatBranding !== 'absent' &&
-    observation.formatBranding !== 'unknown' &&
-    observation.formatBranding !== expectedBranding
-      ? coverObservationLabel(observation.formatBranding)
-      : null
-  const defects = [
-    observation.placeholder === 'present' ? 'Placeholder artwork' : null,
-    observation.reproduction === 'degraded' ? 'Degraded reproduction' : null,
-    observation.overlayMarking === 'present' ? 'Overlay or marking' : null,
-    wrongFormatBranding,
-  ].filter((value): value is string => value !== null)
-  const uncertain = [
-    observation.placeholder === 'unknown' ? 'Placeholder check' : null,
-    observation.reproduction === 'unknown' ? 'Reproduction check' : null,
-    observation.overlayMarking === 'unknown' ? 'Overlay check' : null,
-    observation.formatBranding === 'unknown' ? 'Format-branding check' : null,
-  ].filter((value): value is string => value !== null)
-  const defectRows = [
-    ['Placeholder', observation.placeholder],
-    ['Reproduction', observation.reproduction],
-    ['Overlay or marking', observation.overlayMarking],
-    ['Format branding', observation.formatBranding],
-  ] as const
-  const preferenceRows = [
-    ['Composition', observation.composition],
-    ['Artwork', observation.medium],
-    ['Promotional text', observation.promotionalText],
-    ['Adaptation branding', observation.tieInBranding],
-    ['Explicit imagery', observation.explicitImagery],
-    ['Title-text language', observation.coverTextLanguage],
-    ['Series styling', observation.seriesStyling],
-    ['Small-preview title', observation.thumbnailLegibility],
-  ] as const
-  return (
-    <section className="cover-observation" aria-label={`${label} visual checks`}>
-      <div
-        className={`cover-defect-summary${defects.length ? ' has-defects' : uncertain.length ? ' is-uncertain' : ' is-clean'}`}
-      >
-        <strong>
-          {defects.length
-            ? `${String(defects.length)} visual ${defects.length === 1 ? 'issue' : 'issues'} flagged`
-            : uncertain.length
-              ? 'Some visual checks are uncertain'
-              : 'No visual defects flagged'}
-        </strong>
-        {defects.length || uncertain.length ? (
-          <ul>
-            {defects.map((defect) => (
-              <li key={defect}>
-                <StatusPill tone="danger">{defect}</StatusPill>
-              </li>
-            ))}
-            {uncertain.map((item) => (
-              <li key={item}>
-                <StatusPill tone="notice">{item} uncertain</StatusPill>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </div>
-      <details className="cover-observation-details">
-        <summary>Visual observation details</summary>
-        <div>
-          <section aria-label="Defect checks">
-            <strong>Defect checks</strong>
-            <dl>
-              {defectRows.map(([name, value]) => (
-                <div key={name}>
-                  <dt>{name}</dt>
-                  <dd>{coverObservationLabel(value)}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-          <section className="cover-preference-notes" aria-label="Style and advisory notes">
-            <strong>Style and advisory notes</strong>
-            <dl>
-              {preferenceRows.map(([name, value]) => (
-                <div key={name}>
-                  <dt>{name}</dt>
-                  <dd>{coverObservationLabel(value)}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        </div>
-      </details>
-    </section>
-  )
-}
-
-function LibraryCoverChoicesContent({
-  reviewCaseId,
-  mediaKind,
-  field,
-  disabled,
-  expandedEvidence,
-  progress,
-  revealEvidence,
-  choose,
-  writesActive,
-}: {
-  reviewCaseId: string
-  mediaKind: string
-  field: ReviewField
-  disabled: boolean
-  progress: ChoiceProgress
-  expandedEvidence: { has: (key: string) => boolean }
-  revealEvidence: (key: string) => void
-  choose: (
-    outcome: DecisionCommand['outcome'],
-    selectedValue?: DecisionCommand['selectedValue'],
-  ) => void
-  writesActive: boolean
-}) {
-  const { http } = useReviewContext()
-  const access = useQuery({
-    queryKey: ['reviewer-access'] as const,
-    queryFn: (context) => http.getReviewerAccess(context.signal, queryWorkClass(context)),
-    retry: false,
-  })
-  const mapping = access.isSuccess ? access.data.mapping : null
-  const currentReviewer = mapping && access.isSuccess ? access.data[mapping.engine] : null
-  const canRetryReviewer =
-    currentReviewer !== null &&
-    [
-      'ready',
-      'configured',
-      'usable',
-      'failed',
-      'interrupted',
-      'unreachable',
-      'malformed_response',
-    ].includes(currentReviewer.state)
-  const cover = useCoverChoiceData(reviewCaseId)
-  const consideration = field.coverConsideration
-  const keeps = field.decisionActions.includes('keep_current')
-  const accepts = field.decisionActions.includes('accept')
-  if (consideration?.current !== true)
-    return (
-      <section aria-label="Prepare cover comparison">
-        <p role="status">
-          No current cover comparison is available. The existing cover remains unchanged.
-        </p>
-        <button
-          type="button"
-          disabled={disabled || cover.prepare.isPending}
-          onClick={() => cover.prepare.mutate()}
-        >
-          Prepare cover comparison
-        </button>
-        {cover.prepare.isError ? (
-          <p role="alert">
-            {refusalCopy(
-              cover.prepare.error,
-              'The comparison could not be prepared. The existing cover remains unchanged.',
-            )}
-          </p>
-        ) : null}
-      </section>
-    )
-  const candidates = consideration.candidates
-  const expanded = candidates.length > 3
-  const incumbent = candidates.find((candidate) => candidate.incumbent)
-  const alternatives = candidates.filter((candidate) => !candidate.incumbent)
-  const coverContexts = consideration.choiceContexts
-  const currentContext = coverContexts[0]
-  const acceptableReferences =
-    Array.isArray(consideration.policy?.acceptable_candidate_references) &&
-    consideration.policy.acceptable_candidate_references.every(
-      (reference): reference is string => typeof reference === 'string',
-    )
-      ? consideration.policy.acceptable_candidate_references
-      : []
-  const policyStatus =
-    typeof consideration.policy?.status === 'string' ? consideration.policy.status : null
-  const recommendedReference =
-    policyStatus === 'recommended' &&
-    typeof consideration.policy?.recommended_candidate_reference === 'string'
-      ? consideration.policy.recommended_candidate_reference
-      : null
-  const policyReasons = Array.isArray(consideration.policy?.reasons)
-    ? consideration.policy.reasons
-        .filter((reason): reason is string => typeof reason === 'string')
-        .slice(0, 2)
-    : []
-  const excludedReason = (candidate: (typeof candidates)[number]) =>
-    candidate.matchState === 'match_not_confirmed'
-      ? "Match not confirmed · We couldn't confirm that this cover belongs to this book or edition."
-      : candidate.observation === null
-        ? 'Reviewer observations unavailable; deterministic match evidence is retained.'
-        : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
-          ? policyReasons.length
-            ? policyReasons.map(coverNoteLabel).join(', ')
-            : 'Not among the covers your policy accepts'
-          : coverStateLabels[candidate.state]
-  const cardState = (candidate: (typeof candidates)[number]) => {
-    const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
-    const value: DecisionCommand['selectedValue'] = candidate.incumbent
-      ? null
-      : { kind: 'cover', value: candidate.artifactId }
-    const selected =
-      choiceSelected(field, progress, outcome, value) ||
-      field.currentCoverSelectionArtifactId === candidate.artifactId
-    const actionableCandidate = candidate.incumbent ? keeps : accepts && candidate.manualEligible
-    return {
-      outcome,
-      value,
-      selected,
-      actionableCandidate,
-      disabled:
-        disabled ||
-        consideration.providerFetching ||
-        !actionableCandidate ||
-        cover.imageFailed(candidate.reference),
-    }
-  }
-  const unavailableCurrent = consideration.incumbent.state === 'unavailable' && !incumbent
-  const keepSelected = choiceSelected(field, progress, 'keep_current')
-  // The cards in reading order, one radio group whose Tab stop and positions
-  // follow the direct choices' rules (#1290).
-  const coverRadios = new Map(
-    choiceRadios(
-      [
-        ...(unavailableCurrent ? [null] : []),
-        ...(expanded && incumbent ? [incumbent, ...alternatives] : candidates),
-      ],
-      (candidate) => {
-        if (candidate === null) return { checked: keepSelected, disabled: disabled || !keeps }
-        const state = cardState(candidate)
-        return {
-          checked: state.actionableCandidate && state.selected,
-          disabled: state.disabled,
-        }
-      },
-    ).map(({ radio, ...candidate }) => [
-      'reference' in candidate ? candidate.reference : 'current-unavailable',
-      radio,
-    ]),
-  )
-  const card = (candidate: (typeof candidates)[number], index: number) => {
-    const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
-    const source = cover.imageSource(consideration.id, candidate.reference)
-    const {
-      outcome,
-      value,
-      selected,
-      actionableCandidate,
-      disabled: cardDisabled,
-    } = cardState(candidate)
-    const eligibleCandidate = candidate.incumbent || candidate.manualEligible
-    const recommended = candidate.reference === recommendedReference
-    const context = candidate.incumbent
-      ? currentContext
-      : coverContexts.find((item) => item.alternativeId === candidate.reference)
-    const key = `${candidate.incumbent ? 'current' : 'alternative'}-${String(index)}`
-    const evidenceId = `cover-evidence-${String(candidate.ordinal)}-${key}`
-    const label = candidate.incumbent ? 'Current cover' : `Alternative ${String(alternative)} cover`
-    const evidenceKey = `cover:${key}`
-    const open = expandedEvidence.has(evidenceKey)
-    return (
-      <article
-        className={`cover-choice${open ? ' is-evidence-open' : ''}${candidate.matchState === 'match_not_confirmed' ? ' is-unconfirmed' : ''}`}
-        key={candidate.reference}
-        onFocusCapture={revealFocusedCoverChoice}
-      >
-        <button
-          type="button"
-          aria-label={`Choose ${label}`}
-          {...coverRadios.get(candidate.reference)}
-          className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
-          disabled={cardDisabled}
-          // One tap records, as on every other field; a card that says Match
-          // not confirmed is itself the explicit choice (#1290).
-          onClick={() => {
-            if (actionableCandidate && !selected) choose(outcome, value)
-          }}
-        >
-          <span className="library-cover-image">
-            {cover.imageFailed(candidate.reference) ? (
-              <span role="img" aria-label="Cover unavailable">
-                Image unavailable
-              </span>
-            ) : (
-              <img
-                src={source}
-                alt={label}
-                loading="lazy"
-                decoding="async"
-                onError={() => cover.markImageFailed(candidate.reference)}
-              />
-            )}
-          </span>
-          <span>
-            <small>
-              {label}
-              {recommended ? ' · Recommended' : ''}
-              {selected && actionableCandidate ? (
-                <b className="choice-chosen">Your choice</b>
-              ) : null}
-            </small>
-            <strong>
-              {candidate.matchState === 'same_edition'
-                ? 'Same edition'
-                : candidate.matchState === 'same_book'
-                  ? 'Same book'
-                  : 'Match not confirmed'}
-            </strong>
-            <span className="cover-dimensions">
-              {`${String(candidate.width)} × ${String(candidate.height)} px`}
-            </span>
-            <span className="cover-sources">
-              {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
-            </span>
-            {context?.rationale ? <em>{context.rationale}</em> : null}
-            <span className="choice-recommendation">
-              {!eligibleCandidate || candidate.matchState === 'match_not_confirmed'
-                ? excludedReason(candidate)
-                : recommended
-                  ? (context?.recommendationReason ?? 'Deterministic recommendation retained')
-                  : 'No recommendation retained'}
-            </span>
-            {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
-          </span>
-        </button>
-        <CoverObservationEvidence
-          label={label}
-          mediaKind={mediaKind}
-          observation={candidate.observation}
-        />
-        {context && (context.evidence.length || context.limitations.length) ? (
-          <button
-            type="button"
-            className="choice-evidence-toggle"
-            aria-controls={evidenceId}
-            aria-expanded={open}
-            aria-label={`Evidence for ${label}`}
-            onClick={() => revealEvidence(evidenceKey)}
-          >
-            {open ? 'Hide evidence' : 'Evidence'}
-          </button>
-        ) : null}
-        {open ? (
-          <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
-        ) : null}
-      </article>
-    )
-  }
-  const reviewerUnavailable =
-    consideration.reviewerStatus === 'failed' || consideration.reviewerStatus === 'unavailable'
-  const reviewerLabel =
-    consideration.reviewerStatus === 'completed'
-      ? 'Advisory visual review complete'
-      : reviewerUnavailable
-        ? 'Visual review is unavailable. Only the eligible choices shown below can be selected.'
-        : 'Manual cover comparison'
-  // A review that failed at chat time says what to change (#1330-#1332).
-  const reviewerDetail = consideration.reviewerFailureCode
-    ? reviewerFailureCopy[consideration.reviewerFailureCode]
-    : reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
-  // A merged duplicate is the same image as a card shown, not an unavailable
-  // candidate, so it is counted apart (#1290).
-  const merged = consideration.omissions.filter(
-    (omission) => omission.reason === 'duplicate_preview',
-  ).length
-  const unavailable = consideration.omissions.filter(
-    (omission) => omission.reason !== 'duplicate_preview',
-  )
-  return (
-    <section
-      className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
-      aria-label="Choose a cover"
-    >
-      <header>
-        <strong>
-          {recommendedReference !== null
-            ? 'Recommended cover ready'
-            : consideration.ready
-              ? 'Cover choices ready'
-              : consideration.providerFetching
-                ? 'Waiting for active cover searches'
-                : 'No confirmed cover recommendation'}
-        </strong>
-        <small>
-          {recommendedReference !== null
-            ? 'The technically best confirmed match is ready for your decision.'
-            : consideration.ready && policyReasons.includes('actual_target_unverified')
-              ? 'The current cover could not be verified, so automatic replacement is withheld.'
-              : consideration.ready && policyReasons.includes('confirmed_incumbent_not_improved')
-                ? 'No confirmed alternative improves the current cover, so automatic replacement is withheld.'
-                : consideration.providerFetching
-                  ? 'Retained covers remain visible. Choices become available when fetching pauses.'
-                  : 'Only confirmed matches can be recommended.'}
-        </small>
-      </header>
-      <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
-      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
-      {consideration.reviewerModel ? (
-        <p>Reviewer: {coverReviewerLabel(consideration.reviewerModel)}</p>
-      ) : null}
-      {field.humanDecision ? (
-        <p className="reviewer-unavailable-detail">
-          Owner choice takes precedence over automation.{' '}
-          {field.editable
-            ? 'You can choose a replacement before application begins.'
-            : 'This cover choice is not currently available for revision.'}
-        </p>
-      ) : field.automaticDecision ? (
-        <p className="reviewer-unavailable-detail">
-          Automatically selected. Only a strictly better confirmed cover can update this choice.
-        </p>
-      ) : null}
-      <WriteStateLine active={writesActive} />
-      <p className="cover-track-hint">
-        Every cover is shown whole in one row. Scroll the row, or move between covers with the arrow
-        keys, to compare them.
-      </p>
-      {reviewerUnavailable && canRetryReviewer ? (
-        <Button
-          className="secondary-action"
-          type="button"
-          disabled={disabled || cover.prepare.isPending}
-          onClick={() => cover.prepare.mutate()}
-        >
-          Retry advisory review
-        </Button>
-      ) : null}
-      {cover.prepare.isError ? (
-        <p role="alert">
-          {refusalCopy(
-            cover.prepare.error,
-            'The advisory retry failed safely. The existing cover and manual choices are unchanged.',
-          )}
-        </p>
-      ) : null}
-      {expanded && incumbent ? (
-        <div
-          className="library-cover-pinned"
-          role="radiogroup"
-          aria-label={decisionQuestion('cover')}
-          onKeyDown={moveChoiceFocus}
-        >
-          <aside>
-            <strong>Current reference</strong>
-            {card(incumbent, candidates.indexOf(incumbent))}
-          </aside>
-          <div className="library-cover-gallery">
-            <header>
-              <strong>Retrieved alternatives</strong>
-              <small>{String(alternatives.length)} available</small>
-            </header>
-            <div>
-              {alternatives.map((candidate) => card(candidate, candidates.indexOf(candidate)))}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div
-          className="library-cover-layout"
-          role="radiogroup"
-          aria-label={decisionQuestion('cover')}
-          onKeyDown={moveChoiceFocus}
-        >
-          {unavailableCurrent ? (
-            <article className="cover-choice" onFocusCapture={revealFocusedCoverChoice}>
-              <button
-                type="button"
-                aria-label="Keep current cover"
-                {...coverRadios.get('current-unavailable')}
-                className={`library-cover-card is-current${keepSelected ? ' is-selected' : ''}`}
-                disabled={disabled || !keeps}
-                onClick={() => {
-                  if (keeps) choose('keep_current')
-                }}
-              >
-                <span
-                  className="library-cover-image"
-                  role="img"
-                  aria-label="Current cover unavailable"
-                >
-                  Image unavailable
-                </span>
-                <span>
-                  <small>
-                    Current cover
-                    {keepSelected ? <b className="choice-chosen">Your choice</b> : null}
-                  </small>
-                  <strong>Unavailable</strong>
-                  <em>
-                    {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
-                  </em>
-                  <span className="choice-recommendation">
-                    {currentContext?.recommendation === 'recommended'
-                      ? currentContext.recommendationReason
-                      : 'No recommendation retained'}
-                  </span>
-                  {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
-                  progress?.phase === 'recording' ? (
-                    <b>Recording…</b>
-                  ) : null}
-                </span>
-              </button>
-              {currentContext &&
-              (currentContext.evidence.length || currentContext.limitations.length) ? (
-                <button
-                  type="button"
-                  className="choice-evidence-toggle"
-                  aria-controls="cover-evidence-current-unavailable"
-                  aria-expanded={expandedEvidence.has('cover:current-unavailable')}
-                  aria-label="Evidence for Current cover"
-                  onClick={() => revealEvidence('cover:current-unavailable')}
-                >
-                  {expandedEvidence.has('cover:current-unavailable') ? 'Hide evidence' : 'Evidence'}
-                </button>
-              ) : null}
-              {expandedEvidence.has('cover:current-unavailable') ? (
-                <ChoiceEvidencePanel
-                  context={currentContext}
-                  evidenceId="cover-evidence-current-unavailable"
-                  label="Current cover"
-                  {...(disabled || !keeps ? {} : { onChoose: () => choose('keep_current') })}
-                />
-              ) : null}
-            </article>
-          ) : null}
-          {candidates.map(card)}
-        </div>
-      )}
-      {merged ? (
-        <p className="cover-merged">
-          {String(merged)} duplicate image{merged === 1 ? '' : 's'} merged. Each card names every
-          source that offered it.
-        </p>
-      ) : null}
-      {unavailable.length ? (
-        <details className="library-cover-excluded">
-          <summary>
-            {String(unavailable.length)} unavailable candidate
-            {unavailable.length === 1 ? '' : 's'} <small>Reasons retained</small>
-          </summary>
-          {unavailable.map((omission, index) => (
-            <p key={String(index)}>
-              {typeof omission.reason === 'string'
-                ? coverNoteLabel(omission.reason)
-                : 'Unavailable source retained in history'}
-            </p>
-          ))}
-        </details>
       ) : null}
     </section>
   )
@@ -4362,8 +3336,12 @@ export default function LibraryPage({
             context,
             current: false,
             disabled: false,
+            // A proposed card is named by its value, never "Alternative N" (#1519).
+            evidenceName: isLongDescription(selected.destination, displayValue(value.value))
+              ? `Evidence for proposed description ${String(index + 1)}`
+              : `Evidence for proposed value: ${valueText(selected.destination, displayValue(value.value))}`,
             expanded: expandedChoices.has(key),
-            label: `Alternative ${String(index + 1)}`,
+            label: '',
             longDescription: isLongDescription(selected.destination, displayValue(value.value)),
             onChoose: () => choose(selected, 'accept', value),
             recording:
@@ -5044,9 +4022,7 @@ export default function LibraryPage({
                     <span>
                       {String(complete.fields.length)} recorded field outcome
                       {complete.fields.length === 1 ? '' : 's'}
-                      {writesActive
-                        ? ' — each began applying the moment you decided it.'
-                        : '. No library data changed.'}
+                      {writesActive ? ' — each began applying the moment you decided it.' : '.'}
                     </span>
                   </div>
                   <ol>
@@ -5072,11 +4048,7 @@ export default function LibraryPage({
                       </li>
                     ))}
                   </ol>
-                  <p>
-                    {writesActive
-                      ? 'Every write is logged in Activity, and read-back verification remains a separate guarded stage.'
-                      : 'Nothing is written yet — applying happens separately, behind your consent.'}
-                  </p>
+                  {writesActive ? <p>Every write is logged in Activity.</p> : null}
                   <footer>
                     {nextWork ? (
                       <Button
@@ -5139,9 +4111,16 @@ export default function LibraryPage({
                           : destinationLabel(selected.destination)}
                       </h3>
                       {selectedActionable ? (
-                        <>
-                          <p>{`${destinationLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
-                        </>
+                        // One line under the question: this field's own reason (#1519).
+                        <p
+                          className={
+                            selected.automaticWithheldReason
+                              ? 'automatic-withheld-reason'
+                              : undefined
+                          }
+                        >
+                          {questionReason(selected, detail.data.target.mediaKind)}
+                        </p>
                       ) : selectedRevisitable ? (
                         <p>
                           {selected.humanDecision === null && selected.manualHold
@@ -5152,7 +4131,7 @@ export default function LibraryPage({
                       ) : selectedOptional ? (
                         <p>{fieldReason(selected)}</p>
                       ) : null}
-                      {selected.automaticWithheldReason ? (
+                      {selected.automaticWithheldReason && !selectedActionable ? (
                         <p className="automatic-withheld-reason">
                           {selected.automaticWithheldReason}
                         </p>
@@ -5186,7 +4165,6 @@ export default function LibraryPage({
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
                         revealEvidence={toggleChoiceEvidence}
-                        writesActive={writesActive}
                       />
                     ) : (
                       <section
@@ -5221,7 +4199,6 @@ export default function LibraryPage({
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}
-                        <WriteStateLine active={writesActive} />
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
                           role="radiogroup"
@@ -5400,13 +4377,7 @@ export default function LibraryPage({
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (
                         <p key={notice}>
-                          {notice === 'competing_evidence' &&
-                          combinedAutomaticTags(selected, detail.data.target.mediaKind)
-                            ? 'Different source tag lists'
-                            : notice === 'competing_evidence' &&
-                                selectedAutomaticSynopsis(selected, detail.data.target.mediaKind)
-                              ? 'Different source descriptions'
-                              : materialReasonLabel(notice)}
+                          {noticeText(selected, notice, detail.data.target.mediaKind)}
                         </p>
                       ))}
                     </aside>

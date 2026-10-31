@@ -291,7 +291,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                 "limitations": [],
                 "rationale": "Keep the retained local cover.",
                 "recommendation": "no_recommendation",
-                "recommendation_reason": "No deterministic recommendation is retained for the current cover.",
+                "recommendation_reason": "",
                 "selection": "current",
             }
         ],
@@ -1759,14 +1759,29 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
         )
         == "Retained observation (provider name unavailable)"
     )
-    replacing = {
-        "assessment": "replaces_target",
-        "scope": "edition",
-        "correlations": ["correlation_" + "a" * 64],
-    }
+    # A choice names its known sources once each, never a local record or an
+    # unnamed provider, and says nothing when no source is known (#1519).
     assert (
-        _choice_rationale(replacing, True)
-        == "This alternative replaces the local value using edition-specific evidence with retained supporting evidence."
+        _choice_rationale(
+            [
+                {"role": "external_corroboration", "source": "Open Library"},
+                {"role": "external_corroboration", "source": "Hardcover"},
+                {"role": "external_observation", "source": "Open Library"},
+                {"role": "local_presence", "source": "Local library record"},
+                {
+                    "role": "external_observation",
+                    "source": "Retained observation (provider name unavailable)",
+                },
+            ]
+        )
+        == "Hardcover, Open Library"
+    )
+    assert _choice_rationale([]) == ""
+    assert (
+        _choice_rationale(
+            [{"role": "local_presence", "source": "Local library record"}]
+        )
+        == ""
     )
     assert _current_value_present("Present title")
     assert _current_value_present(["Ada Example"])
@@ -2135,13 +2150,8 @@ def test_attention_reads_the_automatic_outcome_and_cause_columns(
         item["destination"]: item["classification_reason"]
         for item in response.json()["items"]
     }
-    assert (
-        reasons["title"] == "Automatic handling is suspended pending a safety recovery."
-    )
-    assert (
-        reasons["series"]
-        == "Automatic handling abstained, so this field needs your review."
-    )
+    assert reasons["title"] == "Changes made for you are waiting for a safety recovery."
+    assert reasons["series"] == "This field needs your choice."
     # The third row carries neither column, so the two above prove the
     # reader read them rather than a constant the double always emits.
     assert reasons["subtitle"] == "This field needs your review."

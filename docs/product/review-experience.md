@@ -232,10 +232,17 @@ A rail lists the work's fields in order and stays after a decision. Each tab
 names its status: Needs you, Decided, Automatic, Optional or No change. Empty
 fields sit behind one `Show N more fields` tab.
 
-The canvas shows current against proposed before evidence. Each choice carries
-its evidence. `Recommended` appears only for an authoritative deterministic
-selection. Recorded observations are listed separately and read-only. A
-disclosure never chooses a value.
+The canvas shows the question, one line under it with the field's own reason,
+and current against proposed. The current value's card shows only its value; a
+proposed card shows its value and, when known, the sources it came from, and
+cards carry no `Alternative N` label. Each card's Evidence control sits
+directly under its value. `Recommended` and its reason appear only for an
+authoritative deterministic selection; nothing says when there is none.
+Recorded observations appear only when the field has some or they could not be
+read, and the external-library card only when a change for the field is
+recorded. A notice never restates the reason already shown, and a decision
+carries no reminder that writes are protected. A disclosure never chooses a
+value.
 
 The server classifies every field, and the tab status follows from it:
 
@@ -292,7 +299,9 @@ cannot be replaced; a verified reversible field write can.
 There is no Undo and there are no bulk decisions. Going back means choosing
 the earlier value: after a write, Enter a value suggests the value it replaced ("Use
 previous value") and Choose genres tags those genres **Previous**. Authors return to an earlier value only when a
-provider proposes it.
+provider proposes it. A work that returns to an earlier content reads as new:
+the decisions recorded on it before are history, and the field shows only
+what you decide now.
 
 ### Audiobooks
 

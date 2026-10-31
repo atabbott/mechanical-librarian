@@ -97,6 +97,16 @@ brackets are GitHub issues.
 - A cover write held up because Audiobookshelf could not be reached now waits
   and is applied once the connection is back, up to three times, like every
   other field, instead of stopping. No clean rebuild is needed (#1415).
+- A field decision shows the question, one line with the field's own reason,
+  and the values: a proposed value names its sources, and generic lines,
+  empty sections, idle library cards and "No recommendation retained" are
+  gone. Reminders that writes are protected remain only in the guided first
+  review and Activity's permission control (#1519).
+- **Clean rebuild required.** A work that returns to an earlier content, for
+  example after you choose the previous value again, reads as new: it no
+  longer shows its earlier decision as written while the library holds
+  another value. Return to automatic also stops a field showing as held
+  (#1358).
 
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
