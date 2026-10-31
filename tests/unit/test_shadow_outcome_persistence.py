@@ -9019,7 +9019,9 @@ def test_resume_projects_a_direct_successor_completed_while_titles_waited(
     )
     assert (field["manual_hold"], field["human_decision"]) == (held, None)
     assert _pending_titles(repository, successor) == ([] if held else automatic)
-    # A second release projects nothing more.
+    # Blocking and releasing titles again projects nothing more: the decided
+    # successor is no longer eligible.
+    controls.suspend("automatic_admission_failed", 35, "title_layout")
     controls.recover(35, "title_layout")
     assert repository.claim_review_pipeline_action(36) is None
     assert _automatic_titles(repository, successor) == automatic
