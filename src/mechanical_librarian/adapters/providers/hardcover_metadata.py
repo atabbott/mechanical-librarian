@@ -7,7 +7,7 @@ import math
 import random
 import time
 import unicodedata
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, cast
 from urllib.parse import urlsplit
@@ -48,6 +48,10 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
+from mechanical_librarian.domain.audiobook_corroboration import (
+    RUNTIME_BAND_TIGHT_SECONDS,
+    local_claim_runtime_seconds,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverContext,
     CoverContextField,
@@ -70,6 +74,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_AUDIO_EDITIONS,
     MAX_CANDIDATES,
     MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
@@ -136,6 +141,20 @@ _WORK_NARROW_QUERY = _WORK_QUERY.replace(
     "$authors:[String!]!", "$author:String!"
 ).replace("_in:$authors", "_eq:$author")
 _QUERY = _ISBN_QUERY
+# One admitted book's audio-format editions (#962, ADR-0089). The projection is
+# closed: edition id, book id, ASIN, audio runtime and the credited people.
+_AUDIO_EDITION_PAGE = 100
+_AUDIO_EDITION_PAGES = 2
+_AUDIO_EDITION_BOOKS = 2
+_AUDIO_READING_FORMAT = 2
+_MAX_AUDIO_SECONDS = 604_800
+_AUDIO_EDITIONS_QUERY = (
+    "query AudioEditions($book:Int!,$offset:Int!){"
+    f"editions(where:{{book_id:{{_eq:$book}},reading_format_id:{{_eq:{_AUDIO_READING_FORMAT}}}}},"
+    f"order_by:{{id:asc}},limit:{_AUDIO_EDITION_PAGE},offset:$offset)"
+    "{id book_id asin audio_seconds contributions(order_by:{id:asc},limit:17)"
+    "{id contribution author{id name}}}}"
+)
 
 
 class _OptionalRejections:
@@ -346,6 +365,9 @@ class HardcoverMetadataProvider:
                     execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
+                audio_editions = self._audio_editions(
+                    observation, lookup, deadline=deadline
+                )
                 diagnostics = provider_attempt_diagnostics(
                     self._session.attempt_records[attempts_before:],
                     status=observation.status.value,
@@ -363,6 +385,7 @@ class HardcoverMetadataProvider:
                         diagnostics,
                         observation.dispatch_lineage,
                         observation.transformation_lineage,
+                        audio_editions=audio_editions,
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -625,6 +648,104 @@ class HardcoverMetadataProvider:
         )
         return observation
 
+    def _audio_editions(
+        self,
+        observation: ProviderObservation,
+        lookup: MetadataLookup,
+        *,
+        deadline: float | None,
+    ) -> tuple[ProviderCandidate, ...]:
+        """Read the admitted books' audio editions that witness this recording.
+
+        Only an audiobook WORK lane whose qualified answer admitted one or two
+        Hardcover books asks, and only when the recording states one running
+        time. An edition is kept when it credits a narrator and its runtime is
+        inside the tight band of the recording's (#962, ADR-0089). Any failed
+        or malformed page ends the fan-out with no editions: the admitted work
+        stands, and a failed read is never a statement that no edition exists.
+        """
+        local_runtime = local_claim_runtime_seconds(lookup.local_claims)
+        books = tuple(
+            candidate
+            for candidate in observation.candidates
+            if candidate.identity == candidate.work_identity
+            and candidate.identity.startswith("hardcover-work-")
+        )
+        if (
+            lookup.kind is not ProviderQueryKind.WORK
+            or lookup.audio is None
+            or observation.status is not ProviderStatus.CANDIDATES
+            or local_runtime is None
+            or not books
+            or len(books) > _AUDIO_EDITION_BOOKS
+            or len(books) != len(observation.candidates)
+        ):
+            return ()
+        editions: list[ProviderCandidate] = []
+        for book in books:
+            book_id = int(book.identity.removeprefix("hardcover-work-"))
+            rows: list[dict[str, Any]] = []
+            for page in range(_AUDIO_EDITION_PAGES + 1):
+                if page == _AUDIO_EDITION_PAGES:
+                    # More rows than the bounded pages hold: no prefix is a
+                    # fair sample, so this book contributes nothing.
+                    rows = []
+                    break
+                offset = page * _AUDIO_EDITION_PAGE
+
+                def execute(
+                    book_id: int = book_id, offset: int = offset
+                ) -> _AudioEditionPage:
+                    try:
+                        payload = self._request(
+                            {
+                                "operationName": "AudioEditions",
+                                "query": _AUDIO_EDITIONS_QUERY,
+                                "variables": {"book": book_id, "offset": offset},
+                            },
+                            deadline=deadline,
+                        )
+                    except ProviderFailure as error:
+                        return _AudioEditionPage((), error.status)
+                    try:
+                        if _has_graphql_errors(payload):
+                            self._session.mark_response_attempt(
+                                "provider_declared_error"
+                            )
+                            return _AudioEditionPage((), ProviderStatus.UNAVAILABLE)
+                        return _AudioEditionPage(
+                            _parse_audio_edition_rows(payload, book_id), None
+                        )
+                    except (
+                        ValueError,
+                        TypeError,
+                        UnicodeError,
+                        RecursionError,
+                        json.JSONDecodeError,
+                    ):
+                        self._session.mark_response_attempt("response_malformed")
+                        return _AudioEditionPage((), ProviderStatus.MALFORMED)
+
+                value, _replayed = self._session.ledger.resolve_detail(
+                    f"audio-editions/{book_id}/{offset}", execute=execute
+                )
+                if value.status is not None:
+                    return ()
+                rows.extend(value.rows)
+                if len(value.rows) < _AUDIO_EDITION_PAGE:
+                    break
+            if len({row["id"] for row in rows}) != len(rows):
+                return ()
+            for row in rows:
+                edition = _audio_edition(
+                    self._name, book.identity, row, lookup.local_claims, local_runtime
+                )
+                if edition is not None:
+                    editions.append(edition)
+        if len(editions) > MAX_AUDIO_EDITIONS:
+            return ()
+        return tuple(sorted(editions, key=lambda value: value.identity))
+
     def _reject_schema_members(self, count: int) -> None:
         if count > 0:
             self._schema_rejections = min(
@@ -701,6 +822,124 @@ def _classify(facts: ProviderResponseFacts) -> ProviderFailure:
             retryable=True,
         )
     return ProviderFailure(ProviderStatus.UNAVAILABLE, category="http_other")
+
+
+@dataclass(frozen=True, slots=True)
+class _AudioEditionPage:
+    rows: tuple[dict[str, Any], ...]
+    status: ProviderStatus | None
+
+
+def _parse_audio_edition_rows(
+    payload: bytes, book_id: int
+) -> tuple[dict[str, Any], ...]:
+    """Read one page of a book's audio editions, refusing any foreign row."""
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
+    data = _closed(_closed(source, {"data"})["data"], {"editions"})
+    rows, overflow = _bounded_list(
+        data["editions"],
+        _AUDIO_EDITION_PAGE,
+        {"id", "book_id", "asin", "audio_seconds", "contributions"},
+    )
+    if overflow:
+        raise ValueError("provider audio editions overflow")
+    for row in rows:
+        _identifier(row["id"])
+        if _identifier(row["book_id"]) != book_id:
+            raise ValueError("provider audio edition names another book")
+    return tuple(rows)
+
+
+def _audio_edition(
+    provider: str,
+    work_identity: str,
+    row: dict[str, Any],
+    local: tuple[LocalClaim, ...],
+    local_runtime: int,
+) -> ProviderCandidate | None:
+    """One audio edition that witnesses the recording, or ``None``.
+
+    It needs a stated runtime inside the tight band of the recording's and at
+    least one valid narrator credit. Only its ASIN, runtime and narrators are
+    kept; nothing else of the row is read.
+    """
+    seconds = row["audio_seconds"]
+    if (
+        type(seconds) is not int
+        or isinstance(seconds, bool)
+        or not 1 <= seconds <= _MAX_AUDIO_SECONDS
+        or abs(seconds - local_runtime) > RUNTIME_BAND_TIGHT_SECONDS
+    ):
+        return None
+    identity = f"hardcover-edition-{row['id']:010d}"
+    claims: list[ProviderClaim] = []
+    state, asin = _field(ClaimKind.ASIN, row["asin"])
+    if state is FieldState.VALID:
+        claims.append(
+            _claim(
+                provider,
+                identity,
+                ClaimKind.ASIN,
+                asin,
+                ClaimScope.EDITION,
+                "not_applicable",
+                None,
+                local,
+                len(claims),
+            )
+        )
+    claims.append(
+        _claim(
+            provider,
+            identity,
+            ClaimKind.DURATION,
+            f"{seconds}.000",
+            ClaimScope.EDITION,
+            "not_applicable",
+            None,
+            local,
+            len(claims),
+        )
+    )
+    contributions, overflow, _invalid = _optional_bounded_list(
+        row["contributions"], MAX_CONTRIBUTIONS, {"id", "contribution", "author"}
+    )
+    narrators: list[str] = []
+    for item in () if overflow else contributions:
+        try:
+            role = validate_role_projection(item["contribution"]).casefold()
+        except (EvidenceValueError, TypeError):
+            continue
+        author = _optional_mapping(item["author"])
+        if role != "narrator" or author is None:
+            continue
+        state, name = _field(ClaimKind.CONTRIBUTOR, author.get("name"))
+        if state is FieldState.VALID and name is not None and name not in narrators:
+            narrators.append(name)
+    if not narrators:
+        return None
+    for name in narrators:
+        claims.append(
+            _claim(
+                provider,
+                identity,
+                ClaimKind.CONTRIBUTOR,
+                name,
+                ClaimScope.WORK,
+                "not_applicable",
+                "narrator",
+                local,
+                len(claims),
+            )
+        )
+    return finalize_candidate_comparisons(
+        ProviderCandidate(identity, work_identity, tuple(claims)), local, provider
+    )
 
 
 def _raw(payload: bytes) -> bytes:

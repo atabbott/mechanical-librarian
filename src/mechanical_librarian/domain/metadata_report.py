@@ -95,12 +95,16 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v63"
+REPORT_SCHEMA = "metadata-report-v64"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
+# Hardcover audio editions one observation retains (#962). Only editions that
+# credit a narrator and state a runtime inside the tight band of the recording
+# are kept, and a work has a handful at most.
+MAX_AUDIO_EDITIONS = 16
 # Band-first recording-lookup hints an item keeps (#1257). #1246 found at most 2
 # refused tight-band products per item on the retained snapshot.
 MAX_RECORDING_LOOKUP_HINTS = 2
@@ -2957,6 +2961,12 @@ class ProviderObservation:
     # `candidates` lost (#1307). Never read for admission: it records what was
     # refused, so a report can say a tight product was refused by title.
     refused_products: tuple[ProviderCandidate, ...] = ()
+    # Hardcover audio editions of an admitted work that credit a narrator and
+    # state a runtime inside the tight band of the recording (#962, ADR-0089).
+    # Never read for admission or as field evidence: a Hardcover edition is
+    # never an independent source, since an Audible exclusive's facts can only
+    # have come from Audible. It only witnesses which recording the file is.
+    audio_editions: tuple[ProviderCandidate, ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -3069,6 +3079,7 @@ class ProviderObservation:
             ):
                 raise ReportValueError("recording lookup provenance is invalid")
         self._validate_refused_products()
+        self._validate_audio_editions()
         if (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates):
             raise ReportValueError("provider status and candidates disagree")
         if self.edition_enrichment_overflow is not None and (
@@ -3140,6 +3151,7 @@ class ProviderObservation:
                 *self.candidates,
                 *self.recording_lookup_candidates,
                 *self.refused_products,
+                *self.audio_editions,
             )
             for claim in candidate.claims
         ):
@@ -3266,9 +3278,60 @@ class ProviderObservation:
             ):
                 raise ReportValueError("refused product does not match its stub")
 
+    def _validate_audio_editions(self) -> None:
+        """Bind each audio edition to an admitted Hardcover work (#962)."""
+        if (
+            type(self.audio_editions) is not tuple
+            or len(self.audio_editions) > MAX_AUDIO_EDITIONS
+            or any(
+                type(value) is not ProviderCandidate for value in self.audio_editions
+            )
+        ):
+            raise ReportValueError("audio editions are invalid")
+        identities = tuple(value.identity for value in self.audio_editions)
+        if identities != tuple(sorted(set(identities))):
+            raise ReportValueError("audio editions are not canonical")
+        if not self.audio_editions:
+            return
+        works = {
+            value.work_identity
+            for value in self.candidates
+            if value.identity == value.work_identity
+            and value.identity.startswith("hardcover-work-")
+        }
+        # An adapter's own answer is bound to its authority after it returns.
+        if (
+            self.authority not in {None, "hardcover"}
+            or self.status is not ProviderStatus.CANDIDATES
+        ):
+            raise ReportValueError("audio edition provenance is invalid")
+        for edition in self.audio_editions:
+            kinds = [claim.kind for claim in edition.claims]
+            if (
+                not edition.identity.startswith("hardcover-edition-")
+                or edition.work_identity not in works
+                or edition.evidence
+                or edition.identity_bindings
+                or edition.runtime_short_of_local
+                or any(
+                    claim.state is not FieldState.VALID
+                    or claim.scope is not claim_scope(claim.kind)
+                    or claim.kind
+                    not in {ClaimKind.ASIN, ClaimKind.DURATION, ClaimKind.CONTRIBUTOR}
+                    or (claim.kind is ClaimKind.CONTRIBUTOR)
+                    != (claim.role == "narrator")
+                    for claim in edition.claims
+                )
+                or kinds.count(ClaimKind.DURATION) != 1
+                or kinds.count(ClaimKind.ASIN) > 1
+                or ClaimKind.CONTRIBUTOR not in kinds
+            ):
+                raise ReportValueError("audio edition is invalid")
+
     def to_data(self) -> dict[str, object]:
         return {
             "candidates": [value.to_data() for value in self.candidates],
+            "audio_editions": [value.to_data() for value in self.audio_editions],
             "recording_lookup_candidates": [
                 value.to_data() for value in self.recording_lookup_candidates
             ],
@@ -4827,6 +4890,7 @@ class MetadataReport:
             for candidate in (
                 *provider.recording_lookup_candidates,
                 *provider.refused_products,
+                *provider.audio_editions,
             )
             for claim in candidate.claims
         ):
@@ -4837,6 +4901,7 @@ class MetadataReport:
                 *provider.candidates,
                 *provider.recording_lookup_candidates,
                 *provider.refused_products,
+                *provider.audio_editions,
             ):
                 expected = finalize_candidate_comparisons(
                     candidate,
@@ -5027,6 +5092,17 @@ class MetadataReport:
                         ),
                     )
                     for candidate in provider.refused_products
+                ),
+                audio_editions=tuple(
+                    finalize_candidate_comparisons(
+                        candidate,
+                        local_claims,
+                        provider.provider,
+                        allow_unbound_manifestation_link=(
+                            _target_backed_work_lookup(target, provider)
+                        ),
+                    )
+                    for candidate in provider.audio_editions
                 ),
                 candidates=tuple(
                     finalize_candidate_comparisons(
@@ -7039,6 +7115,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
         value,
         {
             "accessed_at",
+            "audio_editions",
             "authority",
             "candidates",
             "recording_lookup_candidates",
@@ -7103,6 +7180,10 @@ def _provider_from_data(value: object) -> ProviderObservation:
         refused_products=tuple(
             _candidate_from_data(candidate)
             for candidate in _list(item["refused_products"])
+        ),
+        audio_editions=tuple(
+            _candidate_from_data(candidate)
+            for candidate in _list(item["audio_editions"])
         ),
     )
 
@@ -7541,6 +7622,7 @@ __all__ = [
     "FieldState",
     "FileFacts",
     "LocalClaim",
+    "MAX_AUDIO_EDITIONS",
     "MAX_CANDIDATES",
     "MAX_RECORDING_LOOKUP_HINTS",
     "IdentifierEvidence",

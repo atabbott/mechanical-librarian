@@ -314,6 +314,15 @@ Further audiobook records grant nothing by themselves:
   for one ASIN pass. Library and Detail show them under Recording source.
 - **`refused_products`**: the product a provider returned for each ASIN-only
   stub. Only the carried lane may admit one, through the corroborated rule.
+- **`audio_editions`**: on Hardcover only, up to 16 audio editions of an
+  admitted book that credit a narrator and state a runtime within 90 seconds
+  of the file's. Each keeps only its ASIN, runtime and narrators. They are
+  compared with the file, never with Audible, and never count as a second
+  source. `hardcover_edition_witness` reads them as `no_edition`,
+  `editions_disagree`, `unmatched`, `agrees` or `challenged`. A match is
+  `challenged` only when every accepted recording is outside the tight band,
+  after minute floors, and credits only other narrators
+  ([ADR-0090](../architecture/decisions/0090-hardcover-audio-edition-witness.md)).
 - **`dispatch`**: each lane's `outcome` (`admitted`, `empty`, `refused`,
   `overflow`, `unavailable`, `starved`, `not_dispatched` or
   `empty_or_refused`), `rungs` walked, and on Audible's asserted lane
@@ -333,7 +342,7 @@ and rate-limit holds are in
 | --- | --- |
 | Audible catalog | 6 results per search; 25 when the item states one composed runtime, under a 262,144-byte bound, keeping products in the loose band or stating no runtime (more than five is `candidate_limit_exceeded`); 1 MiB aggregate |
 | Google Books | requests 6 rows, keeps 5; 5 transport retries per query; 54 attempts |
-| Hardcover | 27 attempts; three relationship levels |
+| Hardcover | 27 attempts; three relationship levels; on an audiobook, 2 books and 2 pages of 100 audio editions per book |
 | Inventaire | 3-row search, 2 candidates; 3 attempts per request, 27 per observation; at most 2 MiB |
 | Open Library | 1 transport retry per request, 4 per observation; 49 attempts |
 | iTunes Search | ebook work lanes only; 5 rows; 6 distinct candidates overflow |

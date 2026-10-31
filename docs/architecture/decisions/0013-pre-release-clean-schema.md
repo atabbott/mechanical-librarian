@@ -266,6 +266,12 @@ profile, override or configuration naming `preserve` is refused as an
 unavailable option, and every other v3 profile reads as before. The report
 schema is unchanged; no adoption is supplied.
 
+Issue #962 also takes the clean-rebuild branch. `metadata-report-v64` adds
+each provider's `audio_editions`, the Hardcover audio editions that witness
+which recording an audiobook is (ADR-0090), so a v63 report cannot state what
+a v64 report records. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.
+
 Issue #1451 also takes the clean-rebuild branch. `review_preparation_work`
 gains the nullable `research_not_before` column, which marks when an audiobook
 whose report admitted no recording is searched again (ADR-0089). A predecessor

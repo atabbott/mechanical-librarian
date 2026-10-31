@@ -80,6 +80,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_PROVIDER_AUTHORITIES,
     COMPANION_EBOOK_CLAIM_KINDS,
     CORROBORATED_RULE_AUTHORITY,
+    MAX_AUDIO_EDITIONS,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
     MAX_RECORDING_LOOKUP_HINTS,
@@ -548,8 +549,26 @@ class ProviderLaneResult:
     dispatch: ProviderLaneDispatch | None = None
     # What an ASIN lane refused, with its claims (#1307).
     refused_products: tuple[ProviderCandidate, ...] = ()
+    # Hardcover audio editions of this WORK lane's admitted books (#962).
+    audio_editions: tuple[ProviderCandidate, ...] = ()
 
     def __post_init__(self) -> None:
+        if (
+            type(self.audio_editions) is not tuple
+            or len(self.audio_editions) > MAX_AUDIO_EDITIONS
+            or any(
+                type(value) is not ProviderCandidate for value in self.audio_editions
+            )
+            or self.audio_editions
+            and (
+                self.lane.kind is not ProviderQueryKind.WORK
+                or self.status is not ProviderStatus.CANDIDATES
+                or not {value.work_identity for value in self.audio_editions}.issubset(
+                    {value.identity for value in self.candidates}
+                )
+            )
+        ):
+            raise MetadataReportError("provider lane result is invalid")
         if (
             type(self.refused_products) is not tuple
             or len(self.refused_products) > MAX_CANDIDATES
@@ -1508,7 +1527,34 @@ def provider_observation(
             for candidate in result.recording_lookup_candidates
         ),
         refused_products=_aggregate_refused_products(results, candidates),
+        audio_editions=_aggregate_audio_editions(results, candidates),
     )
+
+
+def _aggregate_audio_editions(
+    results: tuple[ProviderLaneResult, ...],
+    candidates: tuple[ProviderCandidate, ...],
+) -> tuple[ProviderCandidate, ...]:
+    """Keep each audio edition whose work the observation still admits (#962).
+
+    Two lanes that read one edition differently keep neither, and an
+    observation that would exceed the bound keeps none: a prefix is never a
+    fair sample of which recording the editions name.
+    """
+    works = {candidate.identity for candidate in candidates}
+    editions: dict[str, ProviderCandidate | None] = {}
+    for result in results:
+        for edition in result.audio_editions:
+            if edition.work_identity not in works:
+                continue
+            previous = editions.get(edition.identity, edition)
+            editions[edition.identity] = edition if previous == edition else None
+    kept = tuple(
+        edition
+        for _identity, edition in sorted(editions.items())
+        if edition is not None
+    )
+    return () if len(kept) > MAX_AUDIO_EDITIONS else kept
 
 
 def _aggregate_refused_products(
