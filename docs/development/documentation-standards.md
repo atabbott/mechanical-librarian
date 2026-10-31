@@ -14,8 +14,9 @@ same pull request:
   schema where there is one;
 - a durable architectural decision: a new or superseding ADR;
 - a security boundary: the [threat model](../architecture/security.md);
-- a milestone opening, closing or being reordered: the README status and the
-  [roadmap](../product/roadmap.md).
+- a milestone opening or being reordered: the README status and the
+  [roadmap](../product/roadmap.md);
+- a milestone's last pull request: the [closing pass](#closing-a-milestone).
 
 Update a document in place. Say what is true now, and delete what stopped
 being true; git history, the changelog, issues and pull requests already keep
@@ -24,6 +25,26 @@ issue arithmetic or review history to a living document.
 
 ADRs are the exception: an accepted ADR keeps its decision text, and a later
 change supersedes or amends it.
+
+## Closing a milestone
+
+The last pull request to merge in a milestone also brings the documentation up
+to date as of the milestone's close. In the same pull request:
+
+- Close what the milestone owns. Its changelog section drops "(in progress)"
+  and has one bullet for each delivered user-visible outcome. The README status
+  and the roadmap show the milestone as delivered and say what comes next.
+  Every product, operations, reference and architecture page its issues
+  changed describes the delivered behaviour.
+- Sweep the rest. Read every other living document reachable from
+  [the index](../README.md) against current `main`, and correct whatever has
+  stopped being true, whichever change made it stale.
+
+A pull request is the last one when every other issue in the milestone is
+closed. If the exit checks after it merges need another pull request, that one
+becomes the last and repeats the pass for whatever it changes. The milestone is
+closed only after its closing pass has merged. The pass follows the rules on
+this page: it edits in place and adds no delivery history.
 
 ## Where things live
 

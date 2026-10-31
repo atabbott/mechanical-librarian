@@ -27,7 +27,10 @@ between Defect and Bug needs a short comment saying why.
 Each milestone is one checkpoint titled `X.Y.Z — Outcome`, and its
 `Target release` option is exactly `X.Y.Z`. Before 1.0.0, completing a
 checkpoint does not publish a release; the maintainer separately decides which
-delivered checkpoint becomes 1.0.0, the first public release.
+delivered checkpoint becomes 1.0.0, the first public release. A milestone's
+last pull request makes its
+[closing documentation pass](documentation-standards.md#closing-a-milestone),
+and the milestone closes only after that pass merges.
 
 Before 1.0.0, numbers are `0.MINOR.PATCH`. A milestone holding any Feature or
 Epic takes the next minor; one holding only Defect, Bug and Task work takes the
