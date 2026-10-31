@@ -1467,6 +1467,10 @@ class ContinuousGuardedApplication:
                 project_readable_activity_event(event, report)
             except ActivityProjectionError as error:
                 raise GuardedApplicationError("activity") from error
+        # Read with the same default as ``counts``: no field effects, none stopped.
+        owner_action = data.setdefault("owner_action_required", 0)
+        if type(owner_action) is not int or owner_action < 0:
+            raise GuardedApplicationError("activity")
         cleanup = data.pop("cleanup", None)
         if cleanup is not None and (
             type(cleanup) is not dict

@@ -365,7 +365,9 @@ and activating grants none. Rule codes appear only under "Technical detail".
 
 Activity is a permanent destination with no badge. Guarded state, recovery and
 recent outcomes lead the page. Pause, resume and revoke are its only prominent
-controls.
+controls. While a change is stopped until you act, for example a description
+to restore in Audiobookshelf, the header and summary say how many wait on you
+and never read as calm.
 
 ### Write permission
 

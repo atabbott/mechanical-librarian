@@ -136,6 +136,21 @@ def _ledger(
         reader.close()
 
 
+def _owner_action_required(environment: _EffectEnvironment) -> int:
+    count = ContinuousGuardedApplication(
+        environment.repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(environment.repository),
+        (("primary", "books"),),
+        lambda: 2_000,
+        lambda *_: None,
+        activity_only=True,
+    ).activity()["owner_action_required"]
+    assert type(count) is int
+    return count
+
+
 def _facts(event: dict[str, object]) -> dict[str, str]:
     evidence = event["evidence"]
     assert isinstance(evidence, list)
@@ -1101,6 +1116,8 @@ def test_a_write_the_library_refused_never_claims_a_before_and_after(
     )
     effects.target.unavailable_scope_next = "destination"
     assert effects.service.apply(planned.plan.plan_id).state == "stale"
+    # A field the service does not offer is not the owner's to fix (#1430).
+    assert _owner_action_required(effects) == 0
 
     stopped = next(
         event for event in _ledger(effects) if event["category"] == "recovery"
@@ -1160,6 +1177,8 @@ def test_post_write_third_value_closes_without_claiming_no_write(
     assert effects.service.apply(planned.plan.plan_id).state == "reconciling"
     result = effects.service.reconcile(planned.plan.plan_id)
     assert (result.state, result.failure) == ("stale", "third_value")
+    # The stopped change waits for the owner, and Activity counts it (#1430).
+    assert _owner_action_required(effects) == 1
     event = next(event for event in _ledger(effects) if event["state"] == "stale")
     assert event["change"] == "Prepared change closed"
     assert (
@@ -1167,6 +1186,13 @@ def test_post_write_third_value_closes_without_claiming_no_write(
         == "The selected change was not confirmed"
     )
     assert "No write was applied" not in str(event)
+    # A later decision or report replaces the authority; the row stays in the
+    # ledger, but it no longer waits for the owner.
+    effects.repository._connection.execute(
+        "UPDATE field_effect_authorities SET current=0 WHERE decision_id=?",
+        (planned.plan.authority.decision_id,),
+    )
+    assert _owner_action_required(effects) == 0
 
 
 def test_configured_reader_serialized_facts_preserve_public_activity(

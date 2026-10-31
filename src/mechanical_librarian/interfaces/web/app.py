@@ -1248,6 +1248,8 @@ class _ActivityResponse(_ClosedModel):
     last_failure: str | None
     ledger: _ActivityLedger
     current_waiting: _ActivityWaiting | None
+    # Changes stopped until the owner acts on what their row says (#1430).
+    owner_action_required: int = Field(ge=0)
     paused: bool
     prepared: _ActivityPrepared
     provider_recovery: list[_ProviderRecoveryActivity] = Field(

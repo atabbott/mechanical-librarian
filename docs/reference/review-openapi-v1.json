@@ -2570,6 +2570,11 @@
           "ledger": {
             "$ref": "#/components/schemas/_ActivityLedger"
           },
+          "owner_action_required": {
+            "minimum": 0.0,
+            "title": "Owner Action Required",
+            "type": "integer"
+          },
           "paused": {
             "title": "Paused",
             "type": "boolean"
@@ -2614,6 +2619,7 @@
           "last_failure",
           "ledger",
           "current_waiting",
+          "owner_action_required",
           "paused",
           "prepared",
           "schema_version",

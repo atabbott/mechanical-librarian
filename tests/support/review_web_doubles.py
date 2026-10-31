@@ -1175,6 +1175,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             "paused": self.paused,
             "ledger": projected["ledger"],
             "current_waiting": None,
+            "owner_action_required": projected["owner_action_required"],
             "prepared": {"automatic": 1, "human": 1, "total": 2},
             "schema_version": "continuous-field-activity-v3",
             "suspensions": [],

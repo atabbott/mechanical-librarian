@@ -809,6 +809,45 @@ describe('Activity route', () => {
     expect(screen.getAllByText(rowStatus).at(-1)).toBeVisible()
   })
 
+  it.each([
+    [
+      1,
+      'A stopped change needs you',
+      'The ledger below says what it needs. Nothing retries it until you act.',
+    ],
+    [
+      2,
+      '2 stopped changes need you',
+      'The ledger below says what each one needs. Nothing retries them until you act.',
+    ],
+  ])(
+    'never reads calm while %i changes wait on the owner',
+    async (owner_action_required, heading, detail) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getActivity: vi.fn(async () => activity({ owner_action_required })),
+      }
+      renderRoute('/activity', http)
+
+      expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
+      expect(screen.getByText(detail)).toBeVisible()
+      expect(screen.getByText('Action needed')).toBeVisible()
+      expect(screen.queryByText('No action required')).toBeNull()
+      expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
+    },
+  )
+
+  it('stays calm when nothing waits on the owner', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity({ owner_action_required: 0 })),
+    }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(screen.getByText('No action required')).toBeVisible()
+  })
+
   it('keeps failed outcomes bounded in ledger rows', async () => {
     const failures = [
       'target_changed',
