@@ -96,3 +96,4 @@ preference; supersede or amend it.
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations |
 | [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |
 | [0089](0089-unmatched-audiobook-research.md) | accepted | Search an unmatched audiobook again |
+| [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |

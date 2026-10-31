@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
+- **Clean rebuild required.** Hardcover's audio editions are read for every
+  matched audiobook work and compared with the file. The report records when
+  an edition with a different narrator matches the file and the Audible match
+  does not. A Hardcover edition never counts as a second source (#962).
+
 - **Clean rebuild required.** A placeholder or cut-off audiobook synopsis is
   filled under the default option (a cut-off one only by its own full text),
   and an "About the book" header line no longer counts as a difference.

@@ -229,7 +229,12 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
 - **Hardcover**: `POST` to the fixed GraphQL URL, with the bearer token on
   that request only. GraphQL `errors` are checked before `data` and yield
   nothing; their text is never kept. Retries 5xx, and 429 only when
-  `Retry-After` or Hardcover's rate-limit reset fits the deadline.
+  `Retry-After` or Hardcover's rate-limit reset fits the deadline. An
+  audiobook WORK lane that admits one or two books also sends one constant
+  audio-edition document per page, keyed by an integer book id: 100 rows a
+  page, at most 2 pages per book, inside the same ceilings. A row naming
+  another book refuses the whole fan-out
+  ([ADR-0090](decisions/0090-hardcover-audio-edition-witness.md)).
 - **Open Library**: fixed-origin `GET`. The contact email goes only in the
   User-Agent to its fixed origins and is stored nowhere else. Retries 5xx,
   never 429.

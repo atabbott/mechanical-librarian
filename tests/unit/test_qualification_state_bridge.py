@@ -130,6 +130,7 @@ def _v26_document(
     for provider in providers:
         provider.pop("recording_lookup_candidates")
         provider.pop("refused_products")
+        provider.pop("audio_editions")
     data["providers"] = providers
     if artifact_bearing_cover:
         artifact = CoverArtifact.create(
@@ -291,7 +292,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v63"
+    assert report.schema_version == "metadata-report-v64"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     for table in (
@@ -1388,7 +1389,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         report = MetadataReport.from_json(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
-    assert report.schema_version == "metadata-report-v63"
+    assert report.schema_version == "metadata-report-v64"
 
 
 def test_a_bridged_lane_gains_every_lane_field_its_source_predates(
