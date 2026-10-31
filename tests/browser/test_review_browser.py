@@ -7104,11 +7104,12 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
                             f"dark ({'set' if theme else 'system'}): the mark is "
                             f"{mark:.2f}:1 off the masthead, its letters {letters:.2f}:1"
                         )
-                for scheme, text in (
+                schemes: tuple[tuple[Literal["light", "dark"], str], ...] = (
                     ("dark", ""),
                     ("dark", "200%"),
                     ("light", "200%"),
-                ):
+                )
+                for scheme, text in schemes:
                     page.emulate_media(color_scheme=scheme)
                     set_root_text(page, text)
                     for width in (1440, 1200, 760, 390, 375, 320):
