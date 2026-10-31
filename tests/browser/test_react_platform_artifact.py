@@ -465,8 +465,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     const style = getComputedStyle(rail)
                     const left = box.left + parseFloat(style.paddingLeft)
                     const right = box.right - parseFloat(style.paddingRight)
-                    return [...rail.querySelectorAll(
-                        `.lenses a, .library-search input, .library-search button,
+                    // Lenses scroll sideways inside their own row, so the row,
+                    // not each lens, must stay within the panel's border.
+                    const lenses = rail.querySelector('.lenses')?.getBoundingClientRect()
+                    const lensOverrun = !lenses || lenses.left < box.left || lenses.right > box.right
+                        ? [['lenses', 'overrun the panel', 0, 0, 0, 0]] : []
+                    return lensOverrun.concat([...rail.querySelectorAll(
+                        `.library-search input, .library-search button,
                          .library-pager button, .library-work-title,
                          .library-work-author, .library-work-origin,
                          .library-works-heading > *`)]
@@ -476,7 +481,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         .map(([node, r]) => [node.className || node.tagName,
                             (node.textContent || '').trim().slice(0, 28),
                             Math.round(r.left), Math.round(r.right),
-                            Math.round(left), Math.round(right)])
+                            Math.round(left), Math.round(right)]))
                     }"""
                 ),
             )
@@ -1758,7 +1763,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
         page.get_by_text("Page 1", exact=False).wait_for()
         capture_visual_proof("library-pager")
-        assert page.get_by_role("button", name="\u2190 Previous").is_disabled()
+        # The first page offers no way back (#1520).
+        assert page.get_by_role("button", name="\u2190 Previous").count() == 0
         page.get_by_role("button", name="Next \u2192").click()
         page.get_by_text("Unicode shelves:", exact=False).wait_for()
         page.get_by_role("button", name="\u2190 Previous").click()
@@ -1770,17 +1776,20 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         # Searching narrows as the owner types and returns to the first page.
         search_box.fill("Spoken stories")
         expect(page.locator(".library-work-row")).to_have_count(3)
-        page.get_by_text("Page 1", exact=False).wait_for()
+        # Three works are one page, which has no pager (#1520).
+        expect(page.locator(".library-pager")).to_have_count(0)
+        assert "cursor=" not in page.url
         assert search_box.input_value() == "Spoken stories"
         search_box.fill("no synthetic work has this phrase")
         page.get_by_text(
             "No exact-current works match this search and lens."
         ).wait_for()
-        page.get_by_role("button", name="Clear search").click()
+        page.get_by_role("button", name="Clear search", exact=True).click()
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
         assert search_box.input_value() == ""
         stage[0] = "library:touch-targets"
         page.goto("https://react-platform.invalid/library?lens=all")
+        page.locator(".lenses a").first.wait_for()
         for control in page.locator(
             ".masthead nav a, .shell-status button, .shell-actions button"
         ).all():
@@ -1791,6 +1800,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert control.bounding_box()["height"] >= 44
         for lens in page.locator(".lenses a").all():
             assert lens.bounding_box()["width"] >= 44
+        # The lenses are one row that scrolls sideways, its far edge faded (#1520).
+        lens_row = page.evaluate(
+            """() => {
+              const row = document.querySelector('.lenses')
+              const tops = [...row.querySelectorAll('a')].map(a => a.getBoundingClientRect().top)
+              return {rows: new Set(tops).size, scrolls: row.scrollWidth > row.clientWidth,
+                      more: row.dataset.more}
+            }"""
+        )
+        assert lens_row == {"rows": 1, "scrolls": True, "more": "end"}, lens_row
         page.locator(".library-work-row").first.wait_for()
         assert overrunning_rail_controls() == []
         assert page.evaluate(_SHORT_SUMMARIES) == []
@@ -4764,6 +4783,10 @@ _UI_LABELS = (
     )
 )
 _WORKS_ROWS = ".library-work-row"
+# A work's title and authors in the Attention rail and on a decision's
+# choices: data words that must stay whole wherever their line could hold them,
+# at every width (#1530).
+_WORK_TITLES = ".attention-work-identity, .workspace-detail .value-choice strong"
 # Of the split words `_POLICY_MID_WORD` found, those the layout split without
 # need. A word may break only when it is wider than its whole line box. For a
 # word of the interface that box must also hold at least half the page's
@@ -4808,7 +4831,9 @@ def test_words_break_only_where_they_must() -> None:
     """No interface word splits where the layout could have kept it whole, on
     every route state at every frozen width and both text sizes, and no page
     is wider than the window (#1291). Enlarged text is root font-size 200%.
-    From 1100px up a works row's words, title included, stay whole too."""
+    From 1100px up a works row's words, title included, stay whole too, and a
+    work's title in the Attention rail and on its choices does at every width
+    (#1530)."""
     routes = {
         "library": "/library?lens=all",
         "selected": "/library?lens=all&preview=case-1",
@@ -4845,6 +4870,12 @@ def test_words_break_only_where_they_must() -> None:
                     if rows and width >= 1100:
                         needless = page.evaluate(_NEEDLESS_SPLITS, [_WORKS_ROWS, rows])
                         failures += [f"{where}: works row {word}" for word in needless]
+                    titles = page.evaluate(_POLICY_MID_WORD, _WORK_TITLES)
+                    if titles:
+                        needless = page.evaluate(
+                            _NEEDLESS_SPLITS, [_WORK_TITLES, titles]
+                        )
+                        failures += [f"{where}: work title {word}" for word in needless]
                     overflow = page.evaluate(
                         "document.scrollingElement.scrollWidth - innerWidth"
                     )
