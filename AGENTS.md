@@ -189,8 +189,12 @@ part of every change, not a follow-up:
 
 - Update the documents your change makes stale in the same pull request: the
   operations, reference or product page that describes the behaviour, the
-  changelog, and, when a milestone opens, closes or is reordered, the README
-  status and the roadmap.
+  changelog, and, when a milestone opens or is reordered, the README status
+  and the roadmap.
+- The last pull request to merge in a milestone also makes the milestone's
+  [closing documentation pass](docs/development/documentation-standards.md#closing-a-milestone):
+  it closes the milestone's changelog section, README status and roadmap, and
+  corrects every other living document that is no longer true.
 - Edit in place. State what is true now and delete what stopped being true;
   git history, the changelog, issues and pull requests keep the record. Do not
   add dated narrative, delivery history, or review history to a living
