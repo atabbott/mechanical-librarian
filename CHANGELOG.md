@@ -65,6 +65,11 @@ brackets are GitHub issues.
 
 ## 0.29.1 — Clarity and accessibility (in progress)
 
+- At 200% text the write-permission panel, Policy's preview actions and the
+  Review complete card stay on screen; that card's heading comes into view
+  clear of the masthead, and Activity keeps the focused pager control in view.
+  Activity names languages, setup's dark mark meets contrast, and Activity
+  chips, Details and setup's Change buttons are full targets (#1490, #1491).
 - The masthead holds still as its status changes and scrolls away once taller
   than a quarter of the window. Library opens with its write handoff in place
   and stays current on reviews and Attention; saving settings moves nothing.

@@ -20,6 +20,7 @@ import type {
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import { activityRoute, normalizeActivitySearch } from '../src/router'
 import { formatDay, formatWhen } from '../src/dates'
+import { languageName } from '../src/labels'
 import { document as settingsDocument, view as settingsView } from './settingsFixtures'
 import {
   activity,
@@ -1239,6 +1240,41 @@ describe('Activity route', () => {
     expect(table).toHaveTextContent('Ask me')
     expect(table).toHaveTextContent('Automatic')
     expect(table).toHaveTextContent('Visible Google text')
+  })
+
+  it('names a language row’s languages in its change and Details (#1490)', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [
+            {
+              event_id: 'owner-language',
+              destination: 'language',
+              field_label: 'Language',
+              change: 'en → en-GB',
+              change_detail: 'Set Language from en to en-GB',
+              evidence: [
+                { label: 'Previous value', value: 'en' },
+                { label: 'New value', value: 'en-GB' },
+                { label: 'Chosen by', value: 'Library owner' },
+              ],
+            },
+          ],
+        }),
+      ),
+    }
+    renderRoute('/activity', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const [english, british] = [languageName('en'), languageName('en-GB')]
+    expect(english).toBe('English (en)')
+    expect(screen.getByText(`${english} → ${british}`)).toBeInTheDocument()
+    expect(screen.getByText(`Set Language from ${english} to ${british}`)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^Details for /u }))
+    expect(screen.getByText(english)).toBeVisible()
+    expect(screen.getByText(british)).toBeVisible()
   })
 
   it('opens and closes a record from the keyboard with a truthful disclosure label', async () => {
