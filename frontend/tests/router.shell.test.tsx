@@ -120,6 +120,13 @@ describe('Application shell', () => {
         .getAllByRole('link')
         .filter((link) => link.textContent !== current)
       for (const link of others) expect(link).not.toHaveAttribute('aria-current')
+      // The brand link also leads to Library, but only the nav link is the
+      // current page, so the shell names one current link (#1488).
+      const masthead = nav.closest('header')
+      expect(masthead?.querySelectorAll('[aria-current="page"]')).toHaveLength(1)
+      expect(screen.getByRole('link', { name: 'Mechanical Librarian' })).not.toHaveAttribute(
+        'aria-current',
+      )
       cleanup()
     }
   })

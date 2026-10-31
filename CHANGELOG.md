@@ -52,6 +52,12 @@ brackets are GitHub issues.
   step list, the masthead's background-work popover and Activity's pager
   controls stay in view and full size (#1491, #1503).
 
+## 0.29.3 — Review fixes and hygiene (in progress)
+
+- The masthead names only the Library link as the current page on Library,
+  a review and Attention; the Mechanical Librarian brand link no longer
+  claims it too (#1488).
+
 ## 0.29.2 — Delivery reliability and hygiene (in progress)
 
 - **Clean rebuild required.** Automatic authority binds only the operations
