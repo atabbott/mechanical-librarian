@@ -1804,7 +1804,7 @@ describe('Library route', () => {
     // Counted as failed beside the Works count, never as needing no attention,
     // under its own heading in All (#1413).
     expect(await screen.findByText('1 work · 1 could not finish')).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     const terminal = document.querySelector('.library-work-row.is-terminal')
     expect(terminal?.tagName).toBe('ARTICLE')
@@ -1829,7 +1829,7 @@ describe('Library route', () => {
       'aria-current',
       'true',
     )
-    expect(screen.queryByRole('heading', { name: 'Preparation needs attention' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Could not finish' })).toBeNull()
     expect(screen.getByText('Preparation failed safely')).toBeVisible()
   })
 
@@ -2175,7 +2175,7 @@ describe('Library route', () => {
     expect(row).not.toHaveTextContent('No provider matched')
     expect(row).toHaveAccessibleName(/Preparation failed safely/u)
     expect(row).not.toHaveAccessibleName(/No provider matched/u)
-    expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.status-pill.is-notice')).not.toBeNull()
   })
@@ -2288,9 +2288,7 @@ describe('Library route', () => {
         search.lens === 'all' ? new Promise<never>(() => undefined) : page(search, 1),
       ),
     )
-    await waitFor(() =>
-      expect(status).toHaveTextContent(/^2 works · … not matched · … could not finish$/u),
-    )
+    await waitFor(() => expect(status).toHaveTextContent(/^2 works · …$/u))
     status = await counted(vi.fn(async (search: LibrarySearch) => page(search, 1, 1)))
     await waitFor(() =>
       expect(status).toHaveTextContent(/^2 works · 1 not matched · 1 could not finish$/u),
@@ -10360,9 +10358,7 @@ describe('Provider evidence rail', () => {
       getLibrary: vi.fn(async () => ({ ...library, works: [failed] })),
     })
     renderRoute('/library?lens=all', http)
-    expect(
-      await screen.findByRole('heading', { name: 'Preparation needs attention' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Could not finish' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(screen.getByRole('article', { name: 'Terminal preparation failure' })).toHaveTextContent(
       'open Background activity and choose Retry',

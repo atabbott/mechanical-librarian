@@ -184,7 +184,7 @@ Works needing a decision come first: those with complete provider evidence,
 then those with a limited lane, under **Provider evidence complete** and
 **Provider evidence limited**. Complete does not promise a match, and limited
 does not promise a retry. Works that could not finish follow under
-**Preparation needs attention**, then Not matched, then the rest. The other
+**Could not finish**, then Not matched, then the rest. The other
 lenses are alphabetical.
 
 A work with no case, nothing to decide and no admitted provider evidence is

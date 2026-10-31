@@ -754,9 +754,11 @@ const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
   not_matched_unavailable: 'Providers unavailable',
   not_matched_no_match: 'No provider matched',
 }
+// A failed preparation's group shares its lens's name, so a "needs attention"
+// heading never sits outside the Needs attention lens (#1413).
 const providerGroup = (work: LibraryWorkView) =>
   work.preparation
-    ? 'Preparation needs attention'
+    ? 'Could not finish'
     : work.attention === 'not_matched'
       ? 'Not matched'
       : work.attentionCount === 0
@@ -3510,22 +3512,22 @@ export default function LibraryPage({
                   workCount(data.counts.all) +
                   // The works outside both decision lenses, named beside the
                   // total in the masthead's words (#1407, #1413).
-                  (
-                    [
-                      [summaryNotMatched, 'not matched'],
-                      [summaryFailed, 'could not finish'],
-                    ] as const
-                  )
-                    .map(([count, words]) =>
-                      count === undefined
-                        ? summary.isError
-                          ? ''
-                          : ` · … ${words}`
-                        : count === 0
-                          ? ''
-                          : ` · ${String(count)} ${words}`,
-                    )
-                    .join('')
+                  // One placeholder while the summary loads, so the line
+                  // does not wrap and then jump when it arrives.
+                  (summaryNotMatched === undefined || summaryFailed === undefined
+                    ? summary.isError
+                      ? ''
+                      : ' · …'
+                    : (
+                        [
+                          [summaryNotMatched, 'not matched'],
+                          [summaryFailed, 'could not finish'],
+                        ] as const
+                      )
+                        .map(([count, words]) =>
+                          count === 0 ? '' : ` · ${String(count)} ${words}`,
+                        )
+                        .join(''))
                 )
               ) : failed ? (
                 'Count unavailable'
