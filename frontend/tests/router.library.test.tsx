@@ -2678,23 +2678,6 @@ describe('Library route', () => {
     expect(screen.queryByText(/^Page /u)).toBeNull()
   })
 
-  it('moves focus to the remaining move when the pressed one goes (#1520)', async () => {
-    const user = userEvent.setup()
-    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
-      search.cursor === 'page-2'
-        ? { ...library, page: 2, previousCursor: 'page-1' }
-        : { ...library, page: 1, nextCursor: 'page-2' },
-    )
-    renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
-    await user.click(await screen.findByRole('button', { name: 'Next →' }))
-    const previous = await screen.findByRole('button', { name: '← Previous' })
-    expect(screen.queryByRole('button', { name: 'Next →' })).toBeNull()
-    await waitFor(() => expect(previous).toHaveFocus())
-    await user.click(previous)
-    const next = await screen.findByRole('button', { name: 'Next →' })
-    await waitFor(() => expect(next).toHaveFocus())
-  })
-
   it('clears the search from inside the field, only while it has text (#1520)', async () => {
     const user = userEvent.setup()
     const { router } = renderRoute('/library?lens=all')

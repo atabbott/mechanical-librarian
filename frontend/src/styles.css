@@ -190,6 +190,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-search input::-webkit-search-cancel-button { appearance:none; display:none; }
 .library-search button { position:absolute; inset-block:0; inset-inline-end:0; width:2.75rem; min-height:0; padding:0; border:0; border-radius:0 .5rem .5rem 0; color:var(--soft); background:transparent; font-size:1.1rem; line-height:1; }
 .library-search button:hover { color:var(--ink); }
+.library-search button:focus-visible { outline-offset:-3px; }
 .library-work-list { display:grid; gap:.35rem; }
 /* Retained content stays in place, marked busy, while a newer read for another
    key is pending. The count is soft text, which keeps 4.8:1 in light theme only at .9. */

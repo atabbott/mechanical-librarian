@@ -2765,8 +2765,6 @@ export default function LibraryPage({
   const expectedSearchIdentity = useRef<string | null>(null)
   const searchInput = useRef<HTMLInputElement>(null)
   const lensRow = useRef<HTMLElement>(null)
-  const pagerMoved = useRef(false)
-  const pager = useRef<HTMLDivElement>(null)
   // The lenses scroll sideways in one row. An edge with more lenses beyond it
   // fades, so a row that happens to end between two lenses still shows it
   // continues. The current lens is brought into the row's view, clear of the
@@ -2781,36 +2779,37 @@ export default function LibraryPage({
       if (start || end) row.dataset.more = start && end ? 'both' : start ? 'start' : 'end'
       else delete row.dataset.more
     }
-    const reveal = () => {
-      const current = row.querySelector<HTMLElement>('[aria-current]')
-      if (current) {
-        const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
-        const rowBox = row.getBoundingClientRect()
-        const box = current.getBoundingClientRect()
-        if (box.left < rowBox.left + fade) row.scrollLeft -= rowBox.left + fade - box.left
-        else if (box.right > rowBox.right - fade)
-          row.scrollLeft += box.right - (rowBox.right - fade)
+    // The first and last lenses scroll the row to its end, so no fade covers
+    // them; any other lens is brought clear of both fades.
+    const reveal = (lens: Element | null) => {
+      if (lens instanceof HTMLElement) {
+        if (lens === row.firstElementChild) row.scrollLeft = 0
+        else if (lens === row.lastElementChild) row.scrollLeft = row.scrollWidth
+        else {
+          const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
+          const rowBox = row.getBoundingClientRect()
+          const box = lens.getBoundingClientRect()
+          if (box.left < rowBox.left + fade) row.scrollLeft -= rowBox.left + fade - box.left
+          else if (box.right > rowBox.right - fade)
+            row.scrollLeft += box.right - (rowBox.right - fade)
+        }
       }
       mark()
     }
-    reveal()
+    const revealCurrent = () => reveal(row.querySelector('[aria-current]'))
+    // Focus leaves a partly shown lens where it is, so Tab reveals it too.
+    const revealFocused = (event: FocusEvent) => reveal(event.target as Element | null)
+    revealCurrent()
     row.addEventListener('scroll', mark, { passive: true })
-    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(reveal) : null
+    row.addEventListener('focusin', revealFocused)
+    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(revealCurrent) : null
     for (const node of [row, ...row.children]) resized?.observe(node)
     return () => {
       row.removeEventListener('scroll', mark)
+      row.removeEventListener('focusin', revealFocused)
       resized?.disconnect()
     }
   }, [search.lens])
-  // A move to the first or last page removes the button that was pressed, so
-  // focus goes to the move that remains rather than to the page.
-  const shownPage = data?.page
-  useEffect(() => {
-    if (!pagerMoved.current || retained) return
-    pagerMoved.current = false
-    if (document.activeElement === document.body)
-      pager.current?.querySelector<HTMLElement>('button')?.focus({ preventScroll: true })
-  }, [shownPage, retained])
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -4123,7 +4122,6 @@ export default function LibraryPage({
   // A retained page's cursors belong to the key the URL just left.
   const movePage = (cursor: string | undefined) => {
     if (retained) return
-    pagerMoved.current = true
     void navigate({
       search: (current) => {
         const next = { ...current }
@@ -4749,7 +4747,7 @@ export default function LibraryPage({
           </div>
           {data && (data.previousCursor || data.nextCursor) ? (
             // Only the moves that exist are offered; with one page there is no pager.
-            <div className="library-pager" aria-busy={retained || undefined} ref={pager}>
+            <div className="library-pager" aria-busy={retained || undefined}>
               {data.previousCursor ? (
                 <button
                   type="button"
