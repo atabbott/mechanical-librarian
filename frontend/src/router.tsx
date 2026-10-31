@@ -6,6 +6,7 @@ import {
   Link,
   Navigate,
   Outlet,
+  createLink,
   createRootRouteWithContext,
   createRoute,
   createRouter,
@@ -23,6 +24,7 @@ import {
   useState,
 } from 'react'
 
+import type { ComponentPropsWithRef } from 'react'
 import type { createMemoryHistory } from '@tanstack/react-router'
 import settingsVocabulary from '../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 import { ApiError, BuildMismatchError, SessionExpiredError, refusalCopy } from './api/http'
@@ -1078,6 +1080,11 @@ const useAnnounceRetaining = (retaining: boolean) => {
     return () => setRetaining(false)
   }, [setRetaining, retaining])
 }
+// The brand leads to Library too, but the Library nav link is the one current
+// page; TanStack marks every active link current, so the brand drops it (#1488).
+const BrandLink = createLink((props: ComponentPropsWithRef<'a'>) => (
+  <a {...props} aria-current={undefined} />
+))
 const Shell = () => {
   const masthead = useRef<HTMLElement>(null)
   const main = useRef<HTMLElement>(null)
@@ -1184,7 +1191,7 @@ const Shell = () => {
         Skip to content
       </a>
       <header ref={masthead} className="masthead">
-        <Link
+        <BrandLink
           to="/library"
           search={{ lens: 'all' }}
           className="brand"
@@ -1194,7 +1201,7 @@ const Shell = () => {
             ML
           </span>
           <span>Mechanical Librarian</span>
-        </Link>
+        </BrandLink>
         <nav aria-label="Primary workspace">
           <Link
             to="/library"
